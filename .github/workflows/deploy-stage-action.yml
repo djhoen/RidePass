@@ -1,0 +1,27 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [ stage ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Install PM2
+        run: npm install -g pm2
+
+      - name: Deploy
+        run: |
+          # TODO: Configure your staging deployment target
+          # pm2 deploy ecosystem.stage.config.js staging
+          echo "Staging deployment step - configure with your server details"
