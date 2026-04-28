@@ -6,7 +6,7 @@ using Services.Repositories.Interfaces;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class PaymentController : ControllerBase
     {
         private readonly IPaymentProvider _payments;

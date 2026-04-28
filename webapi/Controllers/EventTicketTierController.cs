@@ -10,7 +10,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("Event/{eventId:guid}/Tiers")]
+    [Route("api/Event/{eventId:guid}/Tiers")]
     public class EventTicketTierController : ControllerBase
     {
         private readonly IEventTicketTierRepository _tiers;

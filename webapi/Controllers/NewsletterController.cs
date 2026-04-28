@@ -10,7 +10,7 @@ using System.Security.Claims;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class NewsletterController : ControllerBase
     {
         private readonly INewsletterRepository _subscribers;

@@ -8,7 +8,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     [Authorize]
     public class MeController : ControllerBase
     {

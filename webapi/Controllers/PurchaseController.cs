@@ -11,7 +11,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class PurchaseController : ControllerBase
     {
         private readonly IDayPassProductRepository _products;

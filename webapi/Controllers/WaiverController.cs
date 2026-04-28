@@ -9,7 +9,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class WaiverController : ControllerBase
     {
         private readonly IWaiverRepository _repo;

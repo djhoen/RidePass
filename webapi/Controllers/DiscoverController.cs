@@ -7,7 +7,7 @@ using webapi.Controllers.API.Data.Discover;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     [AllowAnonymous]
     public class DiscoverController : ControllerBase
     {

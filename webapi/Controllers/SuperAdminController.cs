@@ -15,7 +15,7 @@ using webapi.Helpers;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class SuperAdminController : ControllerBase
     {
         private readonly IUserRepository _users;

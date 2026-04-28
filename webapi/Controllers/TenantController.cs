@@ -10,7 +10,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class TenantController : ControllerBase
     {
         private static readonly HashSet<string> AllowedImageKinds = new(StringComparer.Ordinal)

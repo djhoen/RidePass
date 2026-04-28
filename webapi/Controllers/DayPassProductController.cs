@@ -10,7 +10,7 @@ using webapi.Multitenancy;
 namespace webapi.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     public class DayPassProductController : ControllerBase
     {
         private readonly IDayPassProductRepository _repo;
