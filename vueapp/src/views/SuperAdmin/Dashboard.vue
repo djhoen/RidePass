@@ -152,6 +152,8 @@
                     <v-text-field v-model="userQuery" label="Search users" density="compact" hide-details clearable
                         style="max-width: 360px" @keyup.enter="loadUsers"></v-text-field>
                     <v-btn @click="loadUsers">Search</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn color="primary" prepend-icon="mdi-shield-plus" @click="openCreateSuperAdmin">Add Super Admin</v-btn>
                 </div>
                 <v-card>
                     <v-table>
@@ -322,7 +324,8 @@
                                 hint="lowercase, digits, hyphens" persistent-hint></v-text-field>
                         </v-col>
                         <v-col cols="12" md="6">
-                            <v-autocomplete v-model="createForm.timezone" :items="timezoneOptions" label="Timezone" density="compact"></v-autocomplete>
+                            <v-autocomplete v-model="createForm.timezone" :items="timezoneOptions"
+                                item-title="title" item-value="value" label="Timezone" density="compact"></v-autocomplete>
                         </v-col>
                     </v-row>
                     <v-text-field v-model="createForm.displayName" label="Display Name" density="compact"></v-text-field>
@@ -347,6 +350,34 @@
                     <v-spacer></v-spacer>
                     <v-btn @click="createDialog = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="creating" @click="submitCreateTenant">Create</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Add super admin dialog -->
+        <v-dialog v-model="superAdminDialog" max-width="560" persistent>
+            <v-card>
+                <v-card-title>Add Super Admin</v-card-title>
+                <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        The new super admin will have full platform-level access. They sign in at
+                        <code>https://ridepass.io/Login</code> with the password you set here.
+                    </p>
+                    <v-row>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="superAdminForm.firstName" label="First name" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="superAdminForm.lastName" label="Last name" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+                    <v-text-field v-model="superAdminForm.email" type="email" label="Email" density="compact" class="mb-2"></v-text-field>
+                    <v-text-field v-model="superAdminForm.password" type="password" label="Password (min 8 chars)" density="compact"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="superAdminDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="creatingSuperAdmin" @click="submitCreateSuperAdmin">Create</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -415,7 +446,7 @@ const creating = ref(false)
 const createForm = ref({
     subdomain: '',
     displayName: '',
-    timezone: 'UTC',
+    timezone: 'America/New_York',
     adminFirstName: '',
     adminLastName: '',
     adminEmail: '',
@@ -423,6 +454,10 @@ const createForm = ref({
 
 const credsDialog = ref(false)
 const createdResult = ref<CreateTenantResult | null>(null)
+
+const superAdminDialog = ref(false)
+const creatingSuperAdmin = ref(false)
+const superAdminForm = ref({ firstName: '', lastName: '', email: '', password: '' })
 
 const refunds = ref<RefundListItem[]>([])
 const loadingRefunds = ref(false)
@@ -449,7 +484,16 @@ const analyticsTo = ref(_today.add(1, 'day').format('YYYY-MM-DD'))
 const breakdownSortKey = ref<keyof TenantBreakdownRow>('revenueCents')
 const breakdownSortDir = ref<'asc' | 'desc'>('desc')
 
-const timezoneOptions = getTimezoneOptions()
+// US IANA timezones — covers all 50 states plus Arizona (no DST).
+const timezoneOptions = [
+    { title: 'Eastern (New York)', value: 'America/New_York' },
+    { title: 'Central (Chicago)', value: 'America/Chicago' },
+    { title: 'Mountain (Denver)', value: 'America/Denver' },
+    { title: 'Mountain — no DST (Phoenix)', value: 'America/Phoenix' },
+    { title: 'Pacific (Los Angeles)', value: 'America/Los_Angeles' },
+    { title: 'Alaska (Anchorage)', value: 'America/Anchorage' },
+    { title: 'Hawaii–Aleutian (Honolulu)', value: 'Pacific/Honolulu' },
+]
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -462,14 +506,6 @@ onMounted(async () => {
     await loadRefunds()
     await loadDisputes()
 })
-
-function getTimezoneOptions(): string[] {
-    try {
-        const supported = (Intl as any).supportedValuesOf?.('timeZone') as string[] | undefined
-        if (supported && supported.length > 0) return supported
-    } catch { /* ignore */ }
-    return ['UTC', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles']
-}
 
 async function loadTenants() {
     loadingTenants.value = true
@@ -707,7 +743,7 @@ function openCreateTenant() {
     createForm.value = {
         subdomain: '',
         displayName: '',
-        timezone: 'UTC',
+        timezone: 'America/New_York',
         adminFirstName: '',
         adminLastName: '',
         adminEmail: '',
@@ -735,6 +771,30 @@ async function submitCreateTenant() {
         flash(err.response?.data?.error || 'Failed to create tenant.', 'error')
     } finally {
         creating.value = false
+    }
+}
+
+function openCreateSuperAdmin() {
+    superAdminForm.value = { firstName: '', lastName: '', email: '', password: '' }
+    superAdminDialog.value = true
+}
+
+async function submitCreateSuperAdmin() {
+    try {
+        creatingSuperAdmin.value = true
+        await service.createSuperAdmin({
+            firstName: superAdminForm.value.firstName.trim(),
+            lastName: superAdminForm.value.lastName.trim(),
+            email: superAdminForm.value.email.trim(),
+            password: superAdminForm.value.password,
+        })
+        flash('Super admin created.', 'success')
+        superAdminDialog.value = false
+        await loadUsers()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to create super admin.', 'error')
+    } finally {
+        creatingSuperAdmin.value = false
     }
 }
 

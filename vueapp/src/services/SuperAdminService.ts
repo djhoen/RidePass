@@ -61,6 +61,10 @@ export class SuperAdminService {
         return axios.post(`${this.apiUrl}/SuperAdmin/Bootstrap`, body)
     }
 
+    createSuperAdmin(body: { email: string; password: string; firstName: string; lastName: string }) {
+        return axios.post(`${this.apiUrl}/SuperAdmin/SuperAdmins`, body)
+    }
+
     listTenants() {
         return axios.get<{ data: TenantSummary[] }>(`${this.apiUrl}/SuperAdmin/Tenants`)
     }

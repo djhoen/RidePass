@@ -152,6 +152,34 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(response);
         }
 
+        /// <summary>
+        /// Create an additional super admin. Caller must already be a super admin.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("SuperAdmins")]
+        public async Task<IActionResult> CreateSuperAdmin([FromBody] CreateSuperAdminRequest request)
+        {
+            var existing = await _users.GetGlobalByEmail(request.Email.Trim());
+            if (existing is not null)
+            {
+                return new ApiResponses().BadRequestResult($"A user with email '{request.Email}' already exists.");
+            }
+
+            var user = new User
+            {
+                TenantId = null,
+                Email = request.Email.Trim(),
+                FirstName = request.FirstName.Trim(),
+                LastName = request.LastName.Trim(),
+                Role = "super_admin",
+                Status = "active",
+            };
+            user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
+            user.Id = await _users.Create(user);
+
+            return new ApiResponses().OkResult(new { user.Id, user.Email, user.Role });
+        }
+
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Users")]
         public async Task<IActionResult> ListUsers([FromQuery] string? q)
