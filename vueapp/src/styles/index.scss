@@ -1,9 +1,4 @@
-// Variables
-$primary: #1976D2;
-$secondary: #424242;
-$accent: #82B1FF;
-
-// Font imports
+// Variables (design tokens not covered by Vuetify theme — fonts, spacings)
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 // Global styles
@@ -45,10 +40,10 @@ body {
 .p-10 { padding: 10px; }
 .p-20 { padding: 20px; }
 
-// Color helpers
-.color-primary { color: $primary; }
-.color-secondary { color: $secondary; }
-.bg-color-primary { background-color: $primary; color: white; }
+// Color helpers — use Vuetify theme variables so they react to tenant branding changes.
+.color-primary    { color: rgb(var(--v-theme-primary)); }
+.color-secondary  { color: rgb(var(--v-theme-secondary)); }
+.bg-color-primary { background-color: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
 
 // Site container
 .siteContainer {
@@ -57,13 +52,16 @@ body {
     padding: 20px;
 }
 
-// Links
+// Links — inherit theme primary, always pointer, never underlined.
 a {
-    color: $primary;
+    color: rgb(var(--v-theme-primary));
     text-decoration: none;
+    cursor: pointer;
 
-    &:hover {
-        text-decoration: underline;
+    &:hover,
+    &:focus,
+    &:visited {
+        text-decoration: none;
     }
 }
 

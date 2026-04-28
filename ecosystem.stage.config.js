@@ -13,14 +13,14 @@ module.exports = {
         {
             name: "stage-taskrunner",
             script: "dotnet",
-            args: "TaskRunner/bin/Release/net7.0/TaskRunner.dll",
+            args: "TaskRunner/bin/Release/net10.0/TaskRunner.dll",
             max_memory_restart: "150M",
             watch: false
         },
         {
             name: "stage-webapi",
             script: "dotnet",
-            args: "webapi/bin/Release/net7.0/webapi.dll",
+            args: "webapi/bin/Release/net10.0/webapi.dll",
             max_memory_restart: "350M",
             watch: false,
             env: {

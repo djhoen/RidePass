@@ -3,6 +3,14 @@ import App from './App.vue'
 import router from './router/router'
 import axios from 'axios'
 import mitt from 'mitt'
+import dayjs from 'dayjs'
+import utcPlugin from 'dayjs/plugin/utc'
+import timezonePlugin from 'dayjs/plugin/timezone'
+import tenantHelper from './helpers/TenantHelper'
+import authHelper from './helpers/AuthHelper'
+
+dayjs.extend(utcPlugin)
+dayjs.extend(timezonePlugin)
 
 // Vuetify
 import 'vuetify/styles'
@@ -20,9 +28,22 @@ const vuetify = createVuetify({
     components,
     directives,
     theme: {
-        defaultTheme: 'light',
+        defaultTheme: 'tenant',
         themes: {
-            light: {
+            tenant: {
+                dark: false,
+                colors: {
+                    primary: '#1976D2',
+                    secondary: '#424242',
+                    accent: '#82B1FF',
+                    error: '#FF5252',
+                    info: '#2196F3',
+                    success: '#4CAF50',
+                    warning: '#FFC107',
+                }
+            },
+            tenantDark: {
+                dark: true,
                 colors: {
                     primary: '#1976D2',
                     secondary: '#424242',
@@ -37,12 +58,16 @@ const vuetify = createVuetify({
     }
 })
 
-// Axios interceptor for JWT token injection
+// Axios interceptor: attach JWT and tenant subdomain
 axios.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token')
         if (token) {
             config.headers.Authorization = `Bearer ${token}`
+        }
+        const subdomain = tenantHelper.getSubdomain()
+        if (subdomain) {
+            config.headers['X-Tenant-Subdomain'] = subdomain
         }
         return config
     },
@@ -55,9 +80,25 @@ axios.interceptors.request.use(
 axios.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response && error.response.status === 401) {
-            localStorage.removeItem('token')
-            router.push('/Login')
+        if (error.response) {
+            if (error.response.status === 401) {
+                console.error('[RidePass] 401 Unauthorized:', {
+                    url: error.config?.url,
+                    method: error.config?.method,
+                    hadAuthHeader: !!error.config?.headers?.Authorization,
+                    tenantSubdomainHeader: error.config?.headers?.['X-Tenant-Subdomain'],
+                    responseBody: error.response.data,
+                })
+                // Full logout so the NavBar's reactive isAuthenticated/isAdmin computed values update.
+                authHelper.logout()
+                router.push('/Login')
+            } else if (error.response.status === 403) {
+                console.warn('[RidePass] 403 Forbidden:', {
+                    url: error.config?.url,
+                    method: error.config?.method,
+                    responseBody: error.response.data,
+                })
+            }
         }
         return Promise.reject(error)
     }

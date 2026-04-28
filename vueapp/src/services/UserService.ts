@@ -31,15 +31,41 @@ export class UserService {
         return axios.post(`${this.apiUrl}/User/ResetPassword`, req);
     }
 
-    async searchUsers(req: any) {
-        return axios.post(`${this.apiUrl}/User/SearchUsers`, req);
+    // Tenant user management
+    listTenantUsers() {
+        return axios.get<{ data: TenantUserListItem[] }>(`${this.apiUrl}/User/Tenant`)
     }
 
-    async getUser(userId: string) {
-        return axios.get(`${this.apiUrl}/User/${userId}`);
+    createTenantUser(req: { email: string; firstName: string; lastName: string; role: string }) {
+        return axios.post<{ data: CreateTenantUserResponse }>(`${this.apiUrl}/User/Tenant`, req)
     }
 
-    async saveUserRoles(req: any) {
-        return axios.post(`${this.apiUrl}/User/SaveUserRoles`, req);
+    updateTenantUserRole(id: string, role: string) {
+        return axios.put(`${this.apiUrl}/User/Tenant/${id}/Role`, { role })
     }
+
+    updateTenantUserStatus(id: string, status: 'active' | 'disabled') {
+        return axios.put(`${this.apiUrl}/User/Tenant/${id}/Status`, { status })
+    }
+
+    resetTenantUserPassword(id: string) {
+        return axios.post<{ data: { temporaryPassword: string } }>(`${this.apiUrl}/User/Tenant/${id}/ResetPassword`)
+    }
+}
+
+export interface TenantUserListItem {
+    id: string
+    email: string
+    firstName: string
+    lastName: string
+    role: string
+    status: string
+    createdAtUtc: string
+}
+
+export interface CreateTenantUserResponse {
+    id: string
+    email: string
+    role: string
+    temporaryPassword: string
 }

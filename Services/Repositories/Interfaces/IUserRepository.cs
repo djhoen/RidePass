@@ -4,17 +4,17 @@ namespace Services.Repositories.Interfaces
 {
     public interface IUserRepository
     {
-        Task CreateUser(User user);
-        Task<int> CreateUserRole(string userId, int roleId);
-        Task<User> GetUser(string id);
-        Task<User> GetUserByEmail(string email);
-        Task<List<Role>> GetAssignedRoles(string userId);
-        Task<List<Role>> GetAvailableRoles(bool activeOnly = true);
-        Task<User> Login(string email, string password);
-        Task SaveUserRoles(string userId, List<int> roleIds);
-        Task<List<User>> SearchUsers(SearchUsersRequest req);
-        Task UpdatePassword(string id, string password);
-        Task UpdateUser(User user);
-        Task UpdateUserProfileImage(User user);
+        Task<User?> GetByEmail(Guid tenantId, string email);
+        Task<User?> GetGlobalByEmail(string email);
+        Task<User?> GetById(Guid id);
+        Task<Guid> Create(User user);
+        Task<bool> AnySuperAdminExists();
+        Task<List<User>> SearchAll(string? query, int take = 50);
+        Task<List<User>> ListByTenant(Guid tenantId);
+        Task UpdateRole(Guid id, string role);
+        Task UpdateStatus(Guid id, string status);
+        Task UpdatePasswordHash(Guid id, string passwordHash);
+        Task<string?> GetDashboardConfig(Guid userId);
+        Task SetDashboardConfig(Guid userId, string? jsonOrNull);
     }
 }

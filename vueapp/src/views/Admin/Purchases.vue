@@ -1,0 +1,243 @@
+<template>
+    <v-container>
+        <div class="d-flex align-center mb-6 flex-wrap ga-3">
+            <h1 class="text-h4">Purchases</h1>
+            <v-spacer></v-spacer>
+            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 180px"></v-text-field>
+            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 180px"></v-text-field>
+            <v-select v-model="statusFilter" :items="statusOptions" label="Status" density="compact" hide-details clearable style="max-width: 160px"></v-select>
+            <v-btn variant="text" @click="load">Refresh</v-btn>
+        </div>
+
+        <v-card v-if="disputes.length > 0" class="mb-4" color="red-lighten-5">
+            <v-card-title class="d-flex align-center">
+                <v-icon icon="mdi-alert-circle" color="error" class="mr-2"></v-icon>
+                Active Disputes ({{ disputes.length }})
+            </v-card-title>
+            <v-card-subtitle>
+                Submit evidence in your Stripe Dashboard. RidePass staff have been notified.
+            </v-card-subtitle>
+            <v-table density="compact">
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Purchaser</th>
+                        <th style="width: 110px">Amount</th>
+                        <th style="width: 140px">Reason</th>
+                        <th style="width: 200px">Status</th>
+                        <th style="width: 180px">Evidence Due</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="d in disputes" :key="d.id">
+                        <td>{{ d.itemName || '—' }}</td>
+                        <td>
+                            <div>{{ d.purchaserName || '—' }}</div>
+                            <div class="text-caption text-medium-emphasis">{{ d.purchaserEmail }}</div>
+                        </td>
+                        <td>${{ (d.amountCents / 100).toFixed(2) }}</td>
+                        <td>{{ d.reason || '—' }}</td>
+                        <td>
+                            <v-chip size="small" :color="disputeStatusColor(d.status)">{{ d.status }}</v-chip>
+                        </td>
+                        <td>
+                            <span v-if="d.evidenceDueByUtc" :class="evidenceDueClass(d.evidenceDueByUtc)">
+                                {{ formatWhen(d.evidenceDueByUtc) }}
+                            </span>
+                            <span v-else class="text-medium-emphasis">—</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </v-table>
+        </v-card>
+
+        <v-card>
+            <v-table>
+                <thead>
+                    <tr>
+                        <th style="width: 180px">When</th>
+                        <th>Purchaser</th>
+                        <th>Product</th>
+                        <th style="width: 110px">Amount</th>
+                        <th style="width: 120px">Status</th>
+                        <th style="width: 140px">Valid On</th>
+                        <th style="width: 120px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="p in purchases" :key="p.id">
+                        <td>{{ formatWhen(p.createdAt) }}</td>
+                        <td>
+                            <div>{{ p.purchaserName }}</div>
+                            <div class="text-caption text-medium-emphasis">{{ p.purchaserEmail }}</div>
+                        </td>
+                        <td>{{ p.productName }}</td>
+                        <td>${{ (p.amountCents / 100).toFixed(2) }}</td>
+                        <td>
+                            <v-chip size="small" :color="statusColor(p.status)">{{ p.status }}</v-chip>
+                        </td>
+                        <td>{{ p.validOnDate ? p.validOnDate.substring(0,10) : '—' }}</td>
+                        <td>
+                            <v-btn v-if="p.status === 'paid'" size="small" color="error" variant="tonal"
+                                @click="openCancel(p)">Cancel</v-btn>
+                        </td>
+                    </tr>
+                    <tr v-if="!loading && purchases.length === 0">
+                        <td colspan="7" class="text-center text-medium-emphasis py-8">No purchases in this range.</td>
+                    </tr>
+                </tbody>
+            </v-table>
+        </v-card>
+
+        <v-dialog v-model="cancelDialog" max-width="520">
+            <v-card>
+                <v-card-title>Cancel purchase</v-card-title>
+                <v-card-text>
+                    <p class="mb-3">
+                        Cancelling will mark this purchase as cancelled and queue a refund request for a
+                        RidePass super-admin to process. This can't be undone.
+                    </p>
+                    <div v-if="cancelTarget" class="mb-3">
+                        <div class="text-caption text-medium-emphasis">Purchaser</div>
+                        <div>{{ cancelTarget.purchaserName }} — {{ cancelTarget.purchaserEmail }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">Product</div>
+                        <div>{{ cancelTarget.productName }} — ${{ (cancelTarget.amountCents / 100).toFixed(2) }}</div>
+                    </div>
+                    <v-textarea v-model="cancelReason" label="Reason (optional)" rows="3" density="compact"
+                        hide-details></v-textarea>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" :disabled="cancelling" @click="cancelDialog = false">Close</v-btn>
+                    <v-btn color="error" :loading="cancelling" @click="confirmCancel">Cancel purchase</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
+    </v-container>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import dayjs from 'dayjs'
+import { DayPassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/DayPassService'
+import { branding } from '@/stores/branding'
+
+const service = new DayPassService()
+
+const today = dayjs()
+const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
+const rangeTo = ref(today.endOf('month').add(1, 'day').format('YYYY-MM-DD'))
+const statusFilter = ref<string | null>(null)
+const statusOptions = ['pending', 'paid', 'failed', 'cancelled', 'refunded', 'redeemed']
+
+const purchases = ref<PurchaseRow[]>([])
+const loading = ref(false)
+
+const disputes = ref<TenantDisputeListItem[]>([])
+
+const cancelDialog = ref(false)
+const cancelTarget = ref<PurchaseRow | null>(null)
+const cancelReason = ref('')
+const cancelling = ref(false)
+
+const snackbar = ref(false)
+const snackbarText = ref('')
+const snackbarColor = ref<'success' | 'error'>('success')
+
+onMounted(async () => {
+    await load()
+    await loadDisputes()
+})
+
+async function loadDisputes() {
+    try {
+        const r = await service.listDisputes()
+        disputes.value = (r.data as any).data
+    } catch {
+        // silent — disputes are nice-to-have on this page
+    }
+}
+
+function disputeStatusColor(status: string): string {
+    switch (status) {
+        case 'needs_response':
+        case 'warning_needs_response':
+            return 'error'
+        case 'under_review':
+        case 'warning_under_review':
+            return 'warning'
+        case 'won': return 'success'
+        case 'lost': return 'grey'
+        default: return 'default'
+    }
+}
+
+function evidenceDueClass(dueUtc: string): string {
+    const hoursRemaining = dayjs.utc(dueUtc).diff(dayjs.utc(), 'hour')
+    if (hoursRemaining <= 0) return 'text-error'
+    if (hoursRemaining <= 48) return 'text-warning'
+    return ''
+}
+
+function tz() { return branding.timezone || 'UTC' }
+
+async function load() {
+    loading.value = true
+    try {
+        const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
+        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
+        const r = await service.listPurchasesForAdmin({
+            fromUtc,
+            toUtc,
+            status: statusFilter.value || undefined,
+        })
+        purchases.value = (r.data as any).data
+    } finally {
+        loading.value = false
+    }
+}
+
+function formatWhen(utc: string): string {
+    return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
+}
+
+function statusColor(status: string): string {
+    switch (status) {
+        case 'paid': return 'success'
+        case 'pending': return 'warning'
+        case 'failed': return 'error'
+        case 'cancelled': return 'orange'
+        case 'refunded': return 'grey'
+        case 'redeemed': return 'primary'
+        default: return 'default'
+    }
+}
+
+function openCancel(p: PurchaseRow) {
+    cancelTarget.value = p
+    cancelReason.value = ''
+    cancelDialog.value = true
+}
+
+async function confirmCancel() {
+    if (!cancelTarget.value) return
+    cancelling.value = true
+    try {
+        const reason = cancelReason.value.trim().length > 0 ? cancelReason.value.trim() : null
+        await service.cancelDayPass(cancelTarget.value.id, reason)
+        cancelDialog.value = false
+        snackbarText.value = 'Purchase cancelled. Refund queued for super-admin.'
+        snackbarColor.value = 'success'
+        snackbar.value = true
+        await load()
+    } catch (err: any) {
+        snackbarText.value = err.response?.data?.error || 'Failed to cancel purchase.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+    } finally {
+        cancelling.value = false
+    }
+}
+</script>

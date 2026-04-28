@@ -1,8 +1,7 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using webapi.Models;
-using Services.Helpers;
+using Services.Payments;
+using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Interfaces;
 
 namespace webapi.Controllers
 {
@@ -10,51 +9,148 @@ namespace webapi.Controllers
     [Route("[controller]")]
     public class PaymentController : ControllerBase
     {
-        public PaymentController()
+        private readonly IPaymentProvider _payments;
+        private readonly IDayPassPurchaseRepository _dayPassPurchases;
+        private readonly IEventTicketPurchaseRepository _ticketPurchases;
+        private readonly IDisputeRepository _disputes;
+        private readonly ILogger<PaymentController> _logger;
+
+        public PaymentController(
+            IPaymentProvider payments,
+            IDayPassPurchaseRepository dayPassPurchases,
+            IEventTicketPurchaseRepository ticketPurchases,
+            IDisputeRepository disputes,
+            ILogger<PaymentController> logger)
         {
+            _payments = payments;
+            _dayPassPurchases = dayPassPurchases;
+            _ticketPurchases = ticketPurchases;
+            _disputes = disputes;
+            _logger = logger;
         }
 
-        [Authorize]
-        [HttpPost("CreateCheckoutSession")]
-        public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutSessionRequest request)
+        [HttpPost("Webhook")]
+        public async Task<IActionResult> StripeWebhook()
         {
-            try
+            string rawBody;
+            using (var reader = new StreamReader(Request.Body))
             {
-                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-                // TODO: Initialize Stripe client with API key from configuration
-                // TODO: Create Stripe checkout session with line items from request
-                // TODO: Set success and cancel URLs
-                // TODO: Attach customer/user metadata to the session
-                // TODO: Return the session ID and URL to the client
-
-                throw new NotImplementedException("Stripe checkout session creation not yet implemented.");
+                rawBody = await reader.ReadToEndAsync();
             }
-            catch (Exception ex)
+
+            var signature = Request.Headers["Stripe-Signature"].ToString();
+            var webhookEvent = _payments.VerifyAndParseWebhook(rawBody, signature);
+            if (webhookEvent is null)
             {
-                return new ApiResponses().BadRequestResult(ex.Message);
+                return BadRequest();
             }
+
+            if (webhookEvent.Dispute is not null)
+            {
+                await HandleDispute(webhookEvent.Dispute);
+                return Ok();
+            }
+
+            if (webhookEvent.PaymentIntentId is null)
+            {
+                return Ok();
+            }
+
+            var dayPass = await _dayPassPurchases.GetByStripePaymentIntentId(webhookEvent.PaymentIntentId);
+            if (dayPass is not null)
+            {
+                ApplyStatusTransition(
+                    webhookEvent.Type,
+                    dayPass.Status,
+                    paid: () => _dayPassPurchases.UpdateStatus(dayPass.Id, "paid"),
+                    failed: () => _dayPassPurchases.UpdateStatus(dayPass.Id, "failed"));
+                return Ok();
+            }
+
+            var ticket = await _ticketPurchases.GetByStripePaymentIntentId(webhookEvent.PaymentIntentId);
+            if (ticket is not null)
+            {
+                ApplyStatusTransition(
+                    webhookEvent.Type,
+                    ticket.Status,
+                    paid: () => _ticketPurchases.UpdateStatus(ticket.Id, "paid"),
+                    failed: () => _ticketPurchases.UpdateStatus(ticket.Id, "failed"));
+                return Ok();
+            }
+
+            _logger.LogWarning("Received Stripe event {EventType} for unknown payment_intent {IntentId}",
+                webhookEvent.Type, webhookEvent.PaymentIntentId);
+            return Ok();
         }
 
-        [HttpPost("WebhookHandler")]
-        public async Task<IActionResult> WebhookHandler()
+        private async Task HandleDispute(DisputeInfo info)
         {
-            try
+            if (string.IsNullOrEmpty(info.PaymentIntentId))
             {
-                // TODO: Read the request body as a string
-                // TODO: Retrieve Stripe webhook signing secret from configuration
-                // TODO: Validate the webhook signature using Stripe.net EventUtility.ConstructEvent
-                // TODO: Handle event types:
-                //   - checkout.session.completed: fulfill the order
-                //   - payment_intent.succeeded: update payment status
-                //   - payment_intent.payment_failed: handle failure
-                // TODO: Return OK to acknowledge receipt of the event
-
-                throw new NotImplementedException("Stripe webhook handler not yet implemented.");
+                _logger.LogWarning("Dispute {DisputeId} has no payment_intent — cannot link to tenant.", info.DisputeId);
+                return;
             }
-            catch (Exception ex)
+
+            Guid? tenantId = null;
+            Guid? dayPassId = null;
+            Guid? ticketId = null;
+
+            var dayPass = await _dayPassPurchases.GetByStripePaymentIntentId(info.PaymentIntentId);
+            if (dayPass is not null)
             {
-                return new ApiResponses().BadRequestResult(ex.Message);
+                tenantId = dayPass.TenantId;
+                dayPassId = dayPass.Id;
+            }
+            else
+            {
+                var ticket = await _ticketPurchases.GetByStripePaymentIntentId(info.PaymentIntentId);
+                if (ticket is not null)
+                {
+                    tenantId = ticket.TenantId;
+                    ticketId = ticket.Id;
+                }
+            }
+
+            if (tenantId is null)
+            {
+                _logger.LogWarning("Dispute {DisputeId} references payment_intent {IntentId} with no matching purchase.",
+                    info.DisputeId, info.PaymentIntentId);
+                return;
+            }
+
+            await _disputes.Upsert(new Dispute
+            {
+                TenantId = tenantId.Value,
+                DayPassPurchaseId = dayPassId,
+                EventTicketPurchaseId = ticketId,
+                StripeDisputeId = info.DisputeId,
+                StripePaymentIntentId = info.PaymentIntentId,
+                StripeChargeId = info.ChargeId,
+                AmountCents = info.AmountCents,
+                Currency = info.Currency,
+                Reason = info.Reason,
+                Status = info.Status,
+                EvidenceDueBy = info.EvidenceDueBy,
+                StripeCreatedAt = info.StripeCreatedAt,
+            });
+        }
+
+        private static void ApplyStatusTransition(string eventType, string currentStatus, Func<Task> paid, Func<Task> failed)
+        {
+            switch (eventType)
+            {
+                case "payment_intent.succeeded":
+                    if (currentStatus != "paid" && currentStatus != "redeemed")
+                    {
+                        paid().GetAwaiter().GetResult();
+                    }
+                    break;
+                case "payment_intent.payment_failed":
+                    if (currentStatus == "pending")
+                    {
+                        failed().GetAwaiter().GetResult();
+                    }
+                    break;
             }
         }
     }

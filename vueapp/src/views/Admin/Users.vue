@@ -1,127 +1,289 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-6">User Management</h1>
+        <div class="d-flex align-center mb-6 flex-wrap ga-3">
+            <h1 class="text-h4">Users</h1>
+            <v-spacer></v-spacer>
+            <v-btn variant="text" @click="load">Refresh</v-btn>
+            <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openCreate">Add User</v-btn>
+        </div>
 
-        <v-card class="mb-4">
-            <v-card-text>
-                <v-form @submit.prevent="searchUsers">
-                    <v-row align="center">
-                        <v-col cols="12" sm="4">
-                            <v-text-field v-model="search.email" label="Email" density="compact"
-                                hide-details></v-text-field>
-                        </v-col>
-                        <v-col cols="12" sm="4">
-                            <v-text-field v-model="search.name" label="Name" density="compact"
-                                hide-details></v-text-field>
-                        </v-col>
-                        <v-col cols="12" sm="4">
-                            <v-btn type="submit" color="primary" :loading="loading">Search</v-btn>
-                        </v-col>
-                    </v-row>
-                </v-form>
-            </v-card-text>
-        </v-card>
-
-        <v-card v-if="users.length > 0">
+        <v-card>
             <v-table>
                 <thead>
                     <tr>
                         <th>Name</th>
                         <th>Email</th>
-                        <th>Roles</th>
-                        <th></th>
+                        <th style="width: 180px">Role</th>
+                        <th style="width: 120px">Status</th>
+                        <th style="width: 140px">Created</th>
+                        <th style="width: 240px" class="text-right"></th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="user in users" :key="user.id">
-                        <td>{{ user.firstName }} {{ user.lastName }}</td>
-                        <td>{{ user.email }}</td>
+                    <tr v-for="u in users" :key="u.id">
+                        <td>{{ u.firstName }} {{ u.lastName }}</td>
+                        <td>{{ u.email }}</td>
                         <td>
-                            <v-chip v-for="role in user.roles" :key="role" size="small" class="mr-1">
-                                {{ role }}
+                            <v-chip size="small" :color="roleColor(u.role)">{{ roleTitle(u.role) }}</v-chip>
+                        </td>
+                        <td>
+                            <v-chip size="small" :color="u.status === 'active' ? 'success' : 'grey'">
+                                {{ u.status }}
                             </v-chip>
                         </td>
+                        <td>{{ formatDate(u.createdAtUtc) }}</td>
                         <td class="text-right">
-                            <v-btn variant="text" size="small" @click="editUser(user)">Edit Roles</v-btn>
+                            <v-menu>
+                                <template #activator="{ props }">
+                                    <v-btn variant="text" size="small" v-bind="props">Actions</v-btn>
+                                </template>
+                                <v-list density="compact">
+                                    <v-list-item @click="openChangeRole(u)">
+                                        <template #prepend><v-icon icon="mdi-shield-account"></v-icon></template>
+                                        <v-list-item-title>Change Role</v-list-item-title>
+                                    </v-list-item>
+                                    <v-list-item v-if="u.status === 'active'" @click="setStatus(u, 'disabled')">
+                                        <template #prepend><v-icon icon="mdi-account-off" color="warning"></v-icon></template>
+                                        <v-list-item-title>Disable</v-list-item-title>
+                                    </v-list-item>
+                                    <v-list-item v-else @click="setStatus(u, 'active')">
+                                        <template #prepend><v-icon icon="mdi-account-check" color="success"></v-icon></template>
+                                        <v-list-item-title>Re-enable</v-list-item-title>
+                                    </v-list-item>
+                                    <v-list-item @click="resetPassword(u)">
+                                        <template #prepend><v-icon icon="mdi-key-change"></v-icon></template>
+                                        <v-list-item-title>Reset Password</v-list-item-title>
+                                    </v-list-item>
+                                </v-list>
+                            </v-menu>
+                        </td>
+                    </tr>
+                    <tr v-if="!loading && users.length === 0">
+                        <td colspan="6" class="text-center text-medium-emphasis py-8">
+                            No tenant users yet. Add one to get started.
                         </td>
                     </tr>
                 </tbody>
             </v-table>
         </v-card>
 
-        <v-dialog v-model="dialog" max-width="500">
+        <!-- Create user -->
+        <v-dialog v-model="createDialog" max-width="600" persistent>
             <v-card>
-                <v-card-title>Edit User Roles</v-card-title>
+                <v-card-title>Add User</v-card-title>
                 <v-card-text>
-                    <p class="mb-4">{{ selectedUser?.firstName }} {{ selectedUser?.lastName }}</p>
-                    <v-checkbox v-for="role in availableRoles" :key="role" v-model="selectedRoles" :label="role"
-                        :value="role" density="compact" hide-details></v-checkbox>
+                    <v-row>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="createForm.firstName" label="First name" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="createForm.lastName" label="Last name" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+                    <v-text-field v-model="createForm.email" type="email" label="Email" density="compact"></v-text-field>
+                    <v-select v-model="createForm.role" :items="roleOptions" item-title="title" item-value="value"
+                        label="Role" density="compact"></v-select>
+                    <p v-if="selectedRoleDescription" class="text-caption text-medium-emphasis">
+                        {{ selectedRoleDescription }}
+                    </p>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
-                    <v-btn @click="dialog = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="saving" @click="saveRoles">Save</v-btn>
+                    <v-btn :disabled="creating" @click="createDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="creating" @click="submitCreate">Create</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
 
-        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
+        <!-- Change role -->
+        <v-dialog v-model="roleDialog" max-width="500">
+            <v-card>
+                <v-card-title>Change Role</v-card-title>
+                <v-card-text>
+                    <p class="mb-3">{{ roleTarget?.firstName }} {{ roleTarget?.lastName }} — {{ roleTarget?.email }}</p>
+                    <v-select v-model="roleFormValue" :items="roleOptions" item-title="title" item-value="value"
+                        label="Role" density="compact"></v-select>
+                    <p class="text-caption text-medium-emphasis">{{ descriptionFor(roleFormValue) }}</p>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="savingRole" @click="roleDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingRole" @click="saveRole">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- One-time credential reveal -->
+        <v-dialog v-model="credsDialog" max-width="540" persistent>
+            <v-card>
+                <v-card-title>{{ credsTitle }}</v-card-title>
+                <v-card-text>
+                    <v-alert type="warning" variant="tonal" class="mb-3">
+                        Copy this password now — it is shown only once.
+                    </v-alert>
+                    <div class="text-body-2 mb-1"><strong>Email:</strong> {{ credsEmail }}</div>
+                    <div class="text-body-2"><strong>Temporary Password:</strong> <code>{{ credsPassword }}</code></div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn color="primary" @click="credsDialog = false">Done</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3500">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { UserService } from '@/services/UserService'
+import { ref, computed, onMounted } from 'vue'
+import dayjs from 'dayjs'
+import { UserService, type TenantUserListItem } from '@/services/UserService'
+import { ASSIGNABLE_ROLES } from '@/helpers/TenantPermissions'
 
-const userService = new UserService()
+const service = new UserService()
 
-const search = ref({ email: '', name: '' })
-const users = ref<any[]>([])
+const users = ref<TenantUserListItem[]>([])
 const loading = ref(false)
-const saving = ref(false)
-const dialog = ref(false)
-const selectedUser = ref<any>(null)
-const selectedRoles = ref<string[]>([])
-const availableRoles = ['Admin', 'User', 'Editor']
+
+const createDialog = ref(false)
+const creating = ref(false)
+const createForm = ref({ email: '', firstName: '', lastName: '', role: 'tenant_cashier' })
+
+const roleDialog = ref(false)
+const savingRole = ref(false)
+const roleTarget = ref<TenantUserListItem | null>(null)
+const roleFormValue = ref<string>('tenant_cashier')
+
+const credsDialog = ref(false)
+const credsTitle = ref('')
+const credsEmail = ref('')
+const credsPassword = ref('')
+
 const snackbar = ref(false)
 const snackbarText = ref('')
-const snackbarColor = ref('success')
+const snackbarColor = ref<'success' | 'error'>('success')
 
-async function searchUsers() {
+const roleOptions = ASSIGNABLE_ROLES
+const selectedRoleDescription = computed(() => descriptionFor(createForm.value.role))
+
+onMounted(load)
+
+async function load() {
+    loading.value = true
     try {
-        loading.value = true
-        const response = await userService.searchUsers(search.value)
-        users.value = response.data
-    } catch {
-        snackbarText.value = 'Failed to search users.'
-        snackbarColor.value = 'error'
-        snackbar.value = true
+        const r = await service.listTenantUsers()
+        users.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load users.', 'error')
     } finally {
         loading.value = false
     }
 }
 
-function editUser(user: any) {
-    selectedUser.value = user
-    selectedRoles.value = [...(user.roles || [])]
-    dialog.value = true
+function openCreate() {
+    createForm.value = { email: '', firstName: '', lastName: '', role: 'tenant_cashier' }
+    createDialog.value = true
 }
 
-async function saveRoles() {
-    try {
-        saving.value = true
-        await userService.saveUserRoles({ userId: selectedUser.value.id, roles: selectedRoles.value })
-        selectedUser.value.roles = [...selectedRoles.value]
-        dialog.value = false
-        snackbarText.value = 'Roles updated successfully!'
-        snackbarColor.value = 'success'
-        snackbar.value = true
-    } catch {
-        snackbarText.value = 'Failed to save roles.'
-        snackbarColor.value = 'error'
-        snackbar.value = true
-    } finally {
-        saving.value = false
+async function submitCreate() {
+    if (!createForm.value.email.trim() || !createForm.value.firstName.trim() || !createForm.value.lastName.trim()) {
+        flash('First name, last name, and email are required.', 'error')
+        return
     }
+    creating.value = true
+    try {
+        const r = await service.createTenantUser({
+            email: createForm.value.email.trim(),
+            firstName: createForm.value.firstName.trim(),
+            lastName: createForm.value.lastName.trim(),
+            role: createForm.value.role,
+        })
+        const data: any = (r.data as any).data
+        credsTitle.value = 'User created'
+        credsEmail.value = data.email
+        credsPassword.value = data.temporaryPassword
+        createDialog.value = false
+        credsDialog.value = true
+        await load()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to create user.', 'error')
+    } finally {
+        creating.value = false
+    }
+}
+
+function openChangeRole(u: TenantUserListItem) {
+    roleTarget.value = u
+    roleFormValue.value = u.role
+    roleDialog.value = true
+}
+
+async function saveRole() {
+    if (!roleTarget.value) return
+    savingRole.value = true
+    try {
+        await service.updateTenantUserRole(roleTarget.value.id, roleFormValue.value)
+        roleDialog.value = false
+        flash('Role updated.', 'success')
+        await load()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to change role.', 'error')
+    } finally {
+        savingRole.value = false
+    }
+}
+
+async function setStatus(u: TenantUserListItem, status: 'active' | 'disabled') {
+    try {
+        await service.updateTenantUserStatus(u.id, status)
+        flash(status === 'disabled' ? 'User disabled.' : 'User re-enabled.', 'success')
+        await load()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to update status.', 'error')
+    }
+}
+
+async function resetPassword(u: TenantUserListItem) {
+    if (!confirm(`Reset password for ${u.email}? They will need the new temporary password to log in.`)) return
+    try {
+        const r = await service.resetTenantUserPassword(u.id)
+        const data: any = (r.data as any).data
+        credsTitle.value = 'Password reset'
+        credsEmail.value = u.email
+        credsPassword.value = data.temporaryPassword
+        credsDialog.value = true
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to reset password.', 'error')
+    }
+}
+
+function roleTitle(role: string): string {
+    return ASSIGNABLE_ROLES.find(r => r.value === role)?.title ?? role
+}
+
+function descriptionFor(role: string): string {
+    return ASSIGNABLE_ROLES.find(r => r.value === role)?.description ?? ''
+}
+
+function roleColor(role: string): string {
+    switch (role) {
+        case 'tenant_admin': return 'error'
+        case 'tenant_manager': return 'primary'
+        case 'tenant_cashier': return 'secondary'
+        case 'tenant_scanner': return 'teal'
+        case 'tenant_accountant': return 'indigo'
+        default: return 'default'
+    }
+}
+
+function formatDate(utc: string): string {
+    return dayjs.utc(utc).local().format('YYYY-MM-DD')
+}
+
+function flash(text: string, color: 'success' | 'error') {
+    snackbarText.value = text
+    snackbarColor.value = color
+    snackbar.value = true
 }
 </script>

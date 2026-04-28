@@ -19,7 +19,9 @@
                             <v-text-field v-model="form.password" label="Password" type="password" required
                                 class="mb-2"></v-text-field>
                             <v-text-field v-model="form.confirmPassword" label="Confirm Password" type="password"
-                                required class="mb-4"></v-text-field>
+                                required class="mb-2"></v-text-field>
+                            <v-checkbox v-if="!isApex" v-model="form.subscribeNewsletter" density="compact" hide-details
+                                :label="`Email me event updates from ${branding.displayName}`" class="mb-2"></v-checkbox>
                             <v-btn type="submit" color="primary" block size="large"
                                 :loading="loading">Create Account</v-btn>
                         </v-form>
@@ -36,12 +38,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { UserService } from '@/services/UserService'
+import { NewsletterService } from '@/services/NewsletterService'
+import { branding } from '@/stores/branding'
+import tenantHelper from '@/helpers/TenantHelper'
 
 const router = useRouter()
 const userService = new UserService()
+const newsletterService = new NewsletterService()
+const isApex = computed(() => !tenantHelper.getSubdomain())
 
 const loading = ref(false)
 const snackbar = ref(false)
@@ -53,7 +60,8 @@ const form = ref({
     lastName: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    subscribeNewsletter: false,
 })
 
 async function createAccount() {
@@ -66,6 +74,12 @@ async function createAccount() {
     try {
         loading.value = true
         await userService.createAccount(form.value)
+        if (form.value.subscribeNewsletter && !isApex.value) {
+            // Best-effort: a failed newsletter signup shouldn't block account creation success.
+            try {
+                await newsletterService.subscribe(form.value.email, `${form.value.firstName} ${form.value.lastName}`.trim() || null)
+            } catch { /* ignore */ }
+        }
         snackbarText.value = 'Account created successfully!'
         snackbarColor.value = 'success'
         snackbar.value = true

@@ -15,32 +15,11 @@
       "launchBrowser": true,
       "launchUrl": "swagger",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "AWS_ACCESS_KEY_ID": "YOUR_ACCESS_KEY",
-        "AWS_SECRET_ACCESS_KEY": "YOUR_SECRET_KEY",
-        "ISSUER": "http://localhost:3000/",
-        "SIGNING_KEY": "YOUR_SIGNING_KEY_GUID",
-        "STRIPE_SKEY": "sk_test_YOUR_STRIPE_SECRET_KEY"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       },
       "dotnetRunMessages": true,
       "applicationUrl": "https://localhost:7293;http://localhost:5070"
-    },
-    "IIS Express": {
-      "commandName": "IISExpress",
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
     }
   },
-  "$schema": "https://json.schemastore.org/launchsettings.json",
-  "iisSettings": {
-    "windowsAuthentication": false,
-    "anonymousAuthentication": true,
-    "iisExpress": {
-      "applicationUrl": "http://localhost:20358",
-      "sslPort": 44377
-    }
-  }
+  "$schema": "https://json.schemastore.org/launchsettings.json"
 }

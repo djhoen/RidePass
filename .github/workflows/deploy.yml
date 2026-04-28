@@ -1,0 +1,100 @@
+name: Deploy to production
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  DEPLOY_HOST: 146.190.48.200
+  DEPLOY_USER: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Transfer source to droplet
+        run: |
+          tar -czf - \
+            --exclude=bin --exclude=obj --exclude=publish \
+            --exclude=node_modules --exclude=dist \
+            --exclude=.git --exclude=.vs --exclude='*.user' --exclude='.vite' \
+            --exclude=Template.sln \
+            . | \
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            DEPLOY_PATH=/var/www/production
+            if [ -d "$DEPLOY_PATH/webapi/publish/wwwroot" ]; then
+              rm -rf /tmp/ridepass-wwwroot.bak
+              mv "$DEPLOY_PATH/webapi/publish/wwwroot" /tmp/ridepass-wwwroot.bak
+            fi
+            find "$DEPLOY_PATH" -mindepth 1 -delete
+            tar -xzf - -C "$DEPLOY_PATH"
+            if [ -d /tmp/ridepass-wwwroot.bak ]; then
+              mkdir -p "$DEPLOY_PATH/webapi/publish"
+              mv /tmp/ridepass-wwwroot.bak "$DEPLOY_PATH/webapi/publish/wwwroot"
+            fi
+            du -sh "$DEPLOY_PATH"
+          '
+
+      - name: Build vueapp
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            cd /var/www/production/vueapp
+            npm install --no-fund --no-audit --silent
+            npm run build 2>&1 | tail -3
+          '
+
+      - name: Publish .NET projects
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            cd /var/www/production
+            for proj in webapi/webapi.csproj TaskRunner/TaskRunner.csproj RidePass.Migrator/RidePass.Migrator.csproj; do
+              out="$(dirname $proj)/publish"
+              dotnet publish "$proj" -c Release -o "$out" --nologo -v minimal | tail -2
+            done
+          '
+
+      - name: Run database migrations
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            cd /var/www/production
+            set -a; source /etc/ridepass/production.env; set +a
+            dotnet RidePass.Migrator/publish/RidePass.Migrator.dll
+          '
+
+      - name: Restart pm2 with refreshed env
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            cd /var/www/production
+            set -a; source /etc/ridepass/production.env; set +a
+            pm2 startOrRestart ecosystem.config.js --update-env
+            pm2 save --silent
+            pm2 list
+          '
+
+      - name: Smoke test
+        run: |
+          sleep 5
+          curl -fsS -o /dev/null -w 'apex   HTTP %{http_code}\n' --max-time 20 https://ridepass.io/
+          curl -fsS -o /dev/null -w 'tenant HTTP %{http_code}\n' --max-time 20 https://demo.ridepass.io/

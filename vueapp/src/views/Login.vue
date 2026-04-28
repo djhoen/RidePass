@@ -44,15 +44,28 @@ const form = ref({
     password: ''
 })
 
+function isTenantStaffRole(role: string): boolean {
+    return ['tenant_admin', 'tenant_manager', 'tenant_cashier', 'tenant_scanner',
+            'tenant_accountant', 'tenant_staff'].includes(role)
+}
+
 async function login() {
     try {
         loading.value = true
         const response = await userService.login(form.value)
-        authHelper.setToken(response.data.token)
-        authHelper.setUserId(response.data.userId)
-        router.push('/')
+        const payload = response.data.data
+        authHelper.setToken(payload.token)
+        authHelper.setUserId(payload.userId)
+        authHelper.setRole(payload.role)
+        if (payload.role === 'super_admin') {
+            router.push('/SuperAdmin')
+        } else if (isTenantStaffRole(payload.role)) {
+            router.push('/Admin/Dashboard')
+        } else {
+            router.push('/')
+        }
     } catch (error: any) {
-        snackbarText.value = error.response?.data?.message || 'Login failed.'
+        snackbarText.value = error.response?.data?.error || 'Login failed.'
         snackbarColor.value = 'error'
         snackbar.value = true
     } finally {

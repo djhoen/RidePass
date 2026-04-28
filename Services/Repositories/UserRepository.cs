@@ -1,4 +1,3 @@
-using Dapper;
 using Services.Helpers.Interfaces;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
@@ -7,184 +6,131 @@ namespace Services.Repositories
 {
     public class UserRepository : IUserRepository
     {
-        private readonly IDbHelper _dbHelper;
-        private string _userQuery;
-        public UserRepository(IDbHelper doDbHelper)
+        private readonly IDbHelper _db;
+
+        private const string SelectUserColumns = @"
+            id, tenant_id AS TenantId, email, password_hash AS PasswordHash,
+            first_name AS FirstName, last_name AS LastName, role, status,
+            created_at AS CreatedAt, updated_at AS UpdatedAt";
+
+        public UserRepository(IDbHelper db)
         {
-            _dbHelper = doDbHelper;
-            _userQuery = @"SELECT u.*, us.""name"" AS Status
-                        FROM ""user"" u
-                        LEFT JOIN ""user.status"" us ON us.""id"" = u.""statusId""";
+            _db = db;
         }
 
-        public async Task CreateUser(User user)
+        public async Task<User?> GetByEmail(Guid tenantId, string email)
         {
-            user.Email = user.Email.ToLower();
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE tenant_id = @tenantId AND LOWER(email) = LOWER(@email)
+                LIMIT 1";
 
-            var sql = @"INSERT INTO public.""user"" (""id"", ""displayName"", ""email"", ""phone"", ""firstName"", ""lastName"", ""statusId"", ""stripeId"", ""needsPassSetup"")
-                        VALUES (@id, @displayName, @email, @phone, @firstName, @lastName, @statusId, @stripeId, @needsPassSetup)
-                        ON CONFLICT (""id"") DO NOTHING";
-
-            await _dbHelper.Execute(sql, user);
-        }
-
-        public async Task<int> CreateUserRole(string userId, int roleId)
-        {
-            var sql = @"INSERT INTO public.""user.userRole"" (""userId"", ""roleId"")
-                        VALUES (@userId, @roleId)
-                        RETURNING ""id""";
-
-            var result = await _dbHelper.Query<int>(sql, new { userId, roleId });
+            var result = await _db.Query<User>(sql, new { tenantId, email });
             return result.FirstOrDefault();
         }
 
-        public async Task<User> GetUser(string id)
+        public async Task<User?> GetGlobalByEmail(string email)
         {
-            var sql = $@"{_userQuery} WHERE u.""id"" = @id";
-            var userResult = await _dbHelper.Query<User>(sql, new { id });
+            // Global accounts are riders and super_admins (tenant_id IS NULL).
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE tenant_id IS NULL AND LOWER(email) = LOWER(@email)
+                LIMIT 1";
 
-            return userResult.FirstOrDefault();
-        }
-
-        public async Task<User> GetUserByEmail(string email)
-        {
-            var sql = $@"{_userQuery} WHERE LOWER(u.""email"") = LOWER(@email)";
-            var result = await _dbHelper.Query<User>(sql, new { email = email.ToLower() });
-
+            var result = await _db.Query<User>(sql, new { email });
             return result.FirstOrDefault();
         }
 
-        public async Task<List<Role>> GetAssignedRoles(string userId)
+        public async Task<User?> GetById(Guid id)
         {
-            var sql = @"SELECT r.*
-			            FROM ""user.role"" r
-			                JOIN ""user.userRole"" ur ON ur.""roleId"" = r.""id""
-			            WHERE ur.""userId"" = @userId";
-            var result = await _dbHelper.Query<Role>(sql, new { userId });
-            return result != null ? result.ToList() : new List<Role>();
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE id = @id
+                LIMIT 1";
+
+            var result = await _db.Query<User>(sql, new { id });
+            return result.FirstOrDefault();
         }
 
-        public async Task<List<Role>> GetAvailableRoles(bool activeOnly = true)
+        public async Task<Guid> Create(User user)
         {
-            var sql = @"SELECT * FROM ""user.role""";
-            if (activeOnly) sql += @" WHERE ""active"" = true";
+            const string sql = @"
+                INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, status)
+                VALUES (@TenantId, @Email, @PasswordHash, @FirstName, @LastName, @Role, @Status)
+                RETURNING id";
 
-            var result = await _dbHelper.Query<Role>(sql);
+            var result = await _db.Query<Guid>(sql, user);
+            return result.First();
+        }
 
+        public async Task<bool> AnySuperAdminExists()
+        {
+            const string sql = "SELECT COUNT(*) FROM users WHERE role = 'super_admin'";
+            var count = await _db.ExecuteScalar(sql);
+            return count > 0;
+        }
+
+        public async Task<List<User>> SearchAll(string? query, int take = 50)
+        {
+            var hasQuery = !string.IsNullOrWhiteSpace(query);
+            var like = hasQuery ? $"%{query!.Trim()}%" : null;
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE (@hasQuery = false
+                       OR LOWER(email) LIKE LOWER(@like)
+                       OR LOWER(first_name) LIKE LOWER(@like)
+                       OR LOWER(last_name) LIKE LOWER(@like))
+                ORDER BY created_at DESC
+                LIMIT @take";
+            var result = await _db.Query<User>(sql, new { hasQuery, like, take });
             return result.ToList();
         }
 
-        public async Task<User> Login(string email, string password)
+        public async Task<List<User>> ListByTenant(Guid tenantId)
         {
-            var sql = @"SELECT * FROM ""user"" WHERE LOWER(""email"") = LOWER(@email) AND ""password"" = @password";
-            var result = await _dbHelper.Query<User>(sql, new { email, password });
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE tenant_id = @tenantId
+                ORDER BY LOWER(email)";
+            var result = await _db.Query<User>(sql, new { tenantId });
+            return result.ToList();
+        }
 
+        public async Task UpdateRole(Guid id, string role)
+        {
+            const string sql = "UPDATE users SET role = @role WHERE id = @id";
+            await _db.Execute(sql, new { id, role });
+        }
+
+        public async Task UpdateStatus(Guid id, string status)
+        {
+            const string sql = "UPDATE users SET status = @status WHERE id = @id";
+            await _db.Execute(sql, new { id, status });
+        }
+
+        public async Task UpdatePasswordHash(Guid id, string passwordHash)
+        {
+            const string sql = "UPDATE users SET password_hash = @passwordHash WHERE id = @id";
+            await _db.Execute(sql, new { id, passwordHash });
+        }
+
+        public async Task<string?> GetDashboardConfig(Guid userId)
+        {
+            const string sql = "SELECT dashboard_config::text FROM users WHERE id = @userId";
+            var result = await _db.Query<string?>(sql, new { userId });
             return result.FirstOrDefault();
         }
 
-        public async Task SaveUserRoles(string userId, List<int> roleIds)
+        public async Task SetDashboardConfig(Guid userId, string? jsonOrNull)
         {
-            // delete all roles and then recreate them
-            var sql = @"DELETE FROM ""user.userRole"" WHERE ""userId"" = @userId";
-            await _dbHelper.Execute(sql, new { userId });
-
-            // insert all roles
-            sql = @"INSERT INTO ""user.userRole"" (""userId"", ""roleId"") VALUES ";
-
-            foreach (int roleId in roleIds)
-            {
-                sql += $"(@userId, {roleId}), ";
-            }
-
-            // remove trailing comma
-            sql = sql.Substring(0, sql.Length - 2);
-
-            await _dbHelper.Execute(sql, new { userId });
-        }
-
-        public async Task<List<User>> SearchUsers(SearchUsersRequest req)
-        {
-            var args = new DynamicParameters();
-            var joinClause = "";
-            var whereClause = "WHERE 1 = 1 ";
-
-            if (!string.IsNullOrEmpty(req.UserId))
-            {
-                whereClause += @" AND u.""id"" LIKE LOWER(@userId) ";
-                args.Add("@userId", req.UserId.ToLower());
-            }
-            if (!string.IsNullOrEmpty(req.Email))
-            {
-                whereClause += @" AND u.""email"" LIKE LOWER(@email) ";
-                args.Add("@email", req.Email.ToLower());
-            }
-            if (!string.IsNullOrEmpty(req.FirstName))
-            {
-                whereClause += @" AND u.""firstName"" LIKE LOWER(@firstName) ";
-                args.Add("@firstName", req.FirstName.ToLower());
-            }
-            if (!string.IsNullOrEmpty(req.LastName))
-            {
-                whereClause += @" AND u.""lastName"" LIKE LOWER(@lastName) ";
-                args.Add("@lastName", req.LastName.ToLower());
-            }
-            if (!string.IsNullOrEmpty(req.Phone))
-            {
-                whereClause += @" AND u.""phone"" LIKE @phone ";
-                args.Add("@phone", req.Phone);
-            }
-
-            if (req.RoleIds != null && req.RoleIds.Count > 0)
-            {
-                joinClause += @"JOIN ""user.userRole"" ur ON ur.""userId"" = u.""id"" ";
-                whereClause += @"AND ur.""roleId"" = ANY (@roleIds) ";
-                args.Add("@roleIds", req.RoleIds);
-            }
-
-            var sql = $@"SELECT u.* FROM ""user"" u
-                        {joinClause}
-                        {whereClause}";
-
-            var usersResult = await _dbHelper.Query<User>(sql, args);
-
-            return usersResult.ToList();
-        }
-
-        public async Task UpdatePassword(string id, string password)
-        {
-            var accountInitialized = true;
-            string query = $@"UPDATE ""user""
-                            SET ""password"" = @password,
-                            ""isAccountInitialized"" = @accountInitialized
-                            WHERE ""id"" = @id";
-            await _dbHelper.Execute(query, new { id, password, accountInitialized });
-        }
-
-        public async Task UpdateUser(User user)
-        {
-            var sql = @"UPDATE ""user""
-                        SET ""displayName"" = @displayName,
-                            ""aboutMe"" = @aboutMe,
-                            ""email"" = @email,
-                            ""firstName"" = @firstName,
-                            ""lastName"" = @lastName,
-                            ""phone"" = @phone,
-                            ""statusId"" = @statusId,
-                            ""billingAddressId"" = @billingAddressId,
-                            ""shippingAddressId"" = @shippingAddressId,
-                            ""birthDate"" = @birthDate,
-                            ""needsPassSetup"" = @needsPassSetup
-                        WHERE ""id"" = @id";
-            await _dbHelper.Execute(sql, user);
-        }
-
-        public async Task UpdateUserProfileImage(User user)
-        {
-            var sql = @"UPDATE ""user""
-                        SET
-                            ""profileImgUrl"" = @profileImgUrl
-                        WHERE ""id"" = @id";
-            await _dbHelper.Execute(sql, user);
+            // Cast the text param to jsonb so NULLs and well-formed JSON both work.
+            const string sql = "UPDATE users SET dashboard_config = @json::jsonb WHERE id = @userId";
+            await _db.Execute(sql, new { userId, json = jsonOrNull });
         }
     }
 }

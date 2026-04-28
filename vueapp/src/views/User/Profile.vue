@@ -4,6 +4,25 @@
 
         <Spinner v-model="loading" />
 
+        <v-row v-if="!loading && !isApex && newsletterStatus">
+            <v-col cols="12">
+                <v-card class="mb-4" variant="tonal">
+                    <v-card-text>
+                        <div class="d-flex align-center">
+                            <div class="flex-grow-1">
+                                <div class="text-subtitle-1">{{ branding.displayName }} newsletter</div>
+                                <div class="text-caption text-medium-emphasis">
+                                    Event updates and announcements for {{ newsletterStatus.email }}.
+                                </div>
+                            </div>
+                            <v-switch v-model="newsletterSubscribed" color="primary" hide-details density="compact"
+                                :loading="newsletterSaving" @update:model-value="toggleNewsletter"></v-switch>
+                        </div>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+        </v-row>
+
         <v-row v-if="!loading">
             <v-col cols="12" md="3" class="text-center">
                 <v-avatar size="120" color="grey-lighten-2" class="mb-4">
@@ -50,11 +69,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { UserService } from '@/services/UserService'
+import { NewsletterService } from '@/services/NewsletterService'
 import Spinner from '@/components/Spinner.vue'
+import { branding } from '@/stores/branding'
+import tenantHelper from '@/helpers/TenantHelper'
 
 const userService = new UserService()
+const newsletterService = new NewsletterService()
+const isApex = computed(() => !tenantHelper.getSubdomain())
+
+const newsletterStatus = ref<{ subscribed: boolean; email: string } | null>(null)
+const newsletterSubscribed = ref(false)
+const newsletterSaving = ref(false)
 
 const profile = ref<any>({
     firstName: '', lastName: '', email: '', phone: '', aboutMe: '', imageUrl: ''
@@ -78,7 +106,35 @@ onMounted(async () => {
     } finally {
         loading.value = false
     }
+    if (!isApex.value) {
+        try {
+            const r = await newsletterService.getMyStatus()
+            newsletterStatus.value = (r.data as any).data
+            newsletterSubscribed.value = newsletterStatus.value!.subscribed
+        } catch { /* non-critical */ }
+    }
 })
+
+async function toggleNewsletter(next: boolean | null) {
+    const target = !!next
+    newsletterSaving.value = true
+    try {
+        if (target) {
+            await newsletterService.subscribeMe()
+        } else {
+            await newsletterService.unsubscribeMe()
+        }
+        newsletterSubscribed.value = target
+    } catch (err: any) {
+        // Revert the switch if the call failed.
+        newsletterSubscribed.value = !target
+        snackbarText.value = err.response?.data?.error || 'Could not update newsletter preference.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+    } finally {
+        newsletterSaving.value = false
+    }
+}
 
 async function saveProfile() {
     try {
