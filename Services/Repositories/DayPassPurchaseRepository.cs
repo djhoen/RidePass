@@ -53,6 +53,16 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        public async Task<List<DayPassPurchase>> ListByStripePaymentIntentId(string paymentIntentId)
+        {
+            var sql = $@"
+                SELECT {PurchaseColumns}
+                FROM day_pass_purchase
+                WHERE stripe_payment_intent_id = @paymentIntentId";
+            var result = await _db.Query<DayPassPurchase>(sql, new { paymentIntentId });
+            return result.ToList();
+        }
+
         public async Task<DayPassPurchaseWithContext?> GetByRedemptionToken(Guid token, Guid tenantId)
         {
             var sql = $@"

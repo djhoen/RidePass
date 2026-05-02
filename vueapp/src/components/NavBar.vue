@@ -13,6 +13,7 @@
             <v-spacer></v-spacer>
 
             <template v-if="isAuthenticated">
+                <NotificationBell />
                 <!-- Tenant Admin dropdown (gear icon only) -->
                 <v-menu v-if="isAdmin" location="bottom end">
                     <template #activator="{ props }">
@@ -102,6 +103,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import authHelper from '../helpers/AuthHelper'
 import { branding } from '../stores/branding'
+import NotificationBell from './NotificationBell.vue'
 
 const router = useRouter()
 const { mobile } = useDisplay()
@@ -124,8 +126,10 @@ const allAdminLinks: AdminLink[] = [
     { to: '/Admin/Blackouts',     icon: 'mdi-calendar-remove',     title: 'Blackouts',     perm: Perm.CatalogManage },
     { to: '/Admin/DayPasses',     icon: 'mdi-ticket-confirmation', title: 'Day Passes',    perm: Perm.CatalogManage },
     { to: '/Admin/Waiver',        icon: 'mdi-file-sign',           title: 'Waiver',        perm: Perm.CatalogManage },
+    { to: '/Admin/Counter',       icon: 'mdi-cash-register',       title: 'Counter Sale',  perm: Perm.SalesCounter },
     { to: '/Admin/Purchases',     icon: 'mdi-cart-check',          title: 'Purchases',     perm: Perm.SalesView },
     { to: '/Admin/Reports',       icon: 'mdi-chart-line',          title: 'Reports',       perm: Perm.ReportsView },
+    { to: '/Admin/Payouts',       icon: 'mdi-bank-transfer',       title: 'Payouts',       perm: Perm.ReportsView },
     { to: '/Admin/Subscribers',   icon: 'mdi-email-multiple',      title: 'Subscribers',   perm: Perm.CampaignsManage },
     { to: '/Admin/Campaigns',     icon: 'mdi-email-newsletter',    title: 'Campaigns',     perm: Perm.CampaignsManage },
     { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan',         title: 'Redeem Tickets', perm: Perm.SalesRedeem },

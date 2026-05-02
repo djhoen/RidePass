@@ -1,5 +1,9 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Services.Helpers;
+using Services.Payments;
+using Services.Repositories;
 
 // RidePass TaskRunner - Background task runner for scheduled jobs
 // Add your scheduled tasks here (e.g., email sending, data cleanup, currency updates)
@@ -22,6 +26,12 @@ Console.WriteLine("TaskRunner started...");
 
 var dbHelper = new DbHelper(configuration);
 
+// Hand-wired services (TaskRunner doesn't use full DI).
+var tenantRepo = new TenantRepository(dbHelper);
+var payoutRepo = new TenantPayoutRepository(dbHelper);
+var drafterLogger = NullLogger<MonthlyPayoutDrafter>.Instance;
+var drafter = new MonthlyPayoutDrafter(tenantRepo, payoutRepo, drafterLogger);
+
 var timer = new PeriodicTimer(TimeSpan.FromMinutes(30));
 
 do
@@ -30,10 +40,8 @@ do
     {
         Console.WriteLine($"[{DateTime.UtcNow}] Running scheduled tasks...");
 
-        // TODO: Add your scheduled tasks here
-        // Example: Update currency exchange rates
-        // Example: Send pending notification emails
-        // Example: Clean up expired sessions
+        var summary = await drafter.Run();
+        Console.WriteLine($"[{DateTime.UtcNow}] Payout drafter: drafted={summary.Drafted} skipped={summary.Skipped} voidedEmpty={summary.VoidedEmpty} totalNet=${summary.TotalNetCents / 100m:0.00}");
 
         Console.WriteLine($"[{DateTime.UtcNow}] Scheduled tasks completed.");
     }

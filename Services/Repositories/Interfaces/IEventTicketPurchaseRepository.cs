@@ -7,6 +7,7 @@ namespace Services.Repositories.Interfaces
         Task<(Guid Id, Guid RedemptionToken)> Create(EventTicketPurchase purchase);
         Task<EventTicketPurchase?> GetById(Guid id, Guid tenantId);
         Task<EventTicketPurchase?> GetByStripePaymentIntentId(string paymentIntentId);
+        Task<List<EventTicketPurchase>> ListByStripePaymentIntentId(string paymentIntentId);
         Task<EventTicketPurchaseWithContext?> GetByRedemptionToken(Guid token, Guid tenantId);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);

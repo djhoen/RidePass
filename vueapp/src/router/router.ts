@@ -109,6 +109,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'sales.view', hideFooter: true }
     },
     {
+        path: '/Admin/Counter',
+        name: 'AdminCounter',
+        component: () => import('../views/Admin/Counter.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
         path: '/Admin/RedeemTickets',
         name: 'AdminRedeemTickets',
         component: () => import('../views/Admin/RedeemTickets.vue'),
@@ -118,6 +124,12 @@ const routes = [
         path: '/Admin/Reports',
         name: 'AdminReports',
         component: () => import('../views/Admin/Reports.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
+        path: '/Admin/Payouts',
+        name: 'AdminPayouts',
+        component: () => import('../views/Admin/Payouts.vue'),
         meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
     },
     {

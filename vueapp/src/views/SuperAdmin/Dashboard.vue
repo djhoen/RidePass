@@ -14,6 +14,9 @@
                 Disputes
                 <v-badge v-if="openDisputeCount > 0" :content="openDisputeCount" color="error" inline class="ml-2"></v-badge>
             </v-tab>
+            <v-tab value="payouts">Payouts</v-tab>
+            <v-tab value="audit">Audit log</v-tab>
+            <v-tab value="reconcile">Reconcile</v-tab>
         </v-tabs>
 
         <v-window v-model="tab">
@@ -311,7 +314,385 @@
                     </v-table>
                 </v-card>
             </v-window-item>
+
+            <!-- PAYOUTS -->
+            <v-window-item value="payouts">
+                <div class="d-flex align-center mb-3">
+                    <p class="text-caption text-medium-emphasis mb-0 mr-4">
+                        Per-tenant available balance and lifetime totals. Click a row for ledger detail and fee schedule.
+                    </p>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="loadBalances">Refresh</v-btn>
+                </div>
+                <v-card>
+                    <v-table>
+                        <thead>
+                            <tr>
+                                <th>Tenant</th>
+                                <th class="text-right" style="width: 130px">Available</th>
+                                <th class="text-right" style="width: 130px">This month</th>
+                                <th class="text-right" style="width: 130px">Lifetime gross</th>
+                                <th class="text-right" style="width: 110px">Stripe fees</th>
+                                <th class="text-right" style="width: 130px">RidePass cut</th>
+                                <th class="text-right" style="width: 130px">Paid out</th>
+                                <th style="width: 200px" class="text-right"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="b in balances" :key="b.tenantId">
+                                <td>
+                                    <strong>{{ b.tenantDisplayName }}</strong>
+                                    <div class="text-caption text-medium-emphasis"><code>{{ b.tenantSubdomain }}</code></div>
+                                </td>
+                                <td class="text-right">${{ (b.availableBalanceCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (b.currentMonthGrossCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (b.lifetimeGrossCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (b.lifetimeStripeFeeCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (b.lifetimeRidepassCutCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (b.lifetimePaidOutCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">
+                                    <v-btn variant="text" size="small" @click="openTenantDetail(b)">Detail</v-btn>
+                                    <v-btn variant="text" size="small" @click="openFeeEditor(b)">Fees</v-btn>
+                                </td>
+                            </tr>
+                            <tr v-if="!loadingBalances && balances.length === 0">
+                                <td colspan="8" class="text-center text-medium-emphasis py-8">No tenants yet.</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                </v-card>
+            </v-window-item>
+
+            <!-- AUDIT LOG -->
+            <v-window-item value="audit">
+                <div class="d-flex align-center mb-3 ga-2">
+                    <v-text-field v-model="auditFilterAction" label="Action filter" placeholder="e.g. payout.create"
+                        density="compact" hide-details clearable style="max-width: 280px"></v-text-field>
+                    <v-btn @click="loadAuditLog">Apply</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="loadAuditLog">Refresh</v-btn>
+                </div>
+                <v-card>
+                    <v-table density="compact">
+                        <thead>
+                            <tr>
+                                <th style="width: 180px">When (UTC)</th>
+                                <th style="width: 180px">Actor</th>
+                                <th style="width: 200px">Action</th>
+                                <th style="width: 140px">Target</th>
+                                <th>Summary</th>
+                                <th style="width: 130px">IP</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="a in auditLog" :key="a.id">
+                                <td>{{ formatDate(a.createdAt) }}</td>
+                                <td>
+                                    <div>{{ a.actorEmail || '—' }}</div>
+                                    <div class="text-caption text-medium-emphasis">{{ a.actorRole }}</div>
+                                </td>
+                                <td><code>{{ a.action }}</code></td>
+                                <td>
+                                    <span v-if="a.targetKind">{{ a.targetKind }}</span>
+                                    <span v-else class="text-medium-emphasis">—</span>
+                                </td>
+                                <td>{{ a.summary }}</td>
+                                <td>{{ a.ipAddress || '—' }}</td>
+                            </tr>
+                            <tr v-if="!loadingAudit && auditLog.length === 0">
+                                <td colspan="6" class="text-center text-medium-emphasis py-8">No audit entries yet.</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                </v-card>
+            </v-window-item>
+
+            <!-- RECONCILE -->
+            <v-window-item value="reconcile">
+                <div class="d-flex align-center mb-3 flex-wrap ga-3">
+                    <v-text-field v-model="reconcileFrom" type="date" label="From (UTC)" density="compact" hide-details
+                        style="max-width: 180px"></v-text-field>
+                    <v-text-field v-model="reconcileTo" type="date" label="To (UTC, exclusive)" density="compact" hide-details
+                        style="max-width: 180px"></v-text-field>
+                    <v-btn color="primary" :loading="loadingReconcile" @click="loadReconciliation">Run</v-btn>
+                    <v-spacer></v-spacer>
+                    <p class="text-caption text-medium-emphasis mb-0">
+                        Compares Stripe balance_transactions against our ledger for the chosen period.
+                    </p>
+                </div>
+
+                <v-alert v-if="reconciliation && !reconciliation.stripeConfigured" type="warning" variant="tonal" class="mb-4">
+                    Stripe credentials are not configured on the server, so the Stripe column is unavailable.
+                    Ledger totals are still shown.
+                </v-alert>
+
+                <v-row v-if="reconciliation" class="mb-4">
+                    <v-col cols="12" md="6">
+                        <v-card>
+                            <v-card-title>Stripe (balance_transactions)</v-card-title>
+                            <v-card-text>
+                                <div v-if="!reconciliation.stripe" class="text-medium-emphasis">Not available.</div>
+                                <v-table v-else density="compact">
+                                    <tbody>
+                                        <tr><td>Transactions</td><td class="text-right">{{ reconciliation.stripe.count }}</td></tr>
+                                        <tr><td>Gross</td><td class="text-right">${{ (reconciliation.stripe.grossCents / 100).toFixed(2) }}</td></tr>
+                                        <tr><td>Stripe fee</td><td class="text-right">${{ (reconciliation.stripe.feeCents / 100).toFixed(2) }}</td></tr>
+                                        <tr><td>Net to platform</td><td class="text-right"><strong>${{ (reconciliation.stripe.netCents / 100).toFixed(2) }}</strong></td></tr>
+                                    </tbody>
+                                </v-table>
+                            </v-card-text>
+                        </v-card>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <v-card>
+                            <v-card-title>RidePass ledger</v-card-title>
+                            <v-card-text>
+                                <v-table density="compact">
+                                    <tbody>
+                                        <tr><td>Entries</td><td class="text-right">{{ reconciliation.ledger.count }}</td></tr>
+                                        <tr><td>Gross</td><td class="text-right">${{ (reconciliation.ledger.grossCents / 100).toFixed(2) }}</td></tr>
+                                        <tr><td>Stripe fee (recorded)</td><td class="text-right">${{ (reconciliation.ledger.stripeFeeCents / 100).toFixed(2) }}</td></tr>
+                                        <tr><td>RidePass cut</td><td class="text-right">${{ (reconciliation.ledger.ridepassCutCents / 100).toFixed(2) }}</td></tr>
+                                        <tr><td>Net to tenants</td><td class="text-right"><strong>${{ (reconciliation.ledger.netToTenantCents / 100).toFixed(2) }}</strong></td></tr>
+                                    </tbody>
+                                </v-table>
+                            </v-card-text>
+                        </v-card>
+                    </v-col>
+                </v-row>
+
+                <v-card v-if="reconciliation && reconciliation.stripe">
+                    <v-card-title>Gap analysis</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Non-zero gaps mean Stripe and our ledger disagree for the period. A small fee gap is normal
+                            (we estimate Stripe's fee at sale time; the actual fee can drift by a few cents).
+                            Large or persistent gaps deserve investigation.
+                        </p>
+                        <v-table density="compact">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th class="text-right">Stripe</th>
+                                    <th class="text-right">Ledger</th>
+                                    <th class="text-right">Gap (Stripe − Ledger)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Gross</td>
+                                    <td class="text-right">${{ (reconciliation.stripe.grossCents / 100).toFixed(2) }}</td>
+                                    <td class="text-right">${{ (reconciliation.ledger.grossCents / 100).toFixed(2) }}</td>
+                                    <td class="text-right" :class="gapClass(reconciliation.gaps.grossGap)">
+                                        ${{ (reconciliation.gaps.grossGap / 100).toFixed(2) }}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Stripe fee</td>
+                                    <td class="text-right">${{ (reconciliation.stripe.feeCents / 100).toFixed(2) }}</td>
+                                    <td class="text-right">${{ (reconciliation.ledger.stripeFeeCents / 100).toFixed(2) }}</td>
+                                    <td class="text-right" :class="gapClass(reconciliation.gaps.feeGap)">
+                                        ${{ (reconciliation.gaps.feeGap / 100).toFixed(2) }}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Net (Stripe net vs. our gross − recorded fee)</td>
+                                    <td class="text-right">${{ (reconciliation.stripe.netCents / 100).toFixed(2) }}</td>
+                                    <td class="text-right">${{ (reconciliation.gaps.expectedStripeNet / 100).toFixed(2) }}</td>
+                                    <td class="text-right" :class="gapClass(reconciliation.gaps.netGap)">
+                                        ${{ (reconciliation.gaps.netGap / 100).toFixed(2) }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </v-table>
+                    </v-card-text>
+                </v-card>
+            </v-window-item>
         </v-window>
+
+        <!-- Tenant detail dialog: payouts + ledger -->
+        <v-dialog v-model="detailDialog" max-width="980" scrollable>
+            <v-card v-if="detailTenant">
+                <v-card-title>
+                    {{ detailTenant.tenantDisplayName }}
+                    <span class="text-medium-emphasis ml-2 text-body-2"><code>{{ detailTenant.tenantSubdomain }}</code></span>
+                </v-card-title>
+                <v-card-text style="max-height: 70vh">
+                    <div class="d-flex align-center mb-2">
+                        <div class="text-subtitle-2">Past payouts</div>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" color="primary" prepend-icon="mdi-plus" @click="openCreatePayout">
+                            New payout
+                        </v-btn>
+                    </div>
+                    <v-table density="compact" class="mb-4">
+                        <thead>
+                            <tr>
+                                <th>Period</th>
+                                <th>Status</th>
+                                <th class="text-right">Net paid</th>
+                                <th>Reference</th>
+                                <th>Date paid</th>
+                                <th style="width: 180px" class="text-right"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="p in detailPayouts" :key="p.id">
+                                <td>{{ formatDateOnly(p.periodStartUtc) }} – {{ formatDateOnly(p.periodEndUtc) }}</td>
+                                <td>
+                                    <v-chip size="x-small" :color="payoutStatusColor(p.status)">{{ p.status }}</v-chip>
+                                </td>
+                                <td class="text-right">${{ (p.netPaidCents / 100).toFixed(2) }}</td>
+                                <td><code v-if="p.externalReference">{{ p.externalReference }}</code><span v-else class="text-medium-emphasis">—</span></td>
+                                <td>{{ p.payoutDateUtc ? formatDate(p.payoutDateUtc) : '—' }}</td>
+                                <td class="text-right">
+                                    <v-btn v-if="p.status === 'pending' || p.status === 'processing'" size="x-small" variant="text"
+                                        @click="openMarkPaid(p)">Mark paid</v-btn>
+                                    <v-btn v-if="p.status === 'pending'" size="x-small" variant="text" color="error"
+                                        @click="voidPayout(p)">Void</v-btn>
+                                    <v-btn size="x-small" variant="text" icon="mdi-download" @click="downloadPayoutCsv(p)"
+                                        :title="'Download CSV'"></v-btn>
+                                </td>
+                            </tr>
+                            <tr v-if="detailPayouts.length === 0">
+                                <td colspan="6" class="text-center text-medium-emphasis py-4">No payouts yet.</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+
+                    <div class="text-subtitle-2 mb-2">Recent transactions (last 200)</div>
+                    <v-table density="compact">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Kind</th>
+                                <th class="text-right">Gross</th>
+                                <th class="text-right">Stripe</th>
+                                <th class="text-right">RidePass</th>
+                                <th class="text-right">Net</th>
+                                <th>Payout</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="e in detailLedger" :key="e.id">
+                                <td>{{ formatDate(e.occurredAtUtc) }}</td>
+                                <td>
+                                    <v-chip size="x-small" :color="e.entryKind === 'sale' ? 'primary' : 'warning'">
+                                        {{ e.entryKind }}<span v-if="e.sourceKind"> · {{ e.sourceKind }}</span>
+                                    </v-chip>
+                                </td>
+                                <td class="text-right">${{ (e.grossCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (e.stripeFeeCents / 100).toFixed(2) }}</td>
+                                <td class="text-right">${{ (e.ridepassCutCents / 100).toFixed(2) }}</td>
+                                <td class="text-right"><strong>${{ (e.netToTenantCents / 100).toFixed(2) }}</strong></td>
+                                <td>
+                                    <span v-if="e.payoutId" class="text-success text-caption">paid out</span>
+                                    <span v-else class="text-warning text-caption">pending</span>
+                                </td>
+                            </tr>
+                            <tr v-if="detailLedger.length === 0">
+                                <td colspan="7" class="text-center text-medium-emphasis py-4">No transactions yet.</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="detailDialog = false">Close</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Create payout dialog -->
+        <v-dialog v-model="createPayoutDialog" max-width="560" persistent>
+            <v-card v-if="detailTenant">
+                <v-card-title>Create payout — {{ detailTenant.tenantDisplayName }}</v-card-title>
+                <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        All unpaid ledger entries with <code>occurred_at_utc</code> in the period will be batched into this payout.
+                    </p>
+                    <v-row>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="payoutPeriodStart" type="date" label="Period start (UTC)" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="payoutPeriodEnd" type="date" label="Period end (UTC, exclusive)" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+                    <v-text-field v-model="payoutMemo" label="Memo (optional)" density="compact"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="createPayoutDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="creatingPayout" @click="submitCreatePayout">Create</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Mark paid dialog -->
+        <v-dialog v-model="markPaidDialog" max-width="520" persistent>
+            <v-card v-if="markPaidTarget">
+                <v-card-title>Mark payout as paid</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-3">
+                        Net to pay: <strong>${{ (markPaidTarget.netPaidCents / 100).toFixed(2) }}</strong>
+                    </p>
+                    <v-text-field v-model="markPaidDate" type="date" label="Payout date (UTC)" density="compact"></v-text-field>
+                    <v-text-field v-model="markPaidReference" label="External reference (transfer id / ACH trace / check #)" density="compact"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="markPaidDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="markingPaid" @click="submitMarkPaid">Mark paid</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Fee schedule editor -->
+        <v-dialog v-model="feeDialog" max-width="720" persistent>
+            <v-card v-if="feeTenant">
+                <v-card-title>Fee schedule — {{ feeTenant.tenantDisplayName }}</v-card-title>
+                <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        Tiered RidePass cut by monthly cumulative gross volume (UTC). New schedule takes effect immediately;
+                        past transactions keep the rate they were charged.
+                    </p>
+                    <v-text-field v-model.number="feeMonthlyCapDollars" type="number" min="0"
+                        label="Monthly cap (USD, blank = no cap)" density="compact" class="mb-3"
+                        hint="RidePass take is limited to this much per UTC month per tenant" persistent-hint></v-text-field>
+
+                    <v-table density="compact">
+                        <thead>
+                            <tr>
+                                <th>From (USD/mo)</th>
+                                <th>To (USD/mo, blank = ∞)</th>
+                                <th>Rate (%)</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(t, i) in feeTiers" :key="i">
+                                <td><v-text-field v-model.number="t.minDollars" type="number" density="compact" hide-details></v-text-field></td>
+                                <td><v-text-field v-model.number="t.maxDollars" type="number" density="compact" hide-details placeholder="∞"></v-text-field></td>
+                                <td><v-text-field v-model.number="t.ratePct" type="number" step="0.01" density="compact" hide-details></v-text-field></td>
+                                <td>
+                                    <v-btn icon="mdi-delete" size="x-small" variant="text" :disabled="feeTiers.length === 1"
+                                        @click="feeTiers.splice(i, 1)"></v-btn>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                    <v-btn variant="text" prepend-icon="mdi-plus" class="mt-2" @click="feeTiers.push({ minDollars: 0, maxDollars: null, ratePct: 5 })">
+                        Add tier
+                    </v-btn>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="feeDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingFee" @click="saveFeeSchedule">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <!-- Create tenant dialog -->
         <v-dialog v-model="createDialog" max-width="640" persistent>
@@ -418,7 +799,8 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
-import { SuperAdminService, type TenantSummary, type SuperAdminUser, type CreateTenantResult, type RefundListItem, type DisputeListItem } from '@/services/SuperAdminService'
+import { SuperAdminService, type TenantSummary, type SuperAdminUser, type CreateTenantResult, type RefundListItem, type DisputeListItem,
+    type TenantBalanceSummary, type LedgerEntry, type PayoutSummary, type AuditLogEntry, type ReconciliationResult } from '@/services/SuperAdminService'
 import { ReportsService, type PlatformAnalyticsSummary, type TenantBreakdownRow } from '@/services/ReportsService'
 import { computed } from 'vue'
 import { Line, Bar } from 'vue-chartjs'
@@ -458,6 +840,75 @@ const createdResult = ref<CreateTenantResult | null>(null)
 const superAdminDialog = ref(false)
 const creatingSuperAdmin = ref(false)
 const superAdminForm = ref({ firstName: '', lastName: '', email: '', password: '' })
+
+// Payouts tab state
+const balances = ref<TenantBalanceSummary[]>([])
+const loadingBalances = ref(false)
+const detailDialog = ref(false)
+const detailTenant = ref<TenantBalanceSummary | null>(null)
+const detailPayouts = ref<PayoutSummary[]>([])
+const detailLedger = ref<LedgerEntry[]>([])
+const feeDialog = ref(false)
+const feeTenant = ref<TenantBalanceSummary | null>(null)
+const feeMonthlyCapDollars = ref<number | null>(null)
+const feeTiers = ref<{ minDollars: number; maxDollars: number | null; ratePct: number }[]>([])
+const savingFee = ref(false)
+
+const createPayoutDialog = ref(false)
+const creatingPayout = ref(false)
+const payoutPeriodStart = ref(dayjs.utc().startOf('month').subtract(1, 'month').format('YYYY-MM-DD'))
+const payoutPeriodEnd = ref(dayjs.utc().startOf('month').format('YYYY-MM-DD'))
+const payoutMemo = ref('')
+
+const markPaidDialog = ref(false)
+const markingPaid = ref(false)
+const markPaidTarget = ref<PayoutSummary | null>(null)
+const markPaidDate = ref(dayjs.utc().format('YYYY-MM-DD'))
+const markPaidReference = ref('')
+
+const auditLog = ref<AuditLogEntry[]>([])
+const loadingAudit = ref(false)
+const auditFilterAction = ref('')
+
+const reconciliation = ref<ReconciliationResult | null>(null)
+const loadingReconcile = ref(false)
+const reconcileFrom = ref(dayjs.utc().startOf('month').subtract(1, 'month').format('YYYY-MM-DD'))
+const reconcileTo = ref(dayjs.utc().startOf('month').format('YYYY-MM-DD'))
+
+function gapClass(cents: number): string {
+    if (cents === 0) return 'text-success'
+    if (Math.abs(cents) < 100) return 'text-warning'
+    return 'text-error'
+}
+
+async function loadReconciliation() {
+    loadingReconcile.value = true
+    try {
+        const fromUtc = dayjs.utc(reconcileFrom.value).toISOString()
+        const toUtc = dayjs.utc(reconcileTo.value).toISOString()
+        const r = await service.getReconciliation(fromUtc, toUtc)
+        reconciliation.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load reconciliation.', 'error')
+    } finally {
+        loadingReconcile.value = false
+    }
+}
+
+function formatDateOnly(utc: string): string {
+    return dayjs.utc(utc).format('YYYY-MM-DD')
+}
+
+function payoutStatusColor(s: string): string {
+    switch (s) {
+        case 'paid': return 'success'
+        case 'pending': return 'warning'
+        case 'processing': return 'info'
+        case 'failed': return 'error'
+        case 'on_hold': return 'grey'
+        default: return 'default'
+    }
+}
 
 const refunds = ref<RefundListItem[]>([])
 const loadingRefunds = ref(false)
@@ -505,7 +956,179 @@ onMounted(async () => {
     await loadUsers()
     await loadRefunds()
     await loadDisputes()
+    await loadBalances()
+    await loadAuditLog()
 })
+
+async function loadAuditLog() {
+    loadingAudit.value = true
+    try {
+        const r = await service.listAuditLog({
+            action: auditFilterAction.value || undefined,
+            take: 200,
+        })
+        auditLog.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load audit log.', 'error')
+    } finally {
+        loadingAudit.value = false
+    }
+}
+
+async function loadBalances() {
+    loadingBalances.value = true
+    try {
+        const r = await service.listBalances()
+        balances.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load balances.', 'error')
+    } finally {
+        loadingBalances.value = false
+    }
+}
+
+async function openTenantDetail(b: TenantBalanceSummary) {
+    detailTenant.value = b
+    detailPayouts.value = []
+    detailLedger.value = []
+    detailDialog.value = true
+    try {
+        const [p, l] = await Promise.all([
+            service.listPayouts(b.tenantId),
+            service.listLedger(b.tenantId, undefined, undefined, 200),
+        ])
+        detailPayouts.value = (p.data as any).data
+        detailLedger.value = (l.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load tenant detail.', 'error')
+    }
+}
+
+async function openFeeEditor(b: TenantBalanceSummary) {
+    feeTenant.value = b
+    feeDialog.value = true
+    feeTiers.value = [{ minDollars: 0, maxDollars: null, ratePct: 5 }]
+    feeMonthlyCapDollars.value = null
+    try {
+        const r = await service.getFeeSchedule(b.tenantId)
+        const data = (r.data as any).data
+        feeMonthlyCapDollars.value = data.schedule.monthlyCapCents !== null ? data.schedule.monthlyCapCents / 100 : null
+        feeTiers.value = data.tiers.map((t: any) => ({
+            minDollars: t.minVolumeCents / 100,
+            maxDollars: t.maxVolumeCents !== null ? t.maxVolumeCents / 100 : null,
+            ratePct: t.rateBps / 100,
+        }))
+    } catch {
+        // 404 or other — leave defaults
+    }
+}
+
+function openCreatePayout() {
+    payoutMemo.value = ''
+    createPayoutDialog.value = true
+}
+
+async function submitCreatePayout() {
+    if (!detailTenant.value) return
+    creatingPayout.value = true
+    try {
+        const r = await service.createPayout(detailTenant.value.tenantId, {
+            periodStartUtc: dayjs.utc(payoutPeriodStart.value).toISOString(),
+            periodEndUtc: dayjs.utc(payoutPeriodEnd.value).toISOString(),
+            memo: payoutMemo.value || null,
+        })
+        const data = (r.data as any).data
+        flash(`Payout created with ${data.attachedCount} ledger entr${data.attachedCount === 1 ? 'y' : 'ies'} attached.`, 'success')
+        createPayoutDialog.value = false
+        await refreshDetailDialog()
+        await loadBalances()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to create payout.', 'error')
+    } finally {
+        creatingPayout.value = false
+    }
+}
+
+function openMarkPaid(p: PayoutSummary) {
+    markPaidTarget.value = p
+    markPaidDate.value = dayjs.utc().format('YYYY-MM-DD')
+    markPaidReference.value = p.externalReference ?? ''
+    markPaidDialog.value = true
+}
+
+async function submitMarkPaid() {
+    if (!markPaidTarget.value || !detailTenant.value) return
+    markingPaid.value = true
+    try {
+        await service.updatePayoutStatus(detailTenant.value.tenantId, markPaidTarget.value.id, {
+            status: 'paid',
+            payoutDateUtc: dayjs.utc(markPaidDate.value).toISOString(),
+            externalReference: markPaidReference.value || null,
+        })
+        flash('Marked as paid.', 'success')
+        markPaidDialog.value = false
+        await refreshDetailDialog()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to update payout.', 'error')
+    } finally {
+        markingPaid.value = false
+    }
+}
+
+async function voidPayout(p: PayoutSummary) {
+    if (!detailTenant.value) return
+    if (!confirm(`Void this pending payout? Attached ledger entries will become unpaid again.`)) return
+    try {
+        await service.voidPayout(detailTenant.value.tenantId, p.id)
+        flash('Payout voided.', 'success')
+        await refreshDetailDialog()
+        await loadBalances()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to void payout.', 'error')
+    }
+}
+
+async function downloadPayoutCsv(p: PayoutSummary) {
+    if (!detailTenant.value) return
+    try {
+        await service.downloadPayoutCsv(detailTenant.value.tenantId, p.id)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to download CSV.', 'error')
+    }
+}
+
+async function refreshDetailDialog() {
+    if (!detailTenant.value) return
+    const [p, l] = await Promise.all([
+        service.listPayouts(detailTenant.value.tenantId),
+        service.listLedger(detailTenant.value.tenantId, undefined, undefined, 200),
+    ])
+    detailPayouts.value = (p.data as any).data
+    detailLedger.value = (l.data as any).data
+}
+
+async function saveFeeSchedule() {
+    if (!feeTenant.value) return
+    savingFee.value = true
+    try {
+        await service.updateFeeSchedule(feeTenant.value.tenantId, {
+            monthlyCapCents: feeMonthlyCapDollars.value !== null && !Number.isNaN(feeMonthlyCapDollars.value)
+                ? Math.round(feeMonthlyCapDollars.value * 100) : null,
+            tiers: feeTiers.value.map(t => ({
+                minVolumeCents: Math.round((t.minDollars || 0) * 100),
+                maxVolumeCents: t.maxDollars !== null && !Number.isNaN(t.maxDollars) ? Math.round(t.maxDollars * 100) : null,
+                rateBps: Math.round((t.ratePct || 0) * 100),
+            })),
+        })
+        flash('Fee schedule saved.', 'success')
+        feeDialog.value = false
+        await loadBalances()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to save fee schedule.', 'error')
+    } finally {
+        savingFee.value = false
+    }
+}
 
 async function loadTenants() {
     loadingTenants.value = true

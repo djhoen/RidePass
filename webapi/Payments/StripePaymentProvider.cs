@@ -48,6 +48,61 @@ namespace webapi.Payments
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
+        public async Task<BalanceSummary?> SummarizeBalanceTransactionsAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            try
+            {
+                var service = new BalanceTransactionService();
+                var options = new BalanceTransactionListOptions
+                {
+                    Created = new DateRangeOptions
+                    {
+                        GreaterThanOrEqual = fromUtc,
+                        LessThan = toUtc,
+                    },
+                    Limit = 100,
+                };
+                int count = 0;
+                long gross = 0, fee = 0, net = 0;
+                await foreach (var tx in service.ListAutoPagingAsync(options, cancellationToken: ct))
+                {
+                    count++;
+                    gross += tx.Amount;
+                    fee += tx.Fee;
+                    net += tx.Net;
+                }
+                return new BalanceSummary(count, gross, fee, net);
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogWarning(ex, "Failed to summarize Stripe balance transactions for {From}-{To}", fromUtc, toUtc);
+                return null;
+            }
+        }
+
+        public async Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            try
+            {
+                var service = new PaymentIntentService();
+                var intent = await service.GetAsync(paymentIntentId, new PaymentIntentGetOptions
+                {
+                    Expand = new List<string> { "latest_charge.balance_transaction" }
+                }, cancellationToken: ct);
+                var fee = intent.LatestCharge?.BalanceTransaction?.Fee;
+                if (fee is null) return null;
+                if (fee.Value > int.MaxValue) return int.MaxValue;
+                return (int)fee.Value;
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch Stripe fee for PaymentIntent {IntentId}.", paymentIntentId);
+                return null;
+            }
+        }
+
         public async Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))

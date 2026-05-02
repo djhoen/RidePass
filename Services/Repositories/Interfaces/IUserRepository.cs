@@ -11,6 +11,8 @@ namespace Services.Repositories.Interfaces
         Task<bool> AnySuperAdminExists();
         Task<List<User>> SearchAll(string? query, int take = 50);
         Task<List<User>> ListByTenant(Guid tenantId);
+        Task<List<User>> ListSuperAdmins();
+        Task<List<User>> ListTenantUsersByRole(Guid tenantId, string role);
         Task UpdateRole(Guid id, string role);
         Task UpdateStatus(Guid id, string status);
         Task UpdatePasswordHash(Guid id, string passwordHash);

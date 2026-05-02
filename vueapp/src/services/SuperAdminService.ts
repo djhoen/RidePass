@@ -96,6 +96,169 @@ export class SuperAdminService {
     listDisputes() {
         return axios.get<{ data: DisputeListItem[] }>(`${this.apiUrl}/SuperAdmin/Disputes`)
     }
+
+    // Payouts / balances
+    listBalances() {
+        return axios.get<{ data: TenantBalanceSummary[] }>(`${this.apiUrl}/SuperAdmin/Balances`)
+    }
+
+    listLedger(tenantId: string, fromUtc?: string, toUtc?: string, take = 200) {
+        return axios.get<{ data: LedgerEntry[] }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Ledger`, {
+            params: { fromUtc, toUtc, take },
+        })
+    }
+
+    listPayouts(tenantId: string) {
+        return axios.get<{ data: PayoutSummary[] }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts`)
+    }
+
+    getPayout(tenantId: string, payoutId: string) {
+        return axios.get<{ data: { payout: PayoutSummary; entries: LedgerEntry[] } }>(
+            `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}`)
+    }
+
+    getFeeSchedule(tenantId: string) {
+        return axios.get<{ data: FeeScheduleWithTiers }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/FeeSchedule`)
+    }
+
+    updateFeeSchedule(tenantId: string, body: { monthlyCapCents: number | null; tiers: FeeTierInput[] }) {
+        return axios.put<{ data: FeeScheduleWithTiers }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/FeeSchedule`, body)
+    }
+
+    createPayout(tenantId: string, body: { periodStartUtc: string; periodEndUtc: string; memo: string | null }) {
+        return axios.post<{ data: { payout: PayoutSummary; attachedCount: number } }>(
+            `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts`, body)
+    }
+
+    updatePayoutStatus(tenantId: string, payoutId: string,
+        body: { status: string; payoutDateUtc?: string | null; externalReference?: string | null; memo?: string | null }) {
+        return axios.put<{ data: PayoutSummary }>(
+            `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}/Status`, body)
+    }
+
+    voidPayout(tenantId: string, payoutId: string) {
+        return axios.delete(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}`)
+    }
+
+    listAuditLog(params: { action?: string; actorUserId?: string; targetKind?: string; targetId?: string; tenantId?: string; fromUtc?: string; toUtc?: string; take?: number } = {}) {
+        return axios.get<{ data: AuditLogEntry[] }>(`${this.apiUrl}/SuperAdmin/AuditLog`, { params })
+    }
+
+    getReconciliation(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: ReconciliationResult }>(`${this.apiUrl}/SuperAdmin/Reconciliation`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    async downloadPayoutCsv(tenantId: string, payoutId: string) {
+        const r = await axios.get(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}/Csv`, { responseType: 'blob' })
+        const cd = (r.headers['content-disposition'] as string | undefined) ?? ''
+        const filename = cd.match(/filename="?([^";]+)"?/)?.[1] ?? `payout-${payoutId}.csv`
+        triggerBlobDownload(r.data, filename)
+    }
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => window.URL.revokeObjectURL(url), 0)
+}
+
+export { triggerBlobDownload }
+
+export interface TenantBalanceSummary {
+    tenantId: string
+    tenantSubdomain: string
+    tenantDisplayName: string
+    availableBalanceCents: number
+    lifetimeGrossCents: number
+    lifetimeStripeFeeCents: number
+    lifetimeRidepassCutCents: number
+    lifetimePaidOutCents: number
+    currentMonthGrossCents: number
+}
+
+export interface LedgerEntry {
+    id: string
+    tenantId: string
+    entryKind: string
+    sourceKind: string | null
+    sourceId: string | null
+    occurredAtUtc: string
+    grossCents: number
+    stripeFeeCents: number
+    ridepassCutCents: number
+    netToTenantCents: number
+    appliedTierId: string | null
+    cumulativeMonthlyVolumeAtSaleCents: number | null
+    stripePaymentIntentId: string | null
+    payoutId: string | null
+    memo: string | null
+    createdAt: string
+}
+
+export interface PayoutSummary {
+    id: string
+    tenantId: string
+    status: string
+    periodStartUtc: string
+    periodEndUtc: string
+    payoutDateUtc: string | null
+    totalGrossCents: number
+    totalStripeFeeCents: number
+    totalRidepassCutCents: number
+    totalAdjustmentCents: number
+    netPaidCents: number
+    externalReference: string | null
+    memo: string | null
+    createdAt: string
+}
+
+export interface FeeTier {
+    id: string
+    scheduleId: string
+    minVolumeCents: number
+    maxVolumeCents: number | null
+    rateBps: number
+    sortOrder: number
+}
+
+export interface FeeScheduleWithTiers {
+    schedule: {
+        id: string
+        tenantId: string
+        effectiveFromUtc: string
+        effectiveToUtc: string | null
+        monthlyCapCents: number | null
+        createdAt: string
+    }
+    tiers: FeeTier[]
+}
+
+export interface AuditLogEntry {
+    id: string
+    actorUserId: string | null
+    actorEmail: string | null
+    actorRole: string | null
+    action: string
+    targetKind: string | null
+    targetId: string | null
+    summary: string
+    metadata: string | null
+    ipAddress: string | null
+    tenantId: string | null
+    createdAt: string
+}
+
+export interface FeeTierInput {
+    minVolumeCents: number
+    maxVolumeCents: number | null
+    rateBps: number
 }
 
 export interface DisputeListItem {
@@ -117,6 +280,15 @@ export interface DisputeListItem {
     evidenceDueByUtc: string | null
     stripeCreatedAtUtc: string
     updatedAtUtc: string
+}
+
+export interface ReconciliationResult {
+    fromUtc: string
+    toUtc: string
+    stripe: { count: number; grossCents: number; feeCents: number; netCents: number } | null
+    ledger: { count: number; grossCents: number; stripeFeeCents: number; ridepassCutCents: number; netToTenantCents: number }
+    gaps: { grossGap: number; feeGap: number; netGap: number; expectedStripeNet: number }
+    stripeConfigured: boolean
 }
 
 export interface RefundListItem {

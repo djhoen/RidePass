@@ -48,15 +48,16 @@ ufw --force enable
 log "fail2ban: enable for SSH"
 systemctl enable --now fail2ban
 
-log "Install .NET 10 ASP.NET Core runtime (Microsoft repo)"
+log "Install .NET 10 ASP.NET Core runtime + SDK (Microsoft repo)"
 if ! command -v dotnet >/dev/null || ! dotnet --list-runtimes 2>/dev/null | grep -q 'Microsoft.AspNetCore.App 10\.'; then
   wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb -O /tmp/ms-prod.deb
   dpkg -i /tmp/ms-prod.deb
   rm /tmp/ms-prod.deb
   apt-get update -qq
-  apt-get install -yqq aspnetcore-runtime-10.0
+  apt-get install -yqq aspnetcore-runtime-10.0 dotnet-sdk-10.0
 fi
 dotnet --list-runtimes
+dotnet --list-sdks
 
 log "Install Node.js 22 LTS (NodeSource)"
 if ! command -v node >/dev/null || [[ "$(node -v)" != v22* ]]; then

@@ -46,6 +46,13 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        public async Task<List<EventTicketPurchase>> ListByStripePaymentIntentId(string paymentIntentId)
+        {
+            var sql = $"SELECT {Columns} FROM event_ticket_purchase WHERE stripe_payment_intent_id = @paymentIntentId";
+            var result = await _db.Query<EventTicketPurchase>(sql, new { paymentIntentId });
+            return result.ToList();
+        }
+
         public async Task<EventTicketPurchaseWithContext?> GetByRedemptionToken(Guid token, Guid tenantId)
         {
             const string sql = @"

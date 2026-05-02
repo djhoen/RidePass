@@ -101,6 +101,26 @@ namespace Services.Repositories
             return result.ToList();
         }
 
+        public async Task<List<User>> ListSuperAdmins()
+        {
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE role = 'super_admin' AND status = 'active' AND tenant_id IS NULL
+                ORDER BY LOWER(email)";
+            return (await _db.Query<User>(sql)).ToList();
+        }
+
+        public async Task<List<User>> ListTenantUsersByRole(Guid tenantId, string role)
+        {
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE tenant_id = @tenantId AND role = @role AND status = 'active'
+                ORDER BY LOWER(email)";
+            return (await _db.Query<User>(sql, new { tenantId, role })).ToList();
+        }
+
         public async Task UpdateRole(Guid id, string role)
         {
             const string sql = "UPDATE users SET role = @role WHERE id = @id";

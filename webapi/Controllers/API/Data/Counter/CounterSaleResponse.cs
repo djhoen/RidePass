@@ -1,0 +1,20 @@
+namespace webapi.Controllers.API.Data.Counter
+{
+    public class CounterSaleResponse
+    {
+        public string ClientSecret { get; set; } = null!;
+        public int TotalAmountCents { get; set; }
+        public List<CounterSaleLineItem> LineItems { get; set; } = new();
+    }
+
+    public class CounterSaleLineItem
+    {
+        public string Kind { get; set; } = null!;     // "day_pass" or "event_ticket"
+        public Guid PurchaseId { get; set; }
+        public Guid RedemptionToken { get; set; }
+        public string DisplayName { get; set; } = null!;
+        public int Quantity { get; set; }
+        public int UnitPriceCents { get; set; }
+        public int LineAmountCents { get; set; }
+    }
+}
