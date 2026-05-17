@@ -1,8 +1,8 @@
-namespace webapi.Controllers.API.Data.Redemption
+﻿namespace webapi.Controllers.API.Data.Redemption
 {
     public class RedemptionPreviewResponse
     {
-        public string Kind { get; set; } = null!; // "day_pass" | "event_ticket"
+        public string Kind { get; set; } = null!; // "pass" | "event_ticket"
         public Guid PurchaseId { get; set; }
         public Guid RedemptionToken { get; set; }
         public string PurchaserName { get; set; } = null!;

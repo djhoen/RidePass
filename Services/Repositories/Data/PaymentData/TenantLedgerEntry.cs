@@ -1,11 +1,11 @@
-namespace Services.Repositories.Data.PaymentData
+﻿namespace Services.Repositories.Data.PaymentData
 {
     public class TenantLedgerEntry
     {
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public string EntryKind { get; set; } = null!;     // sale | refund | dispute_loss | adjustment
-        public string? SourceKind { get; set; }            // day_pass | event_ticket | null
+        public string? SourceKind { get; set; }            // pass | event_ticket | null
         public Guid? SourceId { get; set; }
         public DateTime OccurredAtUtc { get; set; }
         public int GrossCents { get; set; }
@@ -17,6 +17,7 @@ namespace Services.Repositories.Data.PaymentData
         public string? StripePaymentIntentId { get; set; }
         public Guid? PayoutId { get; set; }
         public string? Memo { get; set; }
+        public string PaymentMethod { get; set; } = "stripe";    // stripe | cash | voucher
         public DateTime CreatedAt { get; set; }
     }
 

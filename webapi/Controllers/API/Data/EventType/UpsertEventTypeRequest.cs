@@ -10,6 +10,9 @@ namespace webapi.Controllers.API.Data.EventType
         [Required, RegularExpression("^#[0-9A-Fa-f]{6}$")]
         public string Color { get; set; } = null!;
 
+        // Optional default cover image; falls back to a flat-color card on the home page when null.
+        public string? ImageUrl { get; set; }
+
         public int SortOrder { get; set; } = 100;
     }
 }

@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.Reports
+﻿namespace webapi.Controllers.API.Data.Reports
 {
     public class TenantReportSummary
     {
@@ -13,7 +13,7 @@ namespace webapi.Controllers.API.Data.Reports
         public int DisputedCount { get; set; }
         public long RefundedAmountCents { get; set; }
         public List<DailyRevenuePointDto> DailyRevenue { get; set; } = new();
-        public List<TopProductDto> TopDayPassProducts { get; set; } = new();
+        public List<TopProductDto> TopPassProducts { get; set; } = new();
         public List<TopEventDto> TopEvents { get; set; } = new();
     }
 

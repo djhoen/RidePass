@@ -17,6 +17,7 @@ namespace webapi.AuthPolicies
         public const string ReportsView    = "reports.view";
         public const string DisputesView   = "disputes.view";
         public const string CampaignsManage = "campaigns.manage";
+        public const string CustomersView  = "customers.view";
 
         // Compile-time policy names for [Authorize(Policy = ...)] attributes.
         // Must match TenantPermissionRequirement.PolicyName(perm) format.
@@ -32,13 +33,14 @@ namespace webapi.AuthPolicies
             public const string ReportsView    = "TenantPerm:reports.view";
             public const string DisputesView   = "TenantPerm:disputes.view";
             public const string CampaignsManage = "TenantPerm:campaigns.manage";
+            public const string CustomersView  = "TenantPerm:customers.view";
         }
 
         public static readonly string[] All =
         {
             UsersManage, SettingsManage, CatalogManage,
             SalesCounter, SalesRedeem, SalesView, SalesCancel,
-            ReportsView, DisputesView, CampaignsManage,
+            ReportsView, DisputesView, CampaignsManage, CustomersView,
         };
 
         public static IReadOnlySet<string> ForRole(string role) =>
@@ -60,7 +62,7 @@ namespace webapi.AuthPolicies
         private static readonly HashSet<string> ManagerSet = new()
         {
             CatalogManage, SalesCounter, SalesRedeem, SalesView, SalesCancel,
-            ReportsView, DisputesView, CampaignsManage,
+            ReportsView, DisputesView, CampaignsManage, CustomersView,
         };
 
         private static readonly HashSet<string> CashierSet = new()
@@ -75,7 +77,7 @@ namespace webapi.AuthPolicies
 
         private static readonly HashSet<string> AccountantSet = new()
         {
-            SalesView, ReportsView, DisputesView,
+            SalesView, ReportsView, DisputesView, CustomersView,
         };
     }
 }

@@ -15,7 +15,9 @@ namespace Services.Repositories
             applied_tier_id AS AppliedTierId,
             cumulative_monthly_volume_at_sale_cents AS CumulativeMonthlyVolumeAtSaleCents,
             stripe_payment_intent_id AS StripePaymentIntentId,
-            payout_id AS PayoutId, memo, created_at AS CreatedAt";
+            payout_id AS PayoutId, memo,
+            payment_method AS PaymentMethod,
+            created_at AS CreatedAt";
 
         private readonly IDbHelper _db;
 
@@ -28,12 +30,12 @@ namespace Services.Repositories
                     (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
                      gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
                      applied_tier_id, cumulative_monthly_volume_at_sale_cents,
-                     stripe_payment_intent_id, payout_id, memo)
+                     stripe_payment_intent_id, payout_id, memo, payment_method)
                 VALUES
                     (@TenantId, @EntryKind, @SourceKind, @SourceId, @OccurredAtUtc,
                      @GrossCents, @StripeFeeCents, @RidepassCutCents, @NetToTenantCents,
                      @AppliedTierId, @CumulativeMonthlyVolumeAtSaleCents,
-                     @StripePaymentIntentId, @PayoutId, @Memo)
+                     @StripePaymentIntentId, @PayoutId, @Memo, @PaymentMethod)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, entry)).First();
         }
@@ -79,6 +81,8 @@ namespace Services.Repositories
 
         public async Task<LedgerPeriodTotals> SumForPeriod(DateTime fromUtc, DateTime toUtc)
         {
+            // Reconciliation against Stripe is only meaningful for entries Stripe actually
+            // processed. Cash and voucher rows are excluded.
             const string sql = @"
                 SELECT
                     COUNT(*)::int AS Count,
@@ -87,7 +91,8 @@ namespace Services.Repositories
                     COALESCE(SUM(ridepass_cut_cents), 0)::bigint AS RidepassCutCents,
                     COALESCE(SUM(net_to_tenant_cents), 0)::bigint AS NetToTenantCents
                 FROM tenant_ledger_entry
-                WHERE occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc";
+                WHERE occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
+                  AND payment_method = 'stripe'";
             return (await _db.Query<LedgerPeriodTotals>(sql, new { fromUtc, toUtc })).First();
         }
 

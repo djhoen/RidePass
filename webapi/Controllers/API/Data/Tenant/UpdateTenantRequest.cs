@@ -10,10 +10,49 @@ namespace webapi.Controllers.API.Data.Tenant
         public string Timezone { get; set; } = null!;
 
         public bool RequireReservationForPasses { get; set; }
+
+        public bool RequireEmergencyContact { get; set; }
+
+        public bool AllowEventSubscriptions { get; set; } = true;
+    }
+
+    public class UpdateTenantHomeContentRequest
+    {
+        public string? AboutHtml { get; set; }
+        // hours_json is opaque on the wire — the frontend constructs the
+        // {mon: {open: "09:00", close: "17:00"}, ...} structure.
+        public string? HoursJson { get; set; }
+
+        // Heading text for the events row on the public home page (null = "Next Up").
+        public string? HomeNextUpTitle { get; set; }
+        // Whitelist of event type IDs to surface in the row (null/empty = all).
+        public Guid[]? HomeNextUpEventTypeIds { get; set; }
+    }
+
+    public class UpdateTenantDailyStatusRequest
+    {
+        // null = clear status. true = open. false = closed.
+        public bool? Open { get; set; }
+        [System.ComponentModel.DataAnnotations.MaxLength(280)]
+        public string? Message { get; set; }
+    }
+
+    public class UpdateTenantFooterRequest
+    {
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
+        public string? ContactEmail { get; set; }
+        [System.ComponentModel.DataAnnotations.MaxLength(40)]
+        public string? Phone { get; set; }
+        public string? SocialFacebookUrl { get; set; }
+        public string? SocialInstagramUrl { get; set; }
+        public string? SocialTiktokUrl { get; set; }
+        public string? SocialYoutubeUrl { get; set; }
+        public string? RefundPolicyHtml { get; set; }
     }
 
     public class UpdateTenantLocationRequest
     {
+        public string? ShippingName { get; set; }
         public string? AddressLine { get; set; }
         public string? City { get; set; }
         public string? Region { get; set; }

@@ -9,8 +9,15 @@ namespace Services.Repositories
         private const string Columns = @"
             id, tenant_id AS TenantId, tier_id AS TierId, purchaser_user_id AS PurchaserUserId,
             stripe_payment_intent_id AS StripePaymentIntentId, amount_cents AS AmountCents,
+            service_charge_cents AS ServiceChargeCents,
+            applied_reward_redemption_id AS AppliedRewardRedemptionId,
+            payment_method AS PaymentMethod,
             status, purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
-            redemption_token AS RedemptionToken, created_at AS CreatedAt, updated_at AS UpdatedAt";
+            redemption_token AS RedemptionToken,
+            redeemed_at_utc AS RedeemedAtUtc, redeemed_by_user_id AS RedeemedByUserId,
+            sold_by_user_id AS SoldByUserId,
+            race_number AS RaceNumber,
+            created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string WithContextColumns = Columns + @",
             tier_name AS TierName, event_id AS EventId,
@@ -24,9 +31,11 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO event_ticket_purchase
-                    (tenant_id, tier_id, purchaser_user_id, amount_cents, status, purchaser_email, purchaser_name)
+                    (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents, applied_reward_redemption_id, payment_method,
+                     status, purchaser_email, purchaser_name, sold_by_user_id)
                 VALUES
-                    (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @Status, @PurchaserEmail, @PurchaserName)
+                    (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents, @AppliedRewardRedemptionId, @PaymentMethod,
+                     @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId)
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
             return (row.Id, row.RedemptionToken);
@@ -86,6 +95,37 @@ namespace Services.Repositories
             await _db.Execute(sql, new { id, status });
         }
 
+        public async Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc)
+        {
+            // tenant_id predicate prevents a stray purchaseId from another tenant being
+            // flipped to redeemed. UndoRedeemed already had this; MarkRedeemed didn't.
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET status = 'redeemed', redeemed_at_utc = @atUtc, redeemed_by_user_id = @redeemedByUserId
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, redeemedByUserId, atUtc });
+        }
+
+        // Reverse a check-in (status: redeemed → paid) so staff can correct
+        // an accidental scan. Audit fields are cleared along with status.
+        public async Task UndoRedeemed(Guid id, Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET status = 'paid', redeemed_at_utc = NULL, redeemed_by_user_id = NULL
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'redeemed'";
+            await _db.Execute(sql, new { id, tenantId });
+        }
+
+        public async Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET race_number = @raceNumber
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, raceNumber });
+        }
+
         public async Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason)
         {
             const string sql = @"
@@ -102,6 +142,37 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE event_ticket_purchase SET status = 'refunded', refund_note = @refundNote WHERE id = @id";
             await _db.Execute(sql, new { id, refundNote });
+        }
+
+        // Race-class one-per-rider enforcement. Matches on user_id when signed in,
+        // falls back to email (case-insensitive) for guest checkouts. Cancelled and
+        // refunded rows free the slot; pending/paid/redeemed all count as active.
+        public async Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail)
+        {
+            var normalisedEmail = string.IsNullOrWhiteSpace(purchaserEmail) ? null : purchaserEmail.Trim();
+            if (!purchaserUserId.HasValue && string.IsNullOrEmpty(normalisedEmail))
+            {
+                return false;
+            }
+            const string sql = @"
+                SELECT EXISTS(
+                    SELECT 1 FROM event_ticket_purchase
+                    WHERE tenant_id = @tenantId
+                      AND tier_id = @tierId
+                      AND status IN ('pending', 'paid', 'redeemed')
+                      AND (
+                           (@purchaserUserId IS NOT NULL AND purchaser_user_id = @purchaserUserId)
+                        OR (@purchaserEmail  IS NOT NULL AND LOWER(purchaser_email) = LOWER(@purchaserEmail))
+                      )
+                )";
+            var rows = await _db.Query<bool>(sql, new
+            {
+                tenantId,
+                tierId,
+                purchaserUserId,
+                purchaserEmail = normalisedEmail,
+            });
+            return rows.FirstOrDefault();
         }
 
         public async Task<List<EventTicketPurchaseWithContext>> ListByStatusAcrossTenants(string status)
@@ -134,7 +205,8 @@ namespace Services.Repositories
                        p.status, p.purchaser_email AS PurchaserEmail, p.purchaser_name AS PurchaserName,
                        p.redemption_token AS RedemptionToken,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
-                       t.name AS TierName, e.id AS EventId, e.title AS EventTitle, e.starts_at AS EventStartsAt
+                       t.name AS TierName, t.kind AS TierKind,
+                       e.id AS EventId, e.title AS EventTitle, e.starts_at AS EventStartsAt
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id
                 JOIN event e ON e.id = t.event_id

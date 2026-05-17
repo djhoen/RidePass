@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 export interface EventDto {
     id: string
@@ -6,6 +6,7 @@ export interface EventDto {
     eventTypeCode: string
     eventTypeName: string
     eventTypeColor: string
+    eventTypeImageUrl: string | null
     title: string
     description: string | null
     startsAtUtc: string
@@ -14,9 +15,57 @@ export interface EventDto {
     capacity: number | null
     locationLabel: string | null
     status: 'scheduled' | 'cancelled'
+    requiresRiderWaiver: boolean
+    requiresSpectatorWaiver: boolean
+    spectatorWaiverId: string | null
+    racerWaiverId: string | null
+    imageUrl: string | null
     hasActiveTiers?: boolean
+    hasSpectatorTiers?: boolean
+    hasRaceEntryTiers?: boolean
     minTicketPriceCents?: number | null
     spotsReserved?: number | null
+    eligiblePasses?: EligiblePass[]
+    eligibleExtras?: EligibleExtra[]
+}
+
+export interface EligiblePass {
+    id: string
+    name: string
+    description: string | null
+    priceCents: number
+    requiresWaiver: boolean
+    isActive: boolean
+}
+
+export interface EligibleExtra {
+    productId: string
+    name: string
+    kind: string
+    priceCents: number
+    imageUrl: string | null
+    inventory: number | null
+    sold: number
+    remaining: number   // -1 if unlimited
+    requiresWaiver: boolean
+    variants: EligibleExtraVariant[]
+}
+
+export interface EligibleExtraVariant {
+    id: string
+    size: string | null
+    color: string | null
+    gender: string | null
+    priceCents: number          // effective: variant override or product
+    imageUrl: string | null     // effective: variant override or product
+    inventory: number | null
+    sold: number
+    remaining: number           // -1 if unlimited
+}
+
+export interface EligibleExtraInput {
+    productId: string
+    inventory: number | null
 }
 
 export interface UpsertEventDto {
@@ -29,6 +78,13 @@ export interface UpsertEventDto {
     capacity: number | null
     locationLabel: string | null
     status: 'scheduled' | 'cancelled'
+    requiresRiderWaiver: boolean
+    requiresSpectatorWaiver: boolean
+    spectatorWaiverId: string | null
+    racerWaiverId: string | null
+    imageUrl: string | null
+    eligiblePassProductIds?: string[]
+    eligibleExtras?: EligibleExtraInput[]
 }
 
 export class EventService {
@@ -40,6 +96,10 @@ export class EventService {
 
     async list(fromUtc: string, toUtc: string) {
         return axios.get<{ data: EventDto[] }>(`${this.apiUrl}/Event`, { params: { fromUtc, toUtc } })
+    }
+
+    async getPublic(id: string) {
+        return axios.get<{ data: EventDto }>(`${this.apiUrl}/Event/Public/${id}`)
     }
 
     async create(req: UpsertEventDto) {
@@ -56,5 +116,13 @@ export class EventService {
 
     async duplicate(id: string) {
         return axios.post(`${this.apiUrl}/Event/${id}/Duplicate`)
+    }
+
+    async uploadImage(file: File) {
+        const form = new FormData()
+        form.append('file', file)
+        return axios.post<{ data: { imageUrl: string } }>(`${this.apiUrl}/Event/Image`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        })
     }
 }

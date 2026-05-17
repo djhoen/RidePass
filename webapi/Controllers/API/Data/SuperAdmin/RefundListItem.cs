@@ -1,8 +1,8 @@
-namespace webapi.Controllers.API.Data.SuperAdmin
+﻿namespace webapi.Controllers.API.Data.SuperAdmin
 {
     public class RefundListItem
     {
-        public string Kind { get; set; } = null!; // "day_pass" | "event_ticket"
+        public string Kind { get; set; } = null!; // "pass" | "event_ticket"
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public string TenantSubdomain { get; set; } = null!;

@@ -24,6 +24,43 @@
         </v-row>
 
         <v-row v-if="!loading">
+            <v-col cols="12">
+                <v-card class="mb-4">
+                    <v-card-title>Mobile phone</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Used for waitlist promotions and event-day alerts.
+                        </p>
+                        <v-row>
+                            <v-col cols="12" sm="6">
+                                <PhoneField v-model="phone" label="Phone" density="compact" />
+                            </v-col>
+                        </v-row>
+                        <v-btn color="primary" :loading="savingPhone" :disabled="!canSavePhone" class="mt-2"
+                            @click="savePhone">Save phone</v-btn>
+                    </v-card-text>
+                </v-card>
+                <v-card class="mb-4">
+                    <v-card-title>Emergency contact</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Who to call if there's a problem at the track. Some tracks won't let you
+                            purchase passes until this is on file.
+                        </p>
+                        <v-row>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="emergencyContact.name" label="Name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <PhoneField v-model="emergencyContact.phone" label="Phone" density="compact" />
+                            </v-col>
+                        </v-row>
+                        <v-btn color="primary" :loading="savingEmergency" :disabled="!canSaveEmergency" class="mt-2"
+                            @click="saveEmergencyContact">Save emergency contact</v-btn>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+
             <v-col cols="12" md="3" class="text-center">
                 <v-avatar size="120" color="grey-lighten-2" class="mb-4">
                     <v-img v-if="profile.imageUrl" :src="profile.imageUrl"></v-img>
@@ -57,7 +94,7 @@
                                     <v-textarea v-model="profile.aboutMe" label="About Me" rows="3"></v-textarea>
                                 </v-col>
                             </v-row>
-                            <v-btn type="submit" color="primary" :loading="saving">Save</v-btn>
+                            <v-btn type="submit" color="primary" class="mt-2" :loading="saving">Save</v-btn>
                         </v-form>
                     </v-card-text>
                 </v-card>
@@ -73,6 +110,7 @@ import { ref, computed, onMounted } from 'vue'
 import { UserService } from '@/services/UserService'
 import { NewsletterService } from '@/services/NewsletterService'
 import Spinner from '@/components/Spinner.vue'
+import PhoneField from '@/components/PhoneField.vue'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
 
@@ -90,6 +128,14 @@ const profile = ref<any>({
 const profileImage = ref<File[] | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const phone = ref('')
+const savingPhone = ref(false)
+const canSavePhone = computed(() => phone.value.replace(/\D/g, '').length >= 7)
+const emergencyContact = ref({ name: '', phone: '' })
+const savingEmergency = ref(false)
+const canSaveEmergency = computed(() =>
+    emergencyContact.value.name.trim().length > 0
+    && emergencyContact.value.phone.replace(/\D/g, '').length >= 7)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('success')
@@ -99,6 +145,12 @@ onMounted(async () => {
         loading.value = true
         const response = await userService.getProfile()
         profile.value = response.data
+        const data = (response.data as any).data ?? response.data
+        phone.value = data?.phone ?? ''
+        emergencyContact.value = {
+            name: data?.emergencyContactName ?? '',
+            phone: data?.emergencyContactPhone ?? '',
+        }
     } catch {
         snackbarText.value = 'Failed to load profile.'
         snackbarColor.value = 'error'
@@ -133,6 +185,43 @@ async function toggleNewsletter(next: boolean | null) {
         snackbar.value = true
     } finally {
         newsletterSaving.value = false
+    }
+}
+
+async function savePhone() {
+    if (!canSavePhone.value) return
+    savingPhone.value = true
+    try {
+        await userService.updatePhone({ phone: phone.value.trim() })
+        snackbarText.value = 'Phone saved.'
+        snackbarColor.value = 'success'
+        snackbar.value = true
+    } catch (err: any) {
+        snackbarText.value = err.response?.data?.error || 'Failed to save phone.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+    } finally {
+        savingPhone.value = false
+    }
+}
+
+async function saveEmergencyContact() {
+    if (!canSaveEmergency.value) return
+    savingEmergency.value = true
+    try {
+        await userService.updateEmergencyContact({
+            name: emergencyContact.value.name.trim(),
+            phone: emergencyContact.value.phone.trim(),
+        })
+        snackbarText.value = 'Emergency contact saved.'
+        snackbarColor.value = 'success'
+        snackbar.value = true
+    } catch (err: any) {
+        snackbarText.value = err.response?.data?.error || 'Failed to save emergency contact.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+    } finally {
+        savingEmergency.value = false
     }
 }
 

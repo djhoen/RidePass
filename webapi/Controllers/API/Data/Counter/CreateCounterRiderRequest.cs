@@ -12,5 +12,14 @@ namespace webapi.Controllers.API.Data.Counter
 
         [Required, MaxLength(120)]
         public string LastName { get; set; } = null!;
+
+        [Required]
+        public DateTime Birthdate { get; set; }
+
+        [Required, MaxLength(120)]
+        public string EmergencyContactName { get; set; } = null!;
+
+        [Required, MaxLength(40)]
+        public string EmergencyContactPhone { get; set; } = null!;
     }
 }

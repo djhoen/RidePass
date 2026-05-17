@@ -6,7 +6,7 @@
 
         <v-card v-else-if="preview" class="pa-4">
             <v-card-title class="d-flex align-center flex-wrap ga-2">
-                <span>{{ preview.kind === 'day_pass' ? 'Day Pass' : 'Event Ticket' }}</span>
+                <span>{{ preview.kind === 'pass' ? 'Pass' : 'Event Ticket' }}</span>
                 <v-chip size="small" :color="statusColor(preview.status)">{{ preview.status }}</v-chip>
                 <v-chip v-if="preview.status === 'paid' && !preview.isRedeemableToday" size="small" color="warning">
                     Not redeemable today

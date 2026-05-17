@@ -6,7 +6,6 @@
             <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 180px"></v-text-field>
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 180px"></v-text-field>
             <v-select v-model="statusFilter" :items="statusOptions" label="Status" density="compact" hide-details clearable style="max-width: 160px"></v-select>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
         </div>
 
         <v-card v-if="disputes.length > 0" class="mb-4" color="red-lighten-5">
@@ -56,17 +55,20 @@
                 <thead>
                     <tr>
                         <th style="width: 180px">When</th>
+                        <th style="width: 130px">Kind</th>
                         <th>Purchaser</th>
-                        <th>Product</th>
+                        <th>Item</th>
                         <th style="width: 110px">Amount</th>
                         <th style="width: 120px">Status</th>
-                        <th style="width: 140px">Valid On</th>
                         <th style="width: 120px"></th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="p in purchases" :key="p.id">
+                    <tr v-for="p in purchases" :key="p.kind + ':' + p.id">
                         <td>{{ formatWhen(p.createdAt) }}</td>
+                        <td>
+                            <v-chip size="small">{{ kindLabel(p.kind) }}</v-chip>
+                        </td>
                         <td>
                             <div>{{ p.purchaserName }}</div>
                             <div class="text-caption text-medium-emphasis">{{ p.purchaserEmail }}</div>
@@ -76,9 +78,8 @@
                         <td>
                             <v-chip size="small" :color="statusColor(p.status)">{{ p.status }}</v-chip>
                         </td>
-                        <td>{{ p.validOnDate ? p.validOnDate.substring(0,10) : '—' }}</td>
                         <td>
-                            <v-btn v-if="p.status === 'paid'" size="small" color="error" variant="tonal"
+                            <v-btn v-if="canCancel(p)" size="small" color="error" variant="tonal"
                                 @click="openCancel(p)">Cancel</v-btn>
                         </td>
                     </tr>
@@ -119,12 +120,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
-import { DayPassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/DayPassService'
+import { PassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/PassService'
 import { branding } from '@/stores/branding'
 
-const service = new DayPassService()
+const service = new PassService()
 
 const today = dayjs()
 const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
@@ -199,8 +200,15 @@ async function load() {
     }
 }
 
+// Auto-reload whenever any filter changes. Date pickers fire on commit (not on
+// every keystroke) and v-select fires on selection, so a plain watcher is fine
+// — no debounce needed.
+watch([rangeFrom, rangeTo, statusFilter], () => { load() })
+
 function formatWhen(utc: string): string {
-    return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
+    // Friendly 12-hour format ("May 14, 5:30 PM") — matches the dashboard's
+    // recent-purchases panel so the same row reads the same in both places.
+    return dayjs.utc(utc).tz(tz()).format('MMM D, h:mm A')
 }
 
 function statusColor(status: string): string {
@@ -215,6 +223,29 @@ function statusColor(status: string): string {
     }
 }
 
+// Pretty labels for the v_recent_sales discriminator.
+const KIND_LABELS: Record<string, string> = {
+    pass: 'Day Pass',
+    event_ticket: 'Ticket',
+    event_extra: 'Add-on',
+    season_pass: 'Season Pass',
+    membership: 'Membership',
+    gift_card: 'Gift Card',
+    rental: 'Rental',
+}
+function kindLabel(kind: string): string {
+    return KIND_LABELS[kind] ?? kind
+}
+
+// Which kinds have an admin-cancel endpoint today. Other kinds (gift card,
+// rental, season pass, membership, etc.) still need to be cancelled via their
+// dedicated admin flows, so we hide the inline Cancel button rather than wire
+// it to a 404.
+function canCancel(p: PurchaseRow): boolean {
+    if (p.status !== 'paid') return false
+    return p.kind === 'pass' || p.kind === 'event_ticket'
+}
+
 function openCancel(p: PurchaseRow) {
     cancelTarget.value = p
     cancelReason.value = ''
@@ -226,7 +257,15 @@ async function confirmCancel() {
     cancelling.value = true
     try {
         const reason = cancelReason.value.trim().length > 0 ? cancelReason.value.trim() : null
-        await service.cancelDayPass(cancelTarget.value.id, reason)
+        const t = cancelTarget.value
+        // Dispatch to the right cancel endpoint per kind. Other kinds are
+        // filtered out by canCancel(), so this switch only needs to cover
+        // 'pass' and 'event_ticket' today.
+        if (t.kind === 'event_ticket') {
+            await service.cancelTicket(t.id, reason)
+        } else {
+            await service.cancelPass(t.id, reason)
+        }
         cancelDialog.value = false
         snackbarText.value = 'Purchase cancelled. Refund queued for super-admin.'
         snackbarColor.value = 'success'

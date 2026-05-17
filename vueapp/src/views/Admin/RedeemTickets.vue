@@ -19,68 +19,53 @@
             </v-card-text>
         </v-card>
 
-        <v-card v-if="preview" class="mb-4 pa-4">
+        <v-card v-if="order" class="mb-4 pa-4">
             <v-card-title class="d-flex align-center flex-wrap ga-2">
-                <span>{{ preview.kind === 'day_pass' ? 'Day Pass' : 'Event Ticket' }}</span>
-                <v-chip size="small" :color="statusColor(preview.status)">{{ preview.status }}</v-chip>
-                <v-chip v-if="preview.status === 'paid' && !preview.isRedeemableToday" size="small" color="warning">
-                    Not redeemable today
+                Order
+                <v-chip v-if="redeemableCount > 0" size="small" color="success">
+                    {{ redeemableCount }} redeemable
                 </v-chip>
             </v-card-title>
             <v-card-text>
-                <!-- Event-ticket details (richer) -->
-                <template v-if="preview.kind === 'event_ticket'">
-                    <div class="text-h6 mb-1">{{ preview.eventTitle }}</div>
-                    <div class="text-subtitle-2 text-medium-emphasis mb-2">Tier: {{ preview.tierName }}</div>
-                    <div class="mb-1">
-                        <v-icon size="small" class="mr-1">mdi-clock-outline</v-icon>
-                        <template v-if="preview.eventAllDay">
-                            {{ formatDate(preview.eventStartsAtUtc!) }}<template v-if="spansMultipleDays(preview)"> – {{ formatDate(preview.eventEndsAtUtc!) }}</template>
-                            (all day)
-                        </template>
-                        <template v-else>
-                            {{ formatInTenant(preview.eventStartsAtUtc!) }} – {{ formatInTenant(preview.eventEndsAtUtc!) }}
-                        </template>
-                    </div>
-                    <div v-if="preview.eventLocationLabel" class="mb-1">
-                        <v-icon size="small" class="mr-1">mdi-map-marker-outline</v-icon>
-                        {{ preview.eventLocationLabel }}
-                    </div>
-                    <div v-if="preview.eventDescription" class="text-body-2 text-medium-emphasis mb-3" style="white-space: pre-wrap">
-                        {{ preview.eventDescription }}
-                    </div>
-                </template>
+                <div class="text-body-2 mb-1"><strong>{{ order.purchaserName }}</strong></div>
+                <div class="text-body-2 text-medium-emphasis mb-3">{{ order.purchaserEmail }}</div>
 
-                <!-- Day-pass details -->
-                <template v-else>
-                    <div class="text-h6 mb-1">{{ preview.itemName }}</div>
-                    <div v-if="preview.validOnDate" class="text-body-2 mb-1">
-                        <v-icon size="small" class="mr-1">mdi-calendar-check</v-icon>
-                        Valid on {{ preview.validOnDate.substring(0, 10) }}
+                <p v-if="order.items.length === 0" class="text-medium-emphasis">No items found.</p>
+
+                <div v-for="item in order.items" :key="item.purchaseId"
+                     class="order-row d-flex align-start py-2 ga-3">
+                    <v-checkbox v-model="selectedIds" :value="item.purchaseId"
+                        :disabled="!item.isRedeemableToday"
+                        hide-details density="compact" class="mt-0"></v-checkbox>
+                    <div class="flex-grow-1" style="min-width: 0">
+                        <div class="text-body-1">
+                            <strong>{{ item.itemName }}</strong>
+                            <span class="text-medium-emphasis ml-2">${{ (item.amountCents / 100).toFixed(2) }}</span>
+                            <v-chip size="x-small" class="ml-2" :color="statusColor(item.status)">{{ item.status }}</v-chip>
+                            <v-chip size="x-small" class="ml-1" variant="tonal">{{ kindLabel(item.kind) }}</v-chip>
+                        </div>
+                        <div v-if="item.redeemedAtUtc" class="text-caption text-medium-emphasis">
+                            Redeemed {{ formatInTenant(item.redeemedAtUtc) }}
+                            <span v-if="item.redeemedByName"> by {{ item.redeemedByName }}</span>
+                        </div>
+                        <div v-else-if="!item.isRedeemableToday && item.notRedeemableReason" class="text-caption text-warning">
+                            {{ item.notRedeemableReason }}
+                        </div>
                     </div>
-                </template>
-
-                <v-divider class="my-3"></v-divider>
-
-                <div class="text-body-2 mb-1"><strong>{{ preview.purchaserName }}</strong></div>
-                <div class="text-body-2 text-medium-emphasis mb-1">{{ preview.purchaserEmail }}</div>
-                <div class="text-body-2 mb-1">${{ (preview.amountCents / 100).toFixed(2) }}</div>
-                <div class="text-caption text-medium-emphasis mb-4">
-                    Purchased {{ formatInTenant(preview.createdAtUtc) }} ({{ branding.timezone }})
                 </div>
 
-                <v-btn v-if="preview.status === 'paid' && preview.isRedeemableToday" color="success" :loading="redeeming" @click="redeem">
-                    Redeem Now
-                </v-btn>
-                <v-alert v-else-if="preview.status === 'paid' && !preview.isRedeemableToday" type="warning" density="compact">
-                    {{ preview.notRedeemableReason }}
-                </v-alert>
-                <v-alert v-else-if="preview.status === 'redeemed'" type="info" density="compact">
-                    Already redeemed.
-                </v-alert>
-                <v-alert v-else type="warning" density="compact">
-                    Cannot redeem — status is "{{ preview.status }}".
-                </v-alert>
+                <div class="d-flex align-center mt-4 ga-2 flex-wrap">
+                    <v-btn v-if="redeemableCount > 0" variant="text" size="small" @click="selectAllRedeemable">
+                        Select all redeemable
+                    </v-btn>
+                    <v-btn v-if="selectedIds.length > 0" variant="text" size="small" @click="selectedIds = []">
+                        Clear
+                    </v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn color="success" :loading="redeeming" :disabled="selectedIds.length === 0" @click="redeemSelected">
+                        Redeem {{ selectedIds.length }} {{ selectedIds.length === 1 ? 'item' : 'items' }}
+                    </v-btn>
+                </div>
             </v-card-text>
         </v-card>
 
@@ -89,16 +74,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { Html5Qrcode } from 'html5-qrcode'
-import { TicketService, type RedemptionPreview } from '@/services/TicketService'
+import { TicketService, type OrderLookup } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
 
 const service = new TicketService()
 
 const manualInput = ref('')
-const preview = ref<RedemptionPreview | null>(null)
+const order = ref<OrderLookup | null>(null)
+const orderToken = ref<string | null>(null)        // the originally-scanned token
+const selectedIds = ref<string[]>([])
 const loading = ref(false)
 const redeeming = ref(false)
 const scanning = ref(false)
@@ -108,6 +95,9 @@ let scanner: Html5Qrcode | null = null
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
+
+const redeemableCount = computed(() =>
+    order.value?.items.filter(i => i.isRedeemableToday).length ?? 0)
 
 async function startScan() {
     try {
@@ -135,7 +125,7 @@ async function onDecoded(decodedText: string) {
     const token = extractToken(decodedText)
     if (!token) return
     await stopScan()
-    await doPreview(token)
+    await loadOrder(token)
 }
 
 function extractToken(raw: string): string | null {
@@ -146,29 +136,48 @@ function extractToken(raw: string): string | null {
 async function lookupManual() {
     const token = extractToken(manualInput.value)
     if (!token) { flash('No token found in input.', 'error'); return }
-    await doPreview(token)
+    await loadOrder(token)
 }
 
-async function doPreview(token: string) {
+async function loadOrder(token: string) {
     try {
         loading.value = true
-        const r = await service.preview(token)
-        preview.value = (r.data as any).data
+        const r = await service.orderLookup(token)
+        order.value = (r.data as any).data
+        orderToken.value = token
+        // Auto-select everything redeemable so the staff can just click Redeem.
+        selectedIds.value = order.value?.items
+            .filter(i => i.isRedeemableToday)
+            .map(i => i.purchaseId) ?? []
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Not found.', 'error')
-        preview.value = null
+        flash(err.response?.data?.error || 'Order not found.', 'error')
+        order.value = null
+        orderToken.value = null
+        selectedIds.value = []
     } finally {
         loading.value = false
     }
 }
 
-async function redeem() {
-    if (!preview.value) return
+function selectAllRedeemable() {
+    selectedIds.value = order.value?.items
+        .filter(i => i.isRedeemableToday)
+        .map(i => i.purchaseId) ?? []
+}
+
+async function redeemSelected() {
+    if (!order.value || !orderToken.value || selectedIds.value.length === 0) return
+    redeeming.value = true
     try {
-        redeeming.value = true
-        const r = await service.redeem(preview.value.redemptionToken)
-        preview.value = (r.data as any).data
-        flash('Redeemed!', 'success')
+        const items = order.value.items
+            .filter(i => selectedIds.value.includes(i.purchaseId))
+            .map(i => ({ kind: i.kind, purchaseId: i.purchaseId }))
+        const r = await service.redeemBulk({ orderToken: orderToken.value, items })
+        const data = (r.data as any).data
+        if (data.errors?.length) flash(data.errors.join(' '), 'error')
+        else flash(`Redeemed ${data.redeemedCount}.`, 'success')
+        // Refresh the order so the redeemed rows now show as redeemed.
+        await loadOrder(orderToken.value)
     } catch (err: any) {
         flash(err.response?.data?.error || 'Redeem failed.', 'error')
     } finally {
@@ -176,19 +185,18 @@ async function redeem() {
     }
 }
 
+function kindLabel(kind: string): string {
+    switch (kind) {
+        case 'pass': return 'Pass'
+        case 'event_ticket': return 'Race Entry'
+        case 'extras': return 'Add-on'
+        case 'membership': return 'Membership'
+        default: return kind
+    }
+}
+
 function formatInTenant(utc: string): string {
     return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD HH:mm')
-}
-
-function formatDate(utc: string): string {
-    return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD')
-}
-
-function spansMultipleDays(p: RedemptionPreview): boolean {
-    if (!p.eventStartsAtUtc || !p.eventEndsAtUtc) return false
-    const tz = branding.timezone || 'UTC'
-    return dayjs.utc(p.eventStartsAtUtc).tz(tz).format('YYYY-MM-DD')
-        !== dayjs.utc(p.eventEndsAtUtc).tz(tz).format('YYYY-MM-DD')
 }
 
 function statusColor(status: string): string {
@@ -220,5 +228,8 @@ onBeforeUnmount(() => { if (scanner) stopScan() })
     border-radius: 6px;
     margin: 0 auto;
     background: #f5f5f5;
+}
+.order-row + .order-row {
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 </style>

@@ -86,6 +86,14 @@
                                 <v-list-item-subtitle>
                                     {{ formatWhen(e.startsAtUtc) }}<span v-if="e.capacity"> · capacity {{ e.capacity }}</span>
                                 </v-list-item-subtitle>
+                                <template #append>
+                                    <v-btn v-if="hasPerm('catalog.manage')" icon="mdi-pencil" variant="text" size="small"
+                                        :to="`/Admin/Events?edit=${e.id}`" title="Edit event"></v-btn>
+                                    <v-btn v-if="hasPerm('reports.view')" icon="mdi-account-group" variant="text"
+                                        size="small"
+                                        :to="`/Admin/Reports?report=event-riders&eventId=${e.id}`"
+                                        title="Rider report"></v-btn>
+                                </template>
                             </v-list-item>
                             <v-list-item v-if="snapshot.upcomingEvents.length === 0">
                                 <v-list-item-subtitle class="text-medium-emphasis">No upcoming events scheduled.</v-list-item-subtitle>
@@ -103,11 +111,12 @@
                     </v-card-title>
                     <v-card-text class="pa-0">
                         <v-list density="compact">
-                            <v-list-item v-for="p in snapshot.recentPurchases || []" :key="p.id">
+                            <v-list-item v-for="p in snapshot.recentPurchases || []" :key="p.kind + ':' + p.id">
                                 <v-list-item-title>
                                     {{ p.purchaserName }} — {{ p.productName }}
                                 </v-list-item-title>
                                 <v-list-item-subtitle>
+                                    <v-chip size="x-small" class="mr-1">{{ kindLabel(p.kind) }}</v-chip>
                                     ${{ (p.amountCents / 100).toFixed(2) }} · {{ p.status }} · {{ formatWhen(p.createdAtUtc) }}
                                 </v-list-item-subtitle>
                             </v-list-item>
@@ -117,6 +126,9 @@
                         </v-list>
                     </v-card-text>
                 </v-card>
+
+                <!-- Top Riders widget — self-contained component, fetches its own data. -->
+                <TopRidersWidget v-else-if="w.type === 'top.riders'" />
 
                 <!-- Quick actions -->
                 <v-card v-else-if="w.type === 'quickactions'" height="100%">
@@ -176,6 +188,7 @@ import { registerChartJs } from '@/helpers/ChartSetup'
 import { DashboardService, type DashboardSnapshot, type DashboardWidgetEntry } from '@/services/DashboardService'
 import authHelper from '@/helpers/AuthHelper'
 import { branding } from '@/stores/branding'
+import TopRidersWidget from '@/components/TopRidersWidget.vue'
 
 registerChartJs()
 
@@ -199,6 +212,7 @@ const CATALOG: WidgetMeta[] = [
     { type: 'chart.spark7',      title: '7-Day Revenue',        description: 'Sparkline of the last week.',            perm: 'reports.view',  sm: 12, md: 6 },
     { type: 'events.upcoming',   title: 'Upcoming Events',      description: 'Next 5 events on the schedule.',         perm: null,            sm: 12, md: 6 },
     { type: 'purchases.recent',  title: 'Recent Purchases',     description: 'Last 5 purchases on your tenant.',       perm: 'sales.view',    sm: 12, md: 6 },
+    { type: 'top.riders',        title: 'Top Riders',           description: 'Most-active waiver-signed riders this month or year.', perm: 'customers.view', sm: 12, md: 6 },
     { type: 'quickactions',      title: 'Quick Actions',        description: 'Shortcuts to the tools you use most.',   perm: null,            sm: 12, md: 6 },
 ]
 
@@ -354,6 +368,21 @@ watch(customizeOpen, isOpen => {
 
 function formatWhen(utc: string): string {
     return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('MMM D, h:mm A')
+}
+
+// Pretty labels for the v_recent_sales discriminator. Anything we forget to map
+// falls back to the raw kind slug so we still ship something useful.
+const KIND_LABELS: Record<string, string> = {
+    pass: 'Day Pass',
+    event_ticket: 'Ticket',
+    event_extra: 'Add-on',
+    season_pass: 'Season Pass',
+    membership: 'Membership',
+    gift_card: 'Gift Card',
+    rental: 'Rental',
+}
+function kindLabel(kind: string): string {
+    return KIND_LABELS[kind] ?? kind
 }
 
 function flash(text: string, color: 'success' | 'error') {

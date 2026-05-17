@@ -27,8 +27,39 @@ export class UserService {
         return axios.post(`${this.apiUrl}/User/UpdatePassword`, req);
     }
 
-    async resetPassword(req: any) {
+    async resetPassword(req: { email: string }) {
         return axios.post(`${this.apiUrl}/User/ResetPassword`, req);
+    }
+
+    async confirmPasswordReset(req: { token: string; newPassword: string }) {
+        return axios.post(`${this.apiUrl}/User/ResetPassword/Confirm`, req);
+    }
+
+    async updateEmergencyContact(req: { name: string; phone: string }) {
+        return axios.put(`${this.apiUrl}/User/Profile/EmergencyContact`, req);
+    }
+
+    async updatePhone(req: { phone: string }) {
+        return axios.put(`${this.apiUrl}/User/Profile/Phone`, req);
+    }
+
+    async updateRacerInfo(req: { bike: string | null; raceNumber: string | null }) {
+        return axios.put(`${this.apiUrl}/User/Profile/RacerInfo`, req);
+    }
+
+    async updateBirthdate(req: { birthdate: string }) {
+        return axios.put(`${this.apiUrl}/User/Profile/Birthdate`, req);
+    }
+
+    async updateAddress(req: {
+        addressLine: string | null
+        addressLine2: string | null
+        city: string | null
+        state: string | null
+        postalCode: string | null
+        country: string | null
+    }) {
+        return axios.put(`${this.apiUrl}/User/Profile/Address`, req);
     }
 
     // Tenant user management

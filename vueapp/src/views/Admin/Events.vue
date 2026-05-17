@@ -51,10 +51,8 @@
                         </td>
                         <td>{{ row.status }}</td>
                         <td class="text-right">
-                            <v-btn variant="text" size="small" @click="openTiers(row)">Tickets</v-btn>
+                            <v-btn variant="text" size="small" @click="openShare(row)">Share</v-btn>
                             <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>
-                            <v-btn variant="text" size="small" @click="dup(row)">Duplicate</v-btn>
-                            <v-btn variant="text" size="small" color="error" @click="remove(row)">Delete</v-btn>
                         </td>
                     </tr>
                     <tr v-if="!loading && rows.length === 0">
@@ -64,119 +62,103 @@
             </v-table>
         </v-card>
 
-        <v-dialog v-model="dialog" max-width="640">
-            <v-card>
-                <v-card-title>{{ editing ? 'Edit Event' : 'Add Event' }}</v-card-title>
+        <EventDialog v-model:open="dialog" :event="editing" @saved="onSaved" @deleted="onDeleted" @flash="flash" />
+
+        <v-dialog v-model="shareOpen" max-width="560">
+            <v-card v-if="sharing">
+                <v-card-title>Share event</v-card-title>
                 <v-card-text>
-                    <v-row>
-                        <v-col cols="12" md="8">
-                            <v-text-field v-model="form.title" label="Title" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="4">
-                            <v-select v-model="form.eventTypeId" :items="typeOptions" item-title="name" item-value="id"
-                                label="Type" density="compact"></v-select>
-                        </v-col>
-                    </v-row>
-                    <v-row>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model="form.startsLocal" type="datetime-local" label="Starts" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model="form.endsLocal" type="datetime-local" label="Ends" density="compact"></v-text-field>
-                        </v-col>
-                    </v-row>
-                    <v-row>
-                        <v-col cols="12" md="4">
-                            <v-checkbox v-model="form.allDay" label="All day"></v-checkbox>
-                        </v-col>
-                        <v-col cols="12" md="4">
-                            <v-text-field v-model.number="form.capacity" type="number" label="Capacity (blank = unlimited)" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="4">
-                            <v-select v-model="form.status" :items="['scheduled','cancelled']" label="Status" density="compact"></v-select>
-                        </v-col>
-                    </v-row>
-                    <v-text-field v-model="form.locationLabel" label="Location" density="compact"></v-text-field>
-                    <v-textarea v-model="form.description" label="Description" rows="3" density="compact"></v-textarea>
+                    <div class="text-subtitle-1 mb-1">{{ sharing.title }}</div>
+                    <div class="text-caption text-medium-emphasis mb-3">
+                        Direct link: <a :href="shareUrl" target="_blank" rel="noopener">{{ shareUrl }}</a>
+                    </div>
+                    <p v-if="!hasAnyTenantSocial" class="text-caption text-medium-emphasis mb-3">
+                        Add Facebook, Instagram, TikTok, or YouTube URLs in
+                        <router-link to="/Admin/Settings/Branding">Branding settings</router-link>
+                        to limit this list to your registered platforms. For now, all options are shown.
+                    </p>
+                    <SocialShare :url="shareUrl" :title="shareTitle" :text="shareText"
+                        :platforms="tenantSharePlatforms" />
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
-                    <v-btn @click="dialog = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="saving" @click="save">Save</v-btn>
+                    <v-btn @click="shareOpen = false">Close</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
-
-        <TicketTiersDialog v-model="tiersDialog" :event-id="tiersEventId" :event-title="tiersEventTitle" />
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
-import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding } from '@/stores/branding'
-import TicketTiersDialog from '@/components/TicketTiersDialog.vue'
+import EventDialog from '@/components/EventDialog.vue'
+import SocialShare, { type SocialSharePlatform } from '@/components/SocialShare.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const eventService = new EventService()
-const eventTypeService = new EventTypeService()
 
 const today = dayjs()
+// Default window: start of this month → 6 months out. Most upcoming-event browsing
+// happens within ~half a year; admins can widen via the date pickers if needed.
 const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
-const rangeTo = ref(today.endOf('month').add(1, 'day').format('YYYY-MM-DD'))
+const rangeTo = ref(today.startOf('month').add(6, 'month').format('YYYY-MM-DD'))
 
 const rows = ref<EventDto[]>([])
-const typeOptions = ref<EventType[]>([])
 const loading = ref(false)
 const dialog = ref(false)
 const editing = ref<EventDto | null>(null)
-const saving = ref(false)
 
-const form = ref({
-    eventTypeId: '',
-    title: '',
-    description: '' as string | null,
-    startsLocal: '',
-    endsLocal: '',
-    allDay: false,
-    capacity: null as number | null,
-    locationLabel: '' as string | null,
-    status: 'scheduled' as 'scheduled' | 'cancelled',
+const shareOpen = ref(false)
+const sharing = ref<EventDto | null>(null)
+const shareUrl = computed(() =>
+    sharing.value ? `${window.location.origin}/Event/${sharing.value.id}` : '')
+const shareTitle = computed(() =>
+    sharing.value ? `${sharing.value.title} — ${branding.displayName}` : '')
+const shareText = computed(() => {
+    if (!sharing.value) return ''
+    const date = dayjs.utc(sharing.value.startsAtUtc).tz(tz()).format('MMM D, YYYY')
+    return `Check out ${sharing.value.title} on ${date} at ${branding.displayName}.`
 })
 
-const tiersDialog = ref(false)
-const tiersEventId = ref<string | null>(null)
-const tiersEventTitle = ref<string>('')
+// Restrict the visible buttons to socials the tenant has actually registered.
+// Generic non-account-bound platforms (X, LinkedIn, WhatsApp, Reddit, Email)
+// are always available since they only need the user's own login. If the tenant
+// hasn't registered any account-tied platform yet, fall back to showing
+// everything so the dialog isn't useless.
+const hasAnyTenantSocial = computed(() => !!(branding.socialFacebookUrl
+    || branding.socialInstagramUrl || branding.socialTiktokUrl || branding.socialYoutubeUrl))
+const tenantSharePlatforms = computed<SocialSharePlatform[] | undefined>(() => {
+    if (!hasAnyTenantSocial.value) return undefined
+    const list: SocialSharePlatform[] = ['twitter', 'linkedin', 'whatsapp', 'reddit', 'email']
+    if (branding.socialFacebookUrl) list.unshift('facebook')
+    if (branding.socialInstagramUrl) list.push('instagram')
+    if (branding.socialTiktokUrl) list.push('tiktok')
+    return list
+})
+
+function openShare(row: EventDto) {
+    sharing.value = row
+    shareOpen.value = true
+}
 
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
-onMounted(async () => {
-    const types = await eventTypeService.list()
-    typeOptions.value = (types.data as any).data
-    if (typeOptions.value.length > 0 && !form.value.eventTypeId) {
-        form.value.eventTypeId = typeOptions.value[0].id
-    }
-    await load()
-})
+onMounted(load)
 
 function tz(): string { return branding.timezone || 'UTC' }
 
 function formatInTenant(utc: string): string {
     return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
-}
-
-function localToUtc(localValue: string): string {
-    // localValue is "YYYY-MM-DDTHH:mm"; treat as tenant-timezone and convert to UTC ISO
-    return dayjs.tz(localValue, tz()).utc().toISOString()
-}
-
-function utcToLocalInput(utc: string): string {
-    return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DDTHH:mm')
 }
 
 async function load() {
@@ -186,6 +168,25 @@ async function load() {
         const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
         const r = await eventService.list(fromUtc, toUtc)
         rows.value = (r.data as any).data
+
+        // Deep-link from elsewhere (e.g. dashboard "Edit" button): if ?edit=<id>
+        // is on the URL, open the editor for that event. We widen the date
+        // window if needed so the row is in the in-memory list. The query is
+        // cleared after we open the dialog so a refresh doesn't re-trigger it.
+        const editId = route.query.edit as string | undefined
+        if (editId) {
+            let target = rows.value.find(r => r.id === editId)
+            if (!target) {
+                // Event is outside the default 6-month window — fetch wider.
+                const wideFrom = dayjs().subtract(2, 'year').utc().toISOString()
+                const wideTo = dayjs().add(2, 'year').utc().toISOString()
+                const wider = await eventService.list(wideFrom, wideTo)
+                target = ((wider.data as any).data as EventDto[]).find(r => r.id === editId)
+            }
+            if (target) openEdit(target)
+            const { edit, ...rest } = route.query
+            router.replace({ path: route.path, query: rest })
+        }
     } finally {
         loading.value = false
     }
@@ -193,92 +194,16 @@ async function load() {
 
 function openCreate() {
     editing.value = null
-    const start = dayjs().tz(tz()).startOf('hour').add(1, 'hour')
-    form.value = {
-        eventTypeId: typeOptions.value[0]?.id ?? '',
-        title: '',
-        description: '',
-        startsLocal: start.format('YYYY-MM-DDTHH:mm'),
-        endsLocal: start.add(2, 'hour').format('YYYY-MM-DDTHH:mm'),
-        allDay: false,
-        capacity: null,
-        locationLabel: '',
-        status: 'scheduled',
-    }
     dialog.value = true
 }
 
 function openEdit(row: EventDto) {
     editing.value = row
-    form.value = {
-        eventTypeId: row.eventTypeId,
-        title: row.title,
-        description: row.description ?? '',
-        startsLocal: utcToLocalInput(row.startsAtUtc),
-        endsLocal: utcToLocalInput(row.endsAtUtc),
-        allDay: row.allDay,
-        capacity: row.capacity,
-        locationLabel: row.locationLabel ?? '',
-        status: row.status,
-    }
     dialog.value = true
 }
 
-async function save() {
-    try {
-        saving.value = true
-        const body = {
-            eventTypeId: form.value.eventTypeId,
-            title: form.value.title.trim(),
-            description: form.value.description && form.value.description.trim().length > 0 ? form.value.description : null,
-            startsAtUtc: localToUtc(form.value.startsLocal),
-            endsAtUtc: localToUtc(form.value.endsLocal),
-            allDay: form.value.allDay,
-            capacity: form.value.capacity || null,
-            locationLabel: form.value.locationLabel && form.value.locationLabel.trim().length > 0 ? form.value.locationLabel : null,
-            status: form.value.status,
-        }
-        if (editing.value) {
-            await eventService.update(editing.value.id, body)
-        } else {
-            await eventService.create(body)
-        }
-        dialog.value = false
-        await load()
-        flash('Event saved.', 'success')
-    } catch (err: any) {
-        flash(err.response?.data?.error || 'Save failed.', 'error')
-    } finally {
-        saving.value = false
-    }
-}
-
-function openTiers(row: EventDto) {
-    tiersEventId.value = row.id
-    tiersEventTitle.value = row.title
-    tiersDialog.value = true
-}
-
-async function dup(row: EventDto) {
-    try {
-        await eventService.duplicate(row.id)
-        await load()
-        flash('Event duplicated (+7 days).', 'success')
-    } catch (err: any) {
-        flash(err.response?.data?.error || 'Duplicate failed.', 'error')
-    }
-}
-
-async function remove(row: EventDto) {
-    if (!confirm(`Delete "${row.title}"?`)) return
-    try {
-        await eventService.delete(row.id)
-        await load()
-        flash('Event deleted.', 'success')
-    } catch (err: any) {
-        flash(err.response?.data?.error || 'Delete failed.', 'error')
-    }
-}
+async function onSaved(_ev: EventDto) { await load() }
+async function onDeleted(_id: string) { await load() }
 
 function reservedChipColor(row: EventDto): string {
     if (!row.capacity) return 'default'

@@ -49,15 +49,22 @@
             <v-card>
                 <v-card-title>{{ editing ? 'Edit Blackout' : 'Add Blackout' }}</v-card-title>
                 <v-card-text>
+                    <v-checkbox v-model="form.allDay" label="All day"></v-checkbox>
                     <v-row>
                         <v-col cols="12" md="6">
-                            <v-text-field v-model="form.startsLocal" type="datetime-local" label="Starts" density="compact"></v-text-field>
+                            <v-text-field v-if="form.allDay" v-model="form.startDate" type="date"
+                                label="From (date)" density="compact"></v-text-field>
+                            <v-text-field v-else v-model="form.startsLocal" type="datetime-local"
+                                label="Starts" density="compact"></v-text-field>
                         </v-col>
                         <v-col cols="12" md="6">
-                            <v-text-field v-model="form.endsLocal" type="datetime-local" label="Ends" density="compact"></v-text-field>
+                            <v-text-field v-if="form.allDay" v-model="form.endDate" type="date"
+                                label="To (date, inclusive)" density="compact"
+                                hint="The blackout covers both dates entirely."></v-text-field>
+                            <v-text-field v-else v-model="form.endsLocal" type="datetime-local"
+                                label="Ends" density="compact"></v-text-field>
                         </v-col>
                     </v-row>
-                    <v-checkbox v-model="form.allDay" label="All day"></v-checkbox>
                     <v-textarea v-model="form.reason" label="Reason (optional)" rows="2" density="compact"></v-textarea>
                 </v-card-text>
                 <v-card-actions>
@@ -93,6 +100,8 @@ const saving = ref(false)
 const form = ref({
     startsLocal: '',
     endsLocal: '',
+    startDate: '',
+    endDate: '',
     allDay: false,
     reason: '' as string | null,
 })
@@ -135,6 +144,8 @@ function openCreate() {
     form.value = {
         startsLocal: start.format('YYYY-MM-DDTHH:mm'),
         endsLocal: start.add(1, 'day').format('YYYY-MM-DDTHH:mm'),
+        startDate: start.format('YYYY-MM-DD'),
+        endDate: start.format('YYYY-MM-DD'),
         allDay: true,
         reason: '',
     }
@@ -143,9 +154,18 @@ function openCreate() {
 
 function openEdit(row: BlackoutDto) {
     editing.value = row
+    const startsTz = dayjs.utc(row.startsAtUtc).tz(tz())
+    // For all-day rows the end_at is exclusive midnight of the day-after, so subtract a
+    // day to recover the inclusive last covered date for the UI.
+    const endsExclusiveTz = dayjs.utc(row.endsAtUtc).tz(tz())
+    const endDateInclusive = row.allDay
+        ? endsExclusiveTz.subtract(1, 'day').format('YYYY-MM-DD')
+        : endsExclusiveTz.format('YYYY-MM-DD')
     form.value = {
         startsLocal: utcToLocalInput(row.startsAtUtc),
         endsLocal: utcToLocalInput(row.endsAtUtc),
+        startDate: startsTz.format('YYYY-MM-DD'),
+        endDate: endDateInclusive,
         allDay: row.allDay,
         reason: row.reason ?? '',
     }
@@ -155,9 +175,30 @@ function openEdit(row: BlackoutDto) {
 async function save() {
     try {
         saving.value = true
+        let startsAtUtc: string
+        let endsAtUtc: string
+        if (form.value.allDay) {
+            // Snap to local midnight start; end is the *exclusive* midnight of the day
+            // after the last covered date, so the row cleanly covers full calendar days.
+            const startDate = form.value.startDate
+            const endDate = form.value.endDate || startDate
+            if (!startDate || !endDate) {
+                flash('Pick a start and end date.', 'error')
+                return
+            }
+            if (endDate < startDate) {
+                flash('End date must be on or after the start date.', 'error')
+                return
+            }
+            startsAtUtc = dayjs.tz(startDate + 'T00:00', tz()).utc().toISOString()
+            endsAtUtc = dayjs.tz(endDate + 'T00:00', tz()).add(1, 'day').utc().toISOString()
+        } else {
+            startsAtUtc = localToUtc(form.value.startsLocal)
+            endsAtUtc = localToUtc(form.value.endsLocal)
+        }
         const body = {
-            startsAtUtc: localToUtc(form.value.startsLocal),
-            endsAtUtc: localToUtc(form.value.endsLocal),
+            startsAtUtc,
+            endsAtUtc,
             allDay: form.value.allDay,
             reason: form.value.reason && form.value.reason.trim().length > 0 ? form.value.reason : null,
         }

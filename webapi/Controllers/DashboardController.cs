@@ -15,27 +15,30 @@ namespace webapi.Controllers
     {
         private readonly IReportsRepository _reports;
         private readonly IEventRepository _events;
-        private readonly IDayPassPurchaseRepository _dayPasses;
+        private readonly IPassPurchaseRepository _passes;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IDisputeRepository _disputes;
         private readonly IUserRepository _users;
+        private readonly IRecentSalesRepository _recentSales;
         private readonly ITenantContext _tenantContext;
 
         public DashboardController(
             IReportsRepository reports,
             IEventRepository events,
-            IDayPassPurchaseRepository dayPasses,
+            IPassPurchaseRepository passes,
             IEventTicketPurchaseRepository tickets,
             IDisputeRepository disputes,
             IUserRepository users,
+            IRecentSalesRepository recentSales,
             ITenantContext tenantContext)
         {
             _reports = reports;
             _events = events;
-            _dayPasses = dayPasses;
+            _passes = passes;
             _tickets = tickets;
             _disputes = disputes;
             _users = users;
+            _recentSales = recentSales;
             _tenantContext = tenantContext;
         }
 
@@ -79,17 +82,17 @@ namespace webapi.Controllers
                 var nextMonthStartUtc = monthStartUtc.AddMonths(1);
                 var weekStartUtc = todayStartUtc.AddDays(-6);
 
-                var todayPass = await _reports.GetDayPassTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
+                var topass = await _reports.GetPassTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
                 var todayTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
-                var monthPass = await _reports.GetDayPassTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
+                var monthPass = await _reports.GetPassTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var monthTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var riders = await _reports.GetUniqueRiders(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var daily = await _reports.GetDailyRevenue(_tenantContext.TenantId, weekStartUtc, tomorrowStartUtc, tz);
 
                 snapshot.TodayRevenue = new RevenueBlockDto
                 {
-                    RevenueCents = todayPass.RevenueCents + todayTicket.RevenueCents,
-                    PassesSold = todayPass.SoldCount,
+                    RevenueCents = topass.RevenueCents + todayTicket.RevenueCents,
+                    PassesSold = topass.SoldCount,
                     TicketsSold = todayTicket.SoldCount,
                 };
                 snapshot.MonthRevenue = new RevenueBlockDto
@@ -106,15 +109,18 @@ namespace webapi.Controllers
 
             if (perms.Contains(TenantPermissions.SalesView))
             {
-                var rows = await _dayPasses.ListForAdmin(_tenantContext.TenantId, now.AddDays(-30), now.AddDays(1), status: null);
+                // Reads from v_recent_sales (Script0080) so spectator passes,
+                // event tickets, gift cards, rentals, etc. all show up — not
+                // just day passes, which was the historical scope.
+                var rows = await _recentSales.List(_tenantContext.TenantId,
+                    now.AddDays(-30), now.AddDays(1), status: null, limit: 5);
                 snapshot.RecentPurchases = rows
-                    .OrderByDescending(r => r.CreatedAt)
-                    .Take(5)
                     .Select(r => new RecentPurchaseDto
                     {
                         Id = r.Id,
-                        ProductName = r.ProductName,
-                        PurchaserName = r.PurchaserName,
+                        Kind = r.Kind,
+                        ProductName = r.ItemName ?? string.Empty,
+                        PurchaserName = r.PurchaserName ?? string.Empty,
                         AmountCents = r.AmountCents,
                         Status = r.Status,
                         CreatedAtUtc = DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc),
@@ -131,7 +137,7 @@ namespace webapi.Controllers
             if (perms.Contains(TenantPermissions.SalesCancel))
             {
                 // Cancelled but not yet refunded — tenant admin action queue.
-                var dpCancelled = await _dayPasses.ListByStatusAcrossTenants("cancelled");
+                var dpCancelled = await _passes.ListByStatusAcrossTenants("cancelled");
                 var tkCancelled = await _tickets.ListByStatusAcrossTenants("cancelled");
                 var mine = dpCancelled.Count(p => p.TenantId == _tenantContext.TenantId)
                          + tkCancelled.Count(p => p.TenantId == _tenantContext.TenantId);

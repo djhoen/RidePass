@@ -8,7 +8,7 @@ namespace Services.Repositories
     {
         private const string DisputeColumns = @"
             id, tenant_id AS TenantId,
-            day_pass_purchase_id AS DayPassPurchaseId,
+            pass_purchase_id AS PassPurchaseId,
             event_ticket_purchase_id AS EventTicketPurchaseId,
             stripe_dispute_id AS StripeDisputeId,
             stripe_payment_intent_id AS StripePaymentIntentId,
@@ -26,12 +26,12 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO dispute
-                    (tenant_id, day_pass_purchase_id, event_ticket_purchase_id,
+                    (tenant_id, pass_purchase_id, event_ticket_purchase_id,
                      stripe_dispute_id, stripe_payment_intent_id, stripe_charge_id,
                      amount_cents, currency, reason, status,
                      evidence_due_by, stripe_created_at)
                 VALUES
-                    (@TenantId, @DayPassPurchaseId, @EventTicketPurchaseId,
+                    (@TenantId, @PassPurchaseId, @EventTicketPurchaseId,
                      @StripeDisputeId, @StripePaymentIntentId, @StripeChargeId,
                      @AmountCents, @Currency, @Reason, @Status,
                      @EvidenceDueBy, @StripeCreatedAt)
@@ -55,7 +55,7 @@ namespace Services.Repositories
         {
             var sql = $@"
                 SELECT d.id, d.tenant_id AS TenantId,
-                       d.day_pass_purchase_id AS DayPassPurchaseId,
+                       d.pass_purchase_id AS PassPurchaseId,
                        d.event_ticket_purchase_id AS EventTicketPurchaseId,
                        d.stripe_dispute_id AS StripeDisputeId,
                        d.stripe_payment_intent_id AS StripePaymentIntentId,
@@ -70,8 +70,8 @@ namespace Services.Repositories
                        COALESCE(dp.name, ett.name || ' — ' || e.title) AS ItemName
                 FROM dispute d
                 JOIN tenant t ON t.id = d.tenant_id
-                LEFT JOIN day_pass_purchase dpp ON dpp.id = d.day_pass_purchase_id
-                LEFT JOIN day_pass_product dp ON dp.id = dpp.product_id
+                LEFT JOIN pass_purchase dpp ON dpp.id = d.pass_purchase_id
+                LEFT JOIN pass_product dp ON dp.id = dpp.product_id
                 LEFT JOIN event_ticket_purchase etp ON etp.id = d.event_ticket_purchase_id
                 LEFT JOIN event_ticket_tier ett ON ett.id = etp.tier_id
                 LEFT JOIN event e ON e.id = ett.event_id
@@ -85,7 +85,7 @@ namespace Services.Repositories
         {
             var sql = $@"
                 SELECT d.id, d.tenant_id AS TenantId,
-                       d.day_pass_purchase_id AS DayPassPurchaseId,
+                       d.pass_purchase_id AS PassPurchaseId,
                        d.event_ticket_purchase_id AS EventTicketPurchaseId,
                        d.stripe_dispute_id AS StripeDisputeId,
                        d.stripe_payment_intent_id AS StripePaymentIntentId,
@@ -100,8 +100,8 @@ namespace Services.Repositories
                        COALESCE(dp.name, ett.name || ' — ' || e.title) AS ItemName
                 FROM dispute d
                 JOIN tenant t ON t.id = d.tenant_id
-                LEFT JOIN day_pass_purchase dpp ON dpp.id = d.day_pass_purchase_id
-                LEFT JOIN day_pass_product dp ON dp.id = dpp.product_id
+                LEFT JOIN pass_purchase dpp ON dpp.id = d.pass_purchase_id
+                LEFT JOIN pass_product dp ON dp.id = dpp.product_id
                 LEFT JOIN event_ticket_purchase etp ON etp.id = d.event_ticket_purchase_id
                 LEFT JOIN event_ticket_tier ett ON ett.id = etp.tier_id
                 LEFT JOIN event e ON e.id = ett.event_id

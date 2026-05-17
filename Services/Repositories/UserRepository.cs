@@ -11,6 +11,18 @@ namespace Services.Repositories
         private const string SelectUserColumns = @"
             id, tenant_id AS TenantId, email, password_hash AS PasswordHash,
             first_name AS FirstName, last_name AS LastName, role, status,
+            phone,
+            birthdate AS Birthdate,
+            emergency_contact_name AS EmergencyContactName,
+            emergency_contact_phone AS EmergencyContactPhone,
+            address_line AS AddressLine,
+            address_line2 AS AddressLine2,
+            city,
+            state,
+            postal_code AS PostalCode,
+            country,
+            bike AS Bike,
+            race_number AS RaceNumber,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         public UserRepository(IDbHelper db)
@@ -58,12 +70,60 @@ namespace Services.Repositories
         public async Task<Guid> Create(User user)
         {
             const string sql = @"
-                INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, status)
-                VALUES (@TenantId, @Email, @PasswordHash, @FirstName, @LastName, @Role, @Status)
+                INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, status, phone, birthdate,
+                                   emergency_contact_name, emergency_contact_phone)
+                VALUES (@TenantId, @Email, @PasswordHash, @FirstName, @LastName, @Role, @Status, @Phone, @Birthdate,
+                        @EmergencyContactName, @EmergencyContactPhone)
                 RETURNING id";
 
             var result = await _db.Query<Guid>(sql, user);
             return result.First();
+        }
+
+        public async Task UpdatePhone(Guid userId, string? phone)
+        {
+            const string sql = "UPDATE users SET phone = @phone, updated_at = now() WHERE id = @userId";
+            await _db.Execute(sql, new { userId, phone });
+        }
+
+        public async Task UpdateEmergencyContact(Guid userId, string name, string phone)
+        {
+            const string sql = @"
+                UPDATE users
+                SET emergency_contact_name = @name, emergency_contact_phone = @phone, updated_at = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId, name, phone });
+        }
+
+        public async Task UpdateRacerInfo(Guid userId, string? bike, string? raceNumber)
+        {
+            const string sql = @"
+                UPDATE users
+                SET bike = @bike, race_number = @raceNumber, updated_at = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId, bike, raceNumber });
+        }
+
+        public async Task UpdateBirthdate(Guid userId, DateTime birthdate)
+        {
+            const string sql = "UPDATE users SET birthdate = @birthdate, updated_at = now() WHERE id = @userId";
+            await _db.Execute(sql, new { userId, birthdate });
+        }
+
+        public async Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
+            string? city, string? state, string? postalCode, string? country)
+        {
+            const string sql = @"
+                UPDATE users SET
+                    address_line  = @addressLine,
+                    address_line2 = @addressLine2,
+                    city          = @city,
+                    state         = @state,
+                    postal_code   = @postalCode,
+                    country       = @country,
+                    updated_at    = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId, addressLine, addressLine2, city, state, postalCode, country });
         }
 
         public async Task<bool> AnySuperAdminExists()

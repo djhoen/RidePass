@@ -11,6 +11,10 @@ namespace Services.Repositories.Interfaces
         Task<EventTicketPurchaseWithContext?> GetByRedemptionToken(Guid token, Guid tenantId);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
+        Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail);
+        Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
+        Task UndoRedeemed(Guid id, Guid tenantId);
+        Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);
         Task<List<EventTicketPurchaseWithContext>> GetForUser(Guid userId, Guid tenantId);
         Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
         Task MarkRefunded(Guid id, string? refundNote);

@@ -5,6 +5,7 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public Guid TenantId { get; set; }
         public string Subdomain { get; set; } = null!;
         public string DisplayName { get; set; } = null!;
+        public string TenantType { get; set; } = null!;
         public string Timezone { get; set; } = null!;
 
         // Present only if an initial tenant_admin was provisioned. This is the only time

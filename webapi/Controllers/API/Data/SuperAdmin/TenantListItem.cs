@@ -7,6 +7,8 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string DisplayName { get; set; } = null!;
         public string Status { get; set; } = null!;
         public string Timezone { get; set; } = null!;
+        public int ServiceChargeBps { get; set; }
+        public int? MonthlyServiceChargeCapCents { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }

@@ -23,52 +23,64 @@ namespace webapi.Controllers
     {
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
-        private readonly IDayPassPurchaseRepository _dayPasses;
+        private readonly IPassPurchaseRepository _passes;
+        private readonly IPassProductRepository _passProducts;
         private readonly IEventTicketPurchaseRepository _tickets;
+        private readonly IEventTicketTierRepository _ticketTiers;
         private readonly IDisputeRepository _disputes;
         private readonly IReportsRepository _reports;
         private readonly IPaymentProvider _payments;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IJwtIssuer _jwtIssuer;
-        private readonly IFeeScheduleRepository _feeSchedules;
         private readonly ITenantLedgerRepository _ledger;
         private readonly ITenantPayoutRepository _payouts;
         private readonly INotificationService _notifications;
         private readonly IAuditLogger _audit;
         private readonly IAuditLogRepository _auditRepo;
+        private readonly ISmtpEmailer _emailer;
+        private readonly ICouponRepository _couponShares;
+        private readonly ILogger<SuperAdminController> _logger;
 
         public SuperAdminController(
             IUserRepository users,
             ITenantRepository tenants,
-            IDayPassPurchaseRepository dayPasses,
+            IPassPurchaseRepository passes,
+            IPassProductRepository passProducts,
             IEventTicketPurchaseRepository tickets,
+            IEventTicketTierRepository ticketTiers,
             IDisputeRepository disputes,
             IReportsRepository reports,
             IPaymentProvider payments,
             IPasswordHasher<User> passwordHasher,
             IJwtIssuer jwtIssuer,
-            IFeeScheduleRepository feeSchedules,
             ITenantLedgerRepository ledger,
             ITenantPayoutRepository payouts,
             INotificationService notifications,
             IAuditLogger audit,
-            IAuditLogRepository auditRepo)
+            IAuditLogRepository auditRepo,
+            ISmtpEmailer emailer,
+            ICouponRepository couponShares,
+            ILogger<SuperAdminController> logger)
         {
             _users = users;
             _tenants = tenants;
-            _dayPasses = dayPasses;
+            _passes = passes;
+            _passProducts = passProducts;
             _tickets = tickets;
+            _ticketTiers = ticketTiers;
             _disputes = disputes;
             _reports = reports;
             _payments = payments;
             _passwordHasher = passwordHasher;
             _jwtIssuer = jwtIssuer;
-            _feeSchedules = feeSchedules;
             _ledger = ledger;
             _payouts = payouts;
             _notifications = notifications;
             _audit = audit;
             _auditRepo = auditRepo;
+            _emailer = emailer;
+            _couponShares = couponShares;
+            _logger = logger;
         }
 
         /// <summary>
@@ -133,30 +145,22 @@ namespace webapi.Controllers
                 Subdomain = request.Subdomain,
                 DisplayName = request.DisplayName,
                 Status = "active",
+                TenantType = request.TenantType,
                 Timezone = request.Timezone,
             };
             tenant.Id = await _tenants.Create(tenant);
+            // The DB triggers (seed_default_event_types, seed_initial_waiver,
+            // seed_default_pass_products) fired during this insert and read
+            // tenant.tenant_type to seed type-appropriate defaults.
             await _audit.Log("tenant.create", $"Created tenant '{tenant.DisplayName}' ({tenant.Subdomain})",
-                "tenant", tenant.Id, tenant.Id, new { tenant.Subdomain, tenant.DisplayName, tenant.Timezone });
-
-            // Default fee schedule: flat 5%, no monthly cap. Super admin can edit per-tenant later.
-            await _feeSchedules.Replace(
-                new TenantFeeSchedule
-                {
-                    TenantId = tenant.Id,
-                    EffectiveFromUtc = DateTime.UtcNow,
-                    MonthlyCapCents = null,
-                },
-                new[]
-                {
-                    new TenantFeeTier { MinVolumeCents = 0, MaxVolumeCents = null, RateBps = 500, SortOrder = 1 }
-                });
+                "tenant", tenant.Id, tenant.Id, new { tenant.Subdomain, tenant.DisplayName, tenant.TenantType, tenant.Timezone });
 
             var response = new CreateTenantResponse
             {
                 TenantId = tenant.Id,
                 Subdomain = tenant.Subdomain,
                 DisplayName = tenant.DisplayName,
+                TenantType = tenant.TenantType,
                 Timezone = tenant.Timezone,
             };
 
@@ -184,9 +188,35 @@ namespace webapi.Controllers
                 response.AdminUserId = admin.Id;
                 response.AdminEmail = admin.Email;
                 response.AdminTemporaryPassword = tempPassword;
+
+                // Welcome email with the temporary password and a deep link to the tenant subdomain.
+                if (_emailer.IsConfigured)
+                {
+                    var apex = ApexHostFromCurrent(Request.Host.Value);
+                    var loginUrl = $"{Request.Scheme}://{tenant.Subdomain}.{apex}/Login";
+                    var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(admin.FirstName)},</p>
+<p>Your RidePass admin account for <strong>{System.Net.WebUtility.HtmlEncode(tenant.DisplayName)}</strong> has been created.</p>
+<p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
+<strong>Email:</strong> {System.Net.WebUtility.HtmlEncode(admin.Email)}<br/>
+<strong>Temporary password:</strong> <code>{tempPassword}</code></p>
+<p>For security, please <a href=""{Request.Scheme}://{tenant.Subdomain}.{apex}/ResetPassword"">reset your password</a> after your first sign-in.</p>";
+                    var sent = await _emailer.Send(admin.Email, $"Welcome to RidePass — {tenant.DisplayName}", html);
+                    if (!sent)
+                    {
+                        _logger.LogWarning("Welcome email send returned false for tenant {Tenant} admin {Email}", tenant.Subdomain, admin.Email);
+                    }
+                }
             }
 
             return new ApiResponses().OkResult(response);
+        }
+
+        private static string ApexHostFromCurrent(string currentHost)
+        {
+            var hostOnly = currentHost.Split(':')[0];
+            var parts = hostOnly.Split('.');
+            if (parts.Length >= 3) return string.Join('.', parts.Skip(1));
+            return currentHost;
         }
 
         /// <summary>
@@ -296,10 +326,10 @@ namespace webapi.Controllers
         [HttpGet("Refunds")]
         public async Task<IActionResult> ListRefundQueue()
         {
-            var dayPasses = await _dayPasses.ListByStatusAcrossTenants("cancelled");
+            var passes = await _passes.ListByStatusAcrossTenants("cancelled");
             var tickets = await _tickets.ListByStatusAcrossTenants("cancelled");
 
-            var tenantIds = dayPasses.Select(d => d.TenantId).Concat(tickets.Select(t => t.TenantId)).Distinct().ToList();
+            var tenantIds = passes.Select(d => d.TenantId).Concat(tickets.Select(t => t.TenantId)).Distinct().ToList();
             var subdomains = new Dictionary<Guid, string>();
             foreach (var tid in tenantIds)
             {
@@ -308,9 +338,9 @@ namespace webapi.Controllers
             }
 
             var items = new List<RefundListItem>();
-            items.AddRange(dayPasses.Select(d => new RefundListItem
+            items.AddRange(passes.Select(d => new RefundListItem
             {
-                Kind = "day_pass",
+                Kind = "pass",
                 Id = d.Id,
                 TenantId = d.TenantId,
                 TenantSubdomain = subdomains.TryGetValue(d.TenantId, out var s) ? s : "",
@@ -343,11 +373,11 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
-        [HttpPost("Refunds/DayPass/{id:guid}/Process")]
-        public async Task<IActionResult> ProcessDayPassRefund(Guid id, CancellationToken ct)
+        [HttpPost("Refunds/Pass/{id:guid}/Process")]
+        public async Task<IActionResult> ProcessPassRefund(Guid id, CancellationToken ct)
         {
             // Load across all tenants (super admin).
-            var all = await _dayPasses.ListByStatusAcrossTenants("cancelled");
+            var all = await _passes.ListByStatusAcrossTenants("cancelled");
             var purchase = all.FirstOrDefault(p => p.Id == id);
             if (purchase is null)
             {
@@ -358,14 +388,26 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Purchase has no Stripe payment_intent to refund.");
             }
 
+            // Look up the product for its rider-paid-bps so the refund honors the
+            // "service charge is never refunded" rule (only the rider's portion of
+            // the fee is withheld; tenant's share already went to the platform).
+            var product = await _passProducts.GetById(purchase.ProductId, purchase.TenantId);
+            var riderBps = product?.RiderPaidServiceChargeBps ?? 10000;
+            var refundCents = Services.Helpers.RefundCalculator.RefundableCents(
+                purchase.AmountCents, purchase.ServiceChargeCents, riderBps);
+            if (refundCents <= 0)
+            {
+                return new ApiResponses().BadRequestResult("Nothing to refund (service charge already withheld).");
+            }
+
             try
             {
-                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, ct: ct);
-                await _dayPasses.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status}");
-                await WriteRefundLedgerEntry(purchase.TenantId, "day_pass", id, refund.RefundId);
-                var amount = $"${(purchase.AmountCents / 100m):0.00}";
-                await _audit.Log("refund.process", $"Refunded day pass {amount} for {purchase.PurchaserEmail}",
-                    "day_pass_purchase", id, purchase.TenantId, new { refund.RefundId, purchase.AmountCents });
+                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents, ct);
+                await _passes.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
+                await WriteRefundLedgerEntry(purchase.TenantId, "pass", id, refund.RefundId);
+                var amount = $"${(refundCents / 100m):0.00}";
+                await _audit.Log("refund.process", $"Refunded pass {amount} for {purchase.PurchaserEmail}",
+                    "pass_purchase", id, purchase.TenantId, new { refund.RefundId, refundCents, purchase.AmountCents });
                 await _notifications.EmitToTenantAdmins(purchase.TenantId, "refund_processed",
                     $"Refund issued: {amount}",
                     $"A {amount} refund was issued for {purchase.PurchaserName} ({purchase.PurchaserEmail}).",
@@ -375,7 +417,7 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult($"Stripe refund failed: {ex.Message}");
             }
-            return new ApiResponses().OkResult(new { id, status = "refunded" });
+            return new ApiResponses().OkResult(new { id, status = "refunded", refundCents });
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -393,14 +435,23 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Ticket has no Stripe payment_intent to refund.");
             }
 
+            var tier = await _ticketTiers.GetById(purchase.TierId, purchase.TenantId);
+            var riderBps = tier?.RiderPaidServiceChargeBps ?? 10000;
+            var refundCents = Services.Helpers.RefundCalculator.RefundableCents(
+                purchase.AmountCents, purchase.ServiceChargeCents, riderBps);
+            if (refundCents <= 0)
+            {
+                return new ApiResponses().BadRequestResult("Nothing to refund (service charge already withheld).");
+            }
+
             try
             {
-                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, ct: ct);
-                await _tickets.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status}");
+                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents, ct);
+                await _tickets.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
                 await WriteRefundLedgerEntry(purchase.TenantId, "event_ticket", id, refund.RefundId);
-                var amount = $"${(purchase.AmountCents / 100m):0.00}";
+                var amount = $"${(refundCents / 100m):0.00}";
                 await _audit.Log("refund.process", $"Refunded event ticket {amount} for {purchase.PurchaserEmail}",
-                    "event_ticket_purchase", id, purchase.TenantId, new { refund.RefundId, purchase.AmountCents });
+                    "event_ticket_purchase", id, purchase.TenantId, new { refund.RefundId, refundCents, purchase.AmountCents });
                 await _notifications.EmitToTenantAdmins(purchase.TenantId, "refund_processed",
                     $"Refund issued: {amount}",
                     $"A {amount} refund was issued for {purchase.PurchaserName} ({purchase.PurchaserEmail}).",
@@ -410,7 +461,7 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult($"Stripe refund failed: {ex.Message}");
             }
-            return new ApiResponses().OkResult(new { id, status = "refunded" });
+            return new ApiResponses().OkResult(new { id, status = "refunded", refundCents });
         }
 
         /// <summary>
@@ -448,10 +499,10 @@ namespace webapi.Controllers
                 Id = d.Id,
                 TenantId = d.TenantId,
                 TenantSubdomain = d.TenantSubdomain,
-                Kind = d.DayPassPurchaseId.HasValue ? "day_pass"
+                Kind = d.PassPurchaseId.HasValue ? "pass"
                      : d.EventTicketPurchaseId.HasValue ? "event_ticket"
                      : "unlinked",
-                PurchaseId = d.DayPassPurchaseId ?? d.EventTicketPurchaseId,
+                PurchaseId = d.PassPurchaseId ?? d.EventTicketPurchaseId,
                 ItemName = d.ItemName,
                 PurchaserName = d.PurchaserName,
                 PurchaserEmail = d.PurchaserEmail,
@@ -475,6 +526,30 @@ namespace webapi.Controllers
         {
             var summaries = await _ledger.GetSummariesForAllTenants();
             return new ApiResponses().OkResult(summaries);
+        }
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("Tenants/{tenantId:guid}/ServiceCharge")]
+        public async Task<IActionResult> UpdateTenantServiceCharge(Guid tenantId, [FromBody] UpdateTenantServiceChargeRequest request)
+        {
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null)
+            {
+                return new ApiResponses().NotFoundResult("Tenant not found.");
+            }
+
+            await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
+            await _audit.Log("tenant.serviceCharge.update",
+                $"Set service charge to {request.ServiceChargeBps / 100m:0.##}% (cap {(request.MonthlyServiceChargeCapCents.HasValue ? "$" + request.MonthlyServiceChargeCapCents.Value / 100m : "none")}) for {tenant.Subdomain}",
+                "tenant", tenantId, tenantId,
+                new { request.ServiceChargeBps, request.MonthlyServiceChargeCapCents });
+
+            return new ApiResponses().OkResult(new
+            {
+                tenantId,
+                serviceChargeBps = request.ServiceChargeBps,
+                monthlyServiceChargeCapCents = request.MonthlyServiceChargeCapCents,
+            });
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -524,6 +599,83 @@ namespace webapi.Controllers
             await _audit.Log("payout.create", $"Created payout for {request.PeriodStartUtc:yyyy-MM-dd} – {request.PeriodEndUtc:yyyy-MM-dd}, attached {attached} entries",
                 "payout", payout.Id, tenantId, new { request.PeriodStartUtc, request.PeriodEndUtc, attached, fresh?.NetPaidCents });
             return new ApiResponses().OkResult(new { payout = fresh, attachedCount = attached });
+        }
+
+        /// <summary>
+        /// Sends an existing pending payout to the tenant via Stripe Transfer (platform balance →
+        /// tenant's connected Express account → tenant bank). Requires the tenant to have an
+        /// active Connect account on file. Marks the payout 'processing' with the Stripe transfer
+        /// id as external_reference; the transfer.paid webhook flips it to 'paid'.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("Tenants/{tenantId:guid}/Payouts/{payoutId:guid}/SendViaStripe")]
+        public async Task<IActionResult> SendPayoutViaStripe(Guid tenantId, Guid payoutId, CancellationToken ct)
+        {
+            var payout = await _payouts.GetById(payoutId, tenantId);
+            if (payout is null) return new ApiResponses().NotFoundResult("Payout not found.");
+            if (payout.Status != "pending")
+            {
+                return new ApiResponses().BadRequestResult($"Payout is in status '{payout.Status}'; only 'pending' payouts can be sent.");
+            }
+            if (payout.NetPaidCents <= 0)
+            {
+                return new ApiResponses().BadRequestResult("Payout net amount is zero or negative; nothing to transfer.");
+            }
+
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
+            if (string.IsNullOrEmpty(tenant.StripeConnectAccountId) || tenant.StripeConnectStatus != "active")
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Tenant doesn't have an active Stripe Connect account. Have them complete onboarding before sending a Stripe payout.");
+            }
+
+            Guid? approverId = null;
+            if (Guid.TryParse(User.FindFirst("UserId")?.Value, out var u)) approverId = u;
+
+            TransferResult transfer;
+            try
+            {
+                transfer = await _payments.CreateTransferAsync(
+                    connectAccountId: tenant.StripeConnectAccountId,
+                    amountCents: payout.NetPaidCents,
+                    currency: "usd",
+                    description: $"RidePass payout for {tenant.DisplayName} ({payout.PeriodStartUtc:yyyy-MM-dd} – {payout.PeriodEndUtc:yyyy-MM-dd})",
+                    metadata: new Dictionary<string, string>
+                    {
+                        ["ridepass_payout_id"] = payout.Id.ToString(),
+                        ["ridepass_tenant_id"] = tenantId.ToString(),
+                    },
+                    ct: ct);
+            }
+            catch (Stripe.StripeException ex)
+            {
+                await _audit.Log("payout.stripeTransferFailed", $"Stripe Transfer.create failed: {ex.StripeError?.Message ?? ex.Message}",
+                    "payout", payoutId, tenantId, new { ex.StripeError?.Code, ex.StripeError?.Type });
+                return new ApiResponses().BadRequestResult($"Stripe rejected the transfer: {ex.StripeError?.Message ?? ex.Message}");
+            }
+
+            // Stripe Transfer.create is effectively synchronous from a settlement perspective:
+            // funds leave platform balance and land in the tenant's Connect balance immediately.
+            // The actual bank deposit then runs on the connected account's own payout schedule,
+            // which we don't need to mirror. Mark 'paid' now; the transfer.* webhook is just a
+            // backstop in case Stripe reverses it later.
+            await _payouts.UpdateStatus(payoutId, tenantId, "paid",
+                payoutDateUtc: DateTime.UtcNow, externalReference: transfer.TransferId,
+                memo: payout.Memo, approvedByUserId: approverId);
+
+            await _audit.Log("payout.stripeTransferSent",
+                $"Sent ${(payout.NetPaidCents / 100m):0.00} via Stripe Transfer {transfer.TransferId}",
+                "payout", payoutId, tenantId, new { transfer.TransferId, payout.NetPaidCents });
+
+            var amountStr = $"${(payout.NetPaidCents / 100m):0.00}";
+            await _notifications.EmitToTenantAdmins(tenantId, "payout_paid",
+                $"Payout sent: {amountStr}",
+                $"A payout of {amountStr} for the period {payout.PeriodStartUtc:yyyy-MM-dd} – {payout.PeriodEndUtc:yyyy-MM-dd} was sent via Stripe (ref: {transfer.TransferId}).",
+                "/Admin/Payouts");
+
+            var fresh = await _payouts.GetById(payoutId, tenantId);
+            return new ApiResponses().OkResult(new { payout = fresh, transferId = transfer.TransferId });
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -620,58 +772,6 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
-        [HttpGet("Tenants/{tenantId:guid}/FeeSchedule")]
-        public async Task<IActionResult> GetTenantFeeSchedule(Guid tenantId)
-        {
-            var schedule = await _feeSchedules.GetActive(tenantId, DateTime.UtcNow);
-            if (schedule is null) return new ApiResponses().NotFoundResult("No active fee schedule.");
-            return new ApiResponses().OkResult(schedule);
-        }
-
-        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
-        [HttpPut("Tenants/{tenantId:guid}/FeeSchedule")]
-        public async Task<IActionResult> UpdateTenantFeeSchedule(Guid tenantId, [FromBody] UpdateFeeScheduleRequest request)
-        {
-            // Validate tiers: must start at 0, no overlaps, ascending min, exactly one open-ended top tier.
-            var sorted = request.Tiers.OrderBy(t => t.MinVolumeCents).ToList();
-            if (sorted[0].MinVolumeCents != 0)
-            {
-                return new ApiResponses().BadRequestResult("First tier must start at 0.");
-            }
-            for (var i = 0; i < sorted.Count - 1; i++)
-            {
-                if (sorted[i].MaxVolumeCents is null)
-                {
-                    return new ApiResponses().BadRequestResult("Only the last tier may have no max.");
-                }
-                if (sorted[i].MaxVolumeCents != sorted[i + 1].MinVolumeCents)
-                {
-                    return new ApiResponses().BadRequestResult($"Tier {i + 1}'s max must equal tier {i + 2}'s min (no gaps or overlaps).");
-                }
-            }
-
-            var schedule = new TenantFeeSchedule
-            {
-                TenantId = tenantId,
-                EffectiveFromUtc = DateTime.UtcNow,
-                MonthlyCapCents = request.MonthlyCapCents,
-            };
-            var tiers = sorted.Select((t, idx) => new TenantFeeTier
-            {
-                MinVolumeCents = t.MinVolumeCents,
-                MaxVolumeCents = t.MaxVolumeCents,
-                RateBps = t.RateBps,
-                SortOrder = idx + 1,
-            });
-            await _feeSchedules.Replace(schedule, tiers);
-            await _audit.Log("fee_schedule.update", $"Updated fee schedule ({sorted.Count} tier(s), cap={request.MonthlyCapCents})",
-                "tenant", tenantId, tenantId, new { request.MonthlyCapCents, Tiers = sorted });
-
-            var newSchedule = await _feeSchedules.GetActive(tenantId, DateTime.UtcNow);
-            return new ApiResponses().OkResult(newSchedule);
-        }
-
-        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Reconciliation")]
         public async Task<IActionResult> GetReconciliation([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc, CancellationToken ct)
         {
@@ -763,6 +863,8 @@ namespace webapi.Controllers
             DisplayName = t.DisplayName,
             Status = t.Status,
             Timezone = t.Timezone,
+            ServiceChargeBps = t.ServiceChargeBps,
+            MonthlyServiceChargeCapCents = t.MonthlyServiceChargeCapCents,
             CreatedAtUtc = DateTime.SpecifyKind(t.CreatedAt, DateTimeKind.Utc),
         };
 
@@ -773,6 +875,38 @@ namespace webapi.Controllers
             Span<byte> bytes = stackalloc byte[12];
             RandomNumberGenerator.Fill(bytes);
             return Convert.ToHexString(bytes);
+        }
+
+        // ── Marketing capture: recipient emails harvested via coupon shares ─────
+        // Each row = one rider sending a coupon to a friend. Useful for tenant outreach
+        // ("hey, your friend sent you a code last month — come try a pass?").
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpGet("Marketing/CouponShares")]
+        public async Task<IActionResult> ListCouponShares([FromQuery] Guid? tenantId)
+        {
+            var tenants = tenantId.HasValue
+                ? new List<Tenant?> { await _tenants.GetById(tenantId.Value) }.Where(t => t is not null).Cast<Tenant>().ToList()
+                : await _tenants.ListAll();
+
+            var rows = new List<object>();
+            foreach (var t in tenants)
+            {
+                var shares = await _couponShares.ListSharesByTenant(t.Id, take: 10000);
+                foreach (var s in shares)
+                {
+                    rows.Add(new
+                    {
+                        tenantSubdomain = t.Subdomain,
+                        tenantDisplayName = t.DisplayName,
+                        recipientEmail = s.RecipientEmail,
+                        recipientName = s.RecipientName,
+                        sentAtUtc = DateTime.SpecifyKind(s.SentAt, DateTimeKind.Utc),
+                        redeemedAtUtc = s.RedeemedAt is null ? (DateTime?)null : DateTime.SpecifyKind(s.RedeemedAt.Value, DateTimeKind.Utc),
+                    });
+                }
+            }
+            return new ApiResponses().OkResult(rows);
         }
     }
 }

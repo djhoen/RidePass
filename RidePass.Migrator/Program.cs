@@ -13,18 +13,21 @@ public class Program
         var configBuilder = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+            // user-secrets is the default for local dev; harmless in prod (the secrets
+            // file doesn't ship to deployed environments). Load unconditionally so the
+            // migrator works without DOTNET_ENVIRONMENT being explicitly set.
+            .AddUserSecrets<Program>(optional: true)
             .AddEnvironmentVariables();
-
-        if (environment == "Development")
-        {
-            configBuilder.AddUserSecrets<Program>(optional: true);
-        }
 
         IConfiguration configuration = configBuilder.Build();
 
-        var connectionString = configuration.GetConnectionString("Default")
-            ?? throw new InvalidOperationException(
-                "ConnectionStrings:Default is not configured. Set it via appsettings, user-secrets, or environment variables.");
+        var connectionString = configuration.GetConnectionString("Default");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:Default is not configured. Set it via user-secrets " +
+                "(`dotnet user-secrets set ConnectionStrings:Default \"...\"`) or environment variables.");
+        }
 
         // EnsureDatabase needs access to a master `postgres` database to create the target.
         // Managed providers (DO, RDS, etc.) don't expose one; their DBs are created out-of-band.

@@ -1,296 +1,99 @@
 <template>
-    <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Reports</h1>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-        </div>
+    <v-container fluid>
+        <h1 class="text-h4 mb-4">Reporting</h1>
+        <v-row>
+            <!-- Left: report selector. Stays visible at all breakpoints; on small
+                 screens the right column wraps below it. -->
+            <v-col cols="12" md="3" lg="2">
+                <v-card>
+                    <v-list nav density="compact" :selected="[selected]">
+                        <v-list-item v-for="r in reports" :key="r.key" :value="r.key"
+                            :prepend-icon="r.icon" :title="r.title" :subtitle="r.subtitle"
+                            @click="selectReport(r.key)"></v-list-item>
+                    </v-list>
+                </v-card>
+            </v-col>
 
-        <v-row v-if="summary" class="mb-4">
-            <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Revenue</div>
-                    <div class="text-h4">${{ (summary.totalRevenueCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
-            </v-col>
-            <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Passes Sold</div>
-                    <div class="text-h4">{{ summary.passesSold }}</div>
-                    <div class="text-caption text-medium-emphasis">{{ summary.ticketsSold }} tickets</div>
-                </v-card-text></v-card>
-            </v-col>
-            <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Unique Riders</div>
-                    <div class="text-h4">{{ summary.uniqueRiders }}</div>
-                </v-card-text></v-card>
-            </v-col>
-            <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Refunds / Disputes</div>
-                    <div class="text-h4">{{ summary.refundedCount }} / {{ summary.disputedCount }}</div>
-                    <div class="text-caption text-medium-emphasis">
-                        ${{ (summary.refundedAmountCents / 100).toFixed(2) }} refunded
-                    </div>
-                </v-card-text></v-card>
+            <!-- Right: selected report. KeepAlive so range pickers / loaded data
+                 survive switching between reports. -->
+            <v-col cols="12" md="9" lg="10">
+                <KeepAlive>
+                    <component :is="activeComponent"
+                        :initial-event-id="selected === 'event-riders' ? activeEventId : undefined"
+                        @select-event="onSelectEvent" />
+                </KeepAlive>
             </v-col>
         </v-row>
-
-        <v-card class="mb-4" v-if="summary">
-            <v-card-title>Daily Revenue ({{ branding.timezone }})</v-card-title>
-            <v-card-text>
-                <div style="position: relative; height: 320px;">
-                    <Line v-if="revenueChartData" :data="revenueChartData" :options="revenueChartOptions" />
-                </div>
-            </v-card-text>
-        </v-card>
-
-        <v-row v-if="summary">
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-card-title>Top Day Pass Products</v-card-title>
-                    <v-card-text>
-                        <div v-if="summary.topDayPassProducts.length === 0" class="text-medium-emphasis">No sales in range.</div>
-                        <div v-else style="position: relative; height: 320px;">
-                            <Bar :data="productsChartData" :options="horizontalBarOptions" />
-                        </div>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-card-title>Top Events</v-card-title>
-                    <v-card-text>
-                        <div v-if="summary.topEvents.length === 0" class="text-medium-emphasis">No event sales in range.</div>
-                        <div v-else style="position: relative; height: 320px;">
-                            <Bar :data="eventsChartData" :options="horizontalBarOptions" />
-                        </div>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-        </v-row>
-
-        <v-row v-if="summary" class="mt-2">
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-table density="compact">
-                        <thead>
-                            <tr><th>Product</th><th style="width: 100px">Sold</th><th style="width: 120px">Revenue</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="p in summary.topDayPassProducts" :key="p.productId">
-                                <td>{{ p.productName }}</td>
-                                <td>{{ p.soldCount }}</td>
-                                <td>${{ (p.revenueCents / 100).toFixed(2) }}</td>
-                            </tr>
-                            <tr v-if="summary.topDayPassProducts.length === 0">
-                                <td colspan="3" class="text-center text-medium-emphasis py-4">—</td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </v-card>
-            </v-col>
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-table density="compact">
-                        <thead>
-                            <tr><th>Event</th><th style="width: 140px">When</th><th style="width: 100px">Sold</th><th style="width: 120px">Revenue</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="e in summary.topEvents" :key="e.eventId">
-                                <td>{{ e.eventTitle }}</td>
-                                <td>{{ formatDate(e.eventStartUtc) }}</td>
-                                <td>{{ e.soldCount }}</td>
-                                <td>${{ (e.revenueCents / 100).toFixed(2) }}</td>
-                            </tr>
-                            <tr v-if="summary.topEvents.length === 0">
-                                <td colspan="4" class="text-center text-medium-emphasis py-4">—</td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </v-card>
-            </v-col>
-        </v-row>
-
-        <v-snackbar v-model="snackbar" color="error" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import dayjs from 'dayjs'
-import { Line, Bar } from 'vue-chartjs'
-import { registerChartJs } from '@/helpers/ChartSetup'
-import { ReportsService, type TenantReportSummary } from '@/services/ReportsService'
-import { branding } from '@/stores/branding'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import SalesSummary from './Reports/SalesSummary.vue'
+import EventRiders from './Reports/EventRiders.vue'
+import DailyEvents from './Reports/DailyEvents.vue'
 
-registerChartJs()
+type ReportKey = 'sales-summary' | 'event-riders' | 'daily-events'
 
-const service = new ReportsService()
-
-const presetOptions = [
-    { title: 'Last 7 days', value: '7d' },
-    { title: 'Last 30 days', value: '30d' },
-    { title: 'This month', value: 'thismonth' },
-    { title: 'Last month', value: 'lastmonth' },
-    { title: 'Year to date', value: 'ytd' },
-    { title: 'Custom', value: 'custom' },
+const reports: { key: ReportKey; title: string; subtitle: string; icon: string }[] = [
+    { key: 'sales-summary', title: 'Sales Summary', subtitle: 'Revenue, top products, top events', icon: 'mdi-chart-line' },
+    { key: 'event-riders',  title: 'Event Riders',  subtitle: 'Roll call + check-in for an event', icon: 'mdi-account-group' },
+    { key: 'daily-events',  title: 'Daily Events',  subtitle: 'All events on a chosen date',       icon: 'mdi-calendar-today' },
 ]
-const preset = ref<string>('30d')
 
-const today = dayjs()
-const rangeFrom = ref(today.subtract(29, 'day').format('YYYY-MM-DD'))
-const rangeTo = ref(today.add(1, 'day').format('YYYY-MM-DD'))
+const route = useRoute()
+const router = useRouter()
 
-const summary = ref<TenantReportSummary | null>(null)
-const loading = ref(false)
-const snackbar = ref(false)
-const snackbarText = ref('')
+// Source-of-truth for the selected report is the URL — `?report=<key>` so a
+// deep link from elsewhere in the app (e.g. the calendar's "Rider Report"
+// button) drops the admin straight onto the right pane.
+const selected = ref<ReportKey>(parseReport(route.query.report as string | undefined))
+const activeEventId = ref<string | null>(parseEventId(route.query.eventId as string | undefined))
 
-onMounted(load)
-
-function tz() { return branding.timezone || 'UTC' }
-
-function applyPreset(v: string) {
-    const t = dayjs()
-    switch (v) {
-        case '7d':
-            rangeFrom.value = t.subtract(6, 'day').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
-            break
-        case '30d':
-            rangeFrom.value = t.subtract(29, 'day').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
-            break
-        case 'thismonth':
-            rangeFrom.value = t.startOf('month').format('YYYY-MM-DD')
-            rangeTo.value = t.endOf('month').add(1, 'day').format('YYYY-MM-DD')
-            break
-        case 'lastmonth':
-            rangeFrom.value = t.subtract(1, 'month').startOf('month').format('YYYY-MM-DD')
-            rangeTo.value = t.startOf('month').format('YYYY-MM-DD')
-            break
-        case 'ytd':
-            rangeFrom.value = t.startOf('year').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
-            break
-    }
-    load()
+function parseReport(v: string | undefined): ReportKey {
+    if (v === 'event-riders' || v === 'daily-events' || v === 'sales-summary') return v
+    return 'sales-summary'
+}
+function parseEventId(v: string | undefined): string | null {
+    return typeof v === 'string' && v.length > 0 ? v : null
 }
 
-async function load() {
-    loading.value = true
-    try {
-        const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
-        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
-        const r = await service.getTenantSummary(fromUtc, toUtc)
-        summary.value = (r.data as any).data
-    } catch (err: any) {
-        snackbarText.value = err.response?.data?.error || 'Failed to load report.'
-        snackbar.value = true
-    } finally {
-        loading.value = false
-    }
-}
-
-function formatDate(utc: string): string {
-    return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
-}
-
-const revenueChartData = computed(() => {
-    if (!summary.value) return null
-    const points = summary.value.dailyRevenue
-    return {
-        labels: points.map(p => p.date),
-        datasets: [
-            {
-                label: 'Revenue ($)',
-                data: points.map(p => p.revenueCents / 100),
-                borderColor: '#1976D2',
-                backgroundColor: 'rgba(25, 118, 210, 0.15)',
-                fill: true,
-                tension: 0.3,
-                yAxisID: 'y',
-            },
-            {
-                label: 'Passes',
-                data: points.map(p => p.passesSold),
-                borderColor: '#43A047',
-                backgroundColor: 'transparent',
-                tension: 0.3,
-                yAxisID: 'y1',
-            },
-            {
-                label: 'Tickets',
-                data: points.map(p => p.ticketsSold),
-                borderColor: '#FB8C00',
-                backgroundColor: 'transparent',
-                tension: 0.3,
-                yAxisID: 'y1',
-            },
-        ],
+const activeComponent = computed(() => {
+    switch (selected.value) {
+        case 'event-riders': return EventRiders
+        case 'daily-events': return DailyEvents
+        default: return SalesSummary
     }
 })
 
-const revenueChartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index' as const, intersect: false },
-    scales: {
-        y: {
-            beginAtZero: true,
-            title: { display: true, text: 'Revenue ($)' },
-            position: 'left' as const,
-        },
-        y1: {
-            beginAtZero: true,
-            title: { display: true, text: 'Count' },
-            position: 'right' as const,
-            grid: { drawOnChartArea: false },
-        },
-    },
+function selectReport(key: ReportKey) {
+    if (selected.value === key) return
+    selected.value = key
+    // Preserve eventId on the URL only when it's relevant to the current report.
+    const query: Record<string, string> = { report: key }
+    if (key === 'event-riders' && activeEventId.value) query.eventId = activeEventId.value
+    router.replace({ path: route.path, query })
 }
 
-const productsChartData = computed(() => {
-    if (!summary.value) return { labels: [], datasets: [] }
-    const rows = summary.value.topDayPassProducts
-    return {
-        labels: rows.map(r => r.productName),
-        datasets: [{
-            label: 'Revenue ($)',
-            data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#1976D2',
-        }],
-    }
-})
-
-const eventsChartData = computed(() => {
-    if (!summary.value) return { labels: [], datasets: [] }
-    const rows = summary.value.topEvents
-    return {
-        labels: rows.map(r => r.eventTitle),
-        datasets: [{
-            label: 'Revenue ($)',
-            data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#43A047',
-        }],
-    }
-})
-
-const horizontalBarOptions = {
-    indexAxis: 'y' as const,
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-        x: { beginAtZero: true },
-    },
+// Daily Events row click → jump to Event Riders for that event.
+function onSelectEvent(eventId: string) {
+    activeEventId.value = eventId
+    selected.value = 'event-riders'
+    router.replace({ path: route.path, query: { report: 'event-riders', eventId } })
 }
+
+// Honour external query updates (e.g. browser back/forward) without losing the
+// in-memory state of the other panes.
+watch(() => route.query, (q) => {
+    selected.value = parseReport(q.report as string | undefined)
+    activeEventId.value = parseEventId(q.eventId as string | undefined)
+})
+
+onMounted(() => {
+    // Make sure the URL is canonical even when we landed without a ?report= param.
+    if (!route.query.report) {
+        router.replace({ path: route.path, query: { ...route.query, report: selected.value } })
+    }
+})
 </script>

@@ -11,6 +11,7 @@ namespace webapi.Middleware
 
         private readonly RequestDelegate _next;
         private readonly string _rootDomain;
+        private readonly bool _allowApiClientTenantHeader;
 
         public TenantResolutionMiddleware(RequestDelegate next, IConfiguration configuration)
         {
@@ -18,6 +19,14 @@ namespace webapi.Middleware
             _rootDomain = (configuration["Tenant:RootDomain"]
                 ?? throw new InvalidOperationException("Tenant:RootDomain is not configured."))
                 .ToLowerInvariant();
+            // Native API clients (RidePassCashier mobile app) don't have a subdomain
+            // to resolve from. When this flag is on, the X-Tenant-Subdomain header is
+            // honored regardless of environment. Safe because TenantPermissionHandler
+            // still cross-checks the JWT's tenant_id claim against the resolved tenant,
+            // so a forged header doesn't help an attacker without a valid JWT for that
+            // tenant. Default off — must be opted in via configuration.
+            _allowApiClientTenantHeader = bool.TryParse(
+                configuration["Tenant:AllowApiClientTenantHeader"], out var allow) && allow;
         }
 
         public async Task InvokeAsync(
@@ -30,9 +39,10 @@ namespace webapi.Middleware
             var host = context.Request.Host.Host.ToLowerInvariant();
             var subdomain = ExtractSubdomain(host);
 
-            // In Development, allow the SPA to tell us the tenant via X-Tenant-Subdomain
-            // so browser origin (acme.ridepass.local:3000) and API origin (localhost:5070) can differ.
-            if (subdomain is null && env.IsDevelopment())
+            // In Development, the SPA on a separate origin uses the header. In
+            // any environment when the API-client flag is on, native apps
+            // (mobile cashier) use the same mechanism.
+            if (subdomain is null && (env.IsDevelopment() || _allowApiClientTenantHeader))
             {
                 var header = context.Request.Headers["X-Tenant-Subdomain"].ToString();
                 if (!string.IsNullOrWhiteSpace(header) && !header.Contains('.'))

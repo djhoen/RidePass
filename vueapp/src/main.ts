@@ -27,6 +27,18 @@ const emitter = mitt()
 const vuetify = createVuetify({
     components,
     directives,
+    // Match the LoamPass-style compact-outlined look on every form field by default.
+    // Per-field overrides still work, e.g. <v-text-field variant="filled" :hide-details="false" />.
+    defaults: {
+        VTextField:    { variant: 'outlined', density: 'compact', hideDetails: true },
+        VTextarea:     { variant: 'outlined', density: 'compact', hideDetails: true },
+        VSelect:       { variant: 'outlined', density: 'compact', hideDetails: true },
+        VAutocomplete: { variant: 'outlined', density: 'compact', hideDetails: true },
+        VCombobox:     { variant: 'outlined', density: 'compact', hideDetails: true },
+        // Toasts at the top of the viewport — buttons can be anywhere on a long page.
+        // Per-snackbar overrides (e.g. <v-snackbar location="bottom">) still take precedence.
+        VSnackbar:     { location: 'top', timeout: 4000 },
+    },
     theme: {
         defaultTheme: 'tenant',
         themes: {

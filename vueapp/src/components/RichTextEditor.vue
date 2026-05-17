@@ -110,23 +110,31 @@ function toggleLink() {
 
 <style scoped>
 .rich-text-editor {
-    border: 1px solid rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     border-radius: 4px;
-    background: white;
+    background: rgb(var(--v-theme-surface));
+    color: rgb(var(--v-theme-on-surface));
 }
 .toolbar {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     padding: 6px 8px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    background: rgba(0, 0, 0, 0.02);
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    background: rgb(var(--v-theme-surface-variant), 0.06);
+    color: rgb(var(--v-theme-on-surface));
+}
+/* The text-variant buttons inherit color from the theme; on dark backgrounds they
+   render white-on-white otherwise. Force an on-surface color so they're always visible. */
+.toolbar :deep(.v-btn) {
+    color: rgb(var(--v-theme-on-surface));
 }
 .editor-surface {
     padding: 12px 14px;
     min-height: 200px;
     max-height: 500px;
     overflow-y: auto;
+    color: rgb(var(--v-theme-on-surface));
 }
 </style>
 
@@ -143,14 +151,14 @@ function toggleLink() {
 .rich-text-editor .ProseMirror ul,
 .rich-text-editor .ProseMirror ol { padding-left: 1.4em; margin: 0 0 0.6em; }
 .rich-text-editor .ProseMirror blockquote {
-    border-left: 3px solid rgba(0, 0, 0, 0.2);
+    border-left: 3px solid rgba(var(--v-border-color), var(--v-border-opacity));
     margin: 0 0 0.6em;
     padding-left: 0.8em;
-    color: rgba(0, 0, 0, 0.7);
+    opacity: 0.85;
 }
 .rich-text-editor .ProseMirror hr {
     border: none;
-    border-top: 1px solid rgba(0, 0, 0, 0.15);
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     margin: 0.8em 0;
 }
 .rich-text-editor .ProseMirror a {

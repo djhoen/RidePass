@@ -12,5 +12,8 @@ namespace webapi.Controllers.API.Data.Me
         public string Status { get; set; } = null!;
         public Guid RedemptionToken { get; set; }
         public DateTime CreatedAtUtc { get; set; }
+        // Only set when Kind == "event_ticket": 'race_entry' or 'spectator_pass'.
+        // Lets the UI conditionally show race-only actions like share-registration.
+        public string? TierKind { get; set; }
     }
 }

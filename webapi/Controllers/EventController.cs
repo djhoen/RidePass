@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
+using Services.Notifications;
 using Services.Repositories.Data.EventData;
 using Services.Repositories.Interfaces;
+using Services.Storage;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Event;
 using webapi.Multitenancy;
@@ -16,21 +18,36 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IEventTicketTierRepository _tiers;
-        private readonly IDayPassPurchaseRepository _dayPasses;
+        private readonly IPassPurchaseRepository _passes;
+        private readonly IPassProductRepository _passProducts;
+        private readonly IEventExtraRepository _extras;
+        private readonly IWaiverRepository _waivers;
+        private readonly IEventNotifier _notifier;
         private readonly ITenantContext _tenantContext;
+        private readonly IImageStorage _imageStorage;
 
         public EventController(
             IEventRepository events,
             ITenantEventTypeRepository eventTypes,
             IEventTicketTierRepository tiers,
-            IDayPassPurchaseRepository dayPasses,
-            ITenantContext tenantContext)
+            IPassPurchaseRepository passes,
+            IPassProductRepository passProducts,
+            IEventExtraRepository extras,
+            IWaiverRepository waivers,
+            IEventNotifier notifier,
+            ITenantContext tenantContext,
+            IImageStorage imageStorage)
         {
             _events = events;
             _eventTypes = eventTypes;
             _tiers = tiers;
-            _dayPasses = dayPasses;
+            _passes = passes;
+            _passProducts = passProducts;
+            _extras = extras;
+            _waivers = waivers;
+            _notifier = notifier;
             _tenantContext = tenantContext;
+            _imageStorage = imageStorage;
         }
 
         [HttpGet]
@@ -52,7 +69,24 @@ namespace webapi.Controllers
 
             // For events with capacity, fetch current reserved count so the UI can show spots left.
             var reservableIds = events.Where(e => e.Capacity.HasValue).Select(e => e.Id).ToList();
-            var reservedByEvent = await _dayPasses.ActiveSpotsReservedForEvents(reservableIds);
+            var reservedByEvent = await _passes.ActiveSpotsReservedForEvents(reservableIds);
+
+            // Eligibility map (eventId → product ids) batched once. The product lookup
+            // is also batched so we avoid an N+1 even when many events have eligibility.
+            var eligibilityByEvent = await _events.ListEligibilityForEvents(events.Select(e => e.Id));
+            var allProducts = (await _passProducts.GetAllForTenant(_tenantContext.TenantId, activeOnly: false))
+                .ToDictionary(p => p.Id);
+            // Same pattern for extras: batch the eligibility map + products map +
+            // sold-counts in one go so the per-row build can stay synchronous.
+            var extrasByEvent = await _extras.ListEligibilityForEvents(events.Select(e => e.Id));
+            var allExtras = (await _extras.ListProducts(_tenantContext.TenantId, activeOnly: false))
+                .ToDictionary(p => p.Id);
+            var extrasSold = await _extras.SumSoldForEvents(events.Select(e => e.Id));
+            // Variants: pulled tenant-wide and filtered to active. Tenant-wide sold-counts
+            // since variant inventory is tenant-wide (not per-event).
+            var variantsByProduct = await _extras.ListVariantsForProducts(allExtras.Keys);
+            var variantSold = await _extras.SumSoldVariants(
+                variantsByProduct.Values.SelectMany(v => v).Select(v => v.Id));
 
             var response = events.Select(ev =>
             {
@@ -60,15 +94,116 @@ namespace webapi.Controllers
                 if (tiersByEvent.TryGetValue(ev.Id, out var tiers) && tiers.Count > 0)
                 {
                     r.HasActiveTiers = true;
+                    r.HasSpectatorTiers = tiers.Any(t => t.Kind == "spectator_pass");
+                    r.HasRaceEntryTiers = tiers.Any(t => t.Kind == "race_entry");
                     r.MinTicketPriceCents = tiers.Min(t => t.PriceCents);
                 }
                 if (ev.Capacity.HasValue)
                 {
                     r.SpotsReserved = reservedByEvent.TryGetValue(ev.Id, out var reserved) ? reserved : 0;
                 }
+                if (eligibilityByEvent.TryGetValue(ev.Id, out var productIds) && productIds.Count > 0)
+                {
+                    r.EligiblePasses = productIds
+                        .Where(allProducts.ContainsKey)
+                        .Select(pid => allProducts[pid])
+                        .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
+                        .Select(p => new EligiblePassProduct
+                        {
+                            Id = p.Id, Name = p.Name, Description = p.Description,
+                            PriceCents = p.PriceCents, RequiresWaiver = p.RequiresWaiver, IsActive = p.IsActive,
+                        }).ToList();
+                }
+                if (extrasByEvent.TryGetValue(ev.Id, out var extraEligibility) && extraEligibility.Count > 0)
+                {
+                    // Render in catalog sort_order — eligibility rows arrive in insert order,
+                    // which is meaningless to riders. Mirrors the pass-product ordering above.
+                    var orderedEligibility = extraEligibility
+                        .Where(e => allExtras.ContainsKey(e.ProductId))
+                        .OrderBy(e => allExtras[e.ProductId].SortOrder)
+                        .ThenBy(e => allExtras[e.ProductId].Name);
+                    foreach (var elig in orderedEligibility)
+                    {
+                        if (!allExtras.TryGetValue(elig.ProductId, out var prod) || !prod.IsActive) continue;
+                        // Expired products drop off the rider-facing list. Admin still
+                        // sees them in the catalog so they can re-extend the date.
+                        if (prod.ExpiresAt.HasValue && prod.ExpiresAt.Value <= DateTime.UtcNow) continue;
+                        var sold = extrasSold.GetValueOrDefault((ev.Id, prod.Id), 0);
+                        var variantList = variantsByProduct.TryGetValue(prod.Id, out var vs)
+                            ? vs.Where(v => v.IsActive).Select(v =>
+                            {
+                                var vsold = variantSold.GetValueOrDefault(v.Id, 0);
+                                return new EligibleExtraVariant
+                                {
+                                    Id = v.Id,
+                                    Size = v.Size, Color = v.Color, Gender = v.Gender,
+                                    PriceCents = v.PriceCents ?? prod.PriceCents,
+                                    ImageUrl = v.ImageUrl ?? prod.ImageUrl,
+                                    Inventory = v.Inventory,
+                                    Sold = vsold,
+                                    Remaining = v.Inventory.HasValue ? Math.Max(0, v.Inventory.Value - vsold) : -1,
+                                };
+                            }).ToList()
+                            : new List<EligibleExtraVariant>();
+                        r.EligibleExtras.Add(new EligibleExtra
+                        {
+                            ProductId = prod.Id,
+                            Name = prod.Name,
+                            Kind = prod.Kind,
+                            PriceCents = prod.PriceCents,
+                            ImageUrl = prod.ImageUrl,
+                            Inventory = elig.Inventory,
+                            Sold = sold,
+                            Remaining = elig.Inventory.HasValue ? Math.Max(0, elig.Inventory.Value - sold) : -1,
+                            RequiresWaiver = prod.RequiresWaiver,
+                            Variants = variantList,
+                        });
+                    }
+                }
                 return r;
             }).ToList();
             return new ApiResponses().OkResult(response);
+        }
+
+        // Public single-event detail. Used by the shareable /Event/{id} landing
+        // page so visitors can see what's happening and buy a spectator pass
+        // without needing an account. Tenant scope comes from the subdomain via
+        // TenantResolutionMiddleware — same as the bulk GET above.
+        [HttpGet("Public/{id:guid}")]
+        public async Task<IActionResult> GetPublic(Guid id)
+        {
+            if (!_tenantContext.IsResolved)
+            {
+                return new ApiResponses().BadRequestResult("No tenant resolved for this request.");
+            }
+            var ev = await _events.GetById(id, _tenantContext.TenantId);
+            if (ev is null) return new ApiResponses().NotFoundResult("Event not found.");
+
+            // Don't leak draft/cancelled events to anonymous visitors.
+            if (ev.Status != "scheduled")
+            {
+                return new ApiResponses().NotFoundResult("Event not found.");
+            }
+
+            var types = (await _eventTypes.GetAllForTenant(_tenantContext.TenantId)).ToDictionary(t => t.Id);
+            var resp = await MapResponseAsync(ev, types);
+
+            // Tier summary (so the landing page knows whether to show spectator
+            // and race-entry CTAs, and the starting price).
+            var tiers = await _tiers.GetForEvent(ev.Id, _tenantContext.TenantId, activeOnly: true);
+            if (tiers.Count > 0)
+            {
+                resp.HasActiveTiers = true;
+                resp.HasSpectatorTiers = tiers.Any(t => t.Kind == "spectator_pass");
+                resp.HasRaceEntryTiers = tiers.Any(t => t.Kind == "race_entry");
+                resp.MinTicketPriceCents = tiers.Min(t => t.PriceCents);
+            }
+            if (ev.Capacity.HasValue)
+            {
+                var reservedByEvent = await _passes.ActiveSpotsReservedForEvents(new[] { ev.Id });
+                resp.SpotsReserved = reservedByEvent.TryGetValue(ev.Id, out var reserved) ? reserved : 0;
+            }
+            return new ApiResponses().OkResult(resp);
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -86,6 +221,11 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("EndsAt must be on or after StartsAt.");
             }
 
+            var spectatorErr = await ValidateWaiverForEvent(request.SpectatorWaiverId, request.EndsAtUtc.ToUniversalTime(), "spectator");
+            if (spectatorErr is not null) return new ApiResponses().BadRequestResult(spectatorErr);
+            var racerErr = await ValidateWaiverForEvent(request.RacerWaiverId, request.EndsAtUtc.ToUniversalTime(), "racer");
+            if (racerErr is not null) return new ApiResponses().BadRequestResult(racerErr);
+
             var ev = new Event
             {
                 TenantId = _tenantContext.TenantId,
@@ -98,11 +238,40 @@ namespace webapi.Controllers
                 Capacity = request.Capacity,
                 LocationLabel = request.LocationLabel,
                 Status = request.Status,
+                RequiresRiderWaiver = request.RequiresRiderWaiver,
+                RequiresSpectatorWaiver = request.RequiresSpectatorWaiver,
+                SpectatorWaiverId = request.SpectatorWaiverId,
+                RacerWaiverId = request.RacerWaiverId,
+                ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl,
             };
 
             ev.Id = await _events.Create(ev);
+            if (request.EligiblePassProductIds is not null)
+            {
+                await _events.ReplacePassEligibility(ev.Id, request.EligiblePassProductIds);
+            }
+            if (request.EligibleExtras is not null)
+            {
+                await _extras.ReplaceEligibility(ev.Id, request.EligibleExtras
+                    .Select(e => new Services.Repositories.Data.ExtrasData.EventExtraEligibility
+                    {
+                        EventId = ev.Id, ProductId = e.ProductId, Inventory = e.Inventory,
+                    }));
+            }
+            FireAndForgetNotify(ev);
             var types = new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> { [typeCheck.Id] = typeCheck };
-            return new ApiResponses().OkResult(MapResponse(ev, types));
+            return new ApiResponses().OkResult(await MapResponseAsync(ev, types));
+        }
+
+        private void FireAndForgetNotify(Event ev)
+        {
+            // Background fan-out so the admin's create request returns immediately.
+            // If the process dies mid-fan-out, some subscribers won't be notified — acceptable for v1.
+            _ = Task.Run(async () =>
+            {
+                try { await _notifier.NotifyNewEvent(ev.TenantId, ev); }
+                catch { /* logged inside the notifier */ }
+            });
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -126,6 +295,11 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("EndsAt must be on or after StartsAt.");
             }
 
+            var spectatorErr = await ValidateWaiverForEvent(request.SpectatorWaiverId, request.EndsAtUtc.ToUniversalTime(), "spectator");
+            if (spectatorErr is not null) return new ApiResponses().BadRequestResult(spectatorErr);
+            var racerErr = await ValidateWaiverForEvent(request.RacerWaiverId, request.EndsAtUtc.ToUniversalTime(), "racer");
+            if (racerErr is not null) return new ApiResponses().BadRequestResult(racerErr);
+
             existing.EventTypeId = request.EventTypeId;
             existing.Title = request.Title;
             existing.Description = request.Description;
@@ -135,10 +309,27 @@ namespace webapi.Controllers
             existing.Capacity = request.Capacity;
             existing.LocationLabel = request.LocationLabel;
             existing.Status = request.Status;
+            existing.RequiresRiderWaiver = request.RequiresRiderWaiver;
+            existing.RequiresSpectatorWaiver = request.RequiresSpectatorWaiver;
+            existing.SpectatorWaiverId = request.SpectatorWaiverId;
+            existing.RacerWaiverId = request.RacerWaiverId;
+            existing.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl;
 
             await _events.Update(existing);
+            if (request.EligiblePassProductIds is not null)
+            {
+                await _events.ReplacePassEligibility(existing.Id, request.EligiblePassProductIds);
+            }
+            if (request.EligibleExtras is not null)
+            {
+                await _extras.ReplaceEligibility(existing.Id, request.EligibleExtras
+                    .Select(e => new Services.Repositories.Data.ExtrasData.EventExtraEligibility
+                    {
+                        EventId = existing.Id, ProductId = e.ProductId, Inventory = e.Inventory,
+                    }));
+            }
             var types = new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> { [typeCheck.Id] = typeCheck };
-            return new ApiResponses().OkResult(MapResponse(existing, types));
+            return new ApiResponses().OkResult(await MapResponseAsync(existing, types));
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -151,7 +342,19 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Event not found.");
             }
 
-            await _events.Delete(id, _tenantContext.TenantId);
+            try
+            {
+                await _events.Delete(id, _tenantContext.TenantId);
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23503")
+            {
+                // event → tier → purchase chain has paid purchases pinning the tiers;
+                // deleting would orphan real money. Surface that to the admin instead
+                // of a 500. Cancelling the event keeps the paid rows intact.
+                return new ApiResponses().BadRequestResult(
+                    "This event has tickets, race entries, or reservations on file and can't be deleted. " +
+                    "Set status to Cancelled instead — that keeps the receipts intact.");
+            }
             return new ApiResponses().OkResult();
         }
 
@@ -178,14 +381,80 @@ namespace webapi.Controllers
                 Capacity = source.Capacity,
                 LocationLabel = source.LocationLabel,
                 Status = "scheduled",
+                RequiresRiderWaiver = source.RequiresRiderWaiver,
+                RequiresSpectatorWaiver = source.RequiresSpectatorWaiver,
+                SpectatorWaiverId = source.SpectatorWaiverId,
+                RacerWaiverId = source.RacerWaiverId,
+                ImageUrl = source.ImageUrl,
             };
             clone.Id = await _events.Create(clone);
+            // Carry over the source event's pass eligibility + extras eligibility
+            // so the duplicated event already has the same options without re-selecting.
+            var srcEligibility = await _events.ListEligiblePassProductIds(source.Id);
+            if (srcEligibility.Count > 0)
+            {
+                await _events.ReplacePassEligibility(clone.Id, srcEligibility);
+            }
+            var srcExtras = await _extras.ListEligibilityForEvent(source.Id);
+            if (srcExtras.Count > 0)
+            {
+                await _extras.ReplaceEligibility(clone.Id, srcExtras.Select(e =>
+                    new Services.Repositories.Data.ExtrasData.EventExtraEligibility
+                    {
+                        EventId = clone.Id, ProductId = e.ProductId, Inventory = e.Inventory,
+                    }));
+            }
+            FireAndForgetNotify(clone);
 
             var type = await _eventTypes.GetById(source.EventTypeId, _tenantContext.TenantId);
             var types = type is null
                 ? new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType>()
                 : new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> { [type.Id] = type };
-            return new ApiResponses().OkResult(MapResponse(clone, types));
+            return new ApiResponses().OkResult(await MapResponseAsync(clone, types));
+        }
+
+        /// <summary>
+        /// Uploads a per-event cover image and returns its public URL. The frontend
+        /// then patches the event via the regular Update endpoint with that URL —
+        /// keeps the upload decoupled from row mutation so a stale upload can be
+        /// discarded by simply not saving the form.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Image")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            if (file is null || file.Length == 0)
+                return new ApiResponses().BadRequestResult("File is required.");
+            if (file.Length > 5 * 1024 * 1024)
+                return new ApiResponses().BadRequestResult("File exceeds 5 MB limit.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+                return new ApiResponses().BadRequestResult($"Unsupported content type: {file.ContentType}.");
+
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, _tenantContext.TenantId, "event", ext, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
+        }
+
+        // Reject event-waiver attachments where the waiver expires before the event
+        // ends — riders signing the day-of would be signing an already-dead waiver.
+        // Also rejects unknown / cross-tenant waiver ids defensively.
+        private async Task<string?> ValidateWaiverForEvent(Guid? waiverId, DateTime eventEndsAtUtc, string audience)
+        {
+            if (!waiverId.HasValue) return null;
+            var waiver = await _waivers.GetById(waiverId.Value, _tenantContext.TenantId);
+            if (waiver is null) return $"Selected {audience} waiver isn't available.";
+            if (waiver.ExpiresAt.HasValue && waiver.ExpiresAt.Value < eventEndsAtUtc)
+            {
+                return $"Selected {audience} waiver expires before this event ends — pick a waiver that's valid through the event.";
+            }
+            return null;
         }
 
         private static EventResponse MapResponse(Event ev, IReadOnlyDictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> types)
@@ -198,6 +467,7 @@ namespace webapi.Controllers
                 EventTypeCode = type?.Code ?? string.Empty,
                 EventTypeName = type?.Name ?? string.Empty,
                 EventTypeColor = type?.Color ?? "#616161",
+                EventTypeImageUrl = type?.ImageUrl,
                 Title = ev.Title,
                 Description = ev.Description,
                 StartsAtUtc = DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc),
@@ -206,7 +476,84 @@ namespace webapi.Controllers
                 Capacity = ev.Capacity,
                 LocationLabel = ev.LocationLabel,
                 Status = ev.Status,
+                RequiresRiderWaiver = ev.RequiresRiderWaiver,
+                RequiresSpectatorWaiver = ev.RequiresSpectatorWaiver,
+                SpectatorWaiverId = ev.SpectatorWaiverId,
+                RacerWaiverId = ev.RacerWaiverId,
+                ImageUrl = ev.ImageUrl,
             };
+        }
+
+        // Single-event variant that hydrates the pass eligibility list. Used on
+        // create/update so the admin sees the pass list reflected back; the bulk
+        // GET endpoint hydrates eligibility once for all events to avoid N+1.
+        private async Task<EventResponse> MapResponseAsync(Event ev,
+            IReadOnlyDictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> types)
+        {
+            var resp = MapResponse(ev, types);
+            var productIds = await _events.ListEligiblePassProductIds(ev.Id);
+            if (productIds.Count > 0)
+            {
+                var products = await _passProducts.GetAllForTenant(_tenantContext.TenantId, activeOnly: false);
+                resp.EligiblePasses = products.Where(p => productIds.Contains(p.Id))
+                    .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
+                    .Select(p => new EligiblePassProduct
+                    {
+                        Id = p.Id, Name = p.Name, Description = p.Description,
+                        PriceCents = p.PriceCents, RequiresWaiver = p.RequiresWaiver, IsActive = p.IsActive,
+                    }).ToList();
+            }
+            // Extras eligibility — hydrate per-event inventory + sold + remaining + variants.
+            var extraRows = await _extras.ListEligibilityForEvent(ev.Id);
+            if (extraRows.Count > 0)
+            {
+                var extraProducts = (await _extras.ListProducts(_tenantContext.TenantId, activeOnly: false))
+                    .ToDictionary(p => p.Id);
+                var variantsByProduct = await _extras.ListVariantsForProducts(extraProducts.Keys);
+                var variantSold = await _extras.SumSoldVariants(
+                    variantsByProduct.Values.SelectMany(v => v).Select(v => v.Id));
+                // Render in catalog sort_order — eligibility rows arrive in insert order.
+                var orderedExtraRows = extraRows
+                    .Where(e => extraProducts.ContainsKey(e.ProductId))
+                    .OrderBy(e => extraProducts[e.ProductId].SortOrder)
+                    .ThenBy(e => extraProducts[e.ProductId].Name);
+                foreach (var elig in orderedExtraRows)
+                {
+                    if (!extraProducts.TryGetValue(elig.ProductId, out var prod) || !prod.IsActive) continue;
+                    if (prod.ExpiresAt.HasValue && prod.ExpiresAt.Value <= DateTime.UtcNow) continue;
+                    var sold = await _extras.SumSold(ev.Id, elig.ProductId);
+                    var variantList = variantsByProduct.TryGetValue(prod.Id, out var vs)
+                        ? vs.Where(v => v.IsActive).Select(v =>
+                        {
+                            var vsold = variantSold.GetValueOrDefault(v.Id, 0);
+                            return new EligibleExtraVariant
+                            {
+                                Id = v.Id,
+                                Size = v.Size, Color = v.Color, Gender = v.Gender,
+                                PriceCents = v.PriceCents ?? prod.PriceCents,
+                                ImageUrl = v.ImageUrl ?? prod.ImageUrl,
+                                Inventory = v.Inventory,
+                                Sold = vsold,
+                                Remaining = v.Inventory.HasValue ? Math.Max(0, v.Inventory.Value - vsold) : -1,
+                            };
+                        }).ToList()
+                        : new List<EligibleExtraVariant>();
+                    resp.EligibleExtras.Add(new EligibleExtra
+                    {
+                        ProductId = prod.Id,
+                        Name = prod.Name,
+                        Kind = prod.Kind,
+                        PriceCents = prod.PriceCents,
+                        ImageUrl = prod.ImageUrl,
+                        Inventory = elig.Inventory,
+                        Sold = sold,
+                        Remaining = elig.Inventory.HasValue ? Math.Max(0, elig.Inventory.Value - sold) : -1,
+                        RequiresWaiver = prod.RequiresWaiver,
+                        Variants = variantList,
+                    });
+                }
+            }
+            return resp;
         }
     }
 }

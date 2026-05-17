@@ -12,6 +12,7 @@ export const Perm = {
     ReportsView: 'reports.view',
     DisputesView: 'disputes.view',
     CampaignsManage: 'campaigns.manage',
+    CustomersView: 'customers.view',
 } as const
 
 export type Permission = typeof Perm[keyof typeof Perm]
@@ -21,11 +22,12 @@ const ADMIN: Permission[] = Object.values(Perm)
 const MANAGER: Permission[] = [
     Perm.CatalogManage, Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView,
     Perm.SalesCancel, Perm.ReportsView, Perm.DisputesView, Perm.CampaignsManage,
+    Perm.CustomersView,
 ]
 
 const CASHIER: Permission[] = [Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView]
 const SCANNER: Permission[] = [Perm.SalesRedeem]
-const ACCOUNTANT: Permission[] = [Perm.SalesView, Perm.ReportsView, Perm.DisputesView]
+const ACCOUNTANT: Permission[] = [Perm.SalesView, Perm.ReportsView, Perm.DisputesView, Perm.CustomersView]
 
 export function permissionsForRole(role: string | null): ReadonlySet<Permission> {
     if (!role) return new Set()

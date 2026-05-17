@@ -53,6 +53,16 @@ namespace Services.Repositories
             return (await _db.Query<TenantPayout>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
+        public async Task<TenantPayout?> GetByExternalReference(string externalReference)
+        {
+            var sql = $@"
+                SELECT {PayoutColumns}
+                FROM tenant_payout
+                WHERE external_reference = @externalReference
+                LIMIT 1";
+            return (await _db.Query<TenantPayout>(sql, new { externalReference })).FirstOrDefault();
+        }
+
         public async Task<List<TenantLedgerEntry>> ListEntriesForPayout(Guid payoutId)
         {
             var sql = $@"

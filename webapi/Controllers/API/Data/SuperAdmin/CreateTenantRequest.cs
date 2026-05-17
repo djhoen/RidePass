@@ -11,6 +11,11 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         [Required, MaxLength(200)]
         public string DisplayName { get; set; } = null!;
 
+        // Drives provisioning defaults at creation time. Defaults to motocross
+        // since that's RidePass's original use case.
+        [Required, RegularExpression("^(motocross|mountain_bike)$")]
+        public string TenantType { get; set; } = "motocross";
+
         [Required, MaxLength(80)]
         public string Timezone { get; set; } = "UTC";
 

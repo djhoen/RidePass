@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -18,20 +19,32 @@ namespace webapi.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserRepository _userRepository;
+        private readonly IPasswordResetRepository _resetTokens;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly ITenantContext _tenantContext;
+        private readonly ITenantRepository _tenants;
         private readonly IJwtIssuer _jwtIssuer;
+        private readonly ISmtpEmailer _emailer;
+        private readonly ILogger<UserController> _logger;
 
         public UserController(
             IUserRepository userRepository,
+            IPasswordResetRepository resetTokens,
             IPasswordHasher<User> passwordHasher,
             ITenantContext tenantContext,
-            IJwtIssuer jwtIssuer)
+            ITenantRepository tenants,
+            IJwtIssuer jwtIssuer,
+            ISmtpEmailer emailer,
+            ILogger<UserController> logger)
         {
             _userRepository = userRepository;
+            _resetTokens = resetTokens;
             _passwordHasher = passwordHasher;
             _tenantContext = tenantContext;
+            _tenants = tenants;
             _jwtIssuer = jwtIssuer;
+            _emailer = emailer;
+            _logger = logger;
         }
 
         [HttpPost("Login")]
@@ -100,6 +113,22 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("An account with this email already exists — please log in.");
             }
 
+            if (!IsValidBirthdate(request.Birthdate))
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid birthdate.");
+            }
+            var contactName = request.EmergencyContactName.Trim();
+            var contactPhone = request.EmergencyContactPhone.Trim();
+            if (contactName.Length == 0 || DigitsOnly(contactPhone).Length < 7)
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid emergency contact name and phone number.");
+            }
+            var riderPhone = request.Phone.Trim();
+            if (DigitsOnly(riderPhone).Length < 7)
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid phone number — we use it for waitlist and event alerts.");
+            }
+
             var user = new User
             {
                 TenantId = null,
@@ -107,7 +136,11 @@ namespace webapi.Controllers
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 Role = "rider",
-                Status = "active"
+                Status = "active",
+                Phone = riderPhone,
+                Birthdate = request.Birthdate.Date,
+                EmergencyContactName = contactName,
+                EmergencyContactPhone = contactPhone,
             };
             user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
 
@@ -148,8 +181,108 @@ namespace webapi.Controllers
                 user.FirstName,
                 user.LastName,
                 user.Role,
-                user.Status
+                user.Status,
+                user.Phone,
+                user.Birthdate,
+                user.EmergencyContactName,
+                user.EmergencyContactPhone,
+                user.AddressLine,
+                user.AddressLine2,
+                user.City,
+                user.State,
+                user.PostalCode,
+                user.Country,
+                user.Bike,
+                user.RaceNumber,
             });
+        }
+
+        [Authorize]
+        [HttpPut("Profile/EmergencyContact")]
+        public async Task<IActionResult> UpdateEmergencyContact([FromBody] UpdateEmergencyContactRequest request)
+        {
+            if (!TryGetSelfId(out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+            var name = request.Name?.Trim() ?? string.Empty;
+            var phone = request.Phone?.Trim() ?? string.Empty;
+            if (name.Length == 0 || DigitsOnly(phone).Length < 7)
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid emergency contact name and phone number.");
+            }
+            await _userRepository.UpdateEmergencyContact(userId, name, phone);
+            return new ApiResponses().OkResult(new { name, phone });
+        }
+
+        [Authorize]
+        [HttpPut("Profile/Phone")]
+        public async Task<IActionResult> UpdatePhone([FromBody] UpdatePhoneRequest request)
+        {
+            if (!TryGetSelfId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var phone = request.Phone?.Trim() ?? string.Empty;
+            if (DigitsOnly(phone).Length < 7)
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid phone number.");
+            }
+            await _userRepository.UpdatePhone(userId, phone);
+            return new ApiResponses().OkResult(new { phone });
+        }
+
+        [Authorize]
+        [HttpPut("Profile/RacerInfo")]
+        public async Task<IActionResult> UpdateRacerInfo([FromBody] UpdateRacerInfoRequest request)
+        {
+            if (!TryGetSelfId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var bike = string.IsNullOrWhiteSpace(request.Bike) ? null : request.Bike.Trim();
+            var raceNumber = string.IsNullOrWhiteSpace(request.RaceNumber) ? null : request.RaceNumber.Trim();
+            // Race numbers stay alphanumeric — we keep them as freeform text since formats
+            // vary by class (e.g. "21", "07B", "X22"), but cap length so nothing absurd.
+            if (bike is { Length: > 100 })
+            {
+                return new ApiResponses().BadRequestResult("Bike name is too long.");
+            }
+            if (raceNumber is { Length: > 16 })
+            {
+                return new ApiResponses().BadRequestResult("Race number is too long.");
+            }
+            await _userRepository.UpdateRacerInfo(userId, bike, raceNumber);
+            return new ApiResponses().OkResult(new { bike, raceNumber });
+        }
+
+        [Authorize]
+        [HttpPut("Profile/Address")]
+        public async Task<IActionResult> UpdateAddress([FromBody] UpdateAddressRequest request)
+        {
+            if (!TryGetSelfId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            string? Norm(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            await _userRepository.UpdateAddress(userId,
+                addressLine: Norm(request.AddressLine),
+                addressLine2: Norm(request.AddressLine2),
+                city: Norm(request.City),
+                state: Norm(request.State),
+                postalCode: Norm(request.PostalCode),
+                country: Norm(request.Country) ?? "US");
+            return new ApiResponses().OkResult();
+        }
+
+        [Authorize]
+        [HttpPut("Profile/Birthdate")]
+        public async Task<IActionResult> UpdateBirthdate([FromBody] UpdateBirthdateRequest request)
+        {
+            if (!TryGetSelfId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            if (!IsValidBirthdate(request.Birthdate))
+            {
+                return new ApiResponses().BadRequestResult("Please enter a valid birthdate.");
+            }
+            await _userRepository.UpdateBirthdate(userId, request.Birthdate.Date);
+            return new ApiResponses().OkResult(new { birthdate = request.Birthdate.Date });
+        }
+
+        private bool TryGetSelfId(out Guid userId)
+        {
+            var claim = User.FindFirst("UserId")?.Value;
+            return Guid.TryParse(claim, out userId);
         }
 
         // ── Tenant user management ────────────────────────────────────────────────
@@ -211,6 +344,19 @@ namespace webapi.Controllers
             };
             user.PasswordHash = _passwordHasher.HashPassword(user, tempPassword);
             user.Id = await _userRepository.Create(user);
+
+            if (_emailer.IsConfigured)
+            {
+                var loginUrl = $"{Request.Scheme}://{Request.Host.Value}/Login";
+                var resetUrl = $"{Request.Scheme}://{Request.Host.Value}/ResetPassword";
+                var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
+<p>You've been added as a <strong>{System.Net.WebUtility.HtmlEncode(user.Role)}</strong> on RidePass.</p>
+<p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
+<strong>Email:</strong> {System.Net.WebUtility.HtmlEncode(user.Email)}<br/>
+<strong>Temporary password:</strong> <code>{tempPassword}</code></p>
+<p>Please <a href=""{resetUrl}"">reset your password</a> after your first sign-in.</p>";
+                await _emailer.Send(user.Email, "Welcome to RidePass", html);
+            }
 
             return new ApiResponses().OkResult(new CreateTenantUserResponse
             {
@@ -275,10 +421,141 @@ namespace webapi.Controllers
             var tempPassword = GenerateTemporaryPassword();
             var hash = _passwordHasher.HashPassword(target, tempPassword);
             await _userRepository.UpdatePasswordHash(id, hash);
+
+            if (_emailer.IsConfigured)
+            {
+                var loginUrl = $"{Request.Scheme}://{Request.Host.Value}/Login";
+                var resetUrl = $"{Request.Scheme}://{Request.Host.Value}/ResetPassword";
+                var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(target.FirstName)},</p>
+<p>An administrator has reset your RidePass password.</p>
+<p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
+<strong>Temporary password:</strong> <code>{tempPassword}</code></p>
+<p>Please <a href=""{resetUrl}"">change it</a> after your next sign-in.</p>";
+                await _emailer.Send(target.Email, "Your RidePass password was reset", html);
+            }
+
             return new ApiResponses().OkResult(new ResetTenantUserPasswordResponse
             {
                 TemporaryPassword = tempPassword,
             });
+        }
+
+        // ── Self-serve password reset ────────────────────────────────────────────
+
+        /// <summary>
+        /// Public endpoint: request a reset email. Always returns 200 to avoid revealing
+        /// which addresses have accounts. If a matching account is found and SMTP is
+        /// configured, a one-time token is emailed.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("ResetPassword")]
+        public async Task<IActionResult> RequestPasswordReset([FromBody] ResetPasswordRequest request)
+        {
+            var email = request.Email.Trim();
+
+            // Mirror Login resolution: prefer a global account; fall back to tenant-scoped.
+            var user = await _userRepository.GetGlobalByEmail(email);
+            if (user is null && _tenantContext.IsResolved)
+            {
+                user = await _userRepository.GetByEmail(_tenantContext.TenantId, email);
+            }
+
+            if (user is not null && user.Status == "active")
+            {
+                var token = GenerateResetToken();
+                var hash = HashToken(token);
+                await _resetTokens.Insert(new PasswordResetToken
+                {
+                    UserId = user.Id,
+                    TokenHash = hash,
+                    ExpiresAtUtc = DateTime.UtcNow.AddMinutes(60),
+                });
+
+                var resetUrl = await BuildResetUrl(user, token);
+                if (_emailer.IsConfigured)
+                {
+                    var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
+<p>We received a request to reset the password for your RidePass account.</p>
+<p><a href=""{resetUrl}"">Click here to set a new password</a>. This link expires in 60 minutes and can only be used once.</p>
+<p>If you didn't request this, you can safely ignore this email.</p>";
+                    await _emailer.Send(user.Email, "Reset your RidePass password", html);
+                }
+                else
+                {
+                    _logger.LogWarning("Password reset requested for {Email} but SMTP is not configured. Reset URL: {Url}", user.Email, resetUrl);
+                }
+            }
+
+            // Always 200, regardless of whether a match was found.
+            return new ApiResponses().OkResult(new { message = "If that email exists, a reset link has been sent." });
+        }
+
+        /// <summary>
+        /// Public endpoint: consume a reset token and set the user's new password.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("ResetPassword/Confirm")]
+        public async Task<IActionResult> ConfirmPasswordReset([FromBody] ConfirmPasswordResetRequest request)
+        {
+            var hash = HashToken(request.Token);
+            var token = await _resetTokens.GetByTokenHash(hash);
+            if (token is null || token.UsedAtUtc is not null || token.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                return new ApiResponses().BadRequestResult("This reset link is invalid or has expired. Please request a new one.");
+            }
+
+            var user = await _userRepository.GetById(token.UserId);
+            if (user is null || user.Status != "active")
+            {
+                return new ApiResponses().BadRequestResult("This reset link is invalid or has expired. Please request a new one.");
+            }
+
+            var newHash = _passwordHasher.HashPassword(user, request.NewPassword);
+            await _userRepository.UpdatePasswordHash(user.Id, newHash);
+            await _resetTokens.MarkUsed(token.Id);
+
+            return new ApiResponses().OkResult(new { message = "Password updated. You can now sign in." });
+        }
+
+        private async Task<string> BuildResetUrl(User user, string token)
+        {
+            // Tenant-scoped users (tenant_admin, tenant_staff) need the link on their tenant subdomain.
+            // Global users (rider, super_admin) get a link on whichever host the request came in on.
+            var scheme = Request.Scheme;
+            var host = Request.Host.Value;
+            if (user.TenantId.HasValue)
+            {
+                var tenant = await _tenants.GetById(user.TenantId.Value);
+                if (tenant is not null)
+                {
+                    var apex = ApexHostFromCurrent(host);
+                    host = $"{tenant.Subdomain}.{apex}";
+                }
+            }
+            return $"{scheme}://{host}/ResetPassword?token={Uri.EscapeDataString(token)}";
+        }
+
+        private static string ApexHostFromCurrent(string currentHost)
+        {
+            // Current host may be `tenant.ridepass.io`, `ridepass.io`, or `localhost:5070`.
+            // Strip a leading subdomain only if there are 3+ labels and no port (i.e. real apex like ridepass.io).
+            var hostOnly = currentHost.Split(':')[0];
+            var parts = hostOnly.Split('.');
+            if (parts.Length >= 3) return string.Join('.', parts.Skip(1));
+            return currentHost;
+        }
+
+        private static string GenerateResetToken()
+        {
+            Span<byte> bytes = stackalloc byte[32];
+            RandomNumberGenerator.Fill(bytes);
+            return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private static string HashToken(string token)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+            return Convert.ToHexString(bytes).ToLowerInvariant();
         }
 
         private Guid? SelfId()
@@ -293,5 +570,13 @@ namespace webapi.Controllers
             RandomNumberGenerator.Fill(bytes);
             return Convert.ToHexString(bytes);
         }
+
+        internal static bool IsValidBirthdate(DateTime b)
+        {
+            var today = DateTime.UtcNow.Date;
+            return b.Date < today && b.Year >= 1900 && (today.Year - b.Year) <= 130;
+        }
+
+        internal static string DigitsOnly(string s) => new string(s.Where(char.IsDigit).ToArray());
     }
 }

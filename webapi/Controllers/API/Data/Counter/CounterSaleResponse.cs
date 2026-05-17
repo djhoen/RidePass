@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.Counter
+﻿namespace webapi.Controllers.API.Data.Counter
 {
     public class CounterSaleResponse
     {
@@ -9,7 +9,7 @@ namespace webapi.Controllers.API.Data.Counter
 
     public class CounterSaleLineItem
     {
-        public string Kind { get; set; } = null!;     // "day_pass" or "event_ticket"
+        public string Kind { get; set; } = null!;     // "pass" or "event_ticket"
         public Guid PurchaseId { get; set; }
         public Guid RedemptionToken { get; set; }
         public string DisplayName { get; set; } = null!;

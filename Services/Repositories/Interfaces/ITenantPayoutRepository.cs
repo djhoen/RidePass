@@ -6,6 +6,7 @@ namespace Services.Repositories.Interfaces
     {
         Task<List<TenantPayout>> ListByTenant(Guid tenantId, int take = 50);
         Task<TenantPayout?> GetById(Guid id, Guid tenantId);
+        Task<TenantPayout?> GetByExternalReference(string externalReference);
         Task<List<TenantLedgerEntry>> ListEntriesForPayout(Guid payoutId);
 
         Task<Guid> Create(TenantPayout payout);

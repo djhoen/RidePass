@@ -16,6 +16,20 @@
                             </v-row>
                             <v-text-field v-model="form.email" label="Email" type="email" required
                                 class="mb-2"></v-text-field>
+                            <PhoneField v-model="form.phone" label="Mobile phone" required
+                                hint="We text waitlist promotions and event-day alerts to this number." persistent-hint
+                                class="mb-2" />
+                            <v-text-field v-model="form.birthdate" label="Birthdate" type="date" required
+                                :max="todayIso" class="mb-2"></v-text-field>
+                            <v-row>
+                                <v-col cols="12" sm="6">
+                                    <v-text-field v-model="form.emergencyContactName" label="Emergency contact name" required
+                                        hint="Someone to call if there's a problem at the track" persistent-hint></v-text-field>
+                                </v-col>
+                                <v-col cols="12" sm="6">
+                                    <PhoneField v-model="form.emergencyContactPhone" label="Emergency contact phone" required />
+                                </v-col>
+                            </v-row>
                             <v-text-field v-model="form.password" label="Password" type="password" required
                                 class="mb-2"></v-text-field>
                             <v-text-field v-model="form.confirmPassword" label="Confirm Password" type="password"
@@ -44,6 +58,7 @@ import { UserService } from '@/services/UserService'
 import { NewsletterService } from '@/services/NewsletterService'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
+import PhoneField from '@/components/PhoneField.vue'
 
 const router = useRouter()
 const userService = new UserService()
@@ -59,14 +74,39 @@ const form = ref({
     firstName: '',
     lastName: '',
     email: '',
+    phone: '',
+    birthdate: '',
+    emergencyContactName: '',
+    emergencyContactPhone: '',
     password: '',
     confirmPassword: '',
     subscribeNewsletter: false,
 })
 
+const todayIso = new Date().toISOString().slice(0, 10)
+
 async function createAccount() {
     if (form.value.password !== form.value.confirmPassword) {
         snackbarText.value = 'Passwords do not match.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+        return
+    }
+    if (!form.value.birthdate || form.value.birthdate >= todayIso) {
+        snackbarText.value = 'Please enter a valid birthdate.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+        return
+    }
+    if (form.value.phone.replace(/\D/g, '').length < 7) {
+        snackbarText.value = 'Please enter a valid mobile phone — we use it for waitlist and event alerts.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+        return
+    }
+    if (!form.value.emergencyContactName.trim()
+        || form.value.emergencyContactPhone.replace(/\D/g, '').length < 7) {
+        snackbarText.value = 'Please enter an emergency contact name and phone.'
         snackbarColor.value = 'error'
         snackbar.value = true
         return

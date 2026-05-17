@@ -125,9 +125,10 @@
                                 <th>Subdomain</th>
                                 <th>Display Name</th>
                                 <th style="width: 120px">Status</th>
+                                <th style="width: 130px">Service charge</th>
                                 <th style="width: 160px">Timezone</th>
                                 <th style="width: 180px">Created</th>
-                                <th style="width: 140px" class="text-right"></th>
+                                <th style="width: 200px" class="text-right"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -135,14 +136,21 @@
                                 <td><code>{{ t.subdomain }}</code></td>
                                 <td>{{ t.displayName }}</td>
                                 <td>{{ t.status }}</td>
+                                <td>
+                                    {{ (t.serviceChargeBps / 100).toFixed(2) }}%
+                                    <span v-if="t.monthlyServiceChargeCapCents !== null" class="text-caption text-medium-emphasis">
+                                        cap ${{ (t.monthlyServiceChargeCapCents / 100).toFixed(2) }}
+                                    </span>
+                                </td>
                                 <td>{{ t.timezone }}</td>
                                 <td>{{ formatDate(t.createdAtUtc) }}</td>
                                 <td class="text-right">
+                                    <v-btn variant="text" size="small" @click="openServiceCharge(t)">Service charge</v-btn>
                                     <v-btn variant="text" size="small" :href="tenantUrl(t.subdomain)" target="_blank">Visit</v-btn>
                                 </td>
                             </tr>
                             <tr v-if="!loadingTenants && tenants.length === 0">
-                                <td colspan="6" class="text-center text-medium-emphasis py-8">No tenants yet.</td>
+                                <td colspan="7" class="text-center text-medium-emphasis py-8">No tenants yet.</td>
                             </tr>
                         </tbody>
                     </v-table>
@@ -218,8 +226,8 @@
                         <tbody>
                             <tr v-for="r in refunds" :key="r.kind + ':' + r.id">
                                 <td>
-                                    <v-chip size="x-small" :color="r.kind === 'day_pass' ? 'primary' : 'secondary'">
-                                        {{ r.kind === 'day_pass' ? 'Day Pass' : 'Ticket' }}
+                                    <v-chip size="x-small" :color="r.kind === 'pass' ? 'primary' : 'secondary'">
+                                        {{ r.kind === 'pass' ? 'Pass' : 'Ticket' }}
                                     </v-chip>
                                 </td>
                                 <td><code>{{ r.tenantSubdomain }}</code></td>
@@ -278,8 +286,8 @@
                             <tr v-for="d in disputes" :key="d.id">
                                 <td>
                                     <v-chip v-if="d.kind !== 'unlinked'" size="x-small"
-                                        :color="d.kind === 'day_pass' ? 'primary' : 'secondary'">
-                                        {{ d.kind === 'day_pass' ? 'Day Pass' : 'Ticket' }}
+                                        :color="d.kind === 'pass' ? 'primary' : 'secondary'">
+                                        {{ d.kind === 'pass' ? 'Pass' : 'Ticket' }}
                                     </v-chip>
                                     <v-chip v-else size="x-small" color="grey">Unlinked</v-chip>
                                 </td>
@@ -352,7 +360,6 @@
                                 <td class="text-right">${{ (b.lifetimePaidOutCents / 100).toFixed(2) }}</td>
                                 <td class="text-right">
                                     <v-btn variant="text" size="small" @click="openTenantDetail(b)">Detail</v-btn>
-                                    <v-btn variant="text" size="small" @click="openFeeEditor(b)">Fees</v-btn>
                                 </td>
                             </tr>
                             <tr v-if="!loadingBalances && balances.length === 0">
@@ -546,6 +553,10 @@
                                 <td><code v-if="p.externalReference">{{ p.externalReference }}</code><span v-else class="text-medium-emphasis">—</span></td>
                                 <td>{{ p.payoutDateUtc ? formatDate(p.payoutDateUtc) : '—' }}</td>
                                 <td class="text-right">
+                                    <v-btn v-if="p.status === 'pending'" size="x-small" variant="tonal" color="primary"
+                                        :loading="stripeSendingId === p.id" @click="sendPayoutViaStripe(p)">
+                                        Send via Stripe
+                                    </v-btn>
                                     <v-btn v-if="p.status === 'pending' || p.status === 'processing'" size="x-small" variant="text"
                                         @click="openMarkPaid(p)">Mark paid</v-btn>
                                     <v-btn v-if="p.status === 'pending'" size="x-small" variant="text" color="error"
@@ -648,48 +659,26 @@
             </v-card>
         </v-dialog>
 
-        <!-- Fee schedule editor -->
-        <v-dialog v-model="feeDialog" max-width="720" persistent>
-            <v-card v-if="feeTenant">
-                <v-card-title>Fee schedule — {{ feeTenant.tenantDisplayName }}</v-card-title>
+        <!-- Service charge dialog -->
+        <v-dialog v-model="serviceChargeDialog" max-width="520" persistent>
+            <v-card v-if="serviceChargeTenant">
+                <v-card-title>Service charge — {{ serviceChargeTenant.displayName }}</v-card-title>
                 <v-card-text>
                     <p class="text-caption text-medium-emphasis mb-3">
-                        Tiered RidePass cut by monthly cumulative gross volume (UTC). New schedule takes effect immediately;
-                        past transactions keep the rate they were charged.
+                        Flat percentage RidePass takes from each sale. The tenant decides per item how
+                        much of this charge is added to the rider's total vs. absorbed from their own net.
                     </p>
-                    <v-text-field v-model.number="feeMonthlyCapDollars" type="number" min="0"
-                        label="Monthly cap (USD, blank = no cap)" density="compact" class="mb-3"
-                        hint="RidePass take is limited to this much per UTC month per tenant" persistent-hint></v-text-field>
-
-                    <v-table density="compact">
-                        <thead>
-                            <tr>
-                                <th>From (USD/mo)</th>
-                                <th>To (USD/mo, blank = ∞)</th>
-                                <th>Rate (%)</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="(t, i) in feeTiers" :key="i">
-                                <td><v-text-field v-model.number="t.minDollars" type="number" density="compact" hide-details></v-text-field></td>
-                                <td><v-text-field v-model.number="t.maxDollars" type="number" density="compact" hide-details placeholder="∞"></v-text-field></td>
-                                <td><v-text-field v-model.number="t.ratePct" type="number" step="0.01" density="compact" hide-details></v-text-field></td>
-                                <td>
-                                    <v-btn icon="mdi-delete" size="x-small" variant="text" :disabled="feeTiers.length === 1"
-                                        @click="feeTiers.splice(i, 1)"></v-btn>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                    <v-btn variant="text" prepend-icon="mdi-plus" class="mt-2" @click="feeTiers.push({ minDollars: 0, maxDollars: null, ratePct: 5 })">
-                        Add tier
-                    </v-btn>
+                    <v-text-field v-model.number="serviceChargePct" type="number" step="0.01" min="0" max="100"
+                        label="Service charge (%)" density="compact" suffix="%" class="mb-3"></v-text-field>
+                    <v-text-field v-model.number="serviceChargeCapDollars" type="number" step="0.01" min="0"
+                        label="Monthly cap (USD, blank = no cap)" density="compact" prefix="$"
+                        hint="Capped per UTC month — once reached, RidePass takes 0% on further sales until next month."
+                        persistent-hint clearable></v-text-field>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
-                    <v-btn @click="feeDialog = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="savingFee" @click="saveFeeSchedule">Save</v-btn>
+                    <v-btn @click="serviceChargeDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingServiceCharge" @click="saveServiceCharge">Save</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -710,6 +699,10 @@
                         </v-col>
                     </v-row>
                     <v-text-field v-model="createForm.displayName" label="Display Name" density="compact"></v-text-field>
+                    <v-select v-model="createForm.tenantType" :items="tenantTypeOptions"
+                        label="Tenant type" density="compact"
+                        hint="Drives event-type / waiver / pass-product defaults at creation. Locked after creation."
+                        persistent-hint></v-select>
                     <v-divider class="my-3"></v-divider>
                     <div class="text-subtitle-2 mb-1">Optional: first tenant admin</div>
                     <p class="text-caption text-medium-emphasis mb-3">
@@ -828,11 +821,17 @@ const creating = ref(false)
 const createForm = ref({
     subdomain: '',
     displayName: '',
+    tenantType: 'motocross' as 'motocross' | 'mountain_bike',
     timezone: 'America/New_York',
     adminFirstName: '',
     adminLastName: '',
     adminEmail: '',
 })
+
+const tenantTypeOptions = [
+    { value: 'motocross', title: 'Motocross (MX)' },
+    { value: 'mountain_bike', title: 'Mountain Bike (MTB)' },
+]
 
 const credsDialog = ref(false)
 const createdResult = ref<CreateTenantResult | null>(null)
@@ -848,11 +847,6 @@ const detailDialog = ref(false)
 const detailTenant = ref<TenantBalanceSummary | null>(null)
 const detailPayouts = ref<PayoutSummary[]>([])
 const detailLedger = ref<LedgerEntry[]>([])
-const feeDialog = ref(false)
-const feeTenant = ref<TenantBalanceSummary | null>(null)
-const feeMonthlyCapDollars = ref<number | null>(null)
-const feeTiers = ref<{ minDollars: number; maxDollars: number | null; ratePct: number }[]>([])
-const savingFee = ref(false)
 
 const createPayoutDialog = ref(false)
 const creatingPayout = ref(false)
@@ -869,6 +863,38 @@ const markPaidReference = ref('')
 const auditLog = ref<AuditLogEntry[]>([])
 const loadingAudit = ref(false)
 const auditFilterAction = ref('')
+
+const serviceChargeDialog = ref(false)
+const serviceChargeTenant = ref<TenantSummary | null>(null)
+const serviceChargePct = ref<number>(3)
+const serviceChargeCapDollars = ref<number | null>(null)
+const savingServiceCharge = ref(false)
+
+function openServiceCharge(t: TenantSummary) {
+    serviceChargeTenant.value = t
+    serviceChargePct.value = t.serviceChargeBps / 100
+    serviceChargeCapDollars.value = t.monthlyServiceChargeCapCents !== null ? t.monthlyServiceChargeCapCents / 100 : null
+    serviceChargeDialog.value = true
+}
+
+async function saveServiceCharge() {
+    if (!serviceChargeTenant.value) return
+    savingServiceCharge.value = true
+    try {
+        await service.updateTenantServiceCharge(serviceChargeTenant.value.id, {
+            serviceChargeBps: Math.round((serviceChargePct.value || 0) * 100),
+            monthlyServiceChargeCapCents: serviceChargeCapDollars.value !== null && !Number.isNaN(serviceChargeCapDollars.value)
+                ? Math.round(serviceChargeCapDollars.value * 100) : null,
+        })
+        flash('Service charge updated.', 'success')
+        serviceChargeDialog.value = false
+        await loadTenants()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to update service charge.', 'error')
+    } finally {
+        savingServiceCharge.value = false
+    }
+}
 
 const reconciliation = ref<ReconciliationResult | null>(null)
 const loadingReconcile = ref(false)
@@ -1004,25 +1030,6 @@ async function openTenantDetail(b: TenantBalanceSummary) {
     }
 }
 
-async function openFeeEditor(b: TenantBalanceSummary) {
-    feeTenant.value = b
-    feeDialog.value = true
-    feeTiers.value = [{ minDollars: 0, maxDollars: null, ratePct: 5 }]
-    feeMonthlyCapDollars.value = null
-    try {
-        const r = await service.getFeeSchedule(b.tenantId)
-        const data = (r.data as any).data
-        feeMonthlyCapDollars.value = data.schedule.monthlyCapCents !== null ? data.schedule.monthlyCapCents / 100 : null
-        feeTiers.value = data.tiers.map((t: any) => ({
-            minDollars: t.minVolumeCents / 100,
-            maxDollars: t.maxVolumeCents !== null ? t.maxVolumeCents / 100 : null,
-            ratePct: t.rateBps / 100,
-        }))
-    } catch {
-        // 404 or other — leave defaults
-    }
-}
-
 function openCreatePayout() {
     payoutMemo.value = ''
     createPayoutDialog.value = true
@@ -1088,6 +1095,25 @@ async function voidPayout(p: PayoutSummary) {
     }
 }
 
+const stripeSendingId = ref<string | null>(null)
+
+async function sendPayoutViaStripe(p: PayoutSummary) {
+    if (!detailTenant.value) return
+    const amount = `$${(p.netPaidCents / 100).toFixed(2)}`
+    if (!confirm(`Send ${amount} to this tenant via Stripe Transfer? This moves funds from the platform balance to their connected account immediately.`)) return
+    try {
+        stripeSendingId.value = p.id
+        const r = await service.sendPayoutViaStripe(detailTenant.value.tenantId, p.id)
+        flash(`Sent via Stripe (transfer ${r.data.data.transferId}).`, 'success')
+        await refreshDetailDialog()
+        await loadBalances()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Stripe transfer failed.', 'error')
+    } finally {
+        stripeSendingId.value = null
+    }
+}
+
 async function downloadPayoutCsv(p: PayoutSummary) {
     if (!detailTenant.value) return
     try {
@@ -1105,29 +1131,6 @@ async function refreshDetailDialog() {
     ])
     detailPayouts.value = (p.data as any).data
     detailLedger.value = (l.data as any).data
-}
-
-async function saveFeeSchedule() {
-    if (!feeTenant.value) return
-    savingFee.value = true
-    try {
-        await service.updateFeeSchedule(feeTenant.value.tenantId, {
-            monthlyCapCents: feeMonthlyCapDollars.value !== null && !Number.isNaN(feeMonthlyCapDollars.value)
-                ? Math.round(feeMonthlyCapDollars.value * 100) : null,
-            tiers: feeTiers.value.map(t => ({
-                minVolumeCents: Math.round((t.minDollars || 0) * 100),
-                maxVolumeCents: t.maxDollars !== null && !Number.isNaN(t.maxDollars) ? Math.round(t.maxDollars * 100) : null,
-                rateBps: Math.round((t.ratePct || 0) * 100),
-            })),
-        })
-        flash('Fee schedule saved.', 'success')
-        feeDialog.value = false
-        await loadBalances()
-    } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to save fee schedule.', 'error')
-    } finally {
-        savingFee.value = false
-    }
 }
 
 async function loadTenants() {
@@ -1348,8 +1351,8 @@ async function processRefund(r: RefundListItem) {
     if (!confirm(`Refund $${(r.amountCents / 100).toFixed(2)} to ${r.purchaserEmail} via Stripe?`)) return
     try {
         processingId.value = r.id
-        if (r.kind === 'day_pass') {
-            await service.processDayPassRefund(r.id)
+        if (r.kind === 'pass') {
+            await service.processPassRefund(r.id)
         } else {
             await service.processTicketRefund(r.id)
         }
@@ -1366,6 +1369,7 @@ function openCreateTenant() {
     createForm.value = {
         subdomain: '',
         displayName: '',
+        tenantType: 'motocross',
         timezone: 'America/New_York',
         adminFirstName: '',
         adminLastName: '',
@@ -1380,6 +1384,7 @@ async function submitCreateTenant() {
         const body = {
             subdomain: createForm.value.subdomain.trim().toLowerCase(),
             displayName: createForm.value.displayName.trim(),
+            tenantType: createForm.value.tenantType,
             timezone: createForm.value.timezone,
             adminEmail: createForm.value.adminEmail.trim() || null,
             adminFirstName: createForm.value.adminFirstName.trim() || null,

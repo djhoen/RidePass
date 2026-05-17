@@ -7,9 +7,16 @@ namespace Services.Repositories
     public class EventTicketTierRepository : IEventTicketTierRepository
     {
         private const string Columns = @"
-            id, tenant_id AS TenantId, event_id AS EventId, name,
+            id, tenant_id AS TenantId, event_id AS EventId, kind, name,
             price_cents AS PriceCents, inventory, sort_order AS SortOrder,
-            is_active AS IsActive, created_at AS CreatedAt, updated_at AS UpdatedAt";
+            is_active AS IsActive,
+            rider_paid_service_charge_bps AS RiderPaidServiceChargeBps,
+            bundled_coupon_count AS BundledCouponCount,
+            bundled_coupon_discount_kind AS BundledCouponDiscountKind,
+            bundled_coupon_discount_value AS BundledCouponDiscountValue,
+            bundled_coupon_scope AS BundledCouponScope,
+            bundled_coupon_expires_in_days AS BundledCouponExpiresInDays,
+            created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
 
@@ -51,8 +58,16 @@ namespace Services.Repositories
         public async Task<Guid> Create(EventTicketTier t)
         {
             const string sql = @"
-                INSERT INTO event_ticket_tier (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active)
-                VALUES (@TenantId, @EventId, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive)
+                INSERT INTO event_ticket_tier (
+                    tenant_id, event_id, kind, name, price_cents, inventory, sort_order, is_active,
+                    rider_paid_service_charge_bps,
+                    bundled_coupon_count, bundled_coupon_discount_kind, bundled_coupon_discount_value,
+                    bundled_coupon_scope, bundled_coupon_expires_in_days)
+                VALUES (
+                    @TenantId, @EventId, @Kind, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
+                    @RiderPaidServiceChargeBps,
+                    @BundledCouponCount, @BundledCouponDiscountKind, @BundledCouponDiscountValue,
+                    @BundledCouponScope, @BundledCouponExpiresInDays)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, t);
             return result.First();
@@ -62,8 +77,14 @@ namespace Services.Repositories
         {
             const string sql = @"
                 UPDATE event_ticket_tier
-                SET name = @Name, price_cents = @PriceCents, inventory = @Inventory,
-                    sort_order = @SortOrder, is_active = @IsActive
+                SET kind = @Kind, name = @Name, price_cents = @PriceCents, inventory = @Inventory,
+                    sort_order = @SortOrder, is_active = @IsActive,
+                    rider_paid_service_charge_bps = @RiderPaidServiceChargeBps,
+                    bundled_coupon_count = @BundledCouponCount,
+                    bundled_coupon_discount_kind = @BundledCouponDiscountKind,
+                    bundled_coupon_discount_value = @BundledCouponDiscountValue,
+                    bundled_coupon_scope = @BundledCouponScope,
+                    bundled_coupon_expires_in_days = @BundledCouponExpiresInDays
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, t);
         }
@@ -80,6 +101,26 @@ namespace Services.Repositories
                 SELECT COUNT(*) FROM event_ticket_purchase
                 WHERE tier_id = @tierId AND status IN ('pending', 'paid', 'redeemed')";
             return await _db.ExecuteScalar(sql, new { tierId });
+        }
+
+        public async Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)
+        {
+            if (ids.Count == 0) return;
+            // Constrain by both tenant_id (security) and event_id (a UI bug can't
+            // move a tier across events even if its id leaked into the request).
+            const string sql = @"
+                UPDATE event_ticket_tier AS t
+                SET sort_order = data.sort_order, updated_at = now()
+                FROM (SELECT unnest(@ids::uuid[]) AS id,
+                             unnest(@orders::int[]) AS sort_order) AS data
+                WHERE t.id = data.id AND t.tenant_id = @tenantId AND t.event_id = @eventId";
+            await _db.Execute(sql, new
+            {
+                tenantId,
+                eventId,
+                ids = ids.ToArray(),
+                orders = sortOrders.ToArray(),
+            });
         }
     }
 }

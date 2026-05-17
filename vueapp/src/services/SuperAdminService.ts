@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 export interface TenantSummary {
     id: string
@@ -6,12 +6,15 @@ export interface TenantSummary {
     displayName: string
     status: string
     timezone: string
+    serviceChargeBps: number
+    monthlyServiceChargeCapCents: number | null
     createdAtUtc: string
 }
 
 export interface CreateTenantPayload {
     subdomain: string
     displayName: string
+    tenantType: 'motocross' | 'mountain_bike'
     timezone: string
     adminEmail?: string | null
     adminFirstName?: string | null
@@ -22,6 +25,7 @@ export interface CreateTenantResult {
     tenantId: string
     subdomain: string
     displayName: string
+    tenantType: 'motocross' | 'mountain_bike'
     timezone: string
     adminUserId?: string | null
     adminEmail?: string | null
@@ -85,8 +89,8 @@ export class SuperAdminService {
         return axios.get<{ data: RefundListItem[] }>(`${this.apiUrl}/SuperAdmin/Refunds`)
     }
 
-    processDayPassRefund(id: string) {
-        return axios.post(`${this.apiUrl}/SuperAdmin/Refunds/DayPass/${id}/Process`)
+    processPassRefund(id: string) {
+        return axios.post(`${this.apiUrl}/SuperAdmin/Refunds/Pass/${id}/Process`)
     }
 
     processTicketRefund(id: string) {
@@ -117,14 +121,6 @@ export class SuperAdminService {
             `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}`)
     }
 
-    getFeeSchedule(tenantId: string) {
-        return axios.get<{ data: FeeScheduleWithTiers }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/FeeSchedule`)
-    }
-
-    updateFeeSchedule(tenantId: string, body: { monthlyCapCents: number | null; tiers: FeeTierInput[] }) {
-        return axios.put<{ data: FeeScheduleWithTiers }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/FeeSchedule`, body)
-    }
-
     createPayout(tenantId: string, body: { periodStartUtc: string; periodEndUtc: string; memo: string | null }) {
         return axios.post<{ data: { payout: PayoutSummary; attachedCount: number } }>(
             `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts`, body)
@@ -140,8 +136,22 @@ export class SuperAdminService {
         return axios.delete(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}`)
     }
 
+    sendPayoutViaStripe(tenantId: string, payoutId: string) {
+        return axios.post<{ data: { payout: PayoutSummary; transferId: string } }>(
+            `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/Payouts/${payoutId}/SendViaStripe`)
+    }
+
+    listCouponShares(tenantId?: string) {
+        return axios.get<{ data: CouponShareRow[] }>(`${this.apiUrl}/SuperAdmin/Marketing/CouponShares`,
+            { params: tenantId ? { tenantId } : undefined })
+    }
+
     listAuditLog(params: { action?: string; actorUserId?: string; targetKind?: string; targetId?: string; tenantId?: string; fromUtc?: string; toUtc?: string; take?: number } = {}) {
         return axios.get<{ data: AuditLogEntry[] }>(`${this.apiUrl}/SuperAdmin/AuditLog`, { params })
+    }
+
+    updateTenantServiceCharge(tenantId: string, body: { serviceChargeBps: number; monthlyServiceChargeCapCents: number | null }) {
+        return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/ServiceCharge`, body)
     }
 
     getReconciliation(fromUtc: string, toUtc: string) {
@@ -219,27 +229,6 @@ export interface PayoutSummary {
     createdAt: string
 }
 
-export interface FeeTier {
-    id: string
-    scheduleId: string
-    minVolumeCents: number
-    maxVolumeCents: number | null
-    rateBps: number
-    sortOrder: number
-}
-
-export interface FeeScheduleWithTiers {
-    schedule: {
-        id: string
-        tenantId: string
-        effectiveFromUtc: string
-        effectiveToUtc: string | null
-        monthlyCapCents: number | null
-        createdAt: string
-    }
-    tiers: FeeTier[]
-}
-
 export interface AuditLogEntry {
     id: string
     actorUserId: string | null
@@ -255,17 +244,11 @@ export interface AuditLogEntry {
     createdAt: string
 }
 
-export interface FeeTierInput {
-    minVolumeCents: number
-    maxVolumeCents: number | null
-    rateBps: number
-}
-
 export interface DisputeListItem {
     id: string
     tenantId: string
     tenantSubdomain: string
-    kind: 'day_pass' | 'event_ticket' | 'unlinked'
+    kind: 'pass' | 'event_ticket' | 'unlinked'
     purchaseId: string | null
     itemName: string | null
     purchaserName: string | null
@@ -292,7 +275,7 @@ export interface ReconciliationResult {
 }
 
 export interface RefundListItem {
-    kind: 'day_pass' | 'event_ticket'
+    kind: 'pass' | 'event_ticket'
     id: string
     tenantId: string
     tenantSubdomain: string
@@ -304,4 +287,13 @@ export interface RefundListItem {
     cancelledAtUtc: string | null
     createdAtUtc: string
     stripePaymentIntentId: string | null
+}
+
+export interface CouponShareRow {
+    tenantSubdomain: string
+    tenantDisplayName: string
+    recipientEmail: string
+    recipientName: string | null
+    sentAtUtc: string
+    redeemedAtUtc: string | null
 }

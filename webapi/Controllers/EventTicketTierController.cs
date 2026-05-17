@@ -63,15 +63,25 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Event not found.");
             }
 
+            if (!ValidateBundledCoupon(request, out var bundleErr))
+                return new ApiResponses().BadRequestResult(bundleErr);
+
             var tier = new EventTicketTier
             {
                 TenantId = _tenantContext.TenantId,
                 EventId = eventId,
+                Kind = request.Kind,
                 Name = request.Name,
                 PriceCents = request.PriceCents,
                 Inventory = request.Inventory,
                 SortOrder = request.SortOrder,
                 IsActive = request.IsActive,
+                RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps,
+                BundledCouponCount = request.BundledCouponCount,
+                BundledCouponDiscountKind = request.BundledCouponDiscountKind,
+                BundledCouponDiscountValue = request.BundledCouponDiscountValue,
+                BundledCouponScope = request.BundledCouponScope,
+                BundledCouponExpiresInDays = request.BundledCouponExpiresInDays,
             };
             tier.Id = await _tiers.Create(tier);
             return new ApiResponses().OkResult(ToResponse(tier, sold: 0));
@@ -87,15 +97,39 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Tier not found.");
             }
 
+            if (!ValidateBundledCoupon(request, out var bundleErr))
+                return new ApiResponses().BadRequestResult(bundleErr);
+
+            existing.Kind = request.Kind;
             existing.Name = request.Name;
             existing.PriceCents = request.PriceCents;
             existing.Inventory = request.Inventory;
             existing.SortOrder = request.SortOrder;
             existing.IsActive = request.IsActive;
+            existing.RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps;
+            existing.BundledCouponCount = request.BundledCouponCount;
+            existing.BundledCouponDiscountKind = request.BundledCouponDiscountKind;
+            existing.BundledCouponDiscountValue = request.BundledCouponDiscountValue;
+            existing.BundledCouponScope = request.BundledCouponScope;
+            existing.BundledCouponExpiresInDays = request.BundledCouponExpiresInDays;
 
             await _tiers.Update(existing);
             var sold = await _tiers.SoldCount(id);
             return new ApiResponses().OkResult(ToResponse(existing, sold));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Reorder")]
+        public async Task<IActionResult> Reorder(Guid eventId, [FromBody] ReorderEventTicketTiersRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var ev = await _events.GetById(eventId, _tenantContext.TenantId);
+            if (ev is null) return new ApiResponses().NotFoundResult("Event not found.");
+            if (req.Items.Count == 0) return new ApiResponses().OkResult();
+            var ids = req.Items.Select(i => i.Id).ToList();
+            var orders = req.Items.Select(i => i.SortOrder).ToList();
+            await _tiers.UpdateSortOrders(_tenantContext.TenantId, eventId, ids, orders);
+            return new ApiResponses().OkResult();
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -122,12 +156,48 @@ namespace webapi.Controllers
         {
             Id = t.Id,
             EventId = t.EventId,
+            Kind = t.Kind,
             Name = t.Name,
             PriceCents = t.PriceCents,
             Inventory = t.Inventory,
             Sold = sold,
             SortOrder = t.SortOrder,
             IsActive = t.IsActive,
+            RiderPaidServiceChargeBps = t.RiderPaidServiceChargeBps,
+            BundledCouponCount = t.BundledCouponCount,
+            BundledCouponDiscountKind = t.BundledCouponDiscountKind,
+            BundledCouponDiscountValue = t.BundledCouponDiscountValue,
+            BundledCouponScope = t.BundledCouponScope,
+            BundledCouponExpiresInDays = t.BundledCouponExpiresInDays,
         };
+
+        // Bundled-coupon fields are all-or-nothing: when count is set, kind/value/scope must
+        // also be set so we can mint the codes correctly. expires_in_days is optional.
+        private static bool ValidateBundledCoupon(UpsertEventTicketTierRequest r, out string err)
+        {
+            if (r.BundledCouponCount is null or 0)
+            {
+                err = string.Empty;
+                return true;
+            }
+            if (r.Kind != "race_entry")
+            {
+                err = "Bundled coupons can only be configured on race-entry tiers.";
+                return false;
+            }
+            if (string.IsNullOrEmpty(r.BundledCouponDiscountKind) || r.BundledCouponDiscountValue is null
+                || string.IsNullOrEmpty(r.BundledCouponScope))
+            {
+                err = "Bundled coupon discount kind, value, and scope are required when count > 0.";
+                return false;
+            }
+            if (r.BundledCouponDiscountKind == "percent" && r.BundledCouponDiscountValue > 10000)
+            {
+                err = "Percent discount can't exceed 10000 bps (100%).";
+                return false;
+            }
+            err = string.Empty;
+            return true;
+        }
     }
 }

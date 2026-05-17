@@ -16,6 +16,12 @@ namespace Services.Repositories.Interfaces
         Task UpdateRole(Guid id, string role);
         Task UpdateStatus(Guid id, string status);
         Task UpdatePasswordHash(Guid id, string passwordHash);
+        Task UpdateEmergencyContact(Guid userId, string name, string phone);
+        Task UpdatePhone(Guid userId, string? phone);
+        Task UpdateRacerInfo(Guid userId, string? bike, string? raceNumber);
+        Task UpdateBirthdate(Guid userId, DateTime birthdate);
+        Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
+            string? city, string? state, string? postalCode, string? country);
         Task<string?> GetDashboardConfig(Guid userId);
         Task SetDashboardConfig(Guid userId, string? jsonOrNull);
     }

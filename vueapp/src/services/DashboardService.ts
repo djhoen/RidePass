@@ -24,6 +24,9 @@ export interface UpcomingEvent {
 
 export interface RecentPurchase {
     id: string
+    // Discriminator from v_recent_sales — 'pass', 'event_ticket',
+    // 'event_extra', 'season_pass', 'membership', 'gift_card', 'rental'.
+    kind: string
     productName: string
     purchaserName: string
     amountCents: number

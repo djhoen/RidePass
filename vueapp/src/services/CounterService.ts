@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 export interface CounterRider {
     id: string
@@ -7,16 +7,27 @@ export interface CounterRider {
     lastName: string
     hasSignedCurrentWaiver?: boolean
     waiverSignedAtUtc?: string | null
+    waiverSignatureDataUrl?: string | null
+    isMinor?: boolean
+    waiverSignedByParent?: boolean
+    waiverParentName?: string | null
+    waiverParentPhone?: string | null
+    emergencyContactName?: string | null
+    emergencyContactPhone?: string | null
 }
 
 export interface CounterCartItem {
-    kind: 'day_pass' | 'event_ticket'
+    kind: 'pass' | 'event_ticket' | 'extras' | 'membership'
     itemId: string
     quantity: number
+    // Required when kind === 'extras' (anchors the add-on to a specific event).
+    eventId?: string | null
+    // Required when kind === 'extras' AND the product has any active variants.
+    variantId?: string | null
 }
 
 export interface CounterSaleLineItem {
-    kind: 'day_pass' | 'event_ticket'
+    kind: 'pass' | 'event_ticket' | 'extras' | 'membership'
     purchaseId: string
     redemptionToken: string
     displayName: string
@@ -42,11 +53,11 @@ export class CounterService {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders/Find`, { email })
     }
 
-    createRider(body: { email: string; firstName: string; lastName: string }) {
+    createRider(body: { email: string; firstName: string; lastName: string; birthdate: string; emergencyContactName?: string; emergencyContactPhone?: string }) {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders`, body)
     }
 
-    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean }) {
+    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; rewardRedemptionId?: string | null; paymentMethod?: 'stripe' | 'cash' | null }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
     }
 }

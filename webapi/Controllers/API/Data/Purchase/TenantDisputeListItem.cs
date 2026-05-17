@@ -1,9 +1,9 @@
-namespace webapi.Controllers.API.Data.Purchase
+﻿namespace webapi.Controllers.API.Data.Purchase
 {
     public class TenantDisputeListItem
     {
         public Guid Id { get; set; }
-        public string Kind { get; set; } = null!; // "day_pass" | "event_ticket" | "unlinked"
+        public string Kind { get; set; } = null!; // "pass" | "event_ticket" | "unlinked"
         public Guid? PurchaseId { get; set; }
         public string? ItemName { get; set; }
         public string? PurchaserName { get; set; }

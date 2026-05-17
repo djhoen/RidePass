@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
 using Services.Repositories.Data.TenantData;
 using Services.Repositories.Interfaces;
+using Services.Storage;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.EventType;
 using webapi.Multitenancy;
@@ -15,11 +16,13 @@ namespace webapi.Controllers
     {
         private readonly ITenantEventTypeRepository _repo;
         private readonly ITenantContext _tenantContext;
+        private readonly IImageStorage _imageStorage;
 
-        public EventTypeController(ITenantEventTypeRepository repo, ITenantContext tenantContext)
+        public EventTypeController(ITenantEventTypeRepository repo, ITenantContext tenantContext, IImageStorage imageStorage)
         {
             _repo = repo;
             _tenantContext = tenantContext;
+            _imageStorage = imageStorage;
         }
 
         [HttpGet]
@@ -44,6 +47,7 @@ namespace webapi.Controllers
                 Code = $"custom_{Guid.NewGuid():N}",
                 Name = request.Name,
                 Color = request.Color,
+                ImageUrl = request.ImageUrl,
                 SortOrder = request.SortOrder,
                 IsSystem = false,
             };
@@ -63,11 +67,24 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Event type not found.");
             }
 
-            await _repo.Update(id, _tenantContext.TenantId, request.Name, request.Color, request.SortOrder);
+            await _repo.Update(id, _tenantContext.TenantId, request.Name, request.Color, request.ImageUrl, request.SortOrder);
             existing.Name = request.Name;
             existing.Color = request.Color;
+            existing.ImageUrl = request.ImageUrl;
             existing.SortOrder = request.SortOrder;
             return new ApiResponses().OkResult(ToResponse(existing));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Reorder")]
+        public async Task<IActionResult> Reorder([FromBody] ReorderEventTypesRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (req.Items.Count == 0) return new ApiResponses().OkResult();
+            var ids = req.Items.Select(i => i.Id).ToList();
+            var orders = req.Items.Select(i => i.SortOrder).ToList();
+            await _repo.UpdateSortOrders(_tenantContext.TenantId, ids, orders);
+            return new ApiResponses().OkResult();
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -94,12 +111,41 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        /// <summary>
+        /// Uploads an image and returns its public URL. The frontend then patches the
+        /// event type via the regular Update endpoint with that URL. Decoupled from row
+        /// mutation so an upload can stage before save and be discarded.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Image")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            if (file is null || file.Length == 0)
+                return new ApiResponses().BadRequestResult("File is required.");
+            if (file.Length > 5 * 1024 * 1024)
+                return new ApiResponses().BadRequestResult("File exceeds 5 MB limit.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+                return new ApiResponses().BadRequestResult($"Unsupported content type: {file.ContentType}.");
+
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, _tenantContext.TenantId, "eventtype", ext, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
+        }
+
         private static EventTypeResponse ToResponse(TenantEventType row) => new()
         {
             Id = row.Id,
             Code = row.Code,
             Name = row.Name,
             Color = row.Color,
+            ImageUrl = row.ImageUrl,
             SortOrder = row.SortOrder,
             IsSystem = row.IsSystem,
         };

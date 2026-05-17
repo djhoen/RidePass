@@ -1,10 +1,10 @@
-namespace Services.Repositories.Data.PaymentData
+﻿namespace Services.Repositories.Data.PaymentData
 {
     public class Dispute
     {
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
-        public Guid? DayPassPurchaseId { get; set; }
+        public Guid? PassPurchaseId { get; set; }
         public Guid? EventTicketPurchaseId { get; set; }
         public string StripeDisputeId { get; set; } = null!;
         public string StripePaymentIntentId { get; set; } = null!;

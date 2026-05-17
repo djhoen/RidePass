@@ -29,5 +29,33 @@ namespace webapi.Controllers.API.Data.Event
 
         [RegularExpression("^(scheduled|cancelled)$")]
         public string Status { get; set; } = "scheduled";
+
+        public bool RequiresRiderWaiver { get; set; } = true;
+        public bool RequiresSpectatorWaiver { get; set; } = false;
+
+        // Per-audience waiver attachments. Either may be null to fall back to
+        // the tenant's active default. Spectators and racers can have different
+        // waivers (e.g. light spectator liability vs. race-day waiver).
+        public Guid? SpectatorWaiverId { get; set; }
+        public Guid? RacerWaiverId { get; set; }
+
+        // Per-event cover image URL (optional). When null, falls back to the event
+        // type's default image, then to a flat color card on the public home page.
+        public string? ImageUrl { get; set; }
+
+        // Allow-list of pass product ids that may be redeemed at this event.
+        // Empty / null → no pass reservation option for this event.
+        public List<Guid>? EligiblePassProductIds { get; set; }
+
+        // Per-event add-ons (camping/parking/pit-vehicle/custom). Each entry binds
+        // an extra product to this event with optional per-event inventory cap.
+        // Empty / null → no add-ons offered at this event.
+        public List<EligibleExtraInput>? EligibleExtras { get; set; }
+    }
+
+    public class EligibleExtraInput
+    {
+        public Guid ProductId { get; set; }
+        public int? Inventory { get; set; }
     }
 }

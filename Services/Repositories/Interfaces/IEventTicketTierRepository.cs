@@ -11,5 +11,8 @@ namespace Services.Repositories.Interfaces
         Task Update(EventTicketTier tier);
         Task Delete(Guid id, Guid tenantId);
         Task<int> SoldCount(Guid tierId);
+
+        /// <summary>Atomic bulk update of sort_order for many tiers within one event.</summary>
+        Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
     }
 }

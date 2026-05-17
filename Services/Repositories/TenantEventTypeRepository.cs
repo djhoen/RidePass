@@ -7,7 +7,7 @@ namespace Services.Repositories
     public class TenantEventTypeRepository : ITenantEventTypeRepository
     {
         private const string SelectColumns = @"
-            id, tenant_id AS TenantId, code, name, color,
+            id, tenant_id AS TenantId, code, name, color, image_url AS ImageUrl,
             sort_order AS SortOrder, is_system AS IsSystem,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
@@ -43,20 +43,20 @@ namespace Services.Repositories
         public async Task<Guid> Create(TenantEventType type)
         {
             const string sql = @"
-                INSERT INTO tenant_event_type (tenant_id, code, name, color, sort_order, is_system)
-                VALUES (@TenantId, @Code, @Name, @Color, @SortOrder, @IsSystem)
+                INSERT INTO tenant_event_type (tenant_id, code, name, color, image_url, sort_order, is_system)
+                VALUES (@TenantId, @Code, @Name, @Color, @ImageUrl, @SortOrder, @IsSystem)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, type);
             return result.First();
         }
 
-        public async Task Update(Guid id, Guid tenantId, string name, string color, int sortOrder)
+        public async Task Update(Guid id, Guid tenantId, string name, string color, string? imageUrl, int sortOrder)
         {
             const string sql = @"
                 UPDATE tenant_event_type
-                SET name = @name, color = @color, sort_order = @sortOrder
+                SET name = @name, color = @color, image_url = @imageUrl, sort_order = @sortOrder
                 WHERE id = @id AND tenant_id = @tenantId";
-            await _db.Execute(sql, new { id, tenantId, name, color, sortOrder });
+            await _db.Execute(sql, new { id, tenantId, name, color, imageUrl, sortOrder });
         }
 
         public async Task Delete(Guid id, Guid tenantId)
@@ -73,6 +73,23 @@ namespace Services.Repositories
                 WHERE event_type_id = @id AND tenant_id = @tenantId";
             var count = await _db.ExecuteScalar(sql, new { id, tenantId });
             return count > 0;
+        }
+
+        public async Task UpdateSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)
+        {
+            if (ids.Count == 0) return;
+            const string sql = @"
+                UPDATE tenant_event_type AS t
+                SET sort_order = data.sort_order
+                FROM (SELECT unnest(@ids::uuid[]) AS id,
+                             unnest(@orders::int[]) AS sort_order) AS data
+                WHERE t.id = data.id AND t.tenant_id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId,
+                ids = ids.ToArray(),
+                orders = sortOrders.ToArray(),
+            });
         }
     }
 }

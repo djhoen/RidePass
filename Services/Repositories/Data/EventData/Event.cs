@@ -13,6 +13,17 @@ namespace Services.Repositories.Data.EventData
         public int? Capacity { get; set; }
         public string? LocationLabel { get; set; }
         public string Status { get; set; } = "scheduled";
+        // Per-audience waiver-required flags. When true and a waiver id is set
+        // (or a tenant default exists), the corresponding buy flow forces a
+        // signature before checkout.
+        public bool RequiresRiderWaiver { get; set; }
+        public bool RequiresSpectatorWaiver { get; set; }
+        // Per-audience waiver attachments. Null = fall back to the tenant's
+        // active default waiver. Spectators and racers can have different ones
+        // (e.g. simpler spectator liability vs. full race-day waiver).
+        public Guid? SpectatorWaiverId { get; set; }
+        public Guid? RacerWaiverId { get; set; }
+        public string? ImageUrl { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
@@ -21,5 +32,19 @@ namespace Services.Repositories.Data.EventData
     {
         public string EventTypeName { get; set; } = null!;
         public string EventTypeColor { get; set; } = null!;
+    }
+
+    /// <summary>
+    /// Row shape returned by IEventRepository.ListByWaiverId — the event with
+    /// flags indicating which role(s) on it the waiver currently fills.
+    /// </summary>
+    public class EventWaiverAssociation
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = null!;
+        public DateTime StartsAt { get; set; }
+        public DateTime EndsAt { get; set; }
+        public bool AsRider { get; set; }
+        public bool AsSpectator { get; set; }
     }
 }
