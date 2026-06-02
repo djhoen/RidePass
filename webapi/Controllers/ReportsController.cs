@@ -218,10 +218,10 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
             var channel = (req.Channel ?? "sms").ToLowerInvariant();
-            if (channel == "sms" && !_sms.IsConfigured)
+            if (channel == "sms" && !_sms.IsConfiguredFor(_tenantContext.Tenant))
             {
                 return new ApiResponses().BadRequestResult(
-                    "SMS isn't configured for this tenant. Add Twilio credentials in app settings.");
+                    "SMS isn't configured for this tenant. Provision Twilio in Settings → SMS.");
             }
             if (channel == "email" && !_emailer.IsConfigured)
             {
@@ -300,7 +300,7 @@ namespace webapi.Controllers
                         skipped.Add(row.PurchaserName);
                         continue;
                     }
-                    ok = await _sms.Send(normalized, req.Body);
+                    ok = await _sms.Send(tenant, normalized, req.Body);
                 }
                 else
                 {

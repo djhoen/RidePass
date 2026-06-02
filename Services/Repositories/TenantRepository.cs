@@ -15,6 +15,12 @@ namespace Services.Repositories
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_terminal_location_id AS StripeTerminalLocationId,
+            twilio_subaccount_sid AS TwilioSubaccountSid,
+            twilio_auth_token_encrypted AS TwilioAuthTokenEncrypted,
+            twilio_from_number AS TwilioFromNumber,
+            twilio_messaging_service_sid AS TwilioMessagingServiceSid,
+            sms_enabled AS SmsEnabled,
+            sms_enabled_at_utc AS SmsEnabledAtUtc,
             service_charge_bps AS ServiceChargeBps,
             monthly_service_charge_cap_cents AS MonthlyServiceChargeCapCents,
             shipping_name AS ShippingName,
@@ -132,6 +138,13 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        public async Task<Tenant?> GetByTwilioSubaccountSid(string subaccountSid)
+        {
+            var sql = $"SELECT {SelectColumns} FROM tenant WHERE twilio_subaccount_sid = @subaccountSid LIMIT 1";
+            var result = await _db.Query<Tenant>(sql, new { subaccountSid });
+            return result.FirstOrDefault();
+        }
+
         public async Task ClearStripeConnect(Guid tenantId)
         {
             const string sql = @"
@@ -149,6 +162,48 @@ namespace Services.Repositories
                 SET stripe_terminal_location_id = @locationId
                 WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, locationId });
+        }
+
+        public async Task SetTwilioCredentials(
+            Guid tenantId, string subaccountSid, string authTokenEncrypted,
+            string fromNumber, string? messagingServiceSid)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET twilio_subaccount_sid = @subaccountSid,
+                    twilio_auth_token_encrypted = @authTokenEncrypted,
+                    twilio_from_number = @fromNumber,
+                    twilio_messaging_service_sid = @messagingServiceSid,
+                    sms_enabled = true,
+                    sms_enabled_at_utc = now()
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, subaccountSid, authTokenEncrypted, fromNumber, messagingServiceSid });
+        }
+
+        public async Task ClearTwilioCredentials(Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET twilio_subaccount_sid = NULL,
+                    twilio_auth_token_encrypted = NULL,
+                    twilio_from_number = NULL,
+                    twilio_messaging_service_sid = NULL,
+                    sms_enabled = false,
+                    sms_enabled_at_utc = NULL
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId });
+        }
+
+        public async Task SetSmsEnabled(Guid tenantId, bool enabled)
+        {
+            // Toggle the on/off switch without clearing credentials — tenant keeps
+            // the provisioned number + 10DLC registration while paused.
+            const string sql = @"
+                UPDATE tenant
+                SET sms_enabled = @enabled,
+                    sms_enabled_at_utc = CASE WHEN @enabled THEN now() ELSE sms_enabled_at_utc END
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
         }
 
         public async Task UpdateServiceCharge(Guid tenantId, int serviceChargeBps, int? monthlyCapCents)

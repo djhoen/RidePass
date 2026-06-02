@@ -1,7 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
+using System.Threading.RateLimiting;
 using Services.Helpers;
 using System.IdentityModel.Tokens.Jwt;
 using Services.Helpers.Interfaces;
@@ -89,7 +91,68 @@ builder.Services.AddScoped<IEventNotifier, EventNotifier>();
 builder.Services.AddScoped<IAuditLogger, webapi.Helpers.HttpContextAuditLogger>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
-builder.Services.AddSingleton<ISmsSender, TwilioSmsSender>();
+// Scoped (not Singleton) because TwilioSmsSender now persists outbound
+// messages to tenant_message via ITenantConversationRepository, which is
+// scoped per request. The static HttpClient inside the sender continues to
+// pool connections regardless of class lifetime.
+builder.Services.AddScoped<ISmsSender, TwilioSmsSender>();
+builder.Services.AddSingleton<ISmsPricing, SmsPricing>();
+builder.Services.AddScoped<Services.Sms.ITwilioSubaccountProvisioner, Services.Sms.TwilioSubaccountProvisioner>();
+builder.Services.AddScoped<Services.Sms.ITwilioTollfreeVerifier, Services.Sms.TwilioTollfreeVerifier>();
+builder.Services.AddScoped<ITenantBillingEventRepository, TenantBillingEventRepository>();
+builder.Services.AddScoped<ITenantConversationRepository, TenantConversationRepository>();
+builder.Services.AddScoped<ITenantSmsOptOutRepository, TenantSmsOptOutRepository>();
+builder.Services.AddScoped<ITenantTollfreeVerificationRepository, TenantTollfreeVerificationRepository>();
+builder.Services.AddScoped<IUpcomingPurchaseRepository, UpcomingPurchaseRepository>();
+
+// Rate limits on the SMS settings endpoints that hit Twilio's master account.
+// Partition by request host so a tenant's quota is its subdomain — one bad
+// admin can't burn another tenant's budget. Search is generous (6/min),
+// Provision is strict (1/min) because each call buys a real phone number.
+builder.Services.AddRateLimiter(opts =>
+{
+    opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    static string PartitionKey(HttpContext ctx)
+    {
+        var host = ctx.Request.Host.Host;
+        if (!string.IsNullOrEmpty(host)) return host;
+        return ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+    }
+
+    opts.AddPolicy("sms-search", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(PartitionKey(ctx), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 6,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        }));
+
+    opts.AddPolicy("sms-provision", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(PartitionKey(ctx), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        }));
+});
+
+// At-rest encryption for sensitive blobs (Twilio subaccount tokens, etc.).
+// Throws here at startup if Encryption:KeyBase64 / IvBase64 aren't set, so we
+// fail fast rather than discovering it on first Encrypt() call in a request.
+{
+    var keyB64 = builder.Configuration["Encryption:KeyBase64"];
+    var ivB64 = builder.Configuration["Encryption:IvBase64"];
+    if (string.IsNullOrWhiteSpace(keyB64) || string.IsNullOrWhiteSpace(ivB64))
+    {
+        throw new InvalidOperationException(
+            "Encryption:KeyBase64 and Encryption:IvBase64 must be configured " +
+            "(use `dotnet user-secrets` in dev, env vars in prod).");
+    }
+    EncryptionHelper.Configure(Convert.FromBase64String(keyB64), Convert.FromBase64String(ivB64));
+}
 
 builder.Services.AddSingleton<IPaymentProvider, StripePaymentProvider>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
@@ -179,6 +242,8 @@ app.UseMiddleware<TenantResolutionMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseRateLimiter();
 
 app.MapControllers();
 

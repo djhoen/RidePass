@@ -32,6 +32,9 @@
                         </v-btn>
                     </template>
                     <v-list density="compact" min-width="200">
+                        <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock">
+                            <v-list-item-title>My Upcoming</v-list-item-title>
+                        </v-list-item>
                         <v-list-item to="/User/Profile" prepend-icon="mdi-account">
                             <v-list-item-title>Profile</v-list-item-title>
                         </v-list-item>
@@ -87,6 +90,7 @@
                     <template #activator="{ props }">
                         <v-list-item v-bind="props" prepend-icon="mdi-account-circle" title="Account"></v-list-item>
                     </template>
+                    <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock" title="My Upcoming"></v-list-item>
                     <v-list-item to="/User/Profile" prepend-icon="mdi-account" title="Profile"></v-list-item>
                     <v-list-item to="/User/MyPasses" prepend-icon="mdi-ticket-account" title="My Passes"></v-list-item>
                     <v-list-item to="/User/Rewards" prepend-icon="mdi-trophy" title="Rewards"></v-list-item>
@@ -129,6 +133,7 @@ const allDirectLinks: AdminLink[] = [
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
     { to: '/Admin/Feedback',  icon: 'mdi-message-text',     title: 'Feedback',  perm: Perm.SettingsManage },
+    { to: '/Admin/Inbox',     icon: 'mdi-inbox',            title: 'Inbox',     perm: Perm.SettingsManage },
 ]
 
 // Grouped links: each group is a collapsible accordion. Groups with no permitted items are hidden.
@@ -190,6 +195,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage },
+            { to: '/Admin/Settings/Sms',      icon: 'mdi-cellphone-message', title: 'SMS',     perm: Perm.SettingsManage },
             { to: '/Admin/Waiver',            icon: 'mdi-file-sign',     title: 'Waivers',    perm: Perm.CatalogManage },
         ],
     },

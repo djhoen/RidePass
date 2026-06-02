@@ -21,6 +21,7 @@ namespace webapi.Controllers
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventTicketTierRepository _ticketTiers;
         private readonly ICouponRepository _coupons;
+        private readonly IUpcomingPurchaseRepository _upcoming;
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly IPaymentProvider _payments;
@@ -37,6 +38,7 @@ namespace webapi.Controllers
             IEventTicketPurchaseRepository tickets,
             IEventTicketTierRepository ticketTiers,
             ICouponRepository coupons,
+            IUpcomingPurchaseRepository upcoming,
             IUserRepository users,
             ITenantRepository tenants,
             IPaymentProvider payments,
@@ -52,6 +54,7 @@ namespace webapi.Controllers
             _tickets = tickets;
             _ticketTiers = ticketTiers;
             _coupons = coupons;
+            _upcoming = upcoming;
             _users = users;
             _tenants = tenants;
             _payments = payments;
@@ -61,6 +64,43 @@ namespace webapi.Controllers
             _emailer = emailer;
             _logger = logger;
             _tenantContext = tenantContext;
+        }
+
+        /// <summary>
+        /// CROSS-TENANT feed of paid purchases the signed-in rider still has
+        /// coming up: future event tickets, day passes for today or later,
+        /// valid season passes, and valid memberships. Intended for the apex
+        /// landing page (ridepass.io/User/Upcoming). No tenant context check
+        /// because this endpoint deliberately spans every tenant the rider
+        /// has bought from; scope is the rider's identity in the JWT.
+        /// </summary>
+        [HttpGet("Upcoming")]
+        public async Task<IActionResult> GetUpcoming()
+        {
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+
+            var rows = await _upcoming.ListForUser(userId);
+            var items = rows.Select(r => new UpcomingItemResponse
+            {
+                Kind = r.Kind,
+                Id = r.Id,
+                TenantId = r.TenantId,
+                TenantSubdomain = r.TenantSubdomain,
+                TenantDisplayName = r.TenantDisplayName,
+                ItemName = r.ItemName,
+                OccursAtUtc = r.OccursAtUtc.HasValue
+                    ? DateTime.SpecifyKind(r.OccursAtUtc.Value, DateTimeKind.Utc) : null,
+                ValidToUtc = r.ValidToUtc.HasValue
+                    ? DateTime.SpecifyKind(r.ValidToUtc.Value, DateTimeKind.Utc) : null,
+                AmountCents = r.AmountCents,
+                RedemptionToken = r.RedemptionToken,
+                CreatedAtUtc = DateTime.SpecifyKind(r.CreatedAtUtc, DateTimeKind.Utc),
+            }).ToList();
+
+            return new ApiResponses().OkResult(items);
         }
 
         [HttpGet("Purchases")]

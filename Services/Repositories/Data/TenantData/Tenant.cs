@@ -20,6 +20,20 @@ namespace Services.Repositories.Data.TenantData
         // Lazily provisioned the first time a cashier opens the mobile app at
         // this tenant — required for Stripe Terminal tap-to-pay.
         public string? StripeTerminalLocationId { get; set; }
+        // Per-tenant Twilio Subaccount, provisioned lazily via Settings → SMS.
+        // AuthToken is stored encrypted via EncryptionHelper; consumers must
+        // decrypt before passing to Twilio. Until populated, SMS sends fall
+        // back to the global Sms:Twilio:* config (transition-only fallback).
+        public string? TwilioSubaccountSid { get; set; }
+        public string? TwilioAuthTokenEncrypted { get; set; }
+        public string? TwilioFromNumber { get; set; }       // E.164, e.g. +18885551234
+        // Per-tenant Messaging Service that owns the sender pool (currently
+        // a single toll-free number; short codes / 10DLC long codes attach
+        // here later). When set, TwilioSmsSender routes through this instead
+        // of binding directly to TwilioFromNumber.
+        public string? TwilioMessagingServiceSid { get; set; }
+        public bool SmsEnabled { get; set; }
+        public DateTime? SmsEnabledAtUtc { get; set; }
         public int ServiceChargeBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
         public string? ShippingName { get; set; }

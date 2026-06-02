@@ -30,6 +30,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UserService } from '@/services/UserService'
 import authHelper from '@/helpers/AuthHelper'
+import tenantHelper from '@/helpers/TenantHelper'
 
 const router = useRouter()
 const userService = new UserService()
@@ -62,7 +63,10 @@ async function login() {
         } else if (isTenantStaffRole(payload.role)) {
             router.push('/Admin/Dashboard')
         } else {
-            router.push('/')
+            // Riders signing in on the apex (no tenant subdomain) land on
+            // the cross-tenant Upcoming feed. Same role signing in on a
+            // tenant subdomain still goes to the tenant home (existing flow).
+            router.push(tenantHelper.getSubdomain() ? '/' : '/User/Upcoming')
         }
     } catch (error: any) {
         snackbarText.value = error.response?.data?.error || 'Login failed.'

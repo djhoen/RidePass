@@ -58,6 +58,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/User/Upcoming',
+        name: 'UserUpcoming',
+        component: () => import('../views/User/Upcoming.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/Membership',
         name: 'Membership',
         component: () => import('../views/User/Membership.vue'),
@@ -148,6 +154,18 @@ const routes = [
         path: '/Admin/Settings/Features',
         name: 'AdminSettingsFeatures',
         component: () => import('../views/Admin/Settings/Features.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/Settings/Sms',
+        name: 'AdminSettingsSms',
+        component: () => import('../views/Admin/Settings/Sms.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/Inbox',
+        name: 'AdminInbox',
+        component: () => import('../views/Admin/Inbox.vue'),
         meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
     },
     {

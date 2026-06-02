@@ -148,7 +148,17 @@ function toAbsoluteUrl(url: string | null | undefined): string | null {
 }
 
 export async function loadBranding(): Promise<void> {
-    if (!tenantHelper.getSubdomain()) return
+    if (!tenantHelper.getSubdomain()) {
+        // Apex domain (ridepass.io with no subdomain): no tenant to fetch
+        // branding for. Flip loaded=true with the default state so App.vue's
+        // splash gate lifts and the apex Home renders. displayName, colors,
+        // and the rest are already the platform-wide defaults; tenant-only
+        // fields stay at null/empty which the apex branch of Home.vue
+        // handles.
+        branding.loaded = true
+        document.title = branding.displayName
+        return
+    }
     try {
         const response = await axios.get(`${apiUrl}/Tenant/Branding`)
         const data = response.data.data

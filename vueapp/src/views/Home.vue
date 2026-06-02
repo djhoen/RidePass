@@ -1,17 +1,118 @@
 <template>
     <div>
-        <!-- Apex (no tenant resolved): keep the existing "find a track" landing -->
-        <v-container v-if="isApex">
-            <v-row class="my-12" align="center" justify="center">
-                <v-col cols="12" md="8" class="text-center">
-                    <h1 class="text-h2 font-weight-bold mb-4">{{ branding.displayName }}</h1>
-                    <p v-if="branding.tagline" class="text-h6 text-medium-emphasis mb-8">{{ branding.tagline }}</p>
-                    <v-btn color="primary" size="x-large" to="/Discover" class="mr-3"
-                        prepend-icon="mdi-map-search">Find Tracks Near You</v-btn>
-                    <v-btn variant="outlined" size="x-large" to="/Login">Super Admin Login</v-btn>
-                </v-col>
-            </v-row>
-        </v-container>
+        <!-- Apex (ridepass.io, no tenant subdomain): platform landing page.
+             Shows a hero, a featured tracks grid, an upcoming events grid,
+             and a "start a track" CTA section. Data comes from the public
+             DiscoverController endpoints (cross-tenant, anonymous). -->
+        <div v-if="isApex">
+            <v-container class="apex-hero py-12">
+                <v-row align="center" justify="center">
+                    <v-col cols="12" md="9" class="text-center">
+                        <h1 class="text-h2 font-weight-bold mb-3">{{ branding.displayName }}</h1>
+                        <p class="text-h6 text-medium-emphasis mb-8">
+                            Find your track. Buy your pass. Ride.
+                        </p>
+                        <div class="d-flex flex-wrap ga-3 justify-center">
+                            <v-btn color="primary" size="x-large" to="/Discover"
+                                prepend-icon="mdi-map-search">Find Tracks Near You</v-btn>
+                            <v-btn v-if="isAuthenticated" variant="outlined" size="x-large" to="/User/Upcoming"
+                                prepend-icon="mdi-calendar-clock">My Upcoming</v-btn>
+                            <v-btn v-else variant="outlined" size="x-large" to="/Login"
+                                prepend-icon="mdi-login">Sign In</v-btn>
+                        </div>
+                    </v-col>
+                </v-row>
+            </v-container>
+
+            <v-container>
+                <!-- Featured tracks -->
+                <section class="mb-12">
+                    <div class="d-flex align-center mb-4 ga-2">
+                        <h2 class="text-h4">Tracks</h2>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" to="/Discover" append-icon="mdi-arrow-right">See all</v-btn>
+                    </div>
+                    <v-row v-if="apexTracks.length > 0" dense>
+                        <v-col v-for="t in apexTracks" :key="t.tenantId" cols="12" sm="6" md="4">
+                            <v-card class="h-100">
+                                <v-card-text>
+                                    <div class="text-h6 mb-1">{{ t.displayName }}</div>
+                                    <div class="text-body-2 text-medium-emphasis mb-2">
+                                        <span v-if="t.city">{{ t.city }}</span><span v-if="t.city && t.region">, </span>
+                                        <span v-if="t.region">{{ t.region }}</span>
+                                        <span v-if="!t.city && !t.region">Location not set</span>
+                                    </div>
+                                    <v-chip v-if="t.upcomingEventsCount > 0" size="x-small" color="secondary" class="mb-3">
+                                        {{ t.upcomingEventsCount }} upcoming
+                                    </v-chip>
+                                    <div>
+                                        <v-btn variant="tonal" size="small" :href="tenantUrl(t.subdomain)"
+                                            rel="noopener">Visit</v-btn>
+                                    </div>
+                                </v-card-text>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+                    <v-card v-else-if="apexLoaded" variant="outlined">
+                        <v-card-text class="text-center text-medium-emphasis py-8">
+                            No tracks on the platform yet.
+                        </v-card-text>
+                    </v-card>
+                </section>
+
+                <!-- Upcoming events across all tracks -->
+                <section class="mb-12">
+                    <div class="d-flex align-center mb-4 ga-2">
+                        <h2 class="text-h4">Upcoming events</h2>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" to="/Discover" append-icon="mdi-arrow-right">See all</v-btn>
+                    </div>
+                    <v-row v-if="apexEvents.length > 0" dense>
+                        <v-col v-for="e in apexEvents" :key="e.eventId" cols="12" sm="6" md="4">
+                            <v-card class="h-100">
+                                <v-card-text>
+                                    <div class="d-flex align-center ga-2 mb-1">
+                                        <v-chip size="x-small"
+                                            :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }">
+                                            {{ e.eventTypeName }}
+                                        </v-chip>
+                                        <span class="text-caption">{{ formatApexEventWhen(e.startsAtUtc) }}</span>
+                                    </div>
+                                    <div class="text-subtitle-1 font-weight-medium mb-1">{{ e.title }}</div>
+                                    <div class="text-body-2 text-medium-emphasis mb-3">
+                                        {{ e.tenantDisplayName }}
+                                        <span v-if="e.tenantCity">, {{ e.tenantCity }}<span
+                                            v-if="e.tenantRegion">, {{ e.tenantRegion }}</span></span>
+                                    </div>
+                                    <v-btn variant="tonal" size="small" :href="tenantUrl(e.tenantSubdomain)"
+                                        rel="noopener">Visit track</v-btn>
+                                </v-card-text>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+                    <v-card v-else-if="apexLoaded" variant="outlined">
+                        <v-card-text class="text-center text-medium-emphasis py-8">
+                            No upcoming events scheduled.
+                        </v-card-text>
+                    </v-card>
+                </section>
+
+                <!-- Operator CTA. Pitch to track owners considering signing up
+                     their facility on the platform. Email button kept simple for
+                     now; can be swapped for a contact form later. -->
+                <section class="apex-operator-cta my-12 pa-8 text-center">
+                    <h2 class="text-h4 font-weight-bold mb-3">Run a track?</h2>
+                    <p class="text-body-1 mb-6 mx-auto" style="max-width: 640px">
+                        Bring your gate fees, ticketing, race entries, season passes, waivers, and
+                        customer messaging onto one platform. RidePass handles payments, tax, and
+                        reporting so you can focus on running events.
+                    </p>
+                    <v-btn color="primary" size="large"
+                        href="mailto:hello@ridepass.io?subject=Interested%20in%20RidePass%20for%20my%20track"
+                        prepend-icon="mdi-email-outline">Get in touch</v-btn>
+                </section>
+            </v-container>
+        </div>
 
         <template v-else>
             <!-- ── 1. Hero ──────────────────────────────────────────────────────── -->
@@ -254,6 +355,7 @@ import { BlackoutService, type BlackoutDto } from '../services/BlackoutService'
 import { PassService, type PassProduct } from '../services/PassService'
 import { SeasonPassService, type SeasonPassProduct } from '../services/SeasonPassService'
 import { TenantService, type GalleryImage, type TrackGraphic } from '../services/TenantService'
+import { DiscoverService, type TrackDiscoverItem, type EventDiscoverItem } from '../services/DiscoverService'
 import tenantHelper from '../helpers/TenantHelper'
 import authHelper from '../helpers/AuthHelper'
 import BuyAdmissionFlow from '@/components/BuyAdmissionFlow.vue'
@@ -276,6 +378,7 @@ const blackoutService = new BlackoutService()
 const passService = new PassService()
 const seasonPassService = new SeasonPassService()
 const tenantService = new TenantService()
+const discoverService = new DiscoverService()
 
 const events = ref<EventDto[]>([])
 const blackouts = ref<BlackoutDto[]>([])
@@ -283,6 +386,15 @@ const passProducts = ref<PassProduct[]>([])
 const seasonPassProducts = ref<SeasonPassProduct[]>([])
 const gallery = ref<GalleryImage[]>([])
 const trackGraphics = ref<TrackGraphic[]>([])
+
+// Apex landing data: featured tracks and upcoming events across the whole
+// platform. Loaded only when there's no tenant subdomain. apexLoaded gates
+// the "no results yet" empty-state cards so they don't flash while fetching.
+const apexTracks = ref<TrackDiscoverItem[]>([])
+const apexEvents = ref<EventDiscoverItem[]>([])
+const apexLoaded = ref(false)
+
+const APEX_LIMIT = 6
 
 // Photo-gallery slideshow modal state. Set when a thumbnail is clicked.
 const galleryDialog = ref(false)
@@ -342,6 +454,37 @@ async function load() {
 onMounted(load)
 watch(() => branding.loaded, load)
 watch(() => branding.timezone, load)
+
+// ── Apex (no tenant) loader ─────────────────────────────────────────────────
+async function loadApex() {
+    if (!isApex.value) return
+    try {
+        const [trackResp, eventResp] = await Promise.all([
+            discoverService.searchTracks({}),
+            discoverService.searchEvents({ fromUtc: new Date().toISOString() }),
+        ])
+        apexTracks.value = (trackResp.data as any).data.slice(0, APEX_LIMIT)
+        apexEvents.value = (eventResp.data as any).data.slice(0, APEX_LIMIT)
+    } catch (err) {
+        console.error('Failed to load apex discover data', err)
+    } finally {
+        apexLoaded.value = true
+    }
+}
+onMounted(loadApex)
+
+// Build the absolute URL to a tenant subdomain. tenantHelper.rootDomain()
+// returns the configured root (ridepass.io in prod, ridepass.local in dev),
+// so this works the same in both environments.
+function tenantUrl(subdomain: string): string {
+    const proto = window.location.protocol
+    const port = window.location.port ? `:${window.location.port}` : ''
+    return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
+}
+
+function formatApexEventWhen(utc: string): string {
+    return dayjs.utc(utc).local().format('ddd, MMM D · h:mm A')
+}
 
 // ── Pricing snapshots ────────────────────────────────────────────────────────
 const passFromCents = computed(() => {
@@ -510,6 +653,17 @@ function formatTime12(hhmm: string): string {
 </script>
 
 <style scoped>
+/* Apex landing page accents. The operator CTA gets a faint tinted block so
+   it visually separates from the white cards above it without using a hero
+   image (we don't have brand assets at the platform level). */
+.apex-hero {
+    background: linear-gradient(135deg, rgba(25, 118, 210, 0.04), rgba(25, 118, 210, 0));
+}
+.apex-operator-cta {
+    background: rgb(var(--v-theme-surface-variant));
+    border-radius: 12px;
+}
+
 .hero {
     position: relative;
     height: 60vh;

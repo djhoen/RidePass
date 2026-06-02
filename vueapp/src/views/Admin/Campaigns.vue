@@ -176,7 +176,7 @@ async function saveDraft() {
 
 async function saveAndSend() {
     if (!validate()) return
-    if (!confirm(`Send "${composeForm.value.subject}" to ${activeSubscriberCount.value ?? 0} active subscribers?`)) return
+    if (!confirm(buildSendConfirm(composeForm.value.subject))) return
     sending.value = true
     try {
         let id = composeId.value
@@ -199,7 +199,7 @@ async function saveAndSend() {
 }
 
 async function sendCampaign(c: CampaignListItem) {
-    if (!confirm(`Send "${c.subject}" to ${activeSubscriberCount.value ?? 0} active subscribers?`)) return
+    if (!confirm(buildSendConfirm(c.subject))) return
     try {
         const r = await campaignService.send(c.id)
         const notice = (r.data as any).data.sendNotice
@@ -219,6 +219,11 @@ async function deleteCampaign(c: CampaignListItem) {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Delete failed.', 'error')
     }
+}
+
+function buildSendConfirm(subject: string): string {
+    const n = activeSubscriberCount.value ?? 0
+    return `Send "${subject}" to ${n} active subscribers?\n\nEstimated cost: free`
 }
 
 function validate(): boolean {

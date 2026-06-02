@@ -99,7 +99,7 @@ namespace Services.Waitlist
                 {
                     var msg = $"You're in for {ev.Title}! Your pre-paid {tier.Name} entry is confirmed. " +
                               $"Show your QR at {origin}/User/MyPasses";
-                    await _sms.Send(user.Phone, msg);
+                    await _sms.Send(tenant, user.Phone, msg);
                 }
                 _logger.LogInformation("Auto-confirmed pre-paid waitlist {Id} for event {EventId}", next.Id, eventId);
                 return;
@@ -116,7 +116,7 @@ namespace Services.Waitlist
                 var confirmUrl = $"{origin}/Waitlist/Confirm/{token}";
                 var label = tierId.HasValue ? "spot" : "spot";  // future: tier name in message
                 var msg = $"A {label} opened at {ev.Title}! Confirm within {window} min: {confirmUrl}";
-                await _sms.Send(user.Phone, msg);
+                await _sms.Send(tenant, user.Phone, msg);
             }
             _logger.LogInformation("Promoted waitlist {Id} for event {EventId}, deadline {Deadline}",
                 next.Id, eventId, deadline);

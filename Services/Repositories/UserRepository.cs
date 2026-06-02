@@ -67,6 +67,26 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        public async Task<User?> GetByPhoneE164(string phoneE164)
+        {
+            // fn_phone_e164(phone) hits the expression index from
+            // Script0088, so this is an index lookup not a scan. ORDER BY
+            // pushes global rider accounts (tenant_id IS NULL) to the front
+            // when multiple users own the same number — that matches the
+            // Inbox's "find the customer" intent. Final tie-break on
+            // created_at DESC takes the most recent signup.
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE phone IS NOT NULL
+                  AND fn_phone_e164(phone) = @phoneE164
+                ORDER BY (tenant_id IS NULL) DESC, created_at DESC
+                LIMIT 1";
+
+            var result = await _db.Query<User>(sql, new { phoneE164 });
+            return result.FirstOrDefault();
+        }
+
         public async Task<Guid> Create(User user)
         {
             const string sql = @"

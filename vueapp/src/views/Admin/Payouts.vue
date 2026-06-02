@@ -80,9 +80,10 @@
                     <tr v-for="e in ledger" :key="e.id">
                         <td>{{ formatDate(e.occurredAtUtc) }}</td>
                         <td>
-                            <v-chip size="x-small" :color="e.entryKind === 'sale' ? 'primary' : 'warning'">
-                                {{ e.entryKind }}<span v-if="e.sourceKind"> · {{ e.sourceKind }}</span>
+                            <v-chip size="x-small" :color="entryKindColor(e.entryKind)">
+                                {{ formatEntryKind(e.entryKind) }}
                             </v-chip>
+                            <div v-if="e.memo" class="text-caption text-medium-emphasis mt-1">{{ e.memo }}</div>
                         </td>
                         <td class="text-right">${{ (e.grossCents / 100).toFixed(2) }}</td>
                         <td class="text-right">${{ (e.stripeFeeCents / 100).toFixed(2) }}</td>
@@ -128,9 +129,10 @@
                             <tr v-for="e in selectedEntries" :key="e.id">
                                 <td>{{ formatDate(e.occurredAtUtc) }}</td>
                                 <td>
-                                    <v-chip size="x-small" :color="e.entryKind === 'sale' ? 'primary' : 'warning'">
-                                        {{ e.entryKind }}<span v-if="e.sourceKind"> · {{ e.sourceKind }}</span>
+                                    <v-chip size="x-small" :color="entryKindColor(e.entryKind)">
+                                        {{ formatEntryKind(e.entryKind) }}
                                     </v-chip>
+                                    <div v-if="e.memo" class="text-caption text-medium-emphasis mt-1">{{ e.memo }}</div>
                                 </td>
                                 <td class="text-right">${{ (e.grossCents / 100).toFixed(2) }}</td>
                                 <td class="text-right">${{ (e.stripeFeeCents / 100).toFixed(2) }}</td>
@@ -227,6 +229,30 @@ function formatDate(utc: string): string {
 
 function formatDateOnly(utc: string): string {
     return dayjs.utc(utc).format('YYYY-MM-DD')
+}
+
+// Human-readable label per entry kind. Falls back to the raw key so unknown
+// future kinds still render something instead of empty.
+function formatEntryKind(kind: string): string {
+    switch (kind) {
+        case 'sale': return 'Sale'
+        case 'refund': return 'Refund'
+        case 'dispute_loss': return 'Dispute'
+        case 'adjustment': return 'Adjustment'
+        case 'sms_charge': return 'SMS charge'
+        default: return kind
+    }
+}
+
+// Sales are positive (primary). sms_charge is a routine deduction, not a
+// problem (info). Refunds / disputes are negative outcomes (warning).
+function entryKindColor(kind: string): string {
+    switch (kind) {
+        case 'sale': return 'primary'
+        case 'sms_charge': return 'info'
+        case 'adjustment': return 'grey'
+        default: return 'warning'
+    }
 }
 
 function payoutStatusColor(s: string): string {

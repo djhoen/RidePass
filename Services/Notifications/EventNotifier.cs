@@ -69,9 +69,9 @@ You're receiving this because you subscribed to event updates from {System.Net.W
 </p>";
                         await _emailer.Send(sub.Email, $"New event from {tenant.DisplayName}: {ev.Title}", html);
                     }
-                    if (sub.NotifySms && _sms.IsConfigured && !string.IsNullOrWhiteSpace(sub.Phone))
+                    if (sub.NotifySms && _sms.IsConfiguredFor(tenant) && !string.IsNullOrWhiteSpace(sub.Phone))
                     {
-                        await _sms.Send(sub.Phone, smsBody);
+                        await _sms.Send(tenant, sub.Phone, smsBody);
                     }
                 }
                 catch (Exception ex)

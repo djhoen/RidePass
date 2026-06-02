@@ -14,6 +14,13 @@ namespace Services.Repositories.Interfaces
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
         Task<Tenant?> GetByStripeConnectAccountId(string accountId);
+        /// <summary>
+        /// Reverse-lookup a tenant by its provisioned Twilio Subaccount SID.
+        /// Used by the StatusCallback webhook: Twilio identifies the owning
+        /// account in the AccountSid form param, and we need the matching
+        /// tenant row to decrypt its auth token for signature verification.
+        /// </summary>
+        Task<Tenant?> GetByTwilioSubaccountSid(string subaccountSid);
         Task ClearStripeConnect(Guid tenantId);
         /// <summary>
         /// Persist the lazily-provisioned Stripe Terminal Location id (used by the
@@ -21,6 +28,28 @@ namespace Services.Repositories.Interfaces
         /// time a cashier opens the app at that tenant.
         /// </summary>
         Task SetStripeTerminalLocationId(Guid tenantId, string locationId);
+        /// <summary>
+        /// Persist the freshly-provisioned Twilio Subaccount credentials and
+        /// flip sms_enabled on. authTokenEncrypted must be the
+        /// EncryptionHelper-encrypted form; the raw token is never stored.
+        /// messagingServiceSid is the per-tenant MG that owns the sender pool —
+        /// nullable for backward compatibility with tenants provisioned before
+        /// MG routing existed, but new provisioning should always supply it.
+        /// </summary>
+        Task SetTwilioCredentials(Guid tenantId, string subaccountSid, string authTokenEncrypted,
+            string fromNumber, string? messagingServiceSid);
+        /// <summary>
+        /// Wipe all Twilio columns and flip sms_enabled off. Called from the
+        /// provisioner's release flow after the Twilio-side close succeeds.
+        /// Idempotent: clearing already-null columns is a no-op.
+        /// </summary>
+        Task ClearTwilioCredentials(Guid tenantId);
+        /// <summary>
+        /// Toggle SMS on/off without clearing the credentials. Used by the
+        /// Settings → SMS page's pause control so the tenant keeps their
+        /// provisioned number + 10DLC brand registration while disabled.
+        /// </summary>
+        Task SetSmsEnabled(Guid tenantId, bool enabled);
         Task UpdateServiceCharge(Guid tenantId, int serviceChargeBps, int? monthlyCapCents);
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);

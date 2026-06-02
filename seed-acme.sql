@@ -37,12 +37,26 @@ BEGIN
     -- ── Wipe prior seed-tagged rows (cascading inserts later) ──────────────
     DELETE FROM event_ticket_purchase WHERE tenant_id = v_tenant_id
         AND purchaser_email LIKE '%@acme.test';
-    DELETE FROM day_pass_purchase WHERE tenant_id = v_tenant_id
+    DELETE FROM pass_purchase WHERE tenant_id = v_tenant_id
         AND purchaser_email LIKE '%@acme.test';
     DELETE FROM season_pass_purchase WHERE tenant_id = v_tenant_id
         AND purchaser_email LIKE '%@acme.test';
     DELETE FROM event_ticket_tier WHERE tenant_id = v_tenant_id
         AND name LIKE '[seed]%';
+    -- Clear every row that still references a seed event before deleting the
+    -- events. The extras / eligibility / waitlist / reservation tables were added
+    -- to the schema after this seed was first written, so the original cleanup
+    -- missed them and the event delete tripped their foreign keys. Ordered so
+    -- inter-child FKs (e.g. ticket_purchase -> ticket_tier) clear cleanly too.
+    DELETE FROM event_extra_purchase   WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM event_ticket_purchase  WHERE tier_id IN (SELECT id FROM event_ticket_tier WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%'));
+    DELETE FROM pass_purchase          WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM season_pass_reservation WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM event_waitlist         WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM event_extra_eligibility WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM event_pass_eligibility WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    UPDATE coupon SET applicable_event_id = NULL WHERE applicable_event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
+    DELETE FROM event_ticket_tier      WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id AND description LIKE '%[seed]%');
     DELETE FROM event WHERE tenant_id = v_tenant_id
         AND description LIKE '%[seed]%';
     DELETE FROM blackout WHERE tenant_id = v_tenant_id
@@ -80,13 +94,13 @@ BEGIN
     SELECT id INTO v_lesson    FROM tenant_event_type WHERE tenant_id = v_tenant_id AND code = 'lesson';
 
     -- ── Day pass products ─────────────────────────────────────────────────
-    INSERT INTO day_pass_product (tenant_id, name, description, price_cents, sort_order)
+    INSERT INTO pass_product (tenant_id, name, description, price_cents, sort_order)
         VALUES
             (v_tenant_id, 'Adult day pass', 'Full-day access for riders 18+', 4500, 10),
             (v_tenant_id, 'Late day pass',  'After 3pm only — discounted',   2500, 30)
         ON CONFLICT DO NOTHING;
-    SELECT id INTO v_dp_adult FROM day_pass_product WHERE tenant_id = v_tenant_id AND name = 'Adult day pass';
-    SELECT id INTO v_dp_late  FROM day_pass_product WHERE tenant_id = v_tenant_id AND name = 'Late day pass';
+    SELECT id INTO v_dp_adult FROM pass_product WHERE tenant_id = v_tenant_id AND name = 'Adult day pass';
+    SELECT id INTO v_dp_late  FROM pass_product WHERE tenant_id = v_tenant_id AND name = 'Late day pass';
 
     -- ── Season pass products ──────────────────────────────────────────────
     INSERT INTO season_pass_product
@@ -175,6 +189,18 @@ BEGIN
     INSERT INTO event_ticket_tier (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active)
         VALUES (v_tenant_id, v_evt_id, '[seed] Clinic spot', 12000, 12, 10, true);
 
+    -- ── Pass eligibility ──────────────────────────────────────────────────
+    -- Make every active pass valid at every seeded event. Without an
+    -- event_pass_eligibility row, EventController returns an empty EligiblePasses
+    -- list and the public BuyPass flow shows "No passes are accepted at this
+    -- event". The eligibility model was added after this seed was first written.
+    INSERT INTO event_pass_eligibility (event_id, pass_product_id)
+        SELECT e.id, p.id
+        FROM event e
+        CROSS JOIN pass_product p
+        WHERE e.tenant_id = v_tenant_id AND e.description LIKE '%[seed]%'
+          AND p.tenant_id = v_tenant_id AND p.is_active;
+
     -- ── Blackouts ─────────────────────────────────────────────────────────
     INSERT INTO blackout (tenant_id, starts_at, ends_at, all_day, reason)
         VALUES
@@ -189,7 +215,7 @@ BEGIN
 
     -- ── Past purchases (paid) — gives the admin reports something to show ─
     -- A handful of day passes from the last 3 weeks
-    INSERT INTO day_pass_purchase
+    INSERT INTO pass_purchase
         (tenant_id, purchaser_user_id, product_id, valid_on_date, amount_cents,
          status, purchaser_email, purchaser_name, created_at)
         VALUES

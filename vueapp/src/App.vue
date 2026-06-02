@@ -19,6 +19,7 @@
             <router-view />
         </v-main>
         <Footer v-if="!$route.meta.hideFooter" />
+        <ConfirmDialog />
     </v-app>
 </template>
 
@@ -28,6 +29,7 @@ import { useTheme } from 'vuetify'
 import NavBar from './components/NavBar.vue'
 import Footer from './components/Footer.vue'
 import ImpersonationBanner from './components/ImpersonationBanner.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { branding, loadBranding } from './stores/branding'
 import splashLogo from './assets/helmet.png'
 

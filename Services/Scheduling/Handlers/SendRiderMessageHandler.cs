@@ -59,10 +59,13 @@ namespace Services.Scheduling.Handlers
             var channel = (payload.Channel ?? "sms").ToLowerInvariant();
             if (channel != "sms" && channel != "email") return ScheduledTaskOutcome.Fail($"Unknown channel '{channel}'");
 
+            var tenant = await _tenants.GetById(task.TenantId);
+            if (tenant is null) return ScheduledTaskOutcome.Fail("Tenant not found.");
+
             // Channel-readiness check: if the relevant sender is not configured
             // there's no point retrying — fail terminally.
-            if (channel == "sms" && !_sms.IsConfigured)
-                return ScheduledTaskOutcome.Fail("SMS isn't configured (Twilio credentials missing).");
+            if (channel == "sms" && !_sms.IsConfiguredFor(tenant))
+                return ScheduledTaskOutcome.Fail("SMS isn't configured for this tenant.");
             if (channel == "email" && !_emailer.IsConfigured)
                 return ScheduledTaskOutcome.Fail("Email isn't configured (SMTP settings missing).");
 
@@ -73,8 +76,6 @@ namespace Services.Scheduling.Handlers
             var requested = payload.PurchaseIds.ToHashSet();
             var targets = rows.Where(r => requested.Contains(r.PurchaseId)).ToList();
             if (targets.Count == 0) return ScheduledTaskOutcome.Fail("No matching recipients on the event.");
-
-            var tenant = await _tenants.GetById(task.TenantId);
 
             var sent = 0;
             var skipped = new List<string>();
@@ -91,7 +92,7 @@ namespace Services.Scheduling.Handlers
                         skipped.Add($"{row.PurchaserName} (no phone)");
                         continue;
                     }
-                    ok = await _sms.Send(normalised, payload.Body);
+                    ok = await _sms.Send(tenant, normalised, payload.Body);
                 }
                 else
                 {
@@ -101,9 +102,9 @@ namespace Services.Scheduling.Handlers
                         continue;
                     }
                     var subject = string.IsNullOrWhiteSpace(payload.Subject)
-                        ? $"Update from {tenant?.DisplayName ?? "the track"}"
+                        ? $"Update from {tenant.DisplayName}"
                         : payload.Subject!.Trim();
-                    var html = BuildEmailBody(payload.Body, tenant?.DisplayName ?? "the track", ev.Title);
+                    var html = BuildEmailBody(payload.Body, tenant.DisplayName, ev.Title);
                     ok = await _emailer.Send(row.PurchaserEmail, subject, html);
                 }
                 if (ok) sent++;

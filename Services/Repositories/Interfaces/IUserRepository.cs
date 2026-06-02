@@ -7,6 +7,16 @@ namespace Services.Repositories.Interfaces
         Task<User?> GetByEmail(Guid tenantId, string email);
         Task<User?> GetGlobalByEmail(string email);
         Task<User?> GetById(Guid id);
+
+        /// <summary>
+        /// Reverse-lookup for inbound SMS: given a Twilio E.164 phone (e.g.
+        /// "+15551234567"), find the user whose loosely-stored phone matches
+        /// after normalization. Uses the expression index from
+        /// Script0088_UserPhoneE164Index. Prefers global rider accounts
+        /// (tenant_id IS NULL) when multiple users share a number, since the
+        /// Inbox is about customer threads — staff phones lose to riders.
+        /// </summary>
+        Task<User?> GetByPhoneE164(string phoneE164);
         Task<Guid> Create(User user);
         Task<bool> AnySuperAdminExists();
         Task<List<User>> SearchAll(string? query, int take = 50);
