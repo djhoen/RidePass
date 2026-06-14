@@ -80,9 +80,24 @@ ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
   pm2 list
 "
 
-log "Smoke test"
-sleep 3
-curl -sS -o /dev/null -w "  https://ridepass.io/         HTTP %{http_code}  (%{size_download} bytes)\n" --max-time 15 https://ridepass.io/ || echo "  apex curl failed"
-curl -sS -o /dev/null -w "  https://demo.ridepass.io/    HTTP %{http_code}  (%{size_download} bytes)\n" --max-time 15 https://demo.ridepass.io/ || echo "  tenant curl failed"
+log "Health gate (fail the deploy if the API doesn't come up)"
+# /api/health is proxied through nginx to Kestrel, so a 200 here means the API
+# process actually booted (this is what would have caught the missing-env 502).
+healthy=0
+for i in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://ridepass.io/api/health || echo 000)
+  if [ "$code" = "200" ]; then echo "  API healthy after $i checks."; healthy=1; break; fi
+  echo "  check $i: API HTTP $code, retrying in 3s..."
+  sleep 3
+done
+if [ "$healthy" != "1" ]; then
+  log "DEPLOY FAILED: API did not become healthy (~90s). Recent webapi logs:"
+  ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "pm2 logs webapi --lines 40 --nostream || true"
+  exit 1
+fi
+
+log "Smoke test (SPA shell)"
+curl -sS -o /dev/null -w "  apex   https://ridepass.io/      HTTP %{http_code}\n" --max-time 15 https://ridepass.io/ || echo "  apex curl failed"
+curl -sS -o /dev/null -w "  tenant https://demo.ridepass.io/ HTTP %{http_code}\n" --max-time 15 https://demo.ridepass.io/ || echo "  tenant curl failed"
 
 log "Deploy complete"

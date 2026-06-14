@@ -93,8 +93,23 @@ jobs:
             pm2 list
           '
 
-      - name: Smoke test
+      - name: Health gate
         run: |
-          sleep 5
+          # /api/health is proxied through nginx to Kestrel, so a 200 means the API
+          # process actually booted. Fails the deploy (red) if it never comes up,
+          # instead of silently leaving a 502 behind a working SPA shell.
+          healthy=0
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://ridepass.io/api/health || echo 000)
+            if [ "$code" = "200" ]; then echo "API healthy after $i checks."; healthy=1; break; fi
+            echo "check $i: API HTTP $code, retrying in 3s..."
+            sleep 3
+          done
+          if [ "$healthy" != "1" ]; then
+            echo "DEPLOY FAILED: API did not become healthy (~90s). Recent webapi logs:"
+            ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'pm2 logs webapi --lines 40 --nostream || true'
+            exit 1
+          fi
+          echo "Smoke (SPA shell):"
           curl -fsS -o /dev/null -w 'apex   HTTP %{http_code}\n' --max-time 20 https://ridepass.io/
           curl -fsS -o /dev/null -w 'tenant HTTP %{http_code}\n' --max-time 20 https://demo.ridepass.io/

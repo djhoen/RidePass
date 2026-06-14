@@ -41,7 +41,7 @@ builder.Services.AddProblemDetails();
 // Liveness health check for load balancers / uptime monitors. Basic check only:
 // the AspNetCore.HealthChecks.NpgSql package is not referenced, so we do not add
 // a DB probe here (no new NuGet packages). Returns 200 "Healthy" when the app is
-// up. Mapped anonymously at GET /health below and excluded from tenant resolution.
+// up. Mapped anonymously at GET /api/health below and excluded from tenant resolution.
 builder.Services.AddHealthChecks();
 
 // Services and helpers
@@ -333,22 +333,24 @@ app.UseStaticFiles();
 app.UseAuthentication();
 
 // Tenant resolution must run before authorization so the permission handlers
-// see ITenantContext populated. Excluded for /health via UseWhen so the health
-// endpoint never gets a 404 from an unknown/inactive/unpublished tenant subdomain
-// (UseWhen branches then rejoins, so auth ordering below is preserved). Auth
-// still runs before this, and authorization still runs after, as intended.
+// see ITenantContext populated. Excluded for /api/health via UseWhen so the
+// health endpoint never gets a 404 from an unknown/inactive/unpublished tenant
+// subdomain (UseWhen branches then rejoins, so auth ordering below is preserved).
+// Auth still runs before this, and authorization still runs after, as intended.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/health"),
+    ctx => !ctx.Request.Path.StartsWithSegments("/api/health"),
     branch => branch.UseMiddleware<TenantResolutionMiddleware>());
 
 app.UseAuthorization();
 
 app.UseRateLimiter();
 
-// Anonymous liveness endpoint. AllowAnonymous so no JWT is required; tenant
-// resolution is already skipped for this path above, so /health always returns
-// 200 regardless of host/subdomain.
-app.MapHealthChecks("/health").AllowAnonymous();
+// Anonymous liveness endpoint, mapped under /api so nginx proxies it to Kestrel
+// (nginx routes /api to the API and everything else to the SPA). AllowAnonymous
+// so no JWT is required; tenant resolution is skipped for this path above, so it
+// always returns 200 regardless of host/subdomain. Used by the deploy health gate
+// and any external uptime monitor.
+app.MapHealthChecks("/api/health").AllowAnonymous();
 
 app.MapControllers();
 
