@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Coupons;
 using Services.Helpers;
+using Services.Helpers.Interfaces;
 using Services.Payments;
 using Services.Repositories.Data.CouponData;
 using Services.Repositories.Data.ExtrasData;
@@ -38,6 +39,7 @@ namespace webapi.Controllers
         private readonly IEventExtraRepository _extras;
         private readonly IMembershipRepository _memberships;
         private readonly IRecentSalesRepository _recentSales;
+        private readonly IDbHelper _db;
         private readonly ITenantContext _tenantContext;
 
         public PurchaseController(
@@ -60,6 +62,7 @@ namespace webapi.Controllers
             IEventExtraRepository extras,
             IMembershipRepository memberships,
             IRecentSalesRepository recentSales,
+            IDbHelper db,
             ITenantContext tenantContext)
         {
             _products = products;
@@ -81,6 +84,7 @@ namespace webapi.Controllers
             _extras = extras;
             _memberships = memberships;
             _recentSales = recentSales;
+            _db = db;
             _tenantContext = tenantContext;
         }
 
@@ -237,6 +241,7 @@ namespace webapi.Controllers
 
             DateTime? validOnDate = request.ValidOnDate?.Date;
             bool eventRequiresWaiver = false;
+            int? lockEventCapacity = null;
 
             if (eventId.HasValue)
             {
@@ -276,6 +281,7 @@ namespace webapi.Controllers
                 validOnDate = ev.StartsAt.Date;
                 // Day-pass purchases are rider-audience.
                 eventRequiresWaiver = ev.RequiresRiderWaiver;
+                lockEventCapacity = ev.Capacity;
             }
 
             // Pre-validate extras cart so we can run waiver gating once for the combined order.
@@ -404,7 +410,32 @@ namespace webapi.Controllers
                 PurchaserEmail = user.Email,
                 PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
             };
-            var createdDay = await _purchases.Create(purchase);
+            // Serialize the capacity recheck + insert per event so concurrent last-spot
+            // day-pass buyers can't both pass the check and oversell (review item #4).
+            // eventId is guaranteed non-null here (enforced above). Released right after
+            // the insert, before the Stripe call.
+            var capacityLock = await _db.AcquireAdvisoryLock($"event-capacity:{eventId.Value}");
+            (Guid Id, Guid RedemptionToken) createdDay;
+            try
+            {
+                if (lockEventCapacity.HasValue)
+                {
+                    var reservedNow = await _purchases.ActiveSpotsReservedForEvent(eventId.Value);
+                    var remainingNow = lockEventCapacity.Value - reservedNow;
+                    if (quantity > remainingNow)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            remainingNow <= 0
+                                ? "This event is sold out."
+                                : $"Only {remainingNow} spot{(remainingNow == 1 ? string.Empty : "s")} left; requested {quantity}.");
+                    }
+                }
+                createdDay = await _purchases.Create(purchase);
+            }
+            finally
+            {
+                await capacityLock.DisposeAsync();
+            }
             purchase.Id = createdDay.Id;
             purchase.RedemptionToken = createdDay.RedemptionToken;
 
@@ -853,6 +884,40 @@ namespace webapi.Controllers
             var totalUnitsRemaining = totalUnits;
 
             var createdTickets = new List<(EventTicketPurchase purchase, Services.Repositories.Data.PaymentData.EventTicketTier tier, int unitAmountCents, int unitServiceChargeCents, int couponDiscountCents)>();
+
+            // Serialize the capacity recheck + row inserts per event so two concurrent
+            // last-spot buyers can't both pass the check and oversell, and a rider can't
+            // double-enter a race class via a near-simultaneous request (review item #4).
+            // The lock is released right after the inserts (capacity is committed by the
+            // pending rows) and before the Stripe call so we never hold it across the network.
+            await using var capacityLock = await _db.AcquireAdvisoryLock($"event-capacity:{parentEvent.Id}");
+
+            // Authoritative re-check under the lock — the early loop above is just a fast-fail.
+            foreach (var item in items)
+            {
+                var lockTier = tierLookup[item.TierId];
+                if (lockTier.Inventory.HasValue)
+                {
+                    var soldNow = await _tiers.SoldCount(lockTier.Id);
+                    if (soldNow + item.Quantity > lockTier.Inventory.Value)
+                    {
+                        var remainingNow = Math.Max(0, lockTier.Inventory.Value - soldNow);
+                        return new ApiResponses().BadRequestResult(
+                            $"Not enough '{lockTier.Name}' left ({remainingNow} remaining, you asked for {item.Quantity}).");
+                    }
+                }
+                if (lockTier.Kind == "race_entry")
+                {
+                    var alreadyNow = await _ticketPurchases.HasActiveRaceEntry(
+                        _tenantContext.TenantId, lockTier.Id, purchaserUserId, purchaserEmail);
+                    if (alreadyNow)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            $"You're already entered in '{lockTier.Name}' — riders can only enter each class once.");
+                    }
+                }
+            }
+
             foreach (var item in items)
             {
                 var tier = tierLookup[item.TierId];
@@ -899,6 +964,10 @@ namespace webapi.Controllers
                     createdTickets.Add((purchase, tier, unitAmount, unitServiceCharge, unitCouponDiscount));
                 }
             }
+
+            // Pending rows now hold the capacity; release the per-event lock before the
+            // (network) Stripe call. Disposal is idempotent with the `await using` above.
+            await capacityLock.DisposeAsync();
 
             // Record one coupon_redemption row per ticket that received a discount. The
             // unique constraint on (source_kind, source_id) means a retry can't double-count.

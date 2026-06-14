@@ -117,8 +117,10 @@
 
         <v-dialog v-model="messageDialog" max-width="600" persistent>
             <v-card>
-                <v-card-title>
-                    Send message to {{ selectedRows.length }} {{ selectedRows.length === 1 ? 'rider' : 'riders' }}
+                <v-card-title class="d-flex align-center">
+                    <span>Send message to {{ selectedRows.length }} {{ selectedRows.length === 1 ? 'rider' : 'riders' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="messageDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
                     <v-btn-toggle v-model="msgChannel" mandatory color="primary" density="compact" class="mb-3">
@@ -138,7 +140,7 @@
                         maxlength="200" class="mb-2"></v-text-field>
 
                     <v-textarea v-model="msgBody" label="Message" rows="4" auto-grow counter
-                        :maxlength="msgChannel === 'sms' ? 800 : 2000" density="compact"></v-textarea>
+                        :maxlength="msgChannel === 'sms' ? 800 : 2000" density="compact" class="mt-4"></v-textarea>
 
                     <!-- Schedule-for picker. Blank = send now. -->
                     <div class="d-flex align-center ga-2 mt-2">

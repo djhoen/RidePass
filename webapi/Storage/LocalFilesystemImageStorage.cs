@@ -26,6 +26,24 @@ namespace webapi.Storage
             return $"/uploads/{tenantId}/{fileName}";
         }
 
+        public async Task<string> SavePlatformAsync(Stream content, string kind, string fileExtension, CancellationToken ct = default)
+        {
+            // Mirrors SaveAsync but uses a fixed "platform" folder instead
+            // of a per-tenant uuid. DeleteAsync still works on the returned
+            // /uploads/platform/... url because it just strips the prefix.
+            var webRoot = GetWebRoot();
+            var dir = Path.Combine(webRoot, "uploads", "platform");
+            Directory.CreateDirectory(dir);
+
+            var fileName = $"{kind}-{Guid.NewGuid():N}{fileExtension}";
+            var filePath = Path.Combine(dir, fileName);
+
+            await using var file = File.Create(filePath);
+            await content.CopyToAsync(file, ct);
+
+            return $"/uploads/platform/{fileName}";
+        }
+
         public Task DeleteAsync(string publicUrl, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(publicUrl) || !publicUrl.StartsWith("/uploads/"))

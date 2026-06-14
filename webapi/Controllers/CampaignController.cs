@@ -14,6 +14,12 @@ namespace webapi.Controllers
     [Authorize(Policy = TenantPermissions.Policy.CampaignsManage)]
     public class CampaignController : ControllerBase
     {
+        // Bulk email delivery is not built yet. While this is false, the Send action is a
+        // hard no-op: it does not change the campaign to a "sent" state and does not write
+        // fake send rows, so the UI can never claim a campaign went out during client testing.
+        // Flip to true (and finish the SMTP/SES wiring in Send) to re-enable delivery.
+        private const bool DeliveryEnabled = false;
+
         private readonly IEmailCampaignRepository _campaigns;
         private readonly INewsletterRepository _subscribers;
         private readonly ITenantContext _tenantContext;
@@ -106,13 +112,23 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// Send stub: materializes the recipient list from active subscribers, writes
-        /// per-recipient send rows, marks the campaign sent. Does NOT deliver email —
-        /// wiring to SMTP/SES is a future task. Safe to call now to exercise the flow.
+        /// Send action. Real bulk delivery is out of scope right now, so while
+        /// <see cref="DeliveryEnabled"/> is false this short-circuits to a clear no-op:
+        /// it does NOT mark the campaign "sent" and does NOT write per-recipient send rows.
+        /// The recipient-materialization helper code below is kept (behind the guard) so
+        /// delivery can be re-enabled later by flipping the const and finishing the wiring.
         /// </summary>
         [HttpPost("{id:guid}/Send")]
         public async Task<IActionResult> Send(Guid id)
         {
+            // Guard: never let an operator "send" while delivery is unbuilt. Returning a
+            // BadRequest here means the campaign stays in its current (draft) state and the
+            // UI cannot falsely show it as sent.
+            if (!DeliveryEnabled)
+            {
+                return new ApiResponses().BadRequestResult("Email campaign delivery isn't enabled yet.");
+            }
+
             var campaign = await _campaigns.GetById(id, _tenantContext.TenantId);
             if (campaign is null)
             {
@@ -140,9 +156,9 @@ namespace webapi.Controllers
             });
             await _campaigns.CreateSendRows(id, sendRows);
 
-            // *** SEND STUB *** — log what *would* happen. Actual delivery wired later.
+            // TODO: deliver via SMTP/SES here before marking sent.
             _logger.LogInformation(
-                "Campaign {CampaignId} send stub: would deliver subject '{Subject}' to {Count} subscribers for tenant {TenantId}",
+                "Campaign {CampaignId} delivering subject '{Subject}' to {Count} subscribers for tenant {TenantId}",
                 id, campaign.Subject, recipients.Count, _tenantContext.TenantId);
 
             await _campaigns.MarkSent(id, recipients.Count);
@@ -152,7 +168,7 @@ namespace webapi.Controllers
                 CampaignId = id,
                 RecipientCount = recipients.Count,
                 Status = "sent",
-                SendNotice = "Email delivery is not yet wired up. Recipients have been queued; configure an email provider to actually deliver.",
+                SendNotice = null,
             });
         }
 

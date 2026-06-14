@@ -631,7 +631,8 @@ namespace webapi.Controllers
             {
                 try
                 {
-                    await _payments.RefundAsync(rental.RentalPiId!, refundCents);
+                    await _payments.RefundAsync(rental.RentalPiId!, refundCents,
+                        idempotencyKey: $"refund-rental-deposit-{rental.Id}-{refundCents}");
                 }
                 catch
                 {

@@ -100,7 +100,11 @@
         <!-- ── Variants editor ────────────────────────────────────────────── -->
         <v-dialog v-model="variantsDialog" max-width="1400" width="95vw" scrollable>
             <v-card v-if="variantsProduct">
-                <v-card-title>Variants — {{ variantsProduct.name }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Variants — {{ variantsProduct.name }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="variantsDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-subtitle>
                     Each row is a buyable SKU. Leave any column blank to skip that attribute.
                     Price overrides the product price; image overrides the product image.
@@ -184,7 +188,11 @@
 
         <v-dialog v-model="dialog" max-width="640" scrollable>
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Add-on' : 'Add Product' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Add-on' : 'Add Product' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-row>
                         <v-col cols="12" md="8">

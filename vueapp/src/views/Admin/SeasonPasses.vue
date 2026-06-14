@@ -58,7 +58,11 @@
 
         <v-dialog v-model="dialog" max-width="720" persistent>
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Pass' : 'New Pass' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Pass' : 'New Pass' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name" density="compact"></v-text-field>
                     <v-textarea v-model="form.description" label="Description (optional)" rows="2" density="compact" class="mt-6"></v-textarea>
@@ -89,7 +93,7 @@
                         </v-btn-toggle>
                     </div>
                     <v-text-field v-if="form.kind === 'credits'" v-model.number="form.totalCredits" type="number" min="1"
-                        label="Total credits" density="compact"></v-text-field>
+                        label="Total credits" density="compact" class="mt-4"></v-text-field>
 
                     <v-divider class="my-3"></v-divider>
                     <div class="text-subtitle-2 mb-1">Event-type perks</div>

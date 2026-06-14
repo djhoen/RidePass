@@ -57,7 +57,11 @@
 
         <v-dialog v-model="tierDialog" max-width="480">
             <v-card>
-                <v-card-title>{{ editing ? `Edit ${kindLabelText}` : `Add ${kindLabelText}` }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? `Edit ${kindLabelText}` : `Add ${kindLabelText}` }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="tierDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name"
                         :placeholder="kind === 'race_entry' ? 'e.g. Pro 250 class' : 'e.g. Adult spectator'"
@@ -118,7 +122,7 @@
             </v-card>
         </v-dialog>
 
-        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
+        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000" location="top">{{ snackbarText }}</v-snackbar>
     </div>
 </template>
 

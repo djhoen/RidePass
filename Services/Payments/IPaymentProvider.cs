@@ -15,11 +15,13 @@ namespace Services.Payments
         /// </summary>
         Task<TransferResult> CreateTransferAsync(string connectAccountId, long amountCents, string currency,
             string? description = null, IReadOnlyDictionary<string, string>? metadata = null,
+            string? idempotencyKey = null,
             CancellationToken ct = default);
 
         PaymentWebhookEvent? VerifyAndParseWebhook(string rawBody, string signatureHeader);
 
-        Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null, CancellationToken ct = default);
+        Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null,
+            string? idempotencyKey = null, CancellationToken ct = default);
 
         // ── Stripe Connect onboarding ────────────────────────────────────────────
         /// <summary>
@@ -55,6 +57,24 @@ namespace Services.Payments
         /// are not configured.
         /// </summary>
         Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Reads a PaymentIntent's current status string at Stripe ("succeeded", "canceled",
+        /// "requires_payment_method", "processing", etc.). Returns null when Stripe credentials
+        /// aren't configured or the PI can't be fetched. Used by the pending-purchase reconciler
+        /// to decide whether a stale pending purchase actually paid (finalize) or was abandoned (fail).
+        /// </summary>
+        Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Cancels a PaymentIntent so it can no longer be charged, returning its resulting status
+        /// ("canceled"). If Stripe rejects the cancel because the PI already reached a terminal
+        /// state, returns that actual status instead (most importantly "succeeded", meaning the
+        /// buyer completed payment in the race window) so the caller can finalize rather than fail.
+        /// Returns null when Stripe isn't configured or the call fails unexpectedly. Used by the
+        /// reconciler to make an abandoned PI permanently unchargeable before failing its rows.
+        /// </summary>
+        Task<string?> CancelPaymentIntentAsync(string paymentIntentId, CancellationToken ct = default);
 
         /// <summary>
         /// Sums Stripe balance_transactions in [fromUtc, toUtc). Used by the reconciliation view to

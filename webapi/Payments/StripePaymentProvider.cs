@@ -50,6 +50,7 @@ namespace webapi.Payments
 
         public async Task<TransferResult> CreateTransferAsync(string connectAccountId, long amountCents, string currency,
             string? description = null, IReadOnlyDictionary<string, string>? metadata = null,
+            string? idempotencyKey = null,
             CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
@@ -64,7 +65,12 @@ namespace webapi.Payments
                 Metadata = metadata?.ToDictionary(kv => kv.Key, kv => kv.Value),
             };
             var service = new TransferService();
-            var transfer = await service.CreateAsync(options, cancellationToken: ct);
+            // Idempotency key (the payout id) so a retry or a double admin-click can't
+            // create a second real-money transfer for the same payout.
+            var requestOptions = string.IsNullOrEmpty(idempotencyKey)
+                ? null
+                : new RequestOptions { IdempotencyKey = idempotencyKey };
+            var transfer = await service.CreateAsync(options, requestOptions, ct);
             return new TransferResult(
                 TransferId: transfer.Id,
                 BalanceTransactionId: transfer.BalanceTransactionId,
@@ -210,6 +216,50 @@ namespace webapi.Payments
             }
         }
 
+        public async Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            try
+            {
+                var service = new PaymentIntentService();
+                var intent = await service.GetAsync(paymentIntentId, cancellationToken: ct);
+                return intent.Status;
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch Stripe status for PaymentIntent {IntentId}.", paymentIntentId);
+                return null;
+            }
+        }
+
+        public async Task<string?> CancelPaymentIntentAsync(string paymentIntentId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            var service = new PaymentIntentService();
+            try
+            {
+                var canceled = await service.CancelAsync(paymentIntentId, cancellationToken: ct);
+                return canceled.Status;
+            }
+            catch (StripeException ex)
+            {
+                // Cancel is rejected once the PI reaches a terminal state — most importantly
+                // 'succeeded', meaning the buyer completed payment in the window. Re-read the
+                // real status so the caller can finalize instead of failing the rows.
+                _logger.LogWarning(ex, "Cancel rejected for PaymentIntent {IntentId}; re-reading status.", paymentIntentId);
+                try
+                {
+                    var current = await service.GetAsync(paymentIntentId, cancellationToken: ct);
+                    return current.Status;
+                }
+                catch (StripeException ex2)
+                {
+                    _logger.LogWarning(ex2, "Failed to re-read PaymentIntent {IntentId} after cancel.", paymentIntentId);
+                    return null;
+                }
+            }
+        }
+
         // ── Stripe Terminal (tap-to-pay) ─────────────────────────────────────
         public async Task<string> CreateTerminalConnectionTokenAsync(string? locationId = null, CancellationToken ct = default)
         {
@@ -287,7 +337,8 @@ namespace webapi.Payments
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
-        public async Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null, CancellationToken ct = default)
+        public async Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null,
+            string? idempotencyKey = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
             {
@@ -298,7 +349,12 @@ namespace webapi.Payments
             if (amountCents.HasValue) options.Amount = amountCents.Value;
 
             var service = new RefundService();
-            var refund = await service.CreateAsync(options, cancellationToken: ct);
+            // Idempotency key (the purchase id) so a retry or a double-click can't issue
+            // a second refund for the same purchase.
+            var requestOptions = string.IsNullOrEmpty(idempotencyKey)
+                ? null
+                : new RequestOptions { IdempotencyKey = idempotencyKey };
+            var refund = await service.CreateAsync(options, requestOptions, ct);
             return new RefundResult(refund.Id, refund.Status);
         }
 

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Services.Helpers;
 using Services.Audit;
 using Services.Notifications;
@@ -40,6 +41,7 @@ namespace webapi.Controllers
         private readonly ISmtpEmailer _emailer;
         private readonly ICouponRepository _couponShares;
         private readonly ILogger<SuperAdminController> _logger;
+        private readonly IMemoryCache _cache;
 
         public SuperAdminController(
             IUserRepository users,
@@ -60,7 +62,8 @@ namespace webapi.Controllers
             IAuditLogRepository auditRepo,
             ISmtpEmailer emailer,
             ICouponRepository couponShares,
-            ILogger<SuperAdminController> logger)
+            ILogger<SuperAdminController> logger,
+            IMemoryCache cache)
         {
             _users = users;
             _tenants = tenants;
@@ -81,6 +84,7 @@ namespace webapi.Controllers
             _emailer = emailer;
             _couponShares = couponShares;
             _logger = logger;
+            _cache = cache;
         }
 
         /// <summary>
@@ -200,7 +204,7 @@ namespace webapi.Controllers
 <strong>Email:</strong> {System.Net.WebUtility.HtmlEncode(admin.Email)}<br/>
 <strong>Temporary password:</strong> <code>{tempPassword}</code></p>
 <p>For security, please <a href=""{Request.Scheme}://{tenant.Subdomain}.{apex}/ResetPassword"">reset your password</a> after your first sign-in.</p>";
-                    var sent = await _emailer.Send(admin.Email, $"Welcome to RidePass — {tenant.DisplayName}", html);
+                    var sent = await _emailer.Send(admin.Email, $"Welcome to RidePass, {tenant.DisplayName}", html);
                     if (!sent)
                     {
                         _logger.LogWarning("Welcome email send returned false for tenant {Tenant} admin {Email}", tenant.Subdomain, admin.Email);
@@ -402,7 +406,8 @@ namespace webapi.Controllers
 
             try
             {
-                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents, ct);
+                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents,
+                    idempotencyKey: $"refund-pass-{id}-{refundCents}", ct: ct);
                 await _passes.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
                 await WriteRefundLedgerEntry(purchase.TenantId, "pass", id, refund.RefundId);
                 var amount = $"${(refundCents / 100m):0.00}";
@@ -446,7 +451,8 @@ namespace webapi.Controllers
 
             try
             {
-                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents, ct);
+                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents,
+                    idempotencyKey: $"refund-ticket-{id}-{refundCents}", ct: ct);
                 await _tickets.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
                 await WriteRefundLedgerEntry(purchase.TenantId, "event_ticket", id, refund.RefundId);
                 var amount = $"${(refundCents / 100m):0.00}";
@@ -553,6 +559,46 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("Tenants/{tenantId:guid}")]
+        public async Task<IActionResult> UpdateTenant(Guid tenantId, [FromBody] SuperAdminUpdateTenantRequest request)
+        {
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
+
+            try { TimeZoneInfo.FindSystemTimeZoneById(request.Timezone); }
+            catch (TimeZoneNotFoundException)
+            {
+                return new ApiResponses().BadRequestResult($"Unknown IANA timezone: {request.Timezone}.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.DisplayName))
+            {
+                return new ApiResponses().BadRequestResult("Display name is required.");
+            }
+
+            static string? Norm(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+            await _tenants.UpdateAdminDetails(tenantId,
+                request.DisplayName.Trim(), request.Status, request.Timezone, request.IsPublished,
+                Norm(request.AddressLine), Norm(request.City), Norm(request.Region),
+                Norm(request.PostalCode), Norm(request.Country),
+                request.Latitude, request.Longitude,
+                Norm(request.ContactEmail), Norm(request.Phone));
+            await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
+
+            // Evict the cached tenant so changes (especially publish status) take
+            // effect immediately instead of after the 5-minute resolution cache.
+            _cache.Remove($"tenant:{tenant.Subdomain.ToLowerInvariant()}");
+
+            await _audit.Log("tenant.update",
+                $"Updated details for {tenant.Subdomain}",
+                "tenant", tenantId, tenantId,
+                new { request.DisplayName, request.Status, request.Timezone, request.IsPublished, request.City, request.Region, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents });
+
+            return new ApiResponses().OkResult(new { tenantId });
+        }
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Tenants/{tenantId:guid}/Ledger")]
         public async Task<IActionResult> ListTenantLedger(Guid tenantId, [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc, [FromQuery] int take = 200)
         {
@@ -640,12 +686,13 @@ namespace webapi.Controllers
                     connectAccountId: tenant.StripeConnectAccountId,
                     amountCents: payout.NetPaidCents,
                     currency: "usd",
-                    description: $"RidePass payout for {tenant.DisplayName} ({payout.PeriodStartUtc:yyyy-MM-dd} – {payout.PeriodEndUtc:yyyy-MM-dd})",
+                    description: $"RidePass payout for {tenant.DisplayName} ({payout.PeriodStartUtc:yyyy-MM-dd} to {payout.PeriodEndUtc:yyyy-MM-dd})",
                     metadata: new Dictionary<string, string>
                     {
                         ["ridepass_payout_id"] = payout.Id.ToString(),
                         ["ridepass_tenant_id"] = tenantId.ToString(),
                     },
+                    idempotencyKey: $"payout-{payout.Id}",
                     ct: ct);
             }
             catch (Stripe.StripeException ex)
@@ -865,6 +912,16 @@ namespace webapi.Controllers
             Timezone = t.Timezone,
             ServiceChargeBps = t.ServiceChargeBps,
             MonthlyServiceChargeCapCents = t.MonthlyServiceChargeCapCents,
+            IsPublished = t.IsPublished,
+            AddressLine = t.AddressLine,
+            City = t.City,
+            Region = t.Region,
+            PostalCode = t.PostalCode,
+            Country = t.Country,
+            Latitude = t.Latitude,
+            Longitude = t.Longitude,
+            ContactEmail = t.ContactEmail,
+            Phone = t.Phone,
             CreatedAtUtc = DateTime.SpecifyKind(t.CreatedAt, DateTimeKind.Utc),
         };
 

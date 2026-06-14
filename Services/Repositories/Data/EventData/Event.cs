@@ -24,6 +24,8 @@ namespace Services.Repositories.Data.EventData
         public Guid? SpectatorWaiverId { get; set; }
         public Guid? RacerWaiverId { get; set; }
         public string? ImageUrl { get; set; }
+        // jsonb array of {time, label} schedule rows, stored as text. '[]' = none.
+        public string? ScheduleJson { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

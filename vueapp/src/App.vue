@@ -13,18 +13,32 @@
             </div>
         </transition>
 
-        <ImpersonationBanner />
-        <NavBar v-if="!$route.meta.hideNav" />
-        <v-main>
-            <router-view />
-        </v-main>
-        <Footer v-if="!$route.meta.hideFooter" />
-        <ConfirmDialog />
+        <!-- Tenant not available to this visitor (unknown / inactive / unpublished). -->
+        <div v-if="branding.unavailable" class="tenant-unavailable">
+            <div class="tenant-unavailable-content">
+                <img :src="splashLogo" alt="" class="tenant-unavailable-img" />
+                <h1 class="text-h5 font-weight-bold mt-3 mb-2">This track isn't available yet</h1>
+                <p class="text-body-2 text-medium-emphasis mb-5">
+                    This page hasn't been published. Check back soon, or explore other tracks on RidePass.
+                </p>
+                <v-btn color="primary" :href="apexUrl">Explore RidePass</v-btn>
+            </div>
+        </div>
+
+        <template v-else>
+            <ImpersonationBanner />
+            <NavBar v-if="!$route.meta.hideNav" />
+            <v-main>
+                <router-view />
+            </v-main>
+            <Footer v-if="!$route.meta.hideFooter" />
+            <ConfirmDialog />
+        </template>
     </v-app>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watchEffect } from 'vue'
+import { onMounted, watchEffect, computed } from 'vue'
 import { useTheme } from 'vuetify'
 import NavBar from './components/NavBar.vue'
 import Footer from './components/Footer.vue'
@@ -34,6 +48,16 @@ import { branding, loadBranding } from './stores/branding'
 import splashLogo from './assets/helmet.png'
 
 const theme = useTheme()
+
+// Apex root URL derived from the current host (strip a leading subdomain), used
+// by the "not available" page's link out.
+const apexUrl = computed(() => {
+    const host = window.location.hostname
+    const labels = host.split('.')
+    const apexHost = (host === 'localhost' || labels.length <= 2) ? host : labels.slice(-2).join('.')
+    const port = window.location.port ? `:${window.location.port}` : ''
+    return `${window.location.protocol}//${apexHost}${port}/`
+})
 
 onMounted(() => {
     loadBranding()
@@ -92,5 +116,26 @@ watchEffect(() => {
 }
 .splash-fade-leave-to {
     opacity: 0;
+}
+
+/* "Tenant not available" full-screen page (unpublished / inactive). */
+.tenant-unavailable {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    padding: 24px;
+    z-index: 9999;
+}
+.tenant-unavailable-content {
+    text-align: center;
+    max-width: 420px;
+}
+.tenant-unavailable-img {
+    width: 64px;
+    height: auto;
+    opacity: 0.5;
 }
 </style>

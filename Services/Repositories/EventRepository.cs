@@ -16,6 +16,7 @@ namespace Services.Repositories
             spectator_waiver_id AS SpectatorWaiverId,
             racer_waiver_id AS RacerWaiverId,
             image_url AS ImageUrl,
+            schedule_json::text AS ScheduleJson,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -56,11 +57,12 @@ namespace Services.Repositories
                 INSERT INTO event (tenant_id, event_type_id, title, description,
                                    starts_at, ends_at, all_day, capacity, location_label, status,
                                    requires_rider_waiver, requires_spectator_waiver,
-                                   spectator_waiver_id, racer_waiver_id, image_url)
+                                   spectator_waiver_id, racer_waiver_id, image_url, schedule_json)
                 VALUES (@TenantId, @EventTypeId, @Title, @Description,
                         @StartsAt, @EndsAt, @AllDay, @Capacity, @LocationLabel, @Status,
                         @RequiresRiderWaiver, @RequiresSpectatorWaiver,
-                        @SpectatorWaiverId, @RacerWaiverId, @ImageUrl)
+                        @SpectatorWaiverId, @RacerWaiverId, @ImageUrl,
+                        COALESCE(@ScheduleJson::jsonb, '[]'::jsonb))
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, ev);
             return result.First();
@@ -83,7 +85,8 @@ namespace Services.Repositories
                     requires_spectator_waiver = @RequiresSpectatorWaiver,
                     spectator_waiver_id = @SpectatorWaiverId,
                     racer_waiver_id     = @RacerWaiverId,
-                    image_url           = @ImageUrl
+                    image_url           = @ImageUrl,
+                    schedule_json       = COALESCE(@ScheduleJson::jsonb, '[]'::jsonb)
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, ev);
         }

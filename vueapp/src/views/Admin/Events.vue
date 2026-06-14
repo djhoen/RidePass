@@ -66,7 +66,11 @@
 
         <v-dialog v-model="shareOpen" max-width="560">
             <v-card v-if="sharing">
-                <v-card-title>Share event</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Share event</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="shareOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <div class="text-subtitle-1 mb-1">{{ sharing.title }}</div>
                     <div class="text-caption text-medium-emphasis mb-3">

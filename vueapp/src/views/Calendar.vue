@@ -61,7 +61,11 @@
 
         <v-dialog v-model="detailOpen" max-width="640">
             <v-card v-if="selectedDay">
-                <v-card-title>{{ formatLong(selectedDay.date) }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ formatLong(selectedDay.date) }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="detailOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-alert v-if="selectedDay.blackout" type="error" variant="tonal" density="compact" class="mb-3">
                         Track closed{{ selectedDay.blackout.reason ? ' — ' + selectedDay.blackout.reason : '' }}
@@ -153,7 +157,11 @@
 
         <v-dialog v-model="subscribeOpen" max-width="500" persistent>
             <v-card>
-                <v-card-title>Notify me of new events</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Notify me of new events</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="subscribeOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 text-medium-emphasis mb-3">
                         Get a heads-up the moment {{ branding.displayName }} adds something to the calendar.
@@ -184,7 +192,11 @@
              Admin → Blackouts page handles partial-day blackouts. -->
         <v-dialog v-if="canManageEvents" v-model="blackoutDialog" max-width="520" persistent>
             <v-card>
-                <v-card-title>{{ blackoutEditing ? 'Edit Blackout' : 'Add Blackout' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ blackoutEditing ? 'Edit Blackout' : 'Add Blackout' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="blackoutDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-subtitle>Mark a date (or range) as Closed on the calendar.</v-card-subtitle>
                 <v-card-text>
                     <v-row>
@@ -220,7 +232,11 @@
 
         <v-dialog v-model="extrasDialog" max-width="640" persistent>
             <v-card v-if="extrasEvent">
-                <v-card-title>Add-ons for {{ extrasEvent.title }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Add-ons for {{ extrasEvent.title }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="extrasDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-caption text-medium-emphasis mb-2">{{ formatLong(dayjs.utc(extrasEvent.startsAtUtc).tz(tz)) }}</p>
                     <ExtrasPicker :extras="eligibleExtrasForDialog" v-model="extraSelections" />
@@ -243,7 +259,11 @@
 
         <v-dialog v-model="extrasPayOpen" persistent max-width="500">
             <v-card v-if="extrasPayInFlight">
-                <v-card-title>Pay for add-ons</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Pay for add-ons</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="extrasPayOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">${{ (extrasPayInFlight.amountCents / 100).toFixed(2) }} for {{ extrasPayInFlight.label }}</p>
                     <div :id="extrasPaymentElementId" class="mb-4"></div>

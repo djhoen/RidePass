@@ -58,6 +58,10 @@ export class TenantService {
         accentColor: string
         tagline: string | null
         themeMode: 'light' | 'dark'
+        navBarColor: string | null
+        navBarTextColor: string | null
+        navBarHomeColor: string | null
+        navBarHomeTextColor: string | null
     }) {
         return axios.put(`${this.apiUrl}/Tenant/Branding`, req)
     }

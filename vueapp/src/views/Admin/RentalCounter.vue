@@ -53,7 +53,11 @@
 
         <v-dialog v-model="markOutOpen" max-width="640" persistent>
             <v-card v-if="markingOut">
-                <v-card-title>Mark out "{{ markingOut.productName }}"</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Mark out "{{ markingOut.productName }}"</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="markOutOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">
                         Rider: <strong>{{ markingOut.purchaserName }}</strong>
@@ -87,7 +91,11 @@
 
         <v-dialog v-model="returnOpen" max-width="640" persistent>
             <v-card v-if="returning">
-                <v-card-title>Mark "{{ returning.productName }}" returned</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Mark "{{ returning.productName }}" returned</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="returnOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-2">
                         Rider: <strong>{{ returning.purchaserName }}</strong>
@@ -114,14 +122,14 @@
                     </template>
                     <v-divider class="my-3"></v-divider>
                     <v-textarea v-model="returnForm.conditionNotes" label="Overall notes (optional)"
-                        rows="2" density="compact"></v-textarea>
+                        rows="2" density="compact" class="mt-4"></v-textarea>
                     <v-alert v-if="returning.depositCents > 0" type="info" variant="tonal" density="compact" class="my-3">
                         Deposit on file: <strong>${{ (returning.depositCents / 100).toFixed(2) }}</strong>.
                         Leave at $0 to refund the full deposit. Enter an amount to keep some/all for damage.
                     </v-alert>
                     <v-text-field v-if="returning.depositCents > 0" v-model.number="depositCapturedDollars"
                         type="number" min="0" :max="returning.depositCents / 100" step="0.01"
-                        label="Deposit kept ($)" density="compact"></v-text-field>
+                        label="Deposit kept ($)" density="compact" class="mt-4"></v-text-field>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>

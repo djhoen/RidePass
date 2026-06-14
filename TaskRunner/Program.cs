@@ -7,7 +7,7 @@ using Services.Scheduling;
 using Services.Scheduling.Handlers;
 using Services.Sms;
 
-// RidePass TaskRunner — background process for deferred work.
+// RidePass TaskRunner, background process for deferred work.
 //
 // Two concurrent loops, different cadences:
 //

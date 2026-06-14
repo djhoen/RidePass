@@ -1,117 +1,202 @@
 <template>
     <div>
         <!-- Apex (ridepass.io, no tenant subdomain): platform landing page.
-             Shows a hero, a featured tracks grid, an upcoming events grid,
-             and a "start a track" CTA section. Data comes from the public
-             DiscoverController endpoints (cross-tenant, anonymous). -->
-        <div v-if="isApex">
-            <v-container class="apex-hero py-12">
-                <v-row align="center" justify="center">
-                    <v-col cols="12" md="9" class="text-center">
-                        <h1 class="text-h2 font-weight-bold mb-3">{{ branding.displayName }}</h1>
-                        <p class="text-h6 text-medium-emphasis mb-8">
-                            Find your track. Buy your pass. Ride.
-                        </p>
-                        <div class="d-flex flex-wrap ga-3 justify-center">
-                            <v-btn color="primary" size="x-large" to="/Discover"
-                                prepend-icon="mdi-map-search">Find Tracks Near You</v-btn>
-                            <v-btn v-if="isAuthenticated" variant="outlined" size="x-large" to="/User/Upcoming"
-                                prepend-icon="mdi-calendar-clock">My Upcoming</v-btn>
-                            <v-btn v-else variant="outlined" size="x-large" to="/Login"
-                                prepend-icon="mdi-login">Sign In</v-btn>
-                        </div>
-                    </v-col>
-                </v-row>
-            </v-container>
+             Purpose: promote the platform's tracks and their events to riders,
+             spotlight a rider, and promote RidePass to prospective track
+             operators (bottom CTA -> /ForTracks). Copy, hero image, featured
+             tracks, benefits, testimonials, and the bottom CTA banner are all
+             pulled from platform_branding so super admins can edit without a
+             deploy. The map section is a stub for now; a real map ships later. -->
+        <div v-if="isApex" class="apex-page">
+            <!-- ── HERO ────────────────────────────────────────────────────── -->
+            <section class="apex-hero" :style="heroStyle">
+                <div class="apex-hero-overlay">
+                    <v-container class="text-left">
+                        <v-row justify="start">
+                            <v-col cols="12" md="8" lg="7" class="text-left">
+                                <h1 class="text-h1 mb-3 font-display apex-hero-headline text-left">
+                                    <span v-for="(line, i) in apexHeroLines" :key="i"
+                                        class="apex-hero-line"
+                                        :class="i === 0 ? 'text-white' : 'text-primary'">
+                                        {{ line }}
+                                    </span>
+                                </h1>
+                                <p class="text-h6 text-white mb-8 text-left" style="max-width: 600px">
+                                    {{ apexHeroSubhead }}
+                                </p>
+                                <div class="d-flex flex-wrap ga-3 mb-10 justify-start">
+                                    <v-btn v-if="apexHeroPrimary"
+                                        color="primary" size="x-large"
+                                        :to="apexHeroPrimary.url">{{ apexHeroPrimary.label }}</v-btn>
+                                    <v-btn v-if="apexHeroSecondary"
+                                        variant="outlined" size="x-large" color="white"
+                                        :to="apexHeroSecondary.url">{{ apexHeroSecondary.label }}</v-btn>
+                                </div>
+                                <div class="apex-stats">
+                                    <div v-if="apexStatsShowTracks" class="apex-stat">
+                                        <v-icon icon="mdi-map-marker-multiple" size="28" class="apex-stat-icon"></v-icon>
+                                        <div>
+                                            <div class="apex-stat-num">{{ apexTrackCount }}+</div>
+                                            <div class="apex-stat-label">Tracks</div>
+                                        </div>
+                                    </div>
+                                    <div v-if="apexStatsShowEventDays" class="apex-stat">
+                                        <v-icon icon="mdi-calendar-check" size="28" class="apex-stat-icon"></v-icon>
+                                        <div>
+                                            <div class="apex-stat-num">{{ apexEventDayCount }}+</div>
+                                            <div class="apex-stat-label">Event days</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </v-col>
+                        </v-row>
+                    </v-container>
+                </div>
+            </section>
 
             <v-container>
-                <!-- Featured tracks -->
-                <section class="mb-12">
+                <!-- ── UPCOMING EVENTS (promoted to full width, first) ──────
+                     Events are the most time-sensitive content, so they lead
+                     the page. Cards deep-link to the event on its tenant. -->
+                <section class="my-12">
                     <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4">Tracks</h2>
+                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('events', 'Upcoming events') }}</h2>
                         <v-spacer></v-spacer>
-                        <v-btn variant="text" to="/Discover" append-icon="mdi-arrow-right">See all</v-btn>
-                    </div>
-                    <v-row v-if="apexTracks.length > 0" dense>
-                        <v-col v-for="t in apexTracks" :key="t.tenantId" cols="12" sm="6" md="4">
-                            <v-card class="h-100">
-                                <v-card-text>
-                                    <div class="text-h6 mb-1">{{ t.displayName }}</div>
-                                    <div class="text-body-2 text-medium-emphasis mb-2">
-                                        <span v-if="t.city">{{ t.city }}</span><span v-if="t.city && t.region">, </span>
-                                        <span v-if="t.region">{{ t.region }}</span>
-                                        <span v-if="!t.city && !t.region">Location not set</span>
-                                    </div>
-                                    <v-chip v-if="t.upcomingEventsCount > 0" size="x-small" color="secondary" class="mb-3">
-                                        {{ t.upcomingEventsCount }} upcoming
-                                    </v-chip>
-                                    <div>
-                                        <v-btn variant="tonal" size="small" :href="tenantUrl(t.subdomain)"
-                                            rel="noopener">Visit</v-btn>
-                                    </div>
-                                </v-card-text>
-                            </v-card>
-                        </v-col>
-                    </v-row>
-                    <v-card v-else-if="apexLoaded" variant="outlined">
-                        <v-card-text class="text-center text-medium-emphasis py-8">
-                            No tracks on the platform yet.
-                        </v-card-text>
-                    </v-card>
-                </section>
-
-                <!-- Upcoming events across all tracks -->
-                <section class="mb-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4">Upcoming events</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" to="/Discover" append-icon="mdi-arrow-right">See all</v-btn>
+                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">View all events</v-btn>
                     </div>
                     <v-row v-if="apexEvents.length > 0" dense>
-                        <v-col v-for="e in apexEvents" :key="e.eventId" cols="12" sm="6" md="4">
-                            <v-card class="h-100">
-                                <v-card-text>
-                                    <div class="d-flex align-center ga-2 mb-1">
-                                        <v-chip size="x-small"
-                                            :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }">
-                                            {{ e.eventTypeName }}
-                                        </v-chip>
-                                        <span class="text-caption">{{ formatApexEventWhen(e.startsAtUtc) }}</span>
+                        <v-col v-for="e in apexEvents" :key="e.eventId" cols="12" sm="6" md="3">
+                            <v-card class="h-100 apex-event-card"
+                                :href="apexEventUrl(e)" rel="noopener">
+                                <!-- Cover image with the date badge floated in the top-left.
+                                     Falls back to event type color when no image is set. -->
+                                <div class="apex-event-image"
+                                    :style="apexEventImageStyle(e)">
+                                    <div class="apex-event-datebadge">
+                                        <div class="apex-event-day">{{ formatApexEventDay(e.startsAtUtc) }}</div>
+                                        <div class="apex-event-month">{{ formatApexEventMonth(e.startsAtUtc) }}</div>
                                     </div>
-                                    <div class="text-subtitle-1 font-weight-medium mb-1">{{ e.title }}</div>
-                                    <div class="text-body-2 text-medium-emphasis mb-3">
-                                        {{ e.tenantDisplayName }}
-                                        <span v-if="e.tenantCity">, {{ e.tenantCity }}<span
-                                            v-if="e.tenantRegion">, {{ e.tenantRegion }}</span></span>
+                                </div>
+                                <v-card-text class="pa-4">
+                                    <div class="text-h6 font-display-upright mb-1">{{ e.title }}</div>
+                                    <div class="text-caption text-medium-emphasis d-flex align-center ga-1">
+                                        <v-icon icon="mdi-map-marker" size="14"></v-icon>
+                                        <span>
+                                            {{ e.tenantDisplayName }}<span v-if="e.tenantCity">, {{ e.tenantCity }}<span v-if="e.tenantRegion">, {{ e.tenantRegion }}</span></span>
+                                        </span>
                                     </div>
-                                    <v-btn variant="tonal" size="small" :href="tenantUrl(e.tenantSubdomain)"
-                                        rel="noopener">Visit track</v-btn>
                                 </v-card-text>
                             </v-card>
                         </v-col>
                     </v-row>
-                    <v-card v-else-if="apexLoaded" variant="outlined">
+                    <v-card v-else variant="outlined">
                         <v-card-text class="text-center text-medium-emphasis py-8">
                             No upcoming events scheduled.
                         </v-card-text>
                     </v-card>
                 </section>
 
-                <!-- Operator CTA. Pitch to track owners considering signing up
-                     their facility on the platform. Email button kept simple for
-                     now; can be swapped for a contact form later. -->
-                <section class="apex-operator-cta my-12 pa-8 text-center">
-                    <h2 class="text-h4 font-weight-bold mb-3">Run a track?</h2>
-                    <p class="text-body-1 mb-6 mx-auto" style="max-width: 640px">
-                        Bring your gate fees, ticketing, race entries, season passes, waivers, and
-                        customer messaging onto one platform. RidePass handles payments, tax, and
-                        reporting so you can focus on running events.
-                    </p>
-                    <v-btn color="primary" size="large"
-                        href="mailto:hello@ridepass.io?subject=Interested%20in%20RidePass%20for%20my%20track"
-                        prepend-icon="mdi-email-outline">Get in touch</v-btn>
+                <!-- ── RIDE THE BEST TRACKS ────────────────────────────────── -->
+                <section class="my-12">
+                    <div class="d-flex align-center mb-4 ga-2">
+                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracks', 'Ride the best tracks') }}</h2>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">See all tracks</v-btn>
+                    </div>
+                    <v-row v-if="apexFeaturedTracks.length > 0" dense>
+                        <v-col v-for="t in apexFeaturedTracks" :key="t.tenantId" cols="12" md="4">
+                            <!-- Whole card is clickable, opens the tenant subdomain. -->
+                            <v-card class="h-100 apex-track-card" :href="tenantUrl(t.subdomain)" rel="noopener">
+                                <!-- Cover image is the tenant's hero photo; falls back to a
+                                     soft dark gradient placeholder when none is set. -->
+                                <div class="apex-track-image" :style="apexTrackImageStyle(t)"></div>
+                                <v-card-text class="pa-4">
+                                    <div class="text-h5 font-display-upright mb-1">{{ t.displayName }}</div>
+                                    <div class="text-body-2 text-medium-emphasis d-flex align-center ga-1">
+                                        <v-icon icon="mdi-map-marker" size="14"></v-icon>
+                                        <span>
+                                            <template v-if="t.city || t.region">
+                                                <span v-if="t.city">{{ t.city }}</span><span v-if="t.city && t.region">, </span><span v-if="t.region">{{ t.region }}</span>
+                                            </template>
+                                            <template v-else>Location not set</template>
+                                        </span>
+                                    </div>
+                                </v-card-text>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+                    <v-card v-else variant="outlined">
+                        <v-card-text class="text-center text-medium-emphasis py-8">
+                            No tracks on the platform yet.
+                        </v-card-text>
+                    </v-card>
+                </section>
+
+                <!-- ── WHY RIDE WITH RIDEPASS (repurposed benefits band) ───────
+                     Dark navy panel pairs a left-hand photo with a bullet list
+                     of rider-facing reasons to ride RidePass tracks. Hidden
+                     entirely when the admin clears both the copy and the photo. -->
+                <section v-if="apexBenefitsHtml || apexBenefitsImageUrl" class="apex-benefits my-12">
+                    <v-row no-gutters>
+                        <!-- Image: 1/3 of the band on desktop, hidden on mobile. -->
+                        <v-col cols="12" md="4" class="d-none d-md-block">
+                            <div v-if="apexBenefitsImageUrl" class="apex-benefits-photo"
+                                :style="{ backgroundImage: `url(${apexBenefitsImageUrl})` }"></div>
+                            <div v-else class="apex-benefits-photo apex-benefits-photo--placeholder"></div>
+                        </v-col>
+                        <v-col cols="12" md="8" class="apex-benefits-content">
+                            <h2 class="text-h4 mb-4 font-display">{{ apexSectionTitle('benefits', 'Why ride with RidePass') }}</h2>
+                            <div v-if="apexBenefitsHtml" class="apex-benefits-list" v-html="apexBenefitsHtml"></div>
+                            <div class="mt-6">
+                                <v-btn color="primary" size="large" to="/ForTracks">See more</v-btn>
+                            </div>
+                        </v-col>
+                    </v-row>
+                </section>
+
+                <!-- ── TESTIMONIALS ────────────────────────────────────────── -->
+                <section v-if="apexTestimonials.length > 0" class="my-12">
+                    <h2 class="text-h4 font-weight-bold text-center mb-6 font-display">
+                        {{ apexSectionTitle('testimonials', 'What riders are saying') }}
+                    </h2>
+                    <v-row dense>
+                        <v-col v-for="t in apexTestimonials" :key="t.id" cols="12" md="6">
+                            <v-card class="h-100">
+                                <v-card-text>
+                                    <div class="d-flex align-center mb-3 ga-3">
+                                        <v-avatar size="48" color="grey-lighten-3">
+                                            <v-img v-if="t.riderPhotoUrl" :src="testimonialPhoto(t.riderPhotoUrl)"></v-img>
+                                            <v-icon v-else>mdi-account</v-icon>
+                                        </v-avatar>
+                                        <div>
+                                            <div class="font-weight-medium">{{ t.riderName }}</div>
+                                            <div class="text-caption text-warning">
+                                                <span v-for="n in t.rating" :key="n">★</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-body-1 font-italic">"{{ t.quote }}"</p>
+                                </v-card-text>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+                </section>
+
+                <!-- ── TRACKS NEAR YOU (lower-48 map, auto-pinned from lat/lng) ── -->
+                <section class="my-12">
+                    <div class="d-flex align-center mb-4 ga-2">
+                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracksNearYou', 'Tracks near you') }}</h2>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">Browse all tracks</v-btn>
+                    </div>
+                    <!-- overflow visible so the hover preview card can extend past the
+                         map's border instead of being clipped. -->
+                    <v-card variant="outlined" class="pa-4" style="overflow: visible">
+                        <TracksMap :tracks="apexTracks" @select="openTrack" />
+                    </v-card>
                 </section>
             </v-container>
+
         </div>
 
         <template v-else>
@@ -126,7 +211,7 @@
                         <span v-if="effectiveStatus.message" class="ml-2 text-body-2">— {{ effectiveStatus.message }}</span>
                     </div>
                     <div class="mt-6">
-                        <v-btn color="primary" size="x-large" to="/Calendar" class="mr-3">See Calendar</v-btn>
+                        <v-btn color="primary" size="x-large" to="/Events" class="mr-3">See Events</v-btn>
                         <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large" color="white"
                             to="/SeasonPasses">Season Passes</v-btn>
                     </div>
@@ -139,7 +224,7 @@
                     {{ effectiveStatus.label }}<span v-if="effectiveStatus.message"> — {{ effectiveStatus.message }}</span>
                 </v-chip>
                 <div>
-                    <v-btn color="primary" size="x-large" to="/Calendar" class="mr-3">See Calendar</v-btn>
+                    <v-btn color="primary" size="x-large" to="/Events" class="mr-3">See Events</v-btn>
                     <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large"
                         to="/SeasonPasses">Season Passes</v-btn>
                 </div>
@@ -155,7 +240,7 @@
                     <div class="d-flex align-center mb-4 ga-2">
                         <h2 class="text-h4">{{ nextUpTitle }}</h2>
                         <v-spacer></v-spacer>
-                        <v-btn variant="text" to="/Calendar" append-icon="mdi-arrow-right">Full calendar</v-btn>
+                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">All events</v-btn>
                     </div>
                     <div class="next-up-wrap">
                         <button v-show="canScrollLeft" type="button" class="next-up-arrow next-up-arrow--left"
@@ -188,8 +273,8 @@
                                         </v-btn>
                                         <v-btn v-if="!e.hasRaceEntryTiers"
                                             size="small" variant="text"
-                                            :to="{ path: '/Calendar', query: { eventId: e.id } }">
-                                            View on calendar
+                                            :to="{ path: '/Events', query: { eventId: e.id } }">
+                                            View event
                                         </v-btn>
                                     </div>
                                 </v-card-text>
@@ -226,17 +311,17 @@
                             <v-card class="pa-6" variant="outlined">
                                 <h3 class="text-h5 mb-2">Pass</h3>
                                 <p class="text-body-2 text-medium-emphasis mb-4">Single-day access to ride.</p>
-                                <div class="text-h4 font-weight-bold mb-4">
+                                <div class="text-h4 font-weight-bold mb-4 font-display">
                                     From ${{ (passFromCents / 100).toFixed(2) }}
                                 </div>
-                                <v-btn color="primary" to="/Calendar">Pick an Event</v-btn>
+                                <v-btn color="primary" to="/Events">Pick an Event</v-btn>
                             </v-card>
                         </v-col>
                         <v-col v-if="seasonPassFromCents !== null && branding.seasonPassesEnabled" cols="12" md="6">
                             <v-card class="pa-6" variant="outlined">
                                 <h3 class="text-h5 mb-2">Season Pass</h3>
                                 <p class="text-body-2 text-medium-emphasis mb-4">Ride the whole season — best value.</p>
-                                <div class="text-h4 font-weight-bold mb-4">
+                                <div class="text-h4 font-weight-bold mb-4 font-display">
                                     From ${{ (seasonPassFromCents / 100).toFixed(2) }}
                                 </div>
                                 <v-btn color="primary" to="/SeasonPasses">See Season Passes</v-btn>
@@ -248,7 +333,7 @@
                 <!-- ── 4. About ──────────────────────────────────────────────── -->
                 <section v-if="branding.aboutHtml" class="mb-12">
                     <h2 class="text-h4 mb-4">About</h2>
-                    <div class="rich-text-body" v-html="branding.aboutHtml"></div>
+                    <div class="rich-text-body" v-html="aboutHtmlSafe"></div>
                     <v-img v-if="branding.secondaryHeroUrl" :src="branding.secondaryHeroUrl"
                         max-height="400" cover class="mt-6 rounded"></v-img>
                 </section>
@@ -356,12 +441,19 @@ import { PassService, type PassProduct } from '../services/PassService'
 import { SeasonPassService, type SeasonPassProduct } from '../services/SeasonPassService'
 import { TenantService, type GalleryImage, type TrackGraphic } from '../services/TenantService'
 import { DiscoverService, type TrackDiscoverItem, type EventDiscoverItem } from '../services/DiscoverService'
+import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import authHelper from '../helpers/AuthHelper'
 import BuyAdmissionFlow from '@/components/BuyAdmissionFlow.vue'
+import TracksMap from '@/components/TracksMap.vue'
+import DOMPurify from 'dompurify'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
 const isAuthenticated = computed(() => authHelper.isAuthenticated())
+
+// Admin-authored "About" copy is rendered as HTML, so sanitize it before it
+// hits v-html. The wrapper keeps the rich-text-body class for its layout rules.
+const aboutHtmlSafe = computed(() => DOMPurify.sanitize(branding.aboutHtml ?? ''))
 
 const apiUrl: string = (import.meta as any).env?.VITE_API_ENDPOINT ?? ''
 function apiOrigin(): string {
@@ -387,14 +479,15 @@ const seasonPassProducts = ref<SeasonPassProduct[]>([])
 const gallery = ref<GalleryImage[]>([])
 const trackGraphics = ref<TrackGraphic[]>([])
 
-// Apex landing data: featured tracks and upcoming events across the whole
-// platform. Loaded only when there's no tenant subdomain. apexLoaded gates
-// the "no results yet" empty-state cards so they don't flash while fetching.
+// Apex landing data: tracks and upcoming events across the whole platform.
+// Loaded only when there's no tenant subdomain.
 const apexTracks = ref<TrackDiscoverItem[]>([])
 const apexEvents = ref<EventDiscoverItem[]>([])
-const apexLoaded = ref(false)
 
-const APEX_LIMIT = 6
+// Featured tracks render 3; upcoming events lead the page full-width as a
+// single row of up to 4 (four across on desktop).
+const APEX_TRACK_LIMIT = 3
+const APEX_EVENT_LIMIT = 4
 
 // Photo-gallery slideshow modal state. Set when a thumbnail is clicked.
 const galleryDialog = ref(false)
@@ -463,15 +556,103 @@ async function loadApex() {
             discoverService.searchTracks({}),
             discoverService.searchEvents({ fromUtc: new Date().toISOString() }),
         ])
-        apexTracks.value = (trackResp.data as any).data.slice(0, APEX_LIMIT)
-        apexEvents.value = (eventResp.data as any).data.slice(0, APEX_LIMIT)
+        apexTracks.value = (trackResp.data as any).data
+        apexEvents.value = (eventResp.data as any).data.slice(0, APEX_EVENT_LIMIT)
     } catch (err) {
         console.error('Failed to load apex discover data', err)
-    } finally {
-        apexLoaded.value = true
     }
 }
 onMounted(loadApex)
+
+// ── Apex computed (all driven by platform_branding) ─────────────────────────
+const apexHeroHeadline = computed(() =>
+    platformBranding.data?.heroHeadline?.trim() || 'Find your track. Ride this weekend.')
+const apexHeroSubhead = computed(() =>
+    platformBranding.data?.heroSubhead?.trim()
+    || 'Discover motocross tracks near you, see what is on the schedule, and grab your gate pass before you load the van.')
+
+// Split the headline on sentence boundaries so each clause renders on its
+// own line and gets its own color (mockup: "RIDE MORE." white,
+// "PAY LESS." orange). When the admin enters a single sentence, only one
+// line renders. Periods dropped by the split are re-added so the rendered
+// text matches what the admin typed.
+const apexHeroLines = computed<string[]>(() => {
+    const raw = apexHeroHeadline.value.trim()
+    if (!raw) return []
+    const parts = raw.split(/\.\s+/).map(p => p.trim()).filter(Boolean)
+    return parts.map((p, i) => {
+        if (i === parts.length - 1) return p
+        return p.endsWith('.') ? p : p + '.'
+    })
+})
+const apexHeroPrimary = computed(() => buttonFrom(
+    platformBranding.data?.heroCtaPrimaryLabel,
+    platformBranding.data?.heroCtaPrimaryUrl))
+const apexHeroSecondary = computed(() => buttonFrom(
+    platformBranding.data?.heroCtaSecondaryLabel,
+    platformBranding.data?.heroCtaSecondaryUrl))
+
+const apexStatsShowTracks = computed(() => platformBranding.data?.statsShowTracks !== false)
+const apexStatsShowEventDays = computed(() => platformBranding.data?.statsShowEventDays !== false)
+
+// Stats counts use real numbers from /Discover. Pad the displayed value so
+// admins don't see a misleading "0+" before tracks load.
+const apexTrackCount = computed(() => apexTracks.value.length)
+const apexEventDayCount = computed(() =>
+    apexTracks.value.reduce((sum, t) => sum + (t.upcomingEventsCount || 0), 0))
+
+const heroStyle = computed(() => {
+    const url = platformImageUrl(platformBranding.data?.heroImageUrl)
+    return url ? { backgroundImage: `url(${url})` } : {}
+})
+
+// Featured tracks: use the admin's curated list when set, otherwise auto-pick
+// by upcoming event count. Limit display to 3 (mockup).
+const apexFeaturedTracks = computed(() => {
+    const all = apexTracks.value
+    const featured = platformBranding.data?.featuredTrackIds ?? []
+    if (featured.length > 0) {
+        const byId = new Map(all.map(t => [t.tenantId, t]))
+        const picks: TrackDiscoverItem[] = []
+        for (const id of featured) {
+            const t = byId.get(id)
+            if (t) picks.push(t)
+            if (picks.length >= APEX_TRACK_LIMIT) break
+        }
+        return picks
+    }
+    return [...all]
+        .sort((a, b) => (b.upcomingEventsCount ?? 0) - (a.upcomingEventsCount ?? 0))
+        .slice(0, APEX_TRACK_LIMIT)
+})
+
+const apexTestimonials = computed(() => platformBranding.data?.testimonials ?? [])
+const apexBenefitsHtml = computed(() => platformBranding.data?.benefitsHtml?.trim() || '')
+const apexBenefitsImageUrl = computed(() => platformImageUrl(platformBranding.data?.benefitsImageUrl))
+
+function apexSectionTitle(key: 'tracks' | 'events' | 'benefits' | 'testimonials' | 'tracksNearYou', fallback: string): string {
+    const b = platformBranding.data
+    if (!b) return fallback
+    const map: Record<typeof key, string | null | undefined> = {
+        tracks: b.sectionTracksTitle,
+        events: b.sectionEventsTitle,
+        benefits: b.sectionBenefitsTitle,
+        testimonials: b.sectionTestimonialsTitle,
+        tracksNearYou: b.sectionTracksNearYouTitle,
+    }
+    return map[key]?.trim() || fallback
+}
+
+function buttonFrom(label: string | null | undefined, url: string | null | undefined): { label: string; url: string } | null {
+    const l = label?.trim()
+    const u = url?.trim()
+    if (!l || !u) return null
+    return { label: l, url: u }
+}
+
+function testimonialPhoto(url: string | null | undefined): string {
+    return platformImageUrl(url) ?? ''
+}
 
 // Build the absolute URL to a tenant subdomain. tenantHelper.rootDomain()
 // returns the configured root (ridepass.io in prod, ridepass.local in dev),
@@ -482,8 +663,48 @@ function tenantUrl(subdomain: string): string {
     return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
 }
 
-function formatApexEventWhen(utc: string): string {
-    return dayjs.utc(utc).local().format('ddd, MMM D · h:mm A')
+// Map pin click -> open that track's site, matching the track-card behavior.
+function openTrack(t: TrackDiscoverItem) {
+    window.location.href = tenantUrl(t.subdomain)
+}
+
+// Date-badge helpers for the upcoming-events list (day number + month abbrev,
+// to match the mockup's "12 / OCT" stacked format).
+function formatApexEventDay(utc: string): string {
+    return dayjs.utc(utc).local().format('D')
+}
+function formatApexEventMonth(utc: string): string {
+    return dayjs.utc(utc).local().format('MMM').toUpperCase()
+}
+
+// Background style for the apex track card cover. Reuses the tenant's own
+// hero image; falls back to a flat themed background so the card never
+// renders an empty white block when a tenant has no hero photo yet.
+function apexTrackImageStyle(t: TrackDiscoverItem) {
+    if (t.heroImageUrl) {
+        return { backgroundImage: `url(${absoluteUrl(t.heroImageUrl)})` }
+    }
+    return { backgroundColor: 'rgb(var(--v-theme-secondary))' }
+}
+
+// Deep link from an apex event card straight to that event's public page on its
+// tenant subdomain (the new standalone event page, not the old calendar modal).
+function apexEventUrl(e: EventDiscoverItem): string {
+    return `${tenantUrl(e.tenantSubdomain)}Event/${e.eventId}`
+}
+
+// Apex event card image: per-event image wins, fall back to the event type's
+// image, then to a flat fill in the event-type color. Both URLs come back as
+// relative `/uploads/...` paths so we need to absolutize against the API host.
+function apexEventImageStyle(e: EventDiscoverItem) {
+    const img = e.imageUrl ?? e.eventTypeImageUrl ?? null
+    if (img) {
+        return {
+            backgroundImage: `url(${absoluteUrl(img)})`,
+            backgroundColor: e.eventTypeColor || '#1976D2',
+        }
+    }
+    return { backgroundColor: e.eventTypeColor || '#1976D2' }
 }
 
 // ── Pricing snapshots ────────────────────────────────────────────────────────
@@ -653,15 +874,236 @@ function formatTime12(hhmm: string): string {
 </script>
 
 <style scoped>
-/* Apex landing page accents. The operator CTA gets a faint tinted block so
-   it visually separates from the white cards above it without using a hero
-   image (we don't have brand assets at the platform level). */
-.apex-hero {
-    background: linear-gradient(135deg, rgba(25, 118, 210, 0.04), rgba(25, 118, 210, 0));
+/* ── Apex landing page ───────────────────────────────────────────────────
+   Hero is full-bleed with a configurable background image; falls back to a
+   dark gradient when the super admin hasn't uploaded one. The overlay sits
+   on top of the image and dims it so white text always reads.
+
+   Stats badges sit in a row at the bottom of the hero with a subtle dark
+   pill background. Other sections (how-it-works, benefits, testimonials,
+   CTA banner) inherit normal page width from v-container.
+*/
+/* Slight warm gray for the apex page background. Cards stay white (their
+   default surface color) so they visually pop against this. Hero and CTA
+   banner have their own background colors and override this. */
+.apex-page {
+    background-color: #f5f5f5;
 }
-.apex-operator-cta {
-    background: rgb(var(--v-theme-surface-variant));
-    border-radius: 12px;
+
+.apex-hero {
+    position: relative;
+    min-height: 540px;
+    background-size: cover;
+    /* Anchor the crop to the top of the photo so heads stay in frame.
+       `cover` zooms to fill and the default `center` drops the top first;
+       `top` pins the top edge no matter the viewport ratio. */
+    background-position: center top;
+    background-color: rgb(var(--v-theme-secondary));
+}
+.apex-hero-overlay {
+    position: relative;
+    /* Horizontal darken: heavy on the left (where the headline, subhead,
+       CTAs and stats sit) fading to fully transparent on the right (where
+       the photo subject reads clean). Uniform top-to-bottom on each side
+       so the text always has the same backstop regardless of viewport
+       height, and so the right side of the photo never gets a mask. */
+    background: linear-gradient(90deg,
+        rgba(20, 24, 32, 0.95) 0%,
+        rgba(20, 24, 32, 0.85) 25%,
+        rgba(20, 24, 32, 0.50) 50%,
+        rgba(20, 24, 32, 0.0) 75%);
+    padding: 5rem 0 4rem;
+    min-height: 540px;
+    display: flex;
+    align-items: center;
+}
+/* Hero headline: two-clause split renders one clause per line, alternating
+   colors. line-height tight so the two clauses sit close together. */
+.apex-hero-headline {
+    line-height: 0.95;
+}
+.apex-hero-line {
+    display: block;
+}
+
+.apex-stats {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 1rem 4rem;
+    padding: 1rem 2rem;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 14px;
+    color: #fff;
+}
+.apex-stat {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: left;
+}
+.apex-stat-icon {
+    color: #ffffff;
+    opacity: 0.95;
+}
+.apex-stat-num {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-style: normal;
+    font-size: 1.75rem;
+    line-height: 1.05;
+}
+.apex-stat-label {
+    font-size: 0.8rem;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
+}
+
+/* Section heading: title centered between two horizontal rules that flex to
+   fill the remaining space on each side. An optional trailing CTA (used on
+   the "Upcoming events" header for the "View All Events" link) sits to the
+   right of the second rule. Mirrors the "---  Title  ---" pattern from the
+   mock for both column headers. */
+.apex-section-head {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+}
+.apex-section-rule {
+    flex: 1 1 auto;
+    border: 0;
+    height: 1px;
+    margin: 0;
+    background-color: rgba(0, 0, 0, 0.22);
+}
+.apex-section-title {
+    flex: 0 0 auto;
+    margin: 0;
+    white-space: nowrap;
+}
+.apex-section-cta {
+    flex: 0 0 auto;
+}
+
+/* Ride the best tracks: each card pairs the tenant's hero photo at the top
+   with the track name + location below. Whole card is a link to the tenant
+   subdomain. Hover gives a subtle lift to signal interactivity. */
+.apex-track-card {
+    overflow: hidden;
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.apex-track-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.apex-track-image {
+    height: 180px;
+    background-size: cover;
+    background-position: center;
+}
+
+/* Upcoming events: card has a cover image at the top with a black date badge
+   floated in the top-left, slightly inset from the corners so it reads as
+   pinned-over-the-image rather than crammed into it. Falls back to a flat
+   event-type color fill when no image is set. */
+.apex-event-card {
+    overflow: visible;
+}
+.apex-event-image {
+    position: relative;
+    height: 160px;
+    background-size: cover;
+    background-position: center;
+}
+.apex-event-datebadge {
+    position: absolute;
+    top: -6px;
+    left: 12px;
+    background: #000;
+    color: #fff;
+    padding: 6px 10px 5px;
+    text-align: center;
+    border-radius: 4px;
+    line-height: 1;
+    min-width: 44px;
+    box-shadow: 1px 2px 5px 0px rgba(0,0,0,0.34); 
+}
+.apex-event-datebadge .apex-event-day {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+}
+.apex-event-datebadge .apex-event-month {
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    color: #fff;
+    opacity: 0.85;
+    margin-top: 2px;
+}
+.apex-event-day {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.apex-event-month {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    margin-top: 2px;
+}
+
+/* Benefits section: dark navy band that pairs a photo on the left with the
+   bullet list of member perks on the right. 50/50 split on desktop. No
+   gutter between the columns so the photo butts up against the dark panel
+   for an editorial layout (mirrors the mock). The whole section gets a
+   border radius so it reads as a contained card against the light page bg. */
+.apex-benefits {
+    background-color: rgb(var(--v-theme-secondary));
+    color: #ffffff;
+    border-radius: 16px;
+    overflow: hidden;
+}
+.apex-benefits-photo {
+    width: 100%;
+    height: 100%;
+    min-height: 360px;
+    background-size: cover;
+    background-position: center;
+    background-color: rgba(255, 255, 255, 0.04);
+}
+.apex-benefits-photo--placeholder {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+.apex-benefits-content {
+    padding: 3rem 3rem !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.apex-benefits-content :deep(ul) {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+.apex-benefits-content :deep(li) {
+    padding: 0.5rem 0 0.5rem 1.75rem;
+    position: relative;
+    font-size: 1.05rem;
+}
+.apex-benefits-content :deep(li::before) {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: rgb(var(--v-theme-primary));
+    font-weight: 700;
+}
+@media (max-width: 960px) {
+    .apex-benefits-photo { min-height: 240px; }
+    .apex-benefits-content { padding: 2rem 1.5rem; }
 }
 
 .hero {

@@ -34,6 +34,16 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 
+// RFC 7807 ProblemDetails so unhandled errors return a structured JSON body
+// instead of a bare 500. Consumed by the production exception handler below.
+builder.Services.AddProblemDetails();
+
+// Liveness health check for load balancers / uptime monitors. Basic check only:
+// the AspNetCore.HealthChecks.NpgSql package is not referenced, so we do not add
+// a DB probe here (no new NuGet packages). Returns 200 "Healthy" when the app is
+// up. Mapped anonymously at GET /health below and excluded from tenant resolution.
+builder.Services.AddHealthChecks();
+
 // Services and helpers
 builder.Services.AddScoped<IDbHelper, DbHelper>();
 builder.Services.AddScoped<ITenantRepository, TenantRepository>();
@@ -57,6 +67,9 @@ builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
 builder.Services.AddScoped<Services.Scheduling.IScheduledTaskHandler, Services.Scheduling.Handlers.SendRiderMessageHandler>();
 builder.Services.AddScoped<Services.Scheduling.ScheduledTaskDispatcher>();
 builder.Services.AddScoped<IDiscoverRepository, DiscoverRepository>();
+// IP geolocation for the apex Events page (US vs out-of-country branch + radius
+// center). Singleton: it holds a pooled static HttpClient and an in-memory cache.
+builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpService>();
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -75,6 +88,7 @@ builder.Services.AddScoped<IRentalRepository, RentalRepository>();
 builder.Services.AddScoped<IEventWaitlistRepository, EventWaitlistRepository>();
 builder.Services.AddScoped<IEventExtraRepository, EventExtraRepository>();
 builder.Services.AddScoped<ITrackFeedbackRepository, TrackFeedbackRepository>();
+builder.Services.AddScoped<ITrackLeadRepository, TrackLeadRepository>();
 builder.Services.AddScoped<ISurveyRepository, SurveyRepository>();
 builder.Services.AddScoped<IMembershipRepository, MembershipRepository>();
 builder.Services.AddScoped<Services.Waitlist.IWaitlistPromoter, Services.Waitlist.WaitlistPromoter>();
@@ -104,6 +118,7 @@ builder.Services.AddScoped<ITenantConversationRepository, TenantConversationRepo
 builder.Services.AddScoped<ITenantSmsOptOutRepository, TenantSmsOptOutRepository>();
 builder.Services.AddScoped<ITenantTollfreeVerificationRepository, TenantTollfreeVerificationRepository>();
 builder.Services.AddScoped<IUpcomingPurchaseRepository, UpcomingPurchaseRepository>();
+builder.Services.AddScoped<IPlatformBrandingRepository, PlatformBrandingRepository>();
 
 // Rate limits on the SMS settings endpoints that hit Twilio's master account.
 // Partition by request host so a tenant's quota is its subdomain — one bad
@@ -155,6 +170,12 @@ builder.Services.AddRateLimiter(opts =>
 }
 
 builder.Services.AddSingleton<IPaymentProvider, StripePaymentProvider>();
+// Shared Stripe PaymentIntent fulfillment, used by both the webhook and the reconciler.
+builder.Services.AddScoped<webapi.Payments.IStripePurchaseFinalizer, webapi.Payments.StripePurchaseFinalizer>();
+builder.Services.AddScoped<IPendingPurchaseRepository, PendingPurchaseRepository>();
+// Catch-up sweep: finalizes paid-but-pending purchases (missed webhook) and fails
+// abandoned ones so their held inventory is released.
+builder.Services.AddHostedService<webapi.Workers.PendingPurchaseReconciler>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
 builder.Services.AddScoped<IImageStorage, LocalFilesystemImageStorage>();
 
@@ -180,14 +201,52 @@ builder.Services.AddAuthorization(options =>
     }
 });
 
-// CORS - dev defaults; tighten for prod via config
+// CORS - only the apex and its tenant subdomains may call the API with
+// credentials. The old SetIsOriginAllowed(_ => true) + AllowCredentials was
+// any-origin-with-credentials, which is unsafe. We read the root domain from
+// config (Tenant:RootDomain) and allow https://{root} plus any https://*.{root}
+// subdomain. In Development we also allow localhost (Vite on :3000) and the
+// *.ridepass.local host shape used for local subdomain testing.
 var origins = "AllowSpecificOrigins";
+var corsRootDomain = (builder.Configuration["Tenant:RootDomain"] ?? "ridepass.io")
+    .ToLowerInvariant();
+var corsIsDevelopment = builder.Environment.IsDevelopment();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(name: origins,
                       policy =>
                       {
-                          policy.SetIsOriginAllowed(_ => true).AllowAnyMethod().AllowAnyHeader().AllowCredentials();
+                          policy.SetIsOriginAllowed(origin =>
+                                {
+                                    if (string.IsNullOrWhiteSpace(origin)) return false;
+                                    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+
+                                    var host = uri.Host.ToLowerInvariant();
+
+                                    // Production: https only, the apex itself or any one of its
+                                    // subdomains (host == root, or host ends with "." + root).
+                                    if (uri.Scheme == Uri.UriSchemeHttps &&
+                                        (host == corsRootDomain || host.EndsWith("." + corsRootDomain)))
+                                    {
+                                        return true;
+                                    }
+
+                                    // Development convenience: any localhost port (Vite dev server
+                                    // on http://localhost:3000) and the ridepass.local host shape
+                                    // (apex + tenant subdomains) on any scheme/port.
+                                    if (corsIsDevelopment &&
+                                        (host == "localhost" ||
+                                         host == "ridepass.local" ||
+                                         host.EndsWith(".ridepass.local")))
+                                    {
+                                        return true;
+                                    }
+
+                                    return false;
+                                })
+                                .AllowAnyMethod()
+                                .AllowAnyHeader()
+                                .AllowCredentials();
                       });
 });
 
@@ -219,6 +278,37 @@ builder.Services.AddAuthentication(auth =>
 
 var app = builder.Build();
 
+// Global exception handling. Must run early so it wraps the rest of the
+// pipeline. In Development, WebApplication wires the developer exception page
+// automatically (full stack traces). In every other environment we convert an
+// unhandled exception into an RFC 7807 ProblemDetails (HTTP 500) without leaking
+// the stack trace to the caller, and log the exception server-side.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            var feature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
+            var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+            logger.LogError(feature?.Error,
+                "Unhandled exception while processing {Method} {Path}",
+                context.Request.Method, feature?.Path ?? context.Request.Path.Value);
+
+            var problem = new Microsoft.AspNetCore.Mvc.ProblemDetails
+            {
+                Status = StatusCodes.Status500InternalServerError,
+                Title = "An unexpected error occurred.",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.6.1",
+            };
+
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/problem+json";
+            await context.Response.WriteAsJsonAsync(problem);
+        });
+    });
+}
+
 app.UseCors(origins);
 
 app.UseRouting();
@@ -237,13 +327,28 @@ if (!app.Environment.IsDevelopment())
 // Serve uploaded images (logos, heroes) from /uploads/*
 app.UseStaticFiles();
 
-// Tenant resolution must run before auth so controllers see ITenantContext populated.
-app.UseMiddleware<TenantResolutionMiddleware>();
-
+// Authenticate first so tenant resolution can read the caller's claims
+// (role / tenant_id) and let a tenant's own admins + super admins reach an
+// unpublished tenant while the public is blocked.
 app.UseAuthentication();
+
+// Tenant resolution must run before authorization so the permission handlers
+// see ITenantContext populated. Excluded for /health via UseWhen so the health
+// endpoint never gets a 404 from an unknown/inactive/unpublished tenant subdomain
+// (UseWhen branches then rejoins, so auth ordering below is preserved). Auth
+// still runs before this, and authorization still runs after, as intended.
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/health"),
+    branch => branch.UseMiddleware<TenantResolutionMiddleware>());
+
 app.UseAuthorization();
 
 app.UseRateLimiter();
+
+// Anonymous liveness endpoint. AllowAnonymous so no JWT is required; tenant
+// resolution is already skipped for this path above, so /health always returns
+// 200 regardless of host/subdomain.
+app.MapHealthChecks("/health").AllowAnonymous();
 
 app.MapControllers();
 

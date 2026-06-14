@@ -6,6 +6,7 @@ namespace Services.Repositories.Interfaces
     {
         Task<List<TrackDiscoverRow>> SearchTracks(double? lat, double? lng, double? radiusKm, string? q, int limit = 50);
         Task<List<EventDiscoverRow>> SearchEvents(double? lat, double? lng, double? radiusKm, string? q,
-            DateTime? fromUtc, DateTime? toUtc, int limit = 100);
+            DateTime? fromUtc, DateTime? toUtc, string[]? eventTypeCodes = null, Guid[]? tenantIds = null, int limit = 200);
+        Task<List<EventTypeOptionRow>> ListEventTypeOptions(string[]? onlyCodes = null);
     }
 }

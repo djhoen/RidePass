@@ -1,6 +1,24 @@
 <template>
-    <v-footer class="bg-grey-darken-4 text-white pa-6">
-        <v-container>
+    <v-footer class="bg-grey-darken-4 text-white pa-0 d-block">
+        <!-- Apex only: prominent operator CTA band at the top of the footer.
+             Tenant sites get a smaller nudge below the footer instead (see end). -->
+        <div v-if="isApex" class="footer-cta">
+            <v-container class="py-6">
+                <div class="d-flex flex-column flex-sm-row align-center ga-4 text-center text-sm-left">
+                    <div class="flex-grow-1">
+                        <div class="text-h5 font-weight-bold font-display mb-1">Run a track?</div>
+                        <div class="text-body-2" style="opacity: 0.92">
+                            Sell passes and tickets online, check riders in at the gate, and run your
+                            events. All in one place.
+                        </div>
+                    </div>
+                    <v-btn color="white" class="text-primary flex-shrink-0" size="large"
+                        to="/ForTracks">See more</v-btn>
+                </div>
+            </v-container>
+        </div>
+
+        <v-container class="pa-6">
             <v-row>
                 <!-- Left: address + refund policy link -->
                 <v-col cols="12" md="4">
@@ -70,11 +88,27 @@
             </v-row>
         </v-container>
 
+        <!-- Tenant only: compact operator CTA below the regular footer. Same
+             gradient as the apex band, just smaller. Links to the apex
+             /ForTracks (cross-host on a tenant subdomain). -->
+        <div v-if="!isApex" class="footer-cta">
+            <v-container class="py-3">
+                <div class="d-flex flex-column flex-sm-row align-center justify-center ga-3 text-center">
+                    <span class="text-body-2 font-weight-medium">Run a track? See how RidePass can power yours.</span>
+                    <v-btn color="white" class="text-primary flex-shrink-0" size="small" :href="forTracksUrl">See more</v-btn>
+                </div>
+            </v-container>
+        </div>
+
         <v-dialog v-model="refundDialog" max-width="700">
             <v-card>
-                <v-card-title>Refund Policy</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Refund Policy</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="refundDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
-                    <div class="rich-text-body" v-html="branding.refundPolicyHtml"></div>
+                    <RichTextView :html="branding.refundPolicyHtml ?? ''" />
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
@@ -90,9 +124,29 @@ import { ref, computed } from 'vue'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
 import NewsletterSignup from '@/components/NewsletterSignup.vue'
+import RichTextView from '@/components/RichTextView.vue'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
 const refundDialog = ref(false)
+
+// The See-more button always targets the apex root /ForTracks, never the
+// tenant's, so the operator marketing page is unambiguously the platform's.
+// We derive the apex host from the ACTUAL current hostname (strip a leading
+// subdomain label) rather than from VITE_ROOT_DOMAIN — that env var isn't set
+// in production and can't be relied on here.
+function computeApexHost(): string {
+    const host = window.location.hostname
+    if (host === 'localhost' || /^(\d+\.){3}\d+$/.test(host)) return host
+    const labels = host.split('.')
+    // 2 labels (ridepass.io, ridepass.local) is already the apex; 3+ means a
+    // tenant subdomain, so keep the last two labels.
+    return labels.length <= 2 ? host : labels.slice(-2).join('.')
+}
+const forTracksUrl = computed(() => {
+    const proto = window.location.protocol
+    const port = window.location.port ? `:${window.location.port}` : ''
+    return `${proto}//${computeApexHost()}${port}/ForTracks`
+})
 
 const locationLine = computed(() => {
     const parts = [branding.city, branding.region, branding.postalCode]
@@ -132,6 +186,17 @@ const phoneTel = computed(() => {
 </script>
 
 <style scoped>
+/* Gradient is driven by the active theme primary so it harmonizes with each
+   tenant's brand (App.vue sets theme primary = tenant primaryColor) and shows
+   the RidePass orange on the apex site. The darker end is the same hue mixed
+   toward black. background-color is a solid fallback for browsers without
+   color-mix() support (the gradient image is simply dropped there). */
+.footer-cta {
+    background-color: rgb(var(--v-theme-primary));
+    background-image: linear-gradient(135deg,
+        rgb(var(--v-theme-primary)) 0%,
+        color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, #000) 100%);
+}
 .footer-link {
     color: #cfcfcf;
     text-decoration: none;

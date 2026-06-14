@@ -46,10 +46,16 @@ namespace webapi.Controllers
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] UpsertPassProductRequest request)
         {
+            var name = (request.Name ?? string.Empty).Trim();
+            if (request.IsActive && await _repo.ExistsActiveByName(_tenantContext.TenantId, name, Guid.Empty))
+            {
+                return new ApiResponses().BadRequestResult($"A pass named \"{name}\" already exists. Pick a different name.");
+            }
+
             var product = new PassProduct
             {
                 TenantId = _tenantContext.TenantId,
-                Name = request.Name,
+                Name = name,
                 Description = request.Description,
                 PriceCents = request.PriceCents,
                 IsActive = request.IsActive,
@@ -71,7 +77,13 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Product not found.");
             }
 
-            existing.Name = request.Name;
+            var name = (request.Name ?? string.Empty).Trim();
+            if (request.IsActive && await _repo.ExistsActiveByName(_tenantContext.TenantId, name, id))
+            {
+                return new ApiResponses().BadRequestResult($"A pass named \"{name}\" already exists. Pick a different name.");
+            }
+
+            existing.Name = name;
             existing.Description = request.Description;
             existing.PriceCents = request.PriceCents;
             existing.IsActive = request.IsActive;

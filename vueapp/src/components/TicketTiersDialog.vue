@@ -1,9 +1,13 @@
 <template>
     <v-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" max-width="720">
         <v-card>
-            <v-card-title>
-                Admissions
-                <span v-if="eventTitle" class="text-body-2 text-medium-emphasis ml-2">— {{ eventTitle }}</span>
+            <v-card-title class="d-flex align-center">
+                <span>
+                    Admissions
+                    <span v-if="eventTitle" class="text-body-2 text-medium-emphasis ml-2">— {{ eventTitle }}</span>
+                </span>
+                <v-spacer></v-spacer>
+                <v-btn icon="mdi-close" variant="text" size="small" @click="close"></v-btn>
             </v-card-title>
             <v-card-text>
                 <div v-if="!loading && tiers.length === 0" class="text-center text-medium-emphasis py-4">
@@ -61,7 +65,11 @@
 
         <v-dialog v-model="tierDialog" max-width="480">
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Admission' : 'Add Admission' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Admission' : 'Add Admission' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="tierDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-select v-model="form.kind" :items="kindOptions" item-title="label" item-value="value"
                         label="Type" density="compact" class="mb-3"
@@ -69,7 +77,7 @@
                         persistent-hint :hide-details="false"></v-select>
                     <v-text-field v-model="form.name" label="Name"
                         :placeholder="form.kind === 'race_entry' ? 'e.g. Pro 250 class' : 'e.g. Adult spectator'"
-                        density="compact"></v-text-field>
+                        density="compact" class="mt-4"></v-text-field>
                     <v-row class="mt-2">
                         <v-col cols="12" md="6">
                             <v-text-field v-model.number="form.priceDollars" type="number" step="0.5" min="0.5"

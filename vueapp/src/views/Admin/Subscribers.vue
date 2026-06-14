@@ -54,10 +54,14 @@
 
         <v-dialog v-model="addDialog" max-width="500">
             <v-card>
-                <v-card-title>Add subscriber</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Add subscriber</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="addDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="addForm.email" type="email" label="Email" density="compact"></v-text-field>
-                    <v-text-field v-model="addForm.name" label="Name (optional)" density="compact"></v-text-field>
+                    <v-text-field v-model="addForm.name" label="Name (optional)" density="compact" class="mt-4"></v-text-field>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
@@ -69,7 +73,11 @@
 
         <v-dialog v-model="importDialog" max-width="640">
             <v-card>
-                <v-card-title>Import subscribers</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Import subscribers</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="importDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-caption text-medium-emphasis mb-2">
                         One per line. Email first, optional name after a comma. Example:

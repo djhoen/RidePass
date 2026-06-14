@@ -243,6 +243,7 @@ namespace webapi.Controllers
                 SpectatorWaiverId = request.SpectatorWaiverId,
                 RacerWaiverId = request.RacerWaiverId,
                 ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl,
+                ScheduleJson = SerializeSchedule(request.Schedule),
             };
 
             ev.Id = await _events.Create(ev);
@@ -314,6 +315,7 @@ namespace webapi.Controllers
             existing.SpectatorWaiverId = request.SpectatorWaiverId;
             existing.RacerWaiverId = request.RacerWaiverId;
             existing.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl;
+            existing.ScheduleJson = SerializeSchedule(request.Schedule);
 
             await _events.Update(existing);
             if (request.EligiblePassProductIds is not null)
@@ -386,6 +388,7 @@ namespace webapi.Controllers
                 SpectatorWaiverId = source.SpectatorWaiverId,
                 RacerWaiverId = source.RacerWaiverId,
                 ImageUrl = source.ImageUrl,
+                ScheduleJson = source.ScheduleJson,
             };
             clone.Id = await _events.Create(clone);
             // Carry over the source event's pass eligibility + extras eligibility
@@ -481,7 +484,29 @@ namespace webapi.Controllers
                 SpectatorWaiverId = ev.SpectatorWaiverId,
                 RacerWaiverId = ev.RacerWaiverId,
                 ImageUrl = ev.ImageUrl,
+                Schedule = DeserializeSchedule(ev.ScheduleJson),
             };
+        }
+
+        private static string SerializeSchedule(List<ScheduleItem>? items)
+        {
+            var clean = (items ?? new List<ScheduleItem>())
+                .Select(s => new ScheduleItem { Time = (s.Time ?? "").Trim(), Label = (s.Label ?? "").Trim() })
+                .Where(s => s.Time.Length > 0 || s.Label.Length > 0)
+                .ToList();
+            return System.Text.Json.JsonSerializer.Serialize(clean);
+        }
+
+        private static List<ScheduleItem> DeserializeSchedule(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return new List<ScheduleItem>();
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<ScheduleItem>>(json,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new List<ScheduleItem>();
+            }
+            catch { return new List<ScheduleItem>(); }
         }
 
         // Single-event variant that hydrates the pass eligibility list. Used on

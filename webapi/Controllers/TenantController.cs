@@ -327,6 +327,10 @@ namespace webapi.Controllers
                 FaviconUrl = row.FaviconUrl,
                 HeroImageUrl = row.HeroImageUrl,
                 SecondaryHeroUrl = row.SecondaryHeroUrl,
+                NavBarColor = row.NavBarColor,
+                NavBarTextColor = row.NavBarTextColor,
+                NavBarHomeColor = row.NavBarHomeColor,
+                NavBarHomeTextColor = row.NavBarHomeTextColor,
                 StripePublishableKey = _configuration["Stripe:PublishableKey"],
                 RequireReservationForPasses = tenant.RequireReservationForPasses,
                 RequireEmergencyContact = tenant.RequireEmergencyContact,
@@ -386,7 +390,11 @@ namespace webapi.Controllers
                 request.SecondaryColor,
                 request.AccentColor,
                 request.Tagline,
-                request.ThemeMode);
+                request.ThemeMode,
+                request.NavBarColor,
+                request.NavBarTextColor,
+                request.NavBarHomeColor,
+                request.NavBarHomeTextColor);
 
             return await GetBranding();
         }

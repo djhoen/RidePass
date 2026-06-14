@@ -132,7 +132,7 @@ const connectStatusHint = computed(() => {
         case 'active':
             return 'Stripe payouts are ready. RidePass can send your owed balance directly to your bank via Stripe Transfer.'
         case 'pending':
-            return 'Stripe still needs identity / banking information. Click "Continue onboarding" to finish — until then, RidePass payouts will be handled manually.'
+            return 'Stripe still needs identity / banking information. Click "Continue onboarding" to finish, until then RidePass payouts will be handled manually.'
         case 'restricted':
             return 'Stripe flagged the account (KYC incomplete or a capability disabled). Stripe payouts will resume once cleared.'
         default:

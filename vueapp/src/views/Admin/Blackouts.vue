@@ -47,7 +47,11 @@
 
         <v-dialog v-model="dialog" max-width="560">
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Blackout' : 'Add Blackout' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Blackout' : 'Add Blackout' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-checkbox v-model="form.allDay" label="All day"></v-checkbox>
                     <v-row>
@@ -65,7 +69,7 @@
                                 label="Ends" density="compact"></v-text-field>
                         </v-col>
                     </v-row>
-                    <v-textarea v-model="form.reason" label="Reason (optional)" rows="2" density="compact"></v-textarea>
+                    <v-textarea v-model="form.reason" label="Reason (optional)" rows="2" density="compact" class="mt-4"></v-textarea>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>

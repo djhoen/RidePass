@@ -96,6 +96,25 @@ export default {
         localStorage.setItem('role', role)
     },
 
+    // Adopt a token handed in out-of-band (the super-admin "Preview" bridge that
+    // carries the JWT to a tenant subdomain via the URL fragment). Stores the
+    // token and decodes role + userId from it so the session is fully hydrated.
+    adoptToken(token: string): void {
+        state.token = token
+        localStorage.setItem('token', token)
+        const decoded = decodeJwt(token)
+        if (decoded) {
+            if (decoded.UserId) {
+                state.userId = decoded.UserId
+                localStorage.setItem('userId', decoded.UserId)
+            }
+            if (decoded.role) {
+                state.role = decoded.role
+                localStorage.setItem('role', decoded.role)
+            }
+        }
+    },
+
     hasRole(...roles: string[]): boolean {
         return state.token !== null && state.role !== null && roles.includes(state.role)
     },

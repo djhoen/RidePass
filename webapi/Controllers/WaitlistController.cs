@@ -409,7 +409,8 @@ namespace webapi.Controllers
             {
                 try
                 {
-                    var refund = await _payments.RefundAsync(entry.PrepayPiId!, entry.PrepayAmountCents, ct);
+                    var refund = await _payments.RefundAsync(entry.PrepayPiId!, entry.PrepayAmountCents,
+                        idempotencyKey: $"refund-waitlist-{id}-{entry.PrepayAmountCents}", ct: ct);
                     await _waitlist.SetPrepayRefund(id, refund.RefundId, DateTime.UtcNow);
                 }
                 catch

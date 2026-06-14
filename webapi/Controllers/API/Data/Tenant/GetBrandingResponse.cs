@@ -16,6 +16,10 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? FaviconUrl { get; set; }
         public string? HeroImageUrl { get; set; }
         public string? SecondaryHeroUrl { get; set; }
+        public string? NavBarColor { get; set; }
+        public string? NavBarTextColor { get; set; }
+        public string? NavBarHomeColor { get; set; }
+        public string? NavBarHomeTextColor { get; set; }
         public string? StripePublishableKey { get; set; }
         public bool RequireReservationForPasses { get; set; }
         public bool RequireEmergencyContact { get; set; }

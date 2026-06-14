@@ -27,6 +27,12 @@ export interface EventDto {
     spotsReserved?: number | null
     eligiblePasses?: EligiblePass[]
     eligibleExtras?: EligibleExtra[]
+    schedule?: ScheduleItem[]
+}
+
+export interface ScheduleItem {
+    time: string
+    label: string
 }
 
 export interface EligiblePass {
@@ -85,6 +91,7 @@ export interface UpsertEventDto {
     imageUrl: string | null
     eligiblePassProductIds?: string[]
     eligibleExtras?: EligibleExtraInput[]
+    schedule?: ScheduleItem[]
 }
 
 export class EventService {

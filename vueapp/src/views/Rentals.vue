@@ -25,7 +25,11 @@
 
         <v-dialog v-model="bookOpen" max-width="540" persistent>
             <v-card v-if="selected">
-                <v-card-title>Book {{ selected.name }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Book {{ selected.name }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="bookOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-row>
                         <v-col cols="12" md="6">
@@ -72,7 +76,11 @@
 
         <v-dialog v-model="payOpen" persistent max-width="500">
             <v-card v-if="purchaseInFlight">
-                <v-card-title>Pay for {{ purchaseInFlight.productName }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Pay for {{ purchaseInFlight.productName }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="payOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-table density="compact" class="mb-3">
                         <tbody>

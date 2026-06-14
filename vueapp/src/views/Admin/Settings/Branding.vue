@@ -3,6 +3,59 @@
         <h1 class="text-h4 mb-6">Branding</h1>
 
         <v-row>
+            <v-col cols="12">
+                <!-- Nav bar color: separate hex for the home page and the
+                     rest of the site. Leave the home field blank to inherit
+                     the rest-of-site color. -->
+                <v-card class="mb-6 pa-4">
+                    <v-card-title>Nav bar</v-card-title>
+                    <v-card-text>
+                        <v-row>
+                            <v-col cols="12" md="6">
+                                <div class="text-subtitle-2 mb-2">Rest of site</div>
+                                <v-text-field v-model="form.navBarColor" label="Background color"
+                                    placeholder="#1A1F2B" persistent-hint
+                                    hint="Hex like #1A1F2B. Leave blank to use the theme primary."
+                                    density="compact"></v-text-field>
+                                <v-color-picker v-model="form.navBarColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <v-text-field v-model="form.navBarTextColor" label="Text + icon color"
+                                    placeholder="#FFFFFF" persistent-hint
+                                    hint="Hex like #FFFFFF. Leave blank for white."
+                                    density="compact" class="mt-4"></v-text-field>
+                                <v-color-picker v-model="form.navBarTextColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <NavBarPreview :color="form.navBarColor"
+                                    :text-color="form.navBarTextColor" class="mt-3" />
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <div class="text-subtitle-2 mb-2">Home page</div>
+                                <v-text-field v-model="form.navBarHomeColor" label="Background color"
+                                    placeholder="#1A1F2B" persistent-hint
+                                    hint="Hex like #1A1F2B. Leave blank to inherit the rest-of-site color."
+                                    density="compact"></v-text-field>
+                                <v-color-picker v-model="form.navBarHomeColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <v-text-field v-model="form.navBarHomeTextColor" label="Text + icon color"
+                                    placeholder="#FFFFFF" persistent-hint
+                                    hint="Hex like #FFFFFF. Leave blank to inherit the rest-of-site text color."
+                                    density="compact" class="mt-4"></v-text-field>
+                                <v-color-picker v-model="form.navBarHomeTextColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <NavBarPreview :color="form.navBarHomeColor || form.navBarColor"
+                                    :text-color="form.navBarHomeTextColor || form.navBarTextColor"
+                                    class="mt-3" />
+                            </v-col>
+                        </v-row>
+                        <v-btn color="primary" class="mt-4" :loading="saving" @click="save">Save</v-btn>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+
             <v-col cols="12" md="6">
                 <v-card class="mb-6 pa-4">
                     <v-card-title>Colors & Theme</v-card-title>
@@ -69,6 +122,7 @@ import { ref, watch, onMounted } from 'vue'
 import { TenantService } from '@/services/TenantService'
 import { branding, loadBranding } from '@/stores/branding'
 import BrandingImageSlot from '@/components/BrandingImageSlot.vue'
+import NavBarPreview from '@/components/NavBarPreview.vue'
 
 const tenantService = new TenantService()
 
@@ -78,6 +132,10 @@ const form = ref({
     accentColor: '#82B1FF',
     tagline: '' as string | null,
     themeMode: 'light' as 'light' | 'dark',
+    navBarColor: '' as string,
+    navBarTextColor: '' as string,
+    navBarHomeColor: '' as string,
+    navBarHomeTextColor: '' as string,
 })
 
 const saving = ref(false)
@@ -91,6 +149,10 @@ function populateForm() {
     form.value.accentColor = branding.accentColor
     form.value.tagline = branding.tagline ?? ''
     form.value.themeMode = branding.themeMode
+    form.value.navBarColor = branding.navBarColor ?? ''
+    form.value.navBarTextColor = branding.navBarTextColor ?? ''
+    form.value.navBarHomeColor = branding.navBarHomeColor ?? ''
+    form.value.navBarHomeTextColor = branding.navBarHomeTextColor ?? ''
 }
 
 // Vuetify v-color-picker may emit #RRGGBBAA; backend accepts only #RRGGBB, so normalize.
@@ -111,6 +173,10 @@ async function save() {
             accentColor: normalizeHex(form.value.accentColor),
             tagline: form.value.tagline && form.value.tagline.trim().length > 0 ? form.value.tagline : null,
             themeMode: form.value.themeMode,
+            navBarColor: form.value.navBarColor ? normalizeHex(form.value.navBarColor) : null,
+            navBarTextColor: form.value.navBarTextColor ? normalizeHex(form.value.navBarTextColor) : null,
+            navBarHomeColor: form.value.navBarHomeColor ? normalizeHex(form.value.navBarHomeColor) : null,
+            navBarHomeTextColor: form.value.navBarHomeTextColor ? normalizeHex(form.value.navBarHomeTextColor) : null,
         })
         await loadBranding()
         snackbarText.value = 'Branding saved.'

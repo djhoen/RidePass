@@ -67,7 +67,11 @@
 
         <v-dialog v-model="editOpen" max-width="640" scrollable>
             <v-card v-if="editing">
-                <v-card-title>Feedback from {{ editing.name }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Feedback from {{ editing.name }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="editOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <div class="text-caption text-medium-emphasis mb-2">
                         {{ editing.email }} · {{ formatLong(editing.createdAtUtc) }}

@@ -59,7 +59,11 @@
         <!-- Variant chooser: per-variant qty +/-, supports multiple variants per product. -->
         <v-dialog v-model="optionsDialog" max-width="640" scrollable>
             <v-card v-if="optionsProduct">
-                <v-card-title>{{ optionsProduct.name }} — Options</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ optionsProduct.name }} — Options</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="optionsDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-subtitle>Pick a quantity for each option you want.</v-card-subtitle>
                 <v-card-text>
                     <div v-for="v in optionsProduct.variants" :key="v.id"

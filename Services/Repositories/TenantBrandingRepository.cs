@@ -24,17 +24,21 @@ namespace Services.Repositories
         public async Task<TenantBranding?> GetByTenantId(Guid tenantId)
         {
             const string sql = @"
-                SELECT tenant_id          AS TenantId,
-                       primary_color      AS PrimaryColor,
-                       secondary_color    AS SecondaryColor,
-                       accent_color       AS AccentColor,
+                SELECT tenant_id            AS TenantId,
+                       primary_color        AS PrimaryColor,
+                       secondary_color      AS SecondaryColor,
+                       accent_color         AS AccentColor,
                        tagline,
-                       theme_mode         AS ThemeMode,
-                       logo_url           AS LogoUrl,
-                       favicon_url        AS FaviconUrl,
-                       hero_image_url     AS HeroImageUrl,
-                       secondary_hero_url AS SecondaryHeroUrl,
-                       updated_at         AS UpdatedAt
+                       theme_mode           AS ThemeMode,
+                       logo_url             AS LogoUrl,
+                       favicon_url          AS FaviconUrl,
+                       hero_image_url       AS HeroImageUrl,
+                       secondary_hero_url   AS SecondaryHeroUrl,
+                       nav_bar_color           AS NavBarColor,
+                       nav_bar_text_color      AS NavBarTextColor,
+                       nav_bar_home_color      AS NavBarHomeColor,
+                       nav_bar_home_text_color AS NavBarHomeTextColor,
+                       updated_at              AS UpdatedAt
                 FROM tenant_branding
                 WHERE tenant_id = @tenantId
                 LIMIT 1";
@@ -44,18 +48,28 @@ namespace Services.Repositories
         }
 
         public async Task UpdateMetadata(Guid tenantId, string primaryColor, string secondaryColor, string accentColor,
-                                         string? tagline, string themeMode)
+                                         string? tagline, string themeMode,
+                                         string? navBarColor, string? navBarTextColor,
+                                         string? navBarHomeColor, string? navBarHomeTextColor)
         {
             const string sql = @"
                 UPDATE tenant_branding
-                   SET primary_color   = @primaryColor,
-                       secondary_color = @secondaryColor,
-                       accent_color    = @accentColor,
-                       tagline         = @tagline,
-                       theme_mode      = @themeMode
+                   SET primary_color           = @primaryColor,
+                       secondary_color         = @secondaryColor,
+                       accent_color            = @accentColor,
+                       tagline                 = @tagline,
+                       theme_mode              = @themeMode,
+                       nav_bar_color           = @navBarColor,
+                       nav_bar_text_color      = @navBarTextColor,
+                       nav_bar_home_color      = @navBarHomeColor,
+                       nav_bar_home_text_color = @navBarHomeTextColor
                  WHERE tenant_id = @tenantId";
 
-            await _db.Execute(sql, new { tenantId, primaryColor, secondaryColor, accentColor, tagline, themeMode });
+            await _db.Execute(sql, new
+            {
+                tenantId, primaryColor, secondaryColor, accentColor, tagline, themeMode,
+                navBarColor, navBarTextColor, navBarHomeColor, navBarHomeTextColor,
+            });
         }
 
         public async Task UpdateImageUrl(Guid tenantId, string kind, string? url)

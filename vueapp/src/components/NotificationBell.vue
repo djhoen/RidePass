@@ -46,7 +46,11 @@
 
     <v-dialog v-model="settingsOpen" max-width="560">
         <v-card>
-            <v-card-title>Notification settings</v-card-title>
+            <v-card-title class="d-flex align-center">
+                <span>Notification settings</span>
+                <v-spacer></v-spacer>
+                <v-btn icon="mdi-close" variant="text" size="small" @click="settingsOpen = false"></v-btn>
+            </v-card-title>
             <v-card-text>
                 <p v-if="catalog.length === 0" class="text-medium-emphasis">
                     No configurable notifications for your role.

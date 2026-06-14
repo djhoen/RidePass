@@ -52,7 +52,11 @@
 
         <v-dialog v-model="dialog" max-width="500">
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Event Type' : 'Add Custom Event Type' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Event Type' : 'Add Custom Event Type' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name" density="compact" :rules="[required]"></v-text-field>
                     <label class="text-subtitle-2 d-block mb-2 mt-2">Default cover photo (optional)</label>

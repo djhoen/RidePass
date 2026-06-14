@@ -61,5 +61,57 @@ namespace Services.Helpers
                 return Enumerable.Empty<T>();
             }
         }
+
+        public async Task<IAsyncDisposable> AcquireAdvisoryLock(string lockKey, int timeout = DEFAULT_TIMEOUT)
+        {
+            var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            try
+            {
+                // hashtext(text) -> int4, implicitly widened to the bigint pg_advisory_lock overload.
+                await connection.ExecuteAsync(
+                    "SELECT pg_advisory_lock(hashtext(@lockKey))",
+                    new { lockKey }, commandTimeout: timeout);
+            }
+            catch
+            {
+                await connection.DisposeAsync();
+                throw;
+            }
+            return new AdvisoryLockHandle(connection, lockKey);
+        }
+
+        private sealed class AdvisoryLockHandle : IAsyncDisposable
+        {
+            private readonly NpgsqlConnection _connection;
+            private readonly string _lockKey;
+            private bool _released;
+
+            public AdvisoryLockHandle(NpgsqlConnection connection, string lockKey)
+            {
+                _connection = connection;
+                _lockKey = lockKey;
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                if (_released) return;
+                _released = true;
+                try
+                {
+                    await _connection.ExecuteAsync(
+                        "SELECT pg_advisory_unlock(hashtext(@lockKey))",
+                        new { lockKey = _lockKey });
+                }
+                catch
+                {
+                    // Closing the connection releases the session lock regardless.
+                }
+                finally
+                {
+                    await _connection.DisposeAsync();
+                }
+            }
+        }
     }
 }

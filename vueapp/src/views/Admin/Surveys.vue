@@ -49,7 +49,11 @@
 
         <v-dialog v-model="createOpen" max-width="640" persistent>
             <v-card>
-                <v-card-title>New Survey</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>New Survey</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="createOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Internal name" hint="Only admins see this" persistent-hint
                         density="compact"></v-text-field>

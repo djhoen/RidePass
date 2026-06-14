@@ -20,7 +20,7 @@
                                 hint="We text waitlist promotions and event-day alerts to this number." persistent-hint
                                 class="mb-2" />
                             <v-text-field v-model="form.birthdate" label="Birthdate" type="date" required
-                                :max="todayIso" class="mb-2"></v-text-field>
+                                :max="todayIso" class="mb-2 mt-4"></v-text-field>
                             <v-row>
                                 <v-col cols="12" sm="6">
                                     <v-text-field v-model="form.emergencyContactName" label="Emergency contact name" required
@@ -31,9 +31,9 @@
                                 </v-col>
                             </v-row>
                             <v-text-field v-model="form.password" label="Password" type="password" required
-                                class="mb-2"></v-text-field>
+                                class="mb-2 mt-4"></v-text-field>
                             <v-text-field v-model="form.confirmPassword" label="Confirm Password" type="password"
-                                required class="mb-2"></v-text-field>
+                                required class="mb-2 mt-4"></v-text-field>
                             <v-checkbox v-if="!isApex" v-model="form.subscribeNewsletter" density="compact" hide-details
                                 :label="`Email me event updates from ${branding.displayName}`" class="mb-2"></v-checkbox>
                             <v-btn type="submit" color="primary" block size="large"

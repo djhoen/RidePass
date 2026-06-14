@@ -6,7 +6,7 @@
 
         <div v-else-if="purchases.length === 0" class="text-medium-emphasis">
             You haven't bought anything yet.
-            <router-link to="/Calendar">Pick an event</router-link> to reserve a spot.
+            <router-link to="/Events">Pick an event</router-link> to reserve a spot.
         </div>
 
         <v-row v-else>
@@ -178,7 +178,11 @@
 
         <v-dialog v-model="shareDialog" max-width="500">
             <v-card v-if="shareTarget">
-                <v-card-title>Send coupon to a friend</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Send coupon to a friend</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="shareDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">
                         We'll email <strong><code>{{ shareTarget.code }}</code></strong>
@@ -200,8 +204,10 @@
 
         <v-dialog v-model="cancelDialog" max-width="520" persistent>
             <v-card v-if="cancelTarget">
-                <v-card-title>
-                    {{ branding.allowSelfCancel ? 'Cancel purchase' : 'Request cancellation' }}
+                <v-card-title class="d-flex align-center">
+                    <span>{{ branding.allowSelfCancel ? 'Cancel purchase' : 'Request cancellation' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="cancelDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">{{ cancelTarget.itemName }}</p>
@@ -228,7 +234,11 @@
 
         <v-dialog v-model="regShareOpen" max-width="560">
             <v-card v-if="regSharing">
-                <v-card-title>Share your registration</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Share your registration</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="regShareOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <div class="text-subtitle-1 mb-1">{{ regSharing.itemName }}</div>
                     <div class="text-caption text-medium-emphasis mb-3">

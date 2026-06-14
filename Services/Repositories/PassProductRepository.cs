@@ -29,6 +29,19 @@ namespace Services.Repositories
             return result.ToList();
         }
 
+        public async Task<bool> ExistsActiveByName(Guid tenantId, string name, Guid excludeId)
+        {
+            const string sql = @"
+                SELECT EXISTS(
+                    SELECT 1 FROM pass_product
+                    WHERE tenant_id = @tenantId
+                      AND is_active = true
+                      AND lower(name) = lower(@name)
+                      AND id <> @excludeId)";
+            var result = await _db.Query<bool>(sql, new { tenantId, name, excludeId });
+            return result.FirstOrDefault();
+        }
+
         public async Task<PassProduct?> GetById(Guid id, Guid tenantId)
         {
             var sql = $"SELECT {SelectColumns} FROM pass_product WHERE id = @id AND tenant_id = @tenantId LIMIT 1";

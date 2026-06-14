@@ -1,4 +1,4 @@
-# RidePass nginx config — tenant-subdomain wildcard routing.
+# RidePass nginx config, tenant-subdomain wildcard routing.
 # Copy to /etc/nginx/sites-available/ridepass, symlink to sites-enabled, reload.
 # Assumes wildcard cert at /etc/letsencrypt/live/ridepass.io/{fullchain,privkey}.pem
 

@@ -36,9 +36,9 @@
                                     <v-text-field v-model="newCustomer.lastName" label="Last name" density="compact"></v-text-field>
                                 </v-col>
                             </v-row>
-                            <v-text-field v-model="newCustomer.email" type="email" label="Email" density="compact"></v-text-field>
+                            <v-text-field v-model="newCustomer.email" type="email" label="Email" density="compact" class="mt-4"></v-text-field>
                             <v-text-field v-model="newCustomer.birthdate" type="date" :max="todayIso"
-                                label="Birthdate" density="compact"></v-text-field>
+                                label="Birthdate" density="compact" class="mt-4"></v-text-field>
                             <v-row>
                                 <v-col cols="12" md="6">
                                     <v-text-field v-model="newCustomer.emergencyContactName" label="Emergency contact name" density="compact"></v-text-field>

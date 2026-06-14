@@ -173,7 +173,11 @@
         <!-- Signature image preview -->
         <v-dialog v-model="signatureDialog" max-width="640">
             <v-card>
-                <v-card-title>Signature</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Signature</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="signatureDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text class="text-center">
                     <img v-if="signatureUrl" :src="signatureUrl" alt="Signature" style="max-width: 100%; background: #fff; border: 1px solid #ccc;" />
                 </v-card-text>

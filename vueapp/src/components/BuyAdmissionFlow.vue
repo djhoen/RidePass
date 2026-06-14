@@ -18,7 +18,72 @@
                 </v-card-text>
             </v-card>
 
-            <v-stepper v-if="tiers.length > 0 && !completed" v-model="step" color="primary" hide-actions>
+            <!-- Race entries are tied to a rider account (waiver on file, My Passes,
+                 waitlist alerts), so racers create their login (or sign in) here as the
+                 first step instead of being bounced to a login wall. Spectator / mixed
+                 flows keep guest checkout below. -->
+            <v-card v-if="needsRacerAuth && tiers.length > 0" class="mb-4 pa-4" variant="outlined">
+                <v-card-title class="px-0">
+                    {{ authMode === 'create' ? 'Create your racer account' : 'Log in to continue' }}
+                </v-card-title>
+                <v-card-text class="px-0">
+                    <p class="text-body-2 text-medium-emphasis mb-4">
+                        Race entries are tied to your account so your waiver stays on file and your
+                        passes show up under My Passes.
+                    </p>
+
+                    <template v-if="authMode === 'create'">
+                        <v-row>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="authForm.firstName" label="First name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="authForm.lastName" label="Last name" density="compact"></v-text-field>
+                            </v-col>
+                        </v-row>
+                        <v-text-field v-model="authForm.email" type="email" label="Email" density="compact" class="mt-4"></v-text-field>
+                        <PhoneField v-model="authForm.phone" label="Mobile phone" density="compact" class="mt-4"
+                            hint="Used for waitlist and event-day alerts." persistent-hint />
+                        <v-text-field v-model="authForm.birthdate" type="date" :max="todayIso" label="Birthdate"
+                            density="compact" class="mt-4"
+                            hint="Riders under 18 need a parent or guardian on the waiver." persistent-hint></v-text-field>
+                        <v-row class="mt-0">
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="authForm.emergencyContactName" label="Emergency contact name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <PhoneField v-model="authForm.emergencyContactPhone" label="Emergency contact phone" density="compact" />
+                            </v-col>
+                        </v-row>
+                        <v-text-field v-model="authForm.password" type="password" label="Password" density="compact" class="mt-4"></v-text-field>
+                        <v-text-field v-model="authForm.confirmPassword" type="password" label="Confirm password" density="compact" class="mt-4"></v-text-field>
+                    </template>
+
+                    <template v-else>
+                        <v-text-field v-model="authForm.email" type="email" label="Email" density="compact"></v-text-field>
+                        <v-text-field v-model="authForm.password" type="password" label="Password" density="compact" class="mt-4"></v-text-field>
+                    </template>
+
+                    <div v-if="authError" class="text-error text-caption mt-2">{{ authError }}</div>
+
+                    <v-btn color="primary" block size="large" class="mt-4" :loading="authBusy" @click="submitAuth">
+                        {{ authMode === 'create' ? 'Create account &amp; continue' : 'Log in &amp; continue' }}
+                    </v-btn>
+
+                    <div class="text-center text-body-2 mt-3">
+                        <template v-if="authMode === 'create'">
+                            Already have an account?
+                            <a class="auth-toggle-link" @click="switchAuthMode('login')">Log in</a>
+                        </template>
+                        <template v-else>
+                            New here?
+                            <a class="auth-toggle-link" @click="switchAuthMode('create')">Create an account</a>
+                        </template>
+                    </div>
+                </v-card-text>
+            </v-card>
+
+            <v-stepper v-if="tiers.length > 0 && !completed && !needsRacerAuth" v-model="step" color="primary" hide-actions>
                 <v-stepper-header>
                     <template v-for="(item, idx) in stepperItems" :key="item.value">
                         <v-divider v-if="idx > 0"></v-divider>
@@ -76,7 +141,7 @@
                                         No account needed. We'll email you a receipt, and the QR codes appear here on confirmation.
                                     </p>
                                     <v-text-field v-model="guestName" label="Full name" density="compact" class="mb-2"></v-text-field>
-                                    <v-text-field v-model="guestEmail" type="email" label="Email" density="compact"></v-text-field>
+                                    <v-text-field v-model="guestEmail" type="email" label="Email" density="compact" class="mt-4"></v-text-field>
                                 </template>
 
                                 <v-select v-if="isAuthenticated && availableVouchers.length > 0 && cartUnits > 0"
@@ -345,7 +410,7 @@
             <!-- Order Summary sits below the stepper so the active step stays the focal
                  point. Updates live as items get added to the cart. Hidden once the
                  purchase completes (the QR card takes over). -->
-            <v-card v-if="tiers.length > 0 && !completed" class="mt-4 pa-3" variant="outlined">
+            <v-card v-if="tiers.length > 0 && !completed && !needsRacerAuth" class="mt-4 pa-3" variant="outlined">
                 <div class="text-overline text-medium-emphasis mb-2">Order Summary</div>
                 <v-table density="compact" class="bg-transparent">
                     <tbody>
@@ -408,7 +473,11 @@
              flashing a toast lets them complete the gating step in one click. -->
         <v-dialog v-model="waiverDialog" max-width="520" persistent>
             <v-card>
-                <v-card-title>Sign the waiver first</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Sign the waiver first</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="waiverDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="mb-2">{{ waiverDialogMessage }}</p>
                     <p class="text-body-2 text-medium-emphasis">
@@ -425,7 +494,11 @@
 
         <v-dialog v-model="membershipGateOpen" max-width="520" persistent>
             <v-card>
-                <v-card-title>Membership required</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Membership required</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="membershipGateOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="mb-2">{{ membershipGateMessage }}</p>
                 </v-card-text>
@@ -441,7 +514,11 @@
 
         <v-dialog v-model="waitlistDialog" max-width="540" persistent>
             <v-card v-if="waitlistTier">
-                <v-card-title>Join the {{ waitlistTier.name }} waitlist</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Join the {{ waitlistTier.name }} waitlist</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="waitlistDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">
                         We'll text you the moment a spot opens. The first alternate in line gets it,
@@ -475,7 +552,11 @@
 
         <v-dialog v-model="waitlistPayOpen" persistent max-width="500">
             <v-card v-if="waitlistPayInFlight">
-                <v-card-title>Pre-pay {{ waitlistPayInFlight.tierName }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Pre-pay {{ waitlistPayInFlight.tierName }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="waitlistPayOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">
                         You'll be charged ${{ (waitlistPayInFlight.amountCents / 100).toFixed(2) }} now.
@@ -637,6 +718,79 @@ const isAuthenticated = computed(() => authHelper.isAuthenticated())
 const guestName = ref('')
 const guestEmail = ref('')
 
+// ── Inline racer auth gate ───────────────────────────────────────────────────
+// Race entries are account-bound, so an unauthenticated rider creates a login (or
+// signs in) before the purchase stepper. Once a token is set, isAuthenticated flips
+// (authState is reactive) and the normal authenticated race flow takes over.
+type AuthMode = 'create' | 'login'
+const authMode = ref<AuthMode>('create')
+const authBusy = ref(false)
+const authError = ref<string | null>(null)
+const authForm = reactive({
+    firstName: '', lastName: '', email: '', phone: '', birthdate: '',
+    emergencyContactName: '', emergencyContactPhone: '',
+    password: '', confirmPassword: '',
+})
+
+function switchAuthMode(mode: AuthMode) {
+    authMode.value = mode
+    authError.value = null
+}
+
+async function submitAuth() {
+    authError.value = null
+    const email = authForm.email.trim()
+    if (!email || !/\S+@\S+/.test(email)) { authError.value = 'Enter a valid email.'; return }
+    if (!authForm.password) { authError.value = 'Enter your password.'; return }
+
+    if (authMode.value === 'create') {
+        if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
+            authError.value = 'Enter your first and last name.'; return
+        }
+        if (authForm.password !== authForm.confirmPassword) {
+            authError.value = 'Passwords do not match.'; return
+        }
+        if (!authForm.birthdate || authForm.birthdate >= todayIso) {
+            authError.value = 'Enter a valid birthdate.'; return
+        }
+        if (authForm.phone.replace(/\D/g, '').length < 7) {
+            authError.value = 'Enter a valid mobile phone — we use it for waitlist and event-day alerts.'; return
+        }
+        if (!authForm.emergencyContactName.trim() || authForm.emergencyContactPhone.replace(/\D/g, '').length < 7) {
+            authError.value = 'Enter an emergency contact name and phone.'; return
+        }
+    }
+
+    authBusy.value = true
+    try {
+        if (authMode.value === 'create') {
+            await userService.createAccount({
+                firstName: authForm.firstName.trim(),
+                lastName: authForm.lastName.trim(),
+                email,
+                phone: authForm.phone.trim(),
+                birthdate: authForm.birthdate,
+                emergencyContactName: authForm.emergencyContactName.trim(),
+                emergencyContactPhone: authForm.emergencyContactPhone.trim(),
+                password: authForm.password,
+            })
+        }
+        // Create-or-login both finish by signing in to obtain a token.
+        const resp = await userService.login({ email, password: authForm.password })
+        const payload = (resp.data as any).data
+        authHelper.setToken(payload.token)
+        if (payload.userId) authHelper.setUserId(payload.userId)
+        if (payload.role) authHelper.setRole(payload.role)
+        // Now authenticated — (re)load tiers + reward vouchers; the race stepper renders.
+        await load()
+    } catch (err: any) {
+        authError.value = err.response?.data?.error || err.response?.data?.message
+            || (authMode.value === 'create' ? 'Could not create your account.' : 'Login failed.')
+    } finally {
+        authBusy.value = false
+    }
+}
+
 const availableVouchers = ref<RiderRewardRedemption[]>([])
 const selectedVoucherId = ref<string | null>(null)
 const voucherOptions = computed(() => availableVouchers.value.map(v => ({
@@ -649,6 +803,8 @@ const step = ref<AdmissionStepKey>('select')
 // Buy Race Entry route hard-locks kindFilter to 'race_entry' — that's our cue to
 // rename step 1 and slot in the Racer Info collection step before Add-ons.
 const isRaceMode = computed(() => props.kindFilter === 'race_entry')
+// Gate the race flow behind inline account creation / login when signed out.
+const needsRacerAuth = computed(() => isRaceMode.value && !isAuthenticated.value)
 const stepperItems = computed<{ title: string; value: AdmissionStepKey }[]>(() => {
     const items: { title: string; value: AdmissionStepKey }[] = [
         { title: isRaceMode.value ? 'Select Class' : 'Select Admissions', value: 'select' },
@@ -1367,4 +1523,10 @@ function flash(text: string, color: 'success' | 'error') {
     flex-direction: column;
     align-items: center;
 }
+.auth-toggle-link {
+    color: rgb(var(--v-theme-primary));
+    font-weight: 600;
+    cursor: pointer;
+}
+.auth-toggle-link:hover { text-decoration: underline; }
 </style>

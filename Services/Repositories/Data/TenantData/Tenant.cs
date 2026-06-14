@@ -58,6 +58,9 @@ namespace Services.Repositories.Data.TenantData
         public string? Country { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
+        // Gates appearance in public discovery (apex map / featured / Discover /
+        // events). Does NOT gate subdomain resolution. New tenants start false.
+        public bool IsPublished { get; set; }
         public bool GiftCardsEnabled { get; set; } = false;
         public int GiftCardMinCents { get; set; } = 1000;       // $10 default
         public int GiftCardMaxCents { get; set; } = 50000;      // $500 default

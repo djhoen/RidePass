@@ -54,7 +54,11 @@
 
         <v-dialog v-model="dialog" max-width="560">
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Pass' : 'Add Pass' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Pass' : 'Add Pass' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name" density="compact"></v-text-field>
                     <v-textarea v-model="form.description" label="Description" rows="2" class="mt-6" density="compact"></v-textarea>

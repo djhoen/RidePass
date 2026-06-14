@@ -50,7 +50,11 @@
 
         <v-dialog v-model="dialog" max-width="640">
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Coupon' : 'Add Coupon' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Coupon' : 'Add Coupon' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.code" label="Code" placeholder="SUMMER25"
                         hint="Letters, numbers, dashes, underscores. Case-insensitive at the gate."

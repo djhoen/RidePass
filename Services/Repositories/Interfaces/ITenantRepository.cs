@@ -51,6 +51,11 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task SetSmsEnabled(Guid tenantId, bool enabled);
         Task UpdateServiceCharge(Guid tenantId, int serviceChargeBps, int? monthlyCapCents);
+        // Super-admin core edit: name/status/timezone + address (with geo) + contact.
+        // Scoped to only these columns so it never clobbers shipping_name, socials, etc.
+        Task UpdateAdminDetails(Guid tenantId, string displayName, string status, string timezone, bool isPublished,
+            string? addressLine, string? city, string? region, string? postalCode, string? country,
+            double? latitude, double? longitude, string? contactEmail, string? phone);
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);
         Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,

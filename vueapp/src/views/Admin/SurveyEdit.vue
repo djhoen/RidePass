@@ -115,7 +115,11 @@
         <!-- Add question dialog -->
         <v-dialog v-model="addQOpen" max-width="640" persistent>
             <v-card>
-                <v-card-title>Add question</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Add question</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="addQOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-select v-model="newQ.kind" :items="kindOptions" label="Type" density="compact" class="mt-6"></v-select>
                     <v-text-field v-model="newQ.prompt" label="Question" density="compact" class="mt-6"></v-text-field>
@@ -148,7 +152,11 @@
         <!-- Send invites dialog -->
         <v-dialog v-model="sendOpen" max-width="720" persistent>
             <v-card>
-                <v-card-title>Send invites</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Send invites</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="sendOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 mb-3">
                         Pick who gets the survey. Each recipient gets a unique link so you can see who opened

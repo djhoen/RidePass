@@ -8,10 +8,8 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import dayjs from 'dayjs'
 import BuyAdmissionFlow from '@/components/BuyAdmissionFlow.vue'
 import { EventService, type EventDto } from '@/services/EventService'
-import { branding } from '@/stores/branding'
 
 // Route page just resolves params and delegates to the reusable flow component.
 // The same component is mounted in a dialog from the home page for in-context purchase.
@@ -30,15 +28,12 @@ const pageTitle = computed(() => {
 })
 
 // Fetch the event so BuyAdmissionFlow can show eligibleExtras on the Add-ons step.
-// The list endpoint is fine here — the per-event payload includes eligibleExtras.
+// Use the public single-event endpoint so this works for signed-out racers too
+// (they create their account inline). The payload includes eligibleExtras/passes.
 onMounted(async () => {
     try {
-        const tz = branding.timezone || 'UTC'
-        const fromUtc = dayjs().tz(tz).startOf('day').subtract(7, 'day').utc().toISOString()
-        const toUtc = dayjs().tz(tz).startOf('day').add(365, 'day').utc().toISOString()
-        const r = await eventService.list(fromUtc, toUtc)
-        const all = (r.data as any).data as EventDto[]
-        event.value = all.find(e => e.id === eventId) ?? null
+        const r = await eventService.getPublic(eventId)
+        event.value = (r.data as any).data as EventDto
     } catch {
         event.value = null
     }

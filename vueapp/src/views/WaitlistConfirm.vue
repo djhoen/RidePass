@@ -20,7 +20,7 @@
                 <p class="text-body-2 text-medium-emphasis">
                     The spot has rolled to the next person in line.
                 </p>
-                <v-btn variant="text" to="/Calendar" class="mt-3">Back to Calendar</v-btn>
+                <v-btn variant="text" to="/Events" class="mt-3">Back to Events</v-btn>
             </v-card>
 
             <v-card v-else-if="details.status !== 'promoted'" class="pa-4 text-center">

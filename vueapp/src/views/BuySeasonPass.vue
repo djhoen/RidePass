@@ -30,7 +30,11 @@
 
         <v-dialog v-model="photoStepOpen" max-width="480" persistent>
             <v-card v-if="selectedProduct">
-                <v-card-title>Take a photo</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Take a photo</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="photoStepOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="text-body-2 text-medium-emphasis mb-3">
                         We snap a photo so the gate worker can confirm you're the pass holder.
@@ -55,7 +59,11 @@
 
         <v-dialog v-model="payOpen" persistent max-width="500">
             <v-card v-if="purchaseInFlight">
-                <v-card-title>Pay for {{ purchaseInFlight.productName }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Pay for {{ purchaseInFlight.productName }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="payOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-table v-if="purchaseInFlight.riderServiceChargeCents > 0 || purchaseInFlight.giftCardAppliedCents > 0" density="compact" class="mb-3">
                         <tbody>

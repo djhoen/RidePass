@@ -13,7 +13,7 @@
         </div>
 
         <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            Email delivery isn't wired up yet. "Send" materializes the recipient list but no email actually leaves the system until an email provider is connected.
+            Email delivery isn't wired up yet. Sending is disabled until an email provider is connected, so campaigns stay as drafts and nothing leaves the system.
         </v-alert>
 
         <v-card>
@@ -39,10 +39,17 @@
                             <v-btn v-if="c.status === 'draft'" variant="text" size="small" @click="openCompose(c.id)">
                                 Edit
                             </v-btn>
-                            <v-btn v-if="c.status === 'draft'" size="small" color="primary" variant="tonal"
-                                @click="sendCampaign(c)">
-                                Send
-                            </v-btn>
+                            <!-- Send is disabled while email delivery is not built (see backend DeliveryEnabled guard). -->
+                            <v-tooltip v-if="c.status === 'draft'" text="Email delivery coming soon" location="top">
+                                <template #activator="{ props }">
+                                    <span v-bind="props">
+                                        <v-btn size="small" color="primary" variant="tonal" disabled
+                                            @click="sendCampaign(c)">
+                                            Send
+                                        </v-btn>
+                                    </span>
+                                </template>
+                            </v-tooltip>
                             <v-btn v-if="c.status !== 'sent' && c.status !== 'sending'" variant="text" size="small"
                                 color="error" @click="deleteCampaign(c)">
                                 Delete
@@ -64,13 +71,19 @@
         <!-- Compose / view dialog -->
         <v-dialog v-model="composeOpen" max-width="900" persistent>
             <v-card>
-                <v-card-title>{{ composeTitle }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ composeTitle }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="composeOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="composeForm.subject" label="Subject" density="compact"
                         :readonly="composeReadonly"></v-text-field>
                     <div class="text-caption text-medium-emphasis mb-1">Body</div>
                     <RichTextEditor v-if="!composeReadonly" v-model="composeForm.bodyHtml" />
-                    <div v-else class="rendered-body" v-html="composeForm.bodyHtml"></div>
+                    <div v-else class="rendered-body">
+                        <RichTextView :html="composeForm.bodyHtml" />
+                    </div>
                     <p class="text-caption text-medium-emphasis mt-3">
                         An unsubscribe link and a short footer are added automatically when campaigns are delivered.
                     </p>
@@ -79,9 +92,16 @@
                     <v-spacer></v-spacer>
                     <v-btn :disabled="saving" @click="composeOpen = false">{{ composeReadonly ? 'Close' : 'Cancel' }}</v-btn>
                     <v-btn v-if="!composeReadonly" :loading="saving" color="primary" @click="saveDraft">Save Draft</v-btn>
-                    <v-btn v-if="!composeReadonly" :loading="sending" color="success" @click="saveAndSend">
-                        Save &amp; Send
-                    </v-btn>
+                    <!-- Save & Send is disabled while email delivery is not built (see backend DeliveryEnabled guard). -->
+                    <v-tooltip v-if="!composeReadonly" text="Email delivery coming soon" location="top">
+                        <template #activator="{ props }">
+                            <span v-bind="props">
+                                <v-btn :loading="sending" color="success" disabled @click="saveAndSend">
+                                    Save &amp; Send
+                                </v-btn>
+                            </span>
+                        </template>
+                    </v-tooltip>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -96,7 +116,10 @@ import dayjs from 'dayjs'
 import { CampaignService, type CampaignListItem } from '@/services/CampaignService'
 import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
+import RichTextView from '@/components/RichTextView.vue'
+import { useConfirm } from '@/composables/useConfirm'
 
+const confirm = useConfirm()
 const campaignService = new CampaignService()
 const newsletterService = new NewsletterService()
 
@@ -176,7 +199,7 @@ async function saveDraft() {
 
 async function saveAndSend() {
     if (!validate()) return
-    if (!confirm(buildSendConfirm(composeForm.value.subject))) return
+    if (!await confirm({ title: 'Send campaign?', message: buildSendConfirm(composeForm.value.subject), confirmText: 'Send' })) return
     sending.value = true
     try {
         let id = composeId.value
@@ -199,7 +222,7 @@ async function saveAndSend() {
 }
 
 async function sendCampaign(c: CampaignListItem) {
-    if (!confirm(buildSendConfirm(c.subject))) return
+    if (!await confirm({ title: 'Send campaign?', message: buildSendConfirm(c.subject), confirmText: 'Send' })) return
     try {
         const r = await campaignService.send(c.id)
         const notice = (r.data as any).data.sendNotice
@@ -211,7 +234,7 @@ async function sendCampaign(c: CampaignListItem) {
 }
 
 async function deleteCampaign(c: CampaignListItem) {
-    if (!confirm(`Delete "${c.subject}"? This is permanent.`)) return
+    if (!await confirm({ title: 'Delete campaign?', message: `Delete "${c.subject}"? This is permanent.`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await campaignService.delete(c.id)
         flash('Campaign deleted.', 'success')

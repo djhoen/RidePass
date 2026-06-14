@@ -40,30 +40,34 @@ const vuetify = createVuetify({
         VSnackbar:     { location: 'top', timeout: 4000 },
     },
     theme: {
+        // RidePass platform palette. Tenant subdomains override primary /
+        // secondary / accent at runtime via stores/branding.ts; the values
+        // below are the apex defaults and also the fallback every tenant
+        // inherits before their own branding API call completes.
         defaultTheme: 'tenant',
         themes: {
             tenant: {
                 dark: false,
                 colors: {
-                    primary: '#1976D2',
-                    secondary: '#424242',
-                    accent: '#82B1FF',
-                    error: '#FF5252',
+                    primary: '#FF6B1A',     // RidePass orange
+                    secondary: '#1A1F2B',   // dark navy used in hero + navbar
+                    accent: '#FFA559',
+                    error: '#E53935',
                     info: '#2196F3',
-                    success: '#4CAF50',
-                    warning: '#FFC107',
+                    success: '#43A047',
+                    warning: '#FB8C00',
                 }
             },
             tenantDark: {
                 dark: true,
                 colors: {
-                    primary: '#1976D2',
-                    secondary: '#424242',
-                    accent: '#82B1FF',
-                    error: '#FF5252',
+                    primary: '#FF6B1A',
+                    secondary: '#1A1F2B',
+                    accent: '#FFA559',
+                    error: '#E53935',
                     info: '#2196F3',
-                    success: '#4CAF50',
-                    warning: '#FFC107',
+                    success: '#43A047',
+                    warning: '#FB8C00',
                 }
             }
         }
@@ -115,6 +119,18 @@ axios.interceptors.response.use(
         return Promise.reject(error)
     }
 )
+
+// Super-admin "Preview" bridge: a JWT handed to a tenant subdomain via the URL
+// fragment (#preview_token=...). Adopt it into this origin's session and strip
+// it from the URL so it doesn't linger in the address bar / history. Runs before
+// mount so the first API calls (branding, etc.) already carry the token.
+const previewMatch = window.location.hash.match(/[#&]preview_token=([^&]+)/)
+if (previewMatch) {
+    try {
+        authHelper.adoptToken(decodeURIComponent(previewMatch[1]))
+    } catch { /* ignore a malformed token */ }
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+}
 
 const app = createApp(App)
 

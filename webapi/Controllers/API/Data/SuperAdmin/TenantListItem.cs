@@ -9,6 +9,16 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string Timezone { get; set; } = null!;
         public int ServiceChargeBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
+        public bool IsPublished { get; set; }
+        public string? AddressLine { get; set; }
+        public string? City { get; set; }
+        public string? Region { get; set; }
+        public string? PostalCode { get; set; }
+        public string? Country { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public string? ContactEmail { get; set; }
+        public string? Phone { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }

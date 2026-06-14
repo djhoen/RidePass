@@ -18,7 +18,7 @@
                                 </v-col>
                             </v-row>
                             <v-text-field v-model="form.email" type="email" label="Email" required class="mb-2"></v-text-field>
-                            <v-text-field v-model="form.password" type="password" label="Password" required></v-text-field>
+                            <v-text-field v-model="form.password" type="password" label="Password" required class="mt-4"></v-text-field>
                             <v-btn type="submit" color="primary" block size="large" :loading="loading" class="mt-4">Create Super Admin</v-btn>
                         </v-form>
                     </v-card-text>

@@ -142,4 +142,4 @@ parent product tables for `item_name` are all LEFT JOIN so a sale survives produ
 - Did not run `EXPLAIN ANALYZE` against any query; index choices were verified by reading.
 - Did not audit Vue/TS code or controllers (Sections 1 and 2).
 - Did not verify the v_recent_sales view by querying it (no `psql`); structural review only.
-- The `loampass-mirror` skill triggered because LoamPass/LoamMx share schema DNA, but this is RidePass — not in scope.
+- The `loampass-mirror` skill triggered because LoamPass/RidePass share schema DNA, but this is RidePass — not in scope.

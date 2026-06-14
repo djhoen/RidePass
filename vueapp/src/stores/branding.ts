@@ -1,9 +1,13 @@
 import { reactive } from 'vue'
 import axios from 'axios'
 import tenantHelper from '@/helpers/TenantHelper'
+import { loadPlatformBranding } from './platformBranding'
 
 export interface BrandingState {
     loaded: boolean
+    // True when the tenant's branding 404s (unknown / inactive / unpublished and
+    // the viewer isn't allowed to see it). Drives the "not available" page.
+    unavailable: boolean
     tenantId: string
     subdomain: string
     displayName: string
@@ -18,6 +22,10 @@ export interface BrandingState {
     faviconUrl: string | null
     heroImageUrl: string | null
     secondaryHeroUrl: string | null
+    navBarColor: string | null
+    navBarTextColor: string | null
+    navBarHomeColor: string | null
+    navBarHomeTextColor: string | null
     stripePublishableKey: string | null
     requireReservationForPasses: boolean
     requireEmergencyContact: boolean
@@ -66,20 +74,25 @@ export interface BrandingState {
 
 const defaults: BrandingState = {
     loaded: false,
+    unavailable: false,
     tenantId: '',
     subdomain: '',
     displayName: 'RidePass',
     tenantType: 'motocross',
     timezone: 'UTC',
-    primaryColor: '#1976D2',
-    secondaryColor: '#424242',
-    accentColor: '#82B1FF',
+    primaryColor: '#FF6B1A',
+    secondaryColor: '#1A1F2B',
+    accentColor: '#FFA559',
     tagline: null,
     themeMode: 'light',
     logoUrl: null,
     faviconUrl: null,
     heroImageUrl: null,
     secondaryHeroUrl: null,
+    navBarColor: null,
+    navBarTextColor: null,
+    navBarHomeColor: null,
+    navBarHomeTextColor: null,
     stripePublishableKey: null,
     requireReservationForPasses: false,
     requireEmergencyContact: false,
@@ -149,12 +162,11 @@ function toAbsoluteUrl(url: string | null | undefined): string | null {
 
 export async function loadBranding(): Promise<void> {
     if (!tenantHelper.getSubdomain()) {
-        // Apex domain (ridepass.io with no subdomain): no tenant to fetch
-        // branding for. Flip loaded=true with the default state so App.vue's
-        // splash gate lifts and the apex Home renders. displayName, colors,
-        // and the rest are already the platform-wide defaults; tenant-only
-        // fields stay at null/empty which the apex branch of Home.vue
-        // handles.
+        // Apex domain: no tenant, but the apex Home renders content edited
+        // through Super Admin → Home page. Block the splash on that fetch so
+        // the apex hero arrives at the same time as the rest of the page,
+        // instead of momentarily flashing the default tagline.
+        await loadPlatformBranding()
         branding.loaded = true
         document.title = branding.displayName
         return
@@ -176,6 +188,10 @@ export async function loadBranding(): Promise<void> {
         branding.faviconUrl = toAbsoluteUrl(data.faviconUrl)
         branding.heroImageUrl = toAbsoluteUrl(data.heroImageUrl)
         branding.secondaryHeroUrl = toAbsoluteUrl(data.secondaryHeroUrl)
+        branding.navBarColor = data.navBarColor ?? null
+        branding.navBarTextColor = data.navBarTextColor ?? null
+        branding.navBarHomeColor = data.navBarHomeColor ?? null
+        branding.navBarHomeTextColor = data.navBarHomeTextColor ?? null
         branding.stripePublishableKey = data.stripePublishableKey ?? null
         branding.requireReservationForPasses = !!data.requireReservationForPasses
         branding.requireEmergencyContact = !!data.requireEmergencyContact
@@ -224,7 +240,15 @@ export async function loadBranding(): Promise<void> {
         branding.loaded = true
         applyFavicon(branding.faviconUrl)
         document.title = branding.displayName
-    } catch (err) {
+    } catch (err: any) {
+        // A 404 from the tenant-resolution middleware means this tenant is
+        // unknown, inactive, or unpublished (and the viewer isn't allowed to see
+        // it). Flip to a clean "unavailable" state and clear the splash instead
+        // of silently rendering with default branding.
+        if (err?.response?.status === 404) {
+            branding.unavailable = true
+            branding.loaded = true
+        }
         console.error('Failed to load tenant branding', err)
     }
 }

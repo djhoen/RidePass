@@ -92,7 +92,11 @@
 
         <v-dialog v-model="cancelDialog" max-width="520">
             <v-card>
-                <v-card-title>Cancel purchase</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Cancel purchase</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="cancelDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="mb-3">
                         Cancelling will mark this purchase as cancelled and queue a refund request for a

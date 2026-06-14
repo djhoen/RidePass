@@ -1,22 +1,21 @@
 <template>
     <v-card variant="tonal" class="pa-4">
-        <div class="text-subtitle-1 mb-1">{{ title }}</div>
-        <div class="text-caption text-medium-emphasis mb-3">{{ subtitle }}</div>
+        <div class="text-subtitle-1 font-weight-medium mb-1">{{ title }}</div>
+        <div class="text-caption newsletter-subtitle mb-3">{{ subtitle }}</div>
         <v-row dense>
-            <v-col cols="12" sm="5">
+            <v-col cols="12" sm="6">
                 <v-text-field v-model="email" type="email" label="Email" density="compact" hide-details></v-text-field>
             </v-col>
-            <v-col cols="12" sm="4">
+            <v-col cols="12" sm="6">
                 <v-text-field v-model="name" label="Name (optional)" density="compact" hide-details></v-text-field>
             </v-col>
-            <v-col cols="12" sm="3">
-                <v-btn block color="primary" :loading="submitting" :disabled="subscribed"
-                    @click="submit">{{ subscribed ? 'Subscribed ✓' : 'Subscribe' }}</v-btn>
-            </v-col>
         </v-row>
+        <v-btn block color="primary" class="mt-3" :loading="submitting" :disabled="subscribed"
+            @click="submit">{{ subscribed ? 'Subscribed ✓' : 'Subscribe' }}</v-btn>
         <div v-if="error" class="text-caption text-error mt-2">{{ error }}</div>
     </v-card>
 </template>
+
 
 <script setup lang="ts">
 import { ref } from 'vue'
@@ -51,3 +50,11 @@ async function submit() {
     }
 }
 </script>
+
+<style scoped>
+/* The signup lives in the dark footer, so keep the subtitle legible there
+   instead of the default low-opacity dark medium-emphasis color. */
+.newsletter-subtitle {
+    color: rgba(255, 255, 255, 0.82);
+}
+</style>

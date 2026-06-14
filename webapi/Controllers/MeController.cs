@@ -282,7 +282,8 @@ namespace webapi.Controllers
             {
                 try
                 {
-                    var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents, ct);
+                    var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents,
+                        idempotencyKey: $"refund-pass-{id}-{refundCents}", ct: ct);
                     refundId = refund.RefundId;
                     await _passes.MarkRefunded(id, $"stripe_refund={refundId} status={refund.Status} amount_cents={refundCents}");
                 }
@@ -334,7 +335,8 @@ namespace webapi.Controllers
             {
                 try
                 {
-                    var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents, ct);
+                    var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents,
+                        idempotencyKey: $"refund-ticket-{id}-{refundCents}", ct: ct);
                     refundId = refund.RefundId;
                     await _tickets.MarkRefunded(id, $"stripe_refund={refundId} status={refund.Status} amount_cents={refundCents}");
                 }

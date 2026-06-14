@@ -40,6 +40,7 @@ namespace Services.Repositories
             refund_policy_html AS RefundPolicyHtml,
             address_line AS AddressLine, city, region, postal_code AS PostalCode, country,
             latitude, longitude,
+            is_published AS IsPublished,
             gift_cards_enabled AS GiftCardsEnabled,
             gift_card_min_cents AS GiftCardMinCents,
             gift_card_max_cents AS GiftCardMaxCents,
@@ -214,6 +215,33 @@ namespace Services.Repositories
                     monthly_service_charge_cap_cents = @monthlyCapCents
                 WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, serviceChargeBps, monthlyCapCents });
+        }
+
+        public async Task UpdateAdminDetails(Guid tenantId, string displayName, string status, string timezone, bool isPublished,
+            string? addressLine, string? city, string? region, string? postalCode, string? country,
+            double? latitude, double? longitude, string? contactEmail, string? phone)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET display_name = @displayName,
+                    status = @status,
+                    timezone = @timezone,
+                    is_published = @isPublished,
+                    address_line = @addressLine,
+                    city = @city,
+                    region = @region,
+                    postal_code = @postalCode,
+                    country = @country,
+                    latitude = @latitude,
+                    longitude = @longitude,
+                    contact_email = @contactEmail,
+                    phone = @phone
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId, displayName, status, timezone, isPublished, addressLine, city, region,
+                postalCode, country, latitude, longitude, contactEmail, phone,
+            });
         }
 
         public async Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,

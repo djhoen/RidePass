@@ -70,7 +70,11 @@
         <!-- Create user -->
         <v-dialog v-model="createDialog" max-width="600" persistent>
             <v-card>
-                <v-card-title>Add User</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Add User</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="createDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-row>
                         <v-col cols="12" md="6">
@@ -80,9 +84,9 @@
                             <v-text-field v-model="createForm.lastName" label="Last name" density="compact"></v-text-field>
                         </v-col>
                     </v-row>
-                    <v-text-field v-model="createForm.email" type="email" label="Email" density="compact"></v-text-field>
+                    <v-text-field v-model="createForm.email" type="email" label="Email" density="compact" class="mt-4"></v-text-field>
                     <v-select v-model="createForm.role" :items="roleOptions" item-title="title" item-value="value"
-                        label="Role" density="compact"></v-select>
+                        label="Role" density="compact" class="mt-4"></v-select>
                     <p v-if="selectedRoleDescription" class="text-caption text-medium-emphasis">
                         {{ selectedRoleDescription }}
                     </p>
@@ -98,7 +102,11 @@
         <!-- Change role -->
         <v-dialog v-model="roleDialog" max-width="500">
             <v-card>
-                <v-card-title>Change Role</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Change Role</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="roleDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="mb-3">{{ roleTarget?.firstName }} {{ roleTarget?.lastName }} — {{ roleTarget?.email }}</p>
                     <v-select v-model="roleFormValue" :items="roleOptions" item-title="title" item-value="value"
@@ -116,7 +124,11 @@
         <!-- One-time credential reveal -->
         <v-dialog v-model="credsDialog" max-width="540" persistent>
             <v-card>
-                <v-card-title>{{ credsTitle }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ credsTitle }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="credsDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-alert type="warning" variant="tonal" class="mb-3">
                         Copy this password now — it is shown only once.

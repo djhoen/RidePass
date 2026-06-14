@@ -59,7 +59,11 @@
 
         <v-dialog v-model="dialog" max-width="900" scrollable>
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Waiver' : 'New Waiver' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Waiver' : 'New Waiver' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-tabs v-model="activeTab" color="primary" grow>
                     <v-tab value="waiver">Waiver</v-tab>
                     <v-tab value="events">Associated Events</v-tab>

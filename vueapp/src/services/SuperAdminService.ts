@@ -8,7 +8,35 @@ export interface TenantSummary {
     timezone: string
     serviceChargeBps: number
     monthlyServiceChargeCapCents: number | null
+    isPublished: boolean
+    addressLine: string | null
+    city: string | null
+    region: string | null
+    postalCode: string | null
+    country: string | null
+    latitude: number | null
+    longitude: number | null
+    contactEmail: string | null
+    phone: string | null
     createdAtUtc: string
+}
+
+export interface UpdateTenantPayload {
+    displayName: string
+    status: string
+    timezone: string
+    isPublished: boolean
+    serviceChargeBps: number
+    monthlyServiceChargeCapCents: number | null
+    addressLine: string | null
+    city: string | null
+    region: string | null
+    postalCode: string | null
+    country: string | null
+    latitude: number | null
+    longitude: number | null
+    contactEmail: string | null
+    phone: string | null
 }
 
 export interface CreateTenantPayload {
@@ -152,6 +180,10 @@ export class SuperAdminService {
 
     updateTenantServiceCharge(tenantId: string, body: { serviceChargeBps: number; monthlyServiceChargeCapCents: number | null }) {
         return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/ServiceCharge`, body)
+    }
+
+    updateTenant(tenantId: string, body: UpdateTenantPayload) {
+        return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}`, body)
     }
 
     getReconciliation(fromUtc: string, toUtc: string) {

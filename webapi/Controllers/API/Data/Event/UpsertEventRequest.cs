@@ -51,6 +51,9 @@ namespace webapi.Controllers.API.Data.Event
         // an extra product to this event with optional per-event inventory cap.
         // Empty / null → no add-ons offered at this event.
         public List<EligibleExtraInput>? EligibleExtras { get; set; }
+
+        // Ordered schedule rows ({time, label}). Null / empty = no schedule.
+        public List<ScheduleItem>? Schedule { get; set; }
     }
 
     public class EligibleExtraInput

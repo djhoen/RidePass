@@ -16,7 +16,7 @@
                                     class="mb-2"></v-text-field>
                                 <v-text-field v-model="confirmPassword" label="Confirm password" type="password"
                                     prepend-inner-icon="mdi-lock-check" required
-                                    :rules="[v => v === newPassword || 'Passwords do not match']" class="mb-4"></v-text-field>
+                                    :rules="[v => v === newPassword || 'Passwords do not match']" class="mb-4 mt-4"></v-text-field>
                                 <v-btn type="submit" color="primary" block size="large" :loading="loading"
                                     :disabled="!canSubmitConfirm">Set new password</v-btn>
                             </v-form>

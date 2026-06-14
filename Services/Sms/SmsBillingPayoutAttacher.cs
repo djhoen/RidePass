@@ -9,7 +9,7 @@ namespace Services.Sms
     /// to the tenant's ledger as a negative sms_charge adjustment. The
     /// existing MonthlyPayoutDrafter then rolls these into the next payout's
     /// total_adjustment_cents, so SMS costs net against what RidePass owes
-    /// the tenant — no separate Stripe invoice required.
+    /// the tenant, no separate Stripe invoice required.
     ///
     /// Idempotent by construction: each billing event is selected only while
     /// pushed_to_payout_at_utc is NULL, and MarkAttachedToPayout stamps both
@@ -51,7 +51,7 @@ namespace Services.Sms
                 {
                     // Negative gross + matching negative net = a pure deduction
                     // from what RidePass owes the tenant. No Stripe fee or
-                    // RidePass cut associated — this isn't a sale.
+                    // RidePass cut associated, this isn't a sale.
                     var entry = new TenantLedgerEntry
                     {
                         TenantId = ev.TenantId,

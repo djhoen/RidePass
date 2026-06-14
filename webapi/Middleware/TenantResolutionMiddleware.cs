@@ -72,10 +72,31 @@ namespace webapi.Middleware
                 return;
             }
 
+            // Unpublished tenants are dark to the public — only the tenant's own
+            // staff and super admins may reach the site (to set it up before
+            // launch). Same 404 as inactive so we don't reveal it exists.
+            if (!tenant.IsPublished && !MayAccessUnpublished(context, tenant.Id))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                await context.Response.WriteAsync($"Unknown or inactive tenant: {subdomain}");
+                return;
+            }
+
             tenantContext.SetTenant(tenant);
             context.Items["TenantId"] = tenant.Id;
 
             await _next(context);
+        }
+
+        // A request may reach an unpublished tenant only if it's authenticated as
+        // a super admin or as a user belonging to that tenant. Relies on
+        // UseAuthentication running before this middleware (see Program.cs).
+        private static bool MayAccessUnpublished(HttpContext context, Guid tenantId)
+        {
+            var user = context.User;
+            if (user?.Identity is not { IsAuthenticated: true }) return false;
+            if (user.FindFirst("role")?.Value == "super_admin") return true;
+            return user.FindFirst("tenant_id")?.Value == tenantId.ToString();
         }
 
         private string? ExtractSubdomain(string host)

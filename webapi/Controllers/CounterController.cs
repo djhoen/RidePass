@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
+using Services.Helpers.Interfaces;
 using Services.Payments;
 using Services.Repositories.Data.ExtrasData;
 using Services.Repositories.Data.MembershipData;
@@ -40,6 +41,7 @@ namespace webapi.Controllers
         private readonly IMembershipRepository _memberships;
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantRepository _tenants;
+        private readonly IDbHelper _db;
         private readonly ITenantContext _tenantContext;
 
         public CounterController(
@@ -58,6 +60,7 @@ namespace webapi.Controllers
             IMembershipRepository memberships,
             IFeeCalculator feeCalculator,
             ITenantRepository tenants,
+            IDbHelper db,
             ITenantContext tenantContext)
         {
             _users = users;
@@ -75,6 +78,7 @@ namespace webapi.Controllers
             _memberships = memberships;
             _feeCalculator = feeCalculator;
             _tenants = tenants;
+            _db = db;
             _tenantContext = tenantContext;
         }
 
@@ -536,6 +540,39 @@ namespace webapi.Controllers
                 });
                 ledgerLines.Add(("pass", created.Id, lineAmount, lineServiceCharge));
             }
+            // Serialize the capacity recheck + ticket inserts per event so a counter sale
+            // can't oversell a tier or double-enter a race class against a concurrent online
+            // or counter sale (review item #4). A counter cart may span multiple events, so
+            // lock them all in a stable (sorted) order to avoid deadlocking with another
+            // multi-event cart. Same key space as the online checkout, so they contend too.
+            // Released right after the inserts, before the Stripe call.
+            var ticketEventIds = ticketItems.Select(t => t.Tier.EventId).Distinct().OrderBy(id => id).ToList();
+            var capacityLocks = new List<IAsyncDisposable>();
+            try
+            {
+                foreach (var evId in ticketEventIds)
+                    capacityLocks.Add(await _db.AcquireAdvisoryLock($"event-capacity:{evId}"));
+
+                // Authoritative re-check under the locks (the cart-build loop was a fast-fail).
+                foreach (var (rcItem, rcTier, _, _) in ticketItems)
+                {
+                    if (rcTier.Inventory.HasValue)
+                    {
+                        var soldNow = await _tiers.SoldCount(rcTier.Id);
+                        if (soldNow + rcItem.Quantity > rcTier.Inventory.Value)
+                            return new ApiResponses().BadRequestResult(
+                                $"Tier '{rcTier.Name}' has only {Math.Max(0, rcTier.Inventory.Value - soldNow)} left.");
+                    }
+                    if (rcTier.Kind == "race_entry")
+                    {
+                        var alreadyNow = await _ticketPurchases.HasActiveRaceEntry(
+                            _tenantContext.TenantId, rcTier.Id, rider.Id, rider.Email);
+                        if (alreadyNow)
+                            return new ApiResponses().BadRequestResult(
+                                $"{rider.FirstName} is already entered in '{rcTier.Name}'.");
+                    }
+                }
+
             for (var tkiIdx = 0; tkiIdx < ticketItems.Count; tkiIdx++)
             {
                 var (item, tier, unitAmount, unitServiceCharge) = ticketItems[tkiIdx];
@@ -571,6 +608,12 @@ namespace webapi.Controllers
                     });
                     ledgerLines.Add(("event_ticket", created.Id, unitAmount, unitServiceCharge));
                 }
+            }
+            }
+            finally
+            {
+                // Pending rows now hold the capacity; release before the (network) Stripe call.
+                foreach (var capacityLock in capacityLocks) await capacityLock.DisposeAsync();
             }
             // Extras: one event_extra_purchase row per unit so each gets its own QR.
             // Variant attrs frozen on the row. Source kind 'extras' isn't in the

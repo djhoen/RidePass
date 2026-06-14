@@ -1,5 +1,8 @@
-// Variables (design tokens not covered by Vuetify theme — fonts, spacings)
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+// Body font (Inter) + display font (Bebas Neue) for the RidePass hero and
+// other high-impact headlines. Bebas Neue is a tall condensed sans-serif
+// that matches the motocross brand tone in the landing-page mockup. Inter
+// handles everything else.
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 // Global styles
 body {
@@ -10,6 +13,34 @@ body {
 
 .font-inter {
     font-family: 'Inter', sans-serif;
+}
+
+// Display utility class. Use on hero headlines, big stat numbers, and other
+// places where the RidePass brand wants to shout. Bebas Neue only ships at
+// weight 400, so we always render at 400 (any !important-driven font-weight
+// up the chain would synthesize bold; we explicitly hold the weight). All
+// caps + slight letter spacing match the mockup.
+.font-display {
+    font-family: 'Bebas Neue', 'Inter', sans-serif;
+    font-weight: 400 !important;
+    // Bebas Neue ships only one weight on Google Fonts (no italic variant),
+    // so the browser synthesizes an oblique. For a heavy condensed display
+    // face this reads as the intended "slanted display" look from the mock.
+    font-style: italic;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+// Upright Bebas variant for sub-headings (how-it-works step titles, event
+// card titles, etc.). Same condensed display family at its native weight,
+// just without the italic. Use this anywhere you want the brand voice on a
+// sub-heading without the hero-headline slant.
+.font-display-upright {
+    font-family: 'Bebas Neue', 'Inter', sans-serif;
+    font-weight: 400;
+    font-style: normal;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
 }
 
 // Layout helpers

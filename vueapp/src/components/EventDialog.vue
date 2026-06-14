@@ -1,25 +1,34 @@
 <template>
     <v-dialog :model-value="open" @update:model-value="$emit('update:open', $event)" max-width="800" scrollable>
         <v-card>
-            <v-card-title>{{ editing ? 'Edit Event' : 'Add Event' }}</v-card-title>
+            <v-card-title class="d-flex align-center">
+                <span>{{ editing ? 'Edit Event' : 'Add Event' }}</span>
+                <v-spacer></v-spacer>
+                <v-btn icon="mdi-close" variant="text" size="small" @click="$emit('update:open', false)"></v-btn>
+            </v-card-title>
             <!-- Tabs: General | Race Classes (race events only) | Add-ons | Waivers.
                  Tickets are gone — use a Gate Fee add-on for spectator admissions. -->
             <v-tabs v-model="activeTab" color="primary" grow>
-                <v-tab value="info">General</v-tab>
+                <v-tab value="info">Details</v-tab>
                 <v-tab v-if="isRaceEvent" value="race" :disabled="!editing">
                     Race Classes
                     <v-tooltip v-if="!editing" location="bottom" activator="parent">
-                        Save the event first to manage race classes.
+                        Save the event first, then add race classes here.
                     </v-tooltip>
                 </v-tab>
-                <v-tab v-if="branding.extrasEnabled" value="extras">Add-ons</v-tab>
+                <v-tab v-if="branding.extrasEnabled" value="extras">Add-ons &amp; Gate Fees</v-tab>
                 <v-tab value="waivers">Waivers</v-tab>
             </v-tabs>
 
             <v-card-text style="min-height: 460px">
                 <v-window v-model="activeTab" class="mt-4">
                     <v-window-item value="info">
-                        <v-row class="mt-2">
+                        <p class="text-caption text-medium-emphasis mt-2 mb-0">
+                            Set the basics here. Use the tabs above for
+                            <template v-if="isRaceEvent">race classes, </template>
+                            spectator gate fees and add-ons, and waiver requirements.
+                        </p>
+                        <v-row class="mt-1">
                             <v-col cols="12" md="8">
                                 <v-text-field v-model="form.title" label="Title" density="compact"></v-text-field>
                             </v-col>
@@ -50,15 +59,16 @@
                         <p v-if="isRaceEvent" class="text-caption text-medium-emphasis mt-n2 mb-2">
                             Race-event capacity is set by the inventory on each race entry below.
                         </p>
-                        <v-text-field v-model="form.locationLabel" label="Location" density="compact"></v-text-field>
+                        <v-text-field v-model="form.locationLabel" label="Location" density="compact" class="mt-4"></v-text-field>
 
                         <!-- Day-pass eligibility (non-race events only). The product list
                              determines which passes the rider can use to reserve a spot
                              at this event. Empty = no pass reservation option. -->
                         <template v-if="!isRaceEvent">
-                            <label class="text-subtitle-2 d-block mt-4 mb-2">Day-pass eligibility</label>
+                            <label class="text-subtitle-2 d-block mt-5 mb-1">Rider entry: accepted passes</label>
                             <p class="text-caption text-medium-emphasis mb-2">
-                                Select which pass products riders can use to reserve a spot at this event.
+                                Which day passes riders can use to reserve a spot. Leave all unchecked for a
+                                spectator-only event.
                             </p>
                             <div v-if="passProducts.length === 0" class="text-medium-emphasis text-caption">
                                 No pass products defined yet.
@@ -73,9 +83,31 @@
                             </div>
                         </template>
 
-                        <v-textarea v-model="form.description" label="Description" rows="3" class="mt-6" density="compact"></v-textarea>
+                        <label class="text-subtitle-2 d-block mt-6 mb-1">Event details</label>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Put one detail per line. Each line shows up as its own bullet point in the
+                            "Event Details" list on the public event page.
+                        </p>
+                        <v-textarea v-model="form.description" rows="4" density="compact"
+                            placeholder="Gates open at 7:00 AM&#10;Practice starts at 8:30 AM&#10;Concessions on site all day&#10;Free parking"
+                            hint="Each line becomes its own bullet point." persistent-hint></v-textarea>
 
-                        <label class="text-subtitle-2 d-block mt-4 mb-2">Cover image (optional)</label>
+                        <label class="text-subtitle-2 d-block mt-4 mb-2">Event schedule (optional)</label>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Shown as a schedule on the public event page. Add rows like "7:00 AM" / "Gates open &amp; check-in".
+                        </p>
+                        <div v-for="(row, i) in form.schedule" :key="i" class="d-flex align-center ga-2 mb-2">
+                            <v-text-field v-model="row.time" label="Time" placeholder="7:00 AM"
+                                density="compact" hide-details style="max-width: 150px"></v-text-field>
+                            <v-text-field v-model="row.label" label="What's happening"
+                                placeholder="Gates open & check-in" density="compact" hide-details></v-text-field>
+                            <v-btn icon="mdi-close" variant="text" size="small"
+                                @click="form.schedule.splice(i, 1)"></v-btn>
+                        </div>
+                        <v-btn variant="tonal" size="small" prepend-icon="mdi-plus"
+                            @click="form.schedule.push({ time: '', label: '' })">Add row</v-btn>
+
+                        <label class="text-subtitle-2 d-block mt-6 mb-2">Cover image (optional)</label>
                         <p class="text-caption text-medium-emphasis mb-2">
                             Overrides the event type's default image on the public home page.
                         </p>
@@ -92,10 +124,6 @@
                                 <v-btn v-if="form.imageUrl" size="small" variant="text" color="error"
                                     prepend-icon="mdi-delete" @click="form.imageUrl = null">Remove image</v-btn>
                             </div>
-                            <v-spacer></v-spacer>
-                            <v-btn v-if="editing" variant="tonal" prepend-icon="mdi-content-copy" @click="dup">
-                                Duplicate event
-                            </v-btn>
                         </div>
                     </v-window-item>
 
@@ -164,7 +192,7 @@
                                 :items="spectatorWaiverOptions" item-title="title" item-value="value"
                                 label="Spectator waiver" density="compact" clearable hide-details
                                 hint="Signed by Gate Fee buyers and other non-racer admissions. Leave blank for tenant default."
-                                persistent-hint class="mb-3"></v-select>
+                                persistent-hint class="mb-3 mt-4"></v-select>
                             <v-alert v-if="spectatorWaiverInvalid"
                                 type="warning" variant="tonal" density="compact" class="mb-3">
                                 The selected spectator waiver expires before this event ends. Pick another or extend its expiration.
@@ -181,10 +209,11 @@
             </v-card-text>
             <v-card-actions>
                 <v-btn v-if="editing" variant="text" color="error" @click="remove">Delete</v-btn>
+                <v-btn v-if="editing" variant="text" prepend-icon="mdi-content-copy" @click="dup">Duplicate</v-btn>
                 <v-spacer></v-spacer>
                 <v-btn @click="$emit('update:open', false)">Cancel</v-btn>
                 <v-btn v-if="activeTab !== 'race'" color="primary" :loading="saving" @click="save">
-                    {{ editing ? 'Save' : 'Save & Continue' }}
+                    {{ saveLabel }}
                 </v-btn>
             </v-card-actions>
         </v-card>
@@ -238,6 +267,11 @@ watch(isRaceEvent, (race) => {
     else if (activeTab.value !== 'info') activeTab.value = 'info'
 })
 
+const saveLabel = computed(() => {
+    if (editing.value) return 'Save changes'
+    return isRaceEvent.value ? 'Save & add classes' : 'Create event'
+})
+
 const form = ref({
     eventTypeId: '',
     title: '',
@@ -255,6 +289,7 @@ const form = ref({
     imageUrl: null as string | null,
     eligiblePassProductIds: [] as string[],
     eligibleExtras: [] as { productId: string; inventory: number | null }[],
+    schedule: [] as { time: string; label: string }[],
 })
 
 // Tenant waiver list — used by both spectator and racer dropdowns. Only active
@@ -403,6 +438,7 @@ watch(() => props.open, (open) => {
                 productId: e.productId,
                 inventory: e.inventory,
             })),
+            schedule: (row.schedule ?? []).map(s => ({ time: s.time, label: s.label })),
         }
     } else if (props.duplicateFrom) {
         seedFromDuplicate(props.duplicateFrom)
@@ -427,6 +463,7 @@ watch(() => props.open, (open) => {
             imageUrl: null,
             eligiblePassProductIds: defaultEligibility([]),
             eligibleExtras: [],
+            schedule: [],
         }
     }
     imageFile.value = null
@@ -457,6 +494,7 @@ function seedFromDuplicate(src: EventDto) {
             productId: e.productId,
             inventory: e.inventory,
         })),
+        schedule: (src.schedule ?? []).map(s => ({ time: s.time, label: s.label })),
         imageUrl: src.imageUrl,
     }
     imageFile.value = null
@@ -499,6 +537,9 @@ async function save() {
             // always send an empty list to clear any stray entries.
             eligiblePassProductIds: isRaceEvent.value ? [] : form.value.eligiblePassProductIds,
             eligibleExtras: form.value.eligibleExtras,
+            schedule: form.value.schedule
+                .map(s => ({ time: s.time.trim(), label: s.label.trim() }))
+                .filter(s => s.time.length > 0 || s.label.length > 0),
         }
         if (editing.value) {
             await eventService.update(editing.value.id, body)

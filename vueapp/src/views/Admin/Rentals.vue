@@ -73,7 +73,11 @@
 
         <v-dialog v-model="dialog" max-width="800" scrollable>
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Rental' : 'Add Rental' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Rental' : 'Add Rental' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-tabs v-model="activeTab" color="primary" grow>
                     <v-tab value="info">Details</v-tab>
                     <v-tab value="units" :disabled="!editing || form.trackingKind !== 'per_item'">
@@ -194,7 +198,11 @@
 
         <v-dialog v-model="unitDialog" max-width="560">
             <v-card>
-                <v-card-title>{{ editingUnit ? 'Edit Unit' : 'Add Unit' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editingUnit ? 'Edit Unit' : 'Add Unit' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="unitDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="unitForm.label" label="Label (e.g. Bike A)" density="compact"></v-text-field>
                     <v-text-field v-model="unitForm.serial" label="Serial (optional)" density="compact" class="mt-6"></v-text-field>
@@ -245,7 +253,11 @@
 
         <v-dialog v-model="maintenanceDialog" max-width="500">
             <v-card>
-                <v-card-title>{{ editingMaintenance ? 'Edit maintenance window' : 'Schedule maintenance' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editingMaintenance ? 'Edit maintenance window' : 'Schedule maintenance' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="maintenanceDialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-row>
                         <v-col cols="12" md="6">

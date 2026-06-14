@@ -7,7 +7,7 @@
         <v-card v-else-if="!event" class="pa-6 text-center" variant="outlined">
             <v-icon size="48" color="grey" class="mb-2">mdi-calendar-question</v-icon>
             <p class="text-body-2 mb-3">We couldn't find that event. It may have been cancelled or removed.</p>
-            <v-btn color="primary" to="/Calendar">Back to Calendar</v-btn>
+            <v-btn color="primary" to="/Events">Back to Events</v-btn>
         </v-card>
 
         <template v-else>
@@ -248,7 +248,11 @@
 
         <v-dialog v-model="membershipGateOpen" max-width="520" persistent>
             <v-card>
-                <v-card-title>Membership required</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>Membership required</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="membershipGateOpen = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <p class="mb-2">{{ membershipGateMessage }}</p>
                     <p class="text-body-2 text-medium-emphasis">
@@ -463,8 +467,8 @@ function formatLong(iso: string): string {
 onMounted(async () => {
     const queryEventId = route.query.eventId as string | undefined
     if (!queryEventId) {
-        flash('Pick an event from the calendar first.', 'error')
-        router.replace('/Calendar')
+        flash('Pick an event first.', 'error')
+        router.replace('/Events')
         return
     }
     try {
@@ -481,7 +485,7 @@ onMounted(async () => {
         event.value = all.find(e => e.id === queryEventId) ?? null
         if (!event.value) {
             // Stay on the page with a visible error instead of redirecting — a
-            // silent bounce back to /Calendar with a flash gets eaten by the
+            // silent bounce back to /Events with a flash gets eaten by the
             // route transition and looks like the click did nothing.
             flash('Event not found or has already ended.', 'error')
             return

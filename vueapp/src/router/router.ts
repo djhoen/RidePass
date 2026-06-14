@@ -8,6 +8,7 @@ const routes = [
     { path: '/CreateAccount', name: 'CreateAccount', component: () => import('../views/CreateAccount.vue') },
     { path: '/ResetPassword', name: 'ResetPassword', component: () => import('../views/ResetPassword.vue') },
     { path: '/Calendar', name: 'Calendar', component: () => import('../views/Calendar.vue') },
+    { path: '/Events', name: 'Events', component: () => import('../views/Events.vue') },
     { path: '/Waiver', name: 'Waiver', component: () => import('../views/Waiver.vue'), meta: { requiresAuth: true } },
     { path: '/EventUnsubscribe/:token', name: 'EventUnsubscribe', component: () => import('../views/EventUnsubscribe.vue') },
     { path: '/SeasonPasses', name: 'SeasonPasses', component: () => import('../views/BuySeasonPass.vue') },
@@ -37,7 +38,8 @@ const routes = [
         path: '/BuyTicket/:eventId',
         name: 'BuyTicket',
         component: () => import('../views/BuyTicket.vue'),
-        meta: { requiresAuth: true }
+        // No requiresAuth — the race flow lets riders create their account (or log
+        // in) inline as the first step instead of bouncing them to a login wall.
     },
     {
         path: '/BuySpectator/:eventId',
@@ -94,16 +96,66 @@ const routes = [
         name: 'SuperAdminBootstrap',
         component: () => import('../views/SuperAdmin/Bootstrap.vue'),
     },
+    // /SuperAdmin lands on the Analytics page. Each former Dashboard tab is now its own route.
+    { path: '/SuperAdmin', redirect: '/SuperAdmin/Analytics' },
     {
-        path: '/SuperAdmin',
-        name: 'SuperAdmin',
-        component: () => import('../views/SuperAdmin/Dashboard.vue'),
+        path: '/SuperAdmin/Analytics',
+        name: 'SuperAdminAnalytics',
+        component: () => import('../views/SuperAdmin/Analytics.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Tenants',
+        name: 'SuperAdminTenants',
+        component: () => import('../views/SuperAdmin/Tenants.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Users',
+        name: 'SuperAdminUsers',
+        component: () => import('../views/SuperAdmin/Users.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Refunds',
+        name: 'SuperAdminRefunds',
+        component: () => import('../views/SuperAdmin/Refunds.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Disputes',
+        name: 'SuperAdminDisputes',
+        component: () => import('../views/SuperAdmin/Disputes.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Payouts',
+        name: 'SuperAdminPayouts',
+        component: () => import('../views/SuperAdmin/Payouts.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Audit',
+        name: 'SuperAdminAudit',
+        component: () => import('../views/SuperAdmin/Audit.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/Reconcile',
+        name: 'SuperAdminReconcile',
+        component: () => import('../views/SuperAdmin/Reconcile.vue'),
         meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
     },
     {
         path: '/SuperAdmin/Marketing',
         name: 'SuperAdminMarketing',
         component: () => import('../views/SuperAdmin/Marketing.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
+    {
+        path: '/SuperAdmin/HomePage',
+        name: 'SuperAdminHomePage',
+        component: () => import('../views/SuperAdmin/HomePage.vue'),
         meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
     },
 
@@ -342,6 +394,12 @@ const routes = [
         path: '/Discover',
         name: 'Discover',
         component: () => import('../views/Discover.vue'),
+    },
+    {
+        path: '/ForTracks',
+        name: 'ForTracks',
+        component: () => import('../views/ForTracks.vue'),
+        // Public apex marketing page — sells RidePass to prospective track operators.
     },
 
     // Error pages

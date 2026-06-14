@@ -52,10 +52,14 @@
 
         <v-dialog v-model="dialog" max-width="640" persistent>
             <v-card>
-                <v-card-title>{{ editing ? 'Edit Program' : 'New Program' }}</v-card-title>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ editing ? 'Edit Program' : 'New Program' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+                </v-card-title>
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name" density="compact"></v-text-field>
-                    <v-textarea v-model="form.description" label="Description (optional)" rows="2" density="compact"></v-textarea>
+                    <v-textarea v-model="form.description" label="Description (optional)" rows="2" density="compact" class="mt-4"></v-textarea>
                     <v-row>
                         <v-col cols="12" md="6">
                             <v-select v-model="form.requirementKind"
@@ -80,7 +84,7 @@
                         </v-col>
                     </v-row>
                     <v-text-field v-model.number="form.proximityEmailThreshold" type="number" min="1"
-                        label="Email when rider is X away (blank to disable)" density="compact" clearable></v-text-field>
+                        label="Email when rider is X away (blank to disable)" density="compact" clearable class="mt-4"></v-text-field>
                     <v-switch v-model="form.isActive" label="Active" hide-details color="primary"></v-switch>
                 </v-card-text>
                 <v-card-actions>

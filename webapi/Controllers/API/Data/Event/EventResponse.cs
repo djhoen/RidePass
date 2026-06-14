@@ -32,6 +32,14 @@
         // pass option (rider sees no Reserve-a-pass button on the event modal).
         public List<EligiblePassProduct> EligiblePasses { get; set; } = new();
         public List<EligibleExtra> EligibleExtras { get; set; } = new();
+        // Ordered schedule rows (e.g. "7:00 AM" / "Gates open"). Empty = none.
+        public List<ScheduleItem> Schedule { get; set; } = new();
+    }
+
+    public class ScheduleItem
+    {
+        public string Time { get; set; } = "";
+        public string Label { get; set; } = "";
     }
 
     public class EligiblePassProduct

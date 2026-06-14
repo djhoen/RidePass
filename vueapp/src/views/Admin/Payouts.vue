@@ -104,8 +104,10 @@
         <!-- Payout detail dialog -->
         <v-dialog v-model="payoutDialog" max-width="900" scrollable>
             <v-card v-if="selectedPayout">
-                <v-card-title>
-                    Payout {{ formatDateOnly(selectedPayout.periodStartUtc) }} – {{ formatDateOnly(selectedPayout.periodEndUtc) }}
+                <v-card-title class="d-flex align-center">
+                    <span>Payout {{ formatDateOnly(selectedPayout.periodStartUtc) }} – {{ formatDateOnly(selectedPayout.periodEndUtc) }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="payoutDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text style="max-height: 70vh">
                     <v-row class="mb-4">
