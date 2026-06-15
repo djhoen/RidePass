@@ -226,6 +226,11 @@ namespace webapi.Controllers
             var racerErr = await ValidateWaiverForEvent(request.RacerWaiverId, request.EndsAtUtc.ToUniversalTime(), "racer");
             if (racerErr is not null) return new ApiResponses().BadRequestResult(racerErr);
 
+            if (!request.AllowsRiders && !request.AllowsSpectators)
+            {
+                return new ApiResponses().BadRequestResult("An event must allow riders, spectators, or both.");
+            }
+
             var ev = new Event
             {
                 TenantId = _tenantContext.TenantId,
@@ -238,6 +243,8 @@ namespace webapi.Controllers
                 Capacity = request.Capacity,
                 LocationLabel = request.LocationLabel,
                 Status = request.Status,
+                AllowsRiders = request.AllowsRiders,
+                AllowsSpectators = request.AllowsSpectators,
                 RequiresRiderWaiver = request.RequiresRiderWaiver,
                 RequiresSpectatorWaiver = request.RequiresSpectatorWaiver,
                 SpectatorWaiverId = request.SpectatorWaiverId,
@@ -301,6 +308,11 @@ namespace webapi.Controllers
             var racerErr = await ValidateWaiverForEvent(request.RacerWaiverId, request.EndsAtUtc.ToUniversalTime(), "racer");
             if (racerErr is not null) return new ApiResponses().BadRequestResult(racerErr);
 
+            if (!request.AllowsRiders && !request.AllowsSpectators)
+            {
+                return new ApiResponses().BadRequestResult("An event must allow riders, spectators, or both.");
+            }
+
             existing.EventTypeId = request.EventTypeId;
             existing.Title = request.Title;
             existing.Description = request.Description;
@@ -310,6 +322,8 @@ namespace webapi.Controllers
             existing.Capacity = request.Capacity;
             existing.LocationLabel = request.LocationLabel;
             existing.Status = request.Status;
+            existing.AllowsRiders = request.AllowsRiders;
+            existing.AllowsSpectators = request.AllowsSpectators;
             existing.RequiresRiderWaiver = request.RequiresRiderWaiver;
             existing.RequiresSpectatorWaiver = request.RequiresSpectatorWaiver;
             existing.SpectatorWaiverId = request.SpectatorWaiverId;
@@ -383,6 +397,8 @@ namespace webapi.Controllers
                 Capacity = source.Capacity,
                 LocationLabel = source.LocationLabel,
                 Status = "scheduled",
+                AllowsRiders = source.AllowsRiders,
+                AllowsSpectators = source.AllowsSpectators,
                 RequiresRiderWaiver = source.RequiresRiderWaiver,
                 RequiresSpectatorWaiver = source.RequiresSpectatorWaiver,
                 SpectatorWaiverId = source.SpectatorWaiverId,
@@ -479,6 +495,8 @@ namespace webapi.Controllers
                 Capacity = ev.Capacity,
                 LocationLabel = ev.LocationLabel,
                 Status = ev.Status,
+                AllowsRiders = ev.AllowsRiders,
+                AllowsSpectators = ev.AllowsSpectators,
                 RequiresRiderWaiver = ev.RequiresRiderWaiver,
                 RequiresSpectatorWaiver = ev.RequiresSpectatorWaiver,
                 SpectatorWaiverId = ev.SpectatorWaiverId,

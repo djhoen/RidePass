@@ -184,6 +184,17 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
+        key: 'concessions',
+        title: 'Concessions',
+        description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.',
+        icon: 'mdi-storefront',
+        enabled: branding.concessionsEnabled,
+        configureTo: '/Admin/Concessions',
+        apply: async (next) => {
+            await tenantService.updateConcessionsEnabled({ enabled: next })
+        },
+    },
+    {
         key: 'allowSelfCancel',
         title: 'Self-cancel purchases',
         description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).',

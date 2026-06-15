@@ -10,6 +10,7 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public int ServiceChargeBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
         public bool IsPublished { get; set; }
+        public bool ConcessionsEnabled { get; set; }
         public string? AddressLine { get; set; }
         public string? City { get; set; }
         public string? Region { get; set; }

@@ -46,6 +46,14 @@
                         class="text-none" rounded="lg">Sign in</v-btn>
                 </v-form>
 
+                <!-- Shown only after a login attempt fails because the email is not yet
+                     verified. Lets the rider request a fresh verification link inline. -->
+                <v-alert v-if="showResend" type="info" variant="tonal" density="compact" class="mt-4">
+                    <div class="text-body-2 mb-2">Your email isn't verified yet.</div>
+                    <v-btn color="primary" variant="text" size="small" class="text-none px-0"
+                        :loading="resending" @click="resendVerification">Resend verification email</v-btn>
+                </v-alert>
+
                 <div class="text-center text-body-2 text-medium-emphasis mt-6">
                     Don't have an account?
                     <router-link to="/CreateAccount" class="login-link ml-1">Create one</router-link>
@@ -73,6 +81,8 @@ const showPassword = ref(false)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('error')
+const showResend = ref(false)
+const resending = ref(false)
 
 const form = ref({
     email: '',
@@ -106,12 +116,28 @@ async function login() {
             router.push(tenantHelper.getSubdomain() ? '/' : '/User/Upcoming')
         }
     } catch (error: any) {
-        snackbarText.value = error.response?.data?.error || 'Login failed.'
+        const message = error.response?.data?.error || 'Login failed.'
+        snackbarText.value = message
         snackbarColor.value = 'error'
         snackbar.value = true
+        // Surface a resend action when the failure is specifically an unverified email.
+        showResend.value = message.toLowerCase().includes('verify your email')
     } finally {
         loading.value = false
     }
+}
+
+async function resendVerification() {
+    try {
+        resending.value = true
+        await userService.resendVerification(form.value.email)
+    } catch { /* endpoint always returns 200; ignore */ }
+    finally {
+        resending.value = false
+    }
+    snackbarText.value = 'Verification link sent.'
+    snackbarColor.value = 'success'
+    snackbar.value = true
 }
 </script>
 

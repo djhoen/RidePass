@@ -15,16 +15,18 @@
                     <tr>
                         <th>Name</th>
                         <th>Email</th>
+                        <th style="width: 150px">Phone</th>
                         <th style="width: 130px">Role</th>
                         <th style="width: 160px">Tenant</th>
                         <th style="width: 120px">Status</th>
-                        <th style="width: 140px" class="text-right"></th>
+                        <th style="width: 200px" class="text-right"></th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="u in users" :key="u.id">
                         <td>{{ u.firstName }} {{ u.lastName }}</td>
                         <td>{{ u.email }}</td>
+                        <td>{{ u.phone || '—' }}</td>
                         <td>{{ u.role }}</td>
                         <td>
                             <code v-if="u.tenantSubdomain">{{ u.tenantSubdomain }}</code>
@@ -32,6 +34,7 @@
                         </td>
                         <td>{{ u.status }}</td>
                         <td class="text-right">
+                            <v-btn variant="text" size="small" color="primary" @click="openEdit(u)">Edit</v-btn>
                             <v-btn v-if="u.role !== 'super_admin'" variant="text" size="small"
                                 :loading="impersonatingId === u.id" @click="startImpersonation(u)">
                                 Impersonate
@@ -39,7 +42,7 @@
                         </td>
                     </tr>
                     <tr v-if="!loadingUsers && users.length === 0">
-                        <td colspan="6" class="text-center text-medium-emphasis py-8">No users match.</td>
+                        <td colspan="7" class="text-center text-medium-emphasis py-8">No users match.</td>
                     </tr>
                 </tbody>
             </v-table>
@@ -76,6 +79,99 @@
             </v-card>
         </v-dialog>
 
+        <v-dialog v-model="editDialog" max-width="760" persistent scrollable>
+            <v-card v-if="editForm">
+                <v-card-title class="d-flex align-center">
+                    <span>Edit user</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="editDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <div class="text-caption text-medium-emphasis mb-3">
+                        {{ editTenantSubdomain ? `Tenant: ${editTenantSubdomain}` : 'Global account (no tenant)' }}
+                    </div>
+
+                    <div class="text-overline">Account</div>
+                    <v-row dense>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.email" type="email" label="Email" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="3">
+                            <v-select v-model="editForm.role" :items="roleOptions" label="Role" density="compact"></v-select>
+                        </v-col>
+                        <v-col cols="12" md="3">
+                            <v-select v-model="editForm.status" :items="statusOptions" label="Status" density="compact"></v-select>
+                        </v-col>
+                    </v-row>
+                    <v-switch v-model="editForm.emailVerified" color="primary" density="compact" hide-details
+                        :label="`Email verified: ${editForm.emailVerified ? 'yes' : 'no'}`"></v-switch>
+
+                    <div class="text-overline mt-4">Profile</div>
+                    <v-row dense>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.firstName" label="First name" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.lastName" label="Last name" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.phone" label="Phone" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.birthdate" type="date" label="Birthdate" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+
+                    <div class="text-overline mt-4">Emergency contact</div>
+                    <v-row dense>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.emergencyContactName" label="Name" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.emergencyContactPhone" label="Phone" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+
+                    <div class="text-overline mt-4">Address</div>
+                    <v-row dense>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.addressLine" label="Address" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.addressLine2" label="Address line 2" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="5">
+                            <v-text-field v-model="editForm.city" label="City" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="6" md="3">
+                            <v-text-field v-model="editForm.state" label="State" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="6" md="4">
+                            <v-text-field v-model="editForm.postalCode" label="Postal code" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.country" label="Country" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+
+                    <div class="text-overline mt-4">Racer</div>
+                    <v-row dense>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.bike" label="Bike" density="compact"></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model="editForm.raceNumber" label="Race number" density="compact"></v-text-field>
+                        </v-col>
+                    </v-row>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="saving" @click="editDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="saving" @click="submitEdit">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -83,7 +179,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { SuperAdminService, type SuperAdminUser } from '@/services/SuperAdminService'
+import { SuperAdminService, type SuperAdminUser, type UpdateUserPayload } from '@/services/SuperAdminService'
 import { useConfirm } from '@/composables/useConfirm'
 import authHelper from '@/helpers/AuthHelper'
 
@@ -99,6 +195,15 @@ const impersonatingId = ref<string | null>(null)
 const superAdminDialog = ref(false)
 const creatingSuperAdmin = ref(false)
 const superAdminForm = ref({ firstName: '', lastName: '', email: '', password: '' })
+
+const roleOptions = ['rider', 'tenant_admin', 'tenant_staff', 'super_admin']
+const statusOptions = ['active', 'suspended', 'pending']
+
+const editDialog = ref(false)
+const saving = ref(false)
+const editId = ref<string | null>(null)
+const editTenantSubdomain = ref<string | null>(null)
+const editForm = ref<UpdateUserPayload | null>(null)
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -139,6 +244,55 @@ async function submitCreateSuperAdmin() {
         flash(err.response?.data?.error || 'Failed to create super admin.', 'error')
     } finally {
         creatingSuperAdmin.value = false
+    }
+}
+
+async function openEdit(u: SuperAdminUser) {
+    try {
+        const r = await service.getUser(u.id)
+        const d = (r.data as any).data
+        editId.value = d.id
+        editTenantSubdomain.value = d.tenantSubdomain
+        editForm.value = {
+            email: d.email,
+            firstName: d.firstName,
+            lastName: d.lastName,
+            role: d.role,
+            status: d.status,
+            phone: d.phone,
+            // <input type="date"> wants YYYY-MM-DD; the API returns an ISO timestamp.
+            birthdate: d.birthdate ? d.birthdate.slice(0, 10) : null,
+            emergencyContactName: d.emergencyContactName,
+            emergencyContactPhone: d.emergencyContactPhone,
+            addressLine: d.addressLine,
+            addressLine2: d.addressLine2,
+            city: d.city,
+            state: d.state,
+            postalCode: d.postalCode,
+            country: d.country,
+            bike: d.bike,
+            raceNumber: d.raceNumber,
+            emailVerified: d.emailVerified,
+        }
+        editDialog.value = true
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to load user.', 'error')
+    }
+}
+
+async function submitEdit() {
+    if (!editId.value || !editForm.value) return
+    saving.value = true
+    try {
+        const payload: UpdateUserPayload = { ...editForm.value, birthdate: editForm.value.birthdate || null }
+        await service.updateUser(editId.value, payload)
+        flash('User updated.', 'success')
+        editDialog.value = false
+        await loadUsers()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Update failed.', 'error')
+    } finally {
+        saving.value = false
     }
 }
 

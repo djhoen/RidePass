@@ -15,6 +15,8 @@ export interface EventDto {
     capacity: number | null
     locationLabel: string | null
     status: 'scheduled' | 'cancelled'
+    allowsRiders: boolean
+    allowsSpectators: boolean
     requiresRiderWaiver: boolean
     requiresSpectatorWaiver: boolean
     spectatorWaiverId: string | null
@@ -84,6 +86,8 @@ export interface UpsertEventDto {
     capacity: number | null
     locationLabel: string | null
     status: 'scheduled' | 'cancelled'
+    allowsRiders: boolean
+    allowsSpectators: boolean
     requiresRiderWaiver: boolean
     requiresSpectatorWaiver: boolean
     spectatorWaiverId: string | null

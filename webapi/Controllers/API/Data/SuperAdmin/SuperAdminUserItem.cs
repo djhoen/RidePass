@@ -10,5 +10,6 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string LastName { get; set; } = null!;
         public string Role { get; set; } = null!;
         public string Status { get; set; } = null!;
+        public string? Phone { get; set; }
     }
 }

@@ -46,8 +46,8 @@ namespace Services.Repositories
                 SELECT {EntryColumns}
                 FROM tenant_ledger_entry
                 WHERE tenant_id = @tenantId
-                  AND (@fromUtc IS NULL OR occurred_at_utc >= @fromUtc)
-                  AND (@toUtc IS NULL OR occurred_at_utc < @toUtc)
+                  AND (@fromUtc::timestamptz IS NULL OR occurred_at_utc >= @fromUtc)
+                  AND (@toUtc::timestamptz IS NULL OR occurred_at_utc < @toUtc)
                 ORDER BY occurred_at_utc DESC
                 LIMIT @take";
             return (await _db.Query<TenantLedgerEntry>(sql, new { tenantId, fromUtc, toUtc, take })).ToList();

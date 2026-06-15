@@ -14,6 +14,7 @@
                         <th>Display Name</th>
                         <th style="width: 120px">Status</th>
                         <th style="width: 130px">Service charge</th>
+                        <th style="width: 120px">Concessions</th>
                         <th style="width: 160px">Timezone</th>
                         <th style="width: 180px">Created</th>
                         <th style="width: 160px" class="text-right"></th>
@@ -33,6 +34,12 @@
                                 cap ${{ (t.monthlyServiceChargeCapCents / 100).toFixed(2) }}
                             </span>
                         </td>
+                        <td>
+                            <v-switch :model-value="t.concessionsEnabled"
+                                @update:model-value="(v: boolean | null) => toggleConcessions(t, !!v)"
+                                color="primary" density="compact" hide-details inset
+                                :loading="togglingId === t.id" :disabled="togglingId !== null"></v-switch>
+                        </td>
                         <td>{{ t.timezone }}</td>
                         <td>{{ formatDate(t.createdAtUtc) }}</td>
                         <td class="text-right">
@@ -44,7 +51,7 @@
                         </td>
                     </tr>
                     <tr v-if="!loadingTenants && tenants.length === 0">
-                        <td colspan="7" class="text-center text-medium-emphasis py-8">No tenants yet.</td>
+                        <td colspan="8" class="text-center text-medium-emphasis py-8">No tenants yet.</td>
                     </tr>
                 </tbody>
             </v-table>
@@ -237,6 +244,7 @@ const service = new SuperAdminService()
 
 const tenants = ref<TenantSummary[]>([])
 const loadingTenants = ref(false)
+const togglingId = ref<string | null>(null)
 
 const createDialog = ref(false)
 const creating = ref(false)
@@ -316,6 +324,20 @@ async function loadTenants() {
         flash(err.response?.data?.error || 'Failed to load tenants.', 'error')
     } finally {
         loadingTenants.value = false
+    }
+}
+
+async function toggleConcessions(t: TenantSummary, enabled: boolean) {
+    if (togglingId.value) return
+    togglingId.value = t.id
+    try {
+        await service.updateTenantConcessionsEnabled(t.id, enabled)
+        t.concessionsEnabled = enabled
+        flash(`Concessions ${enabled ? 'enabled' : 'disabled'} for ${t.subdomain}.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to update concessions.', 'error')
+    } finally {
+        togglingId.value = null
     }
 }
 

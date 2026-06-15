@@ -13,6 +13,10 @@ namespace Services.Repositories.Data.EventData
         public int? Capacity { get; set; }
         public string? LocationLabel { get; set; }
         public string Status { get; set; } = "scheduled";
+        // Who the event admits. Drives which entry options and waivers apply.
+        // At least one is always true.
+        public bool AllowsRiders { get; set; } = true;
+        public bool AllowsSpectators { get; set; }
         // Per-audience waiver-required flags. When true and a waiver id is set
         // (or a tenant default exists), the corresponding buy flow forces a
         // signature before checkout.

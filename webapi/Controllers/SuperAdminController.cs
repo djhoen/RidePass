@@ -275,10 +275,142 @@ namespace webapi.Controllers
                 LastName = u.LastName,
                 Role = u.Role,
                 Status = u.Status,
+                Phone = u.Phone,
             });
 
             return new ApiResponses().OkResult(items);
         }
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpGet("Users/{id:guid}")]
+        public async Task<IActionResult> GetUser(Guid id)
+        {
+            var u = await _users.GetById(id);
+            if (u is null)
+            {
+                return new ApiResponses().NotFoundResult("User not found.");
+            }
+            string? subdomain = null;
+            if (u.TenantId.HasValue)
+            {
+                var t = await _tenants.GetById(u.TenantId.Value);
+                subdomain = t?.Subdomain;
+            }
+            return new ApiResponses().OkResult(ToUserDetail(u, subdomain));
+        }
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("Users/{id:guid}")]
+        public async Task<IActionResult> UpdateUser(Guid id, [FromBody] SuperAdminUpdateUserRequest request)
+        {
+            var u = await _users.GetById(id);
+            if (u is null)
+            {
+                return new ApiResponses().NotFoundResult("User not found.");
+            }
+
+            var email = (request.Email ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            {
+                return new ApiResponses().BadRequestResult("A valid email address is required.");
+            }
+
+            var role = (request.Role ?? "").Trim();
+            if (!AllowedRoles.Contains(role))
+            {
+                return new ApiResponses().BadRequestResult($"Unknown role '{role}'.");
+            }
+            var status = (request.Status ?? "").Trim();
+            if (!AllowedStatuses.Contains(status))
+            {
+                return new ApiResponses().BadRequestResult($"Unknown status '{status}'.");
+            }
+            // Super admins are global; a tenant-scoped user can't hold that role and vice versa.
+            if (role == "super_admin" && u.TenantId.HasValue)
+            {
+                return new ApiResponses().BadRequestResult("A tenant user can't be made a super admin (super admins are global).");
+            }
+            if (role != "super_admin" && !u.TenantId.HasValue && u.Role == "super_admin")
+            {
+                return new ApiResponses().BadRequestResult("A global super admin can't be reassigned to a tenant role here.");
+            }
+
+            // Email is the login; block collisions within the same scope (global pool for
+            // riders/super admins, tenant pool for tenant users).
+            if (!string.Equals(email, u.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                var conflict = u.TenantId.HasValue
+                    ? await _users.GetByEmail(u.TenantId.Value, email)
+                    : await _users.GetGlobalByEmail(email);
+                if (conflict is not null && conflict.Id != u.Id)
+                {
+                    return new ApiResponses().BadRequestResult($"Another user already has the email '{email}'.");
+                }
+            }
+
+            u.Email = email;
+            u.FirstName = (request.FirstName ?? "").Trim();
+            u.LastName = (request.LastName ?? "").Trim();
+            u.Role = role;
+            u.Status = status;
+            u.Phone = NullIfBlank(request.Phone);
+            u.Birthdate = request.Birthdate;
+            u.EmergencyContactName = NullIfBlank(request.EmergencyContactName);
+            u.EmergencyContactPhone = NullIfBlank(request.EmergencyContactPhone);
+            u.AddressLine = NullIfBlank(request.AddressLine);
+            u.AddressLine2 = NullIfBlank(request.AddressLine2);
+            u.City = NullIfBlank(request.City);
+            u.State = NullIfBlank(request.State);
+            u.PostalCode = NullIfBlank(request.PostalCode);
+            u.Country = NullIfBlank(request.Country);
+            u.Bike = NullIfBlank(request.Bike);
+            u.RaceNumber = NullIfBlank(request.RaceNumber);
+            u.EmailVerified = request.EmailVerified;
+
+            await _users.SuperAdminUpdateUser(u);
+            await _audit.Log("super_admin.user_update", $"Updated user {u.Email}", "user", u.Id);
+
+            string? subdomain = null;
+            if (u.TenantId.HasValue)
+            {
+                var t = await _tenants.GetById(u.TenantId.Value);
+                subdomain = t?.Subdomain;
+            }
+            return new ApiResponses().OkResult(ToUserDetail(u, subdomain));
+        }
+
+        private static readonly HashSet<string> AllowedRoles =
+            new(StringComparer.Ordinal) { "rider", "tenant_admin", "tenant_staff", "super_admin" };
+        private static readonly HashSet<string> AllowedStatuses =
+            new(StringComparer.Ordinal) { "active", "suspended", "pending" };
+
+        private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        private static SuperAdminUserDetail ToUserDetail(User u, string? subdomain) => new()
+        {
+            Id = u.Id,
+            TenantId = u.TenantId,
+            TenantSubdomain = subdomain,
+            Email = u.Email,
+            FirstName = u.FirstName,
+            LastName = u.LastName,
+            Role = u.Role,
+            Status = u.Status,
+            Phone = u.Phone,
+            Birthdate = u.Birthdate,
+            EmergencyContactName = u.EmergencyContactName,
+            EmergencyContactPhone = u.EmergencyContactPhone,
+            AddressLine = u.AddressLine,
+            AddressLine2 = u.AddressLine2,
+            City = u.City,
+            State = u.State,
+            PostalCode = u.PostalCode,
+            Country = u.Country,
+            Bike = u.Bike,
+            RaceNumber = u.RaceNumber,
+            EmailVerified = u.EmailVerified,
+            CreatedAtUtc = DateTime.SpecifyKind(u.CreatedAt, DateTimeKind.Utc),
+        };
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpPost("Impersonate/{userId:guid}")]
@@ -556,6 +688,22 @@ namespace webapi.Controllers
                 serviceChargeBps = request.ServiceChargeBps,
                 monthlyServiceChargeCapCents = request.MonthlyServiceChargeCapCents,
             });
+        }
+
+        // Platform-level per-tenant concessions switch. Writes the same flag the tenant's own
+        // Settings -> Features toggle uses, so support can enable/disable it for any tenant.
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("Tenants/{tenantId:guid}/ConcessionsEnabled")]
+        public async Task<IActionResult> UpdateTenantConcessionsEnabled(
+            Guid tenantId, [FromBody] webapi.Controllers.API.Data.Tenant.UpdateConcessionsEnabledRequest request)
+        {
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
+            await _tenants.UpdateConcessionsEnabled(tenantId, request.Enabled);
+            await _audit.Log("tenant.concessions.update",
+                $"{(request.Enabled ? "Enabled" : "Disabled")} concessions for {tenant.Subdomain}",
+                "tenant", tenantId, tenantId, new { request.Enabled });
+            return new ApiResponses().OkResult(new { tenantId, concessionsEnabled = request.Enabled });
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -913,6 +1061,7 @@ namespace webapi.Controllers
             ServiceChargeBps = t.ServiceChargeBps,
             MonthlyServiceChargeCapCents = t.MonthlyServiceChargeCapCents,
             IsPublished = t.IsPublished,
+            ConcessionsEnabled = t.ConcessionsEnabled,
             AddressLine = t.AddressLine,
             City = t.City,
             Region = t.Region,

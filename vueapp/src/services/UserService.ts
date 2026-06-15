@@ -35,6 +35,14 @@ export class UserService {
         return axios.post(`${this.apiUrl}/User/ResetPassword/Confirm`, req);
     }
 
+    async verifyEmail(token: string) {
+        return axios.post(`${this.apiUrl}/User/VerifyEmail`, { token });
+    }
+
+    async resendVerification(email: string) {
+        return axios.post(`${this.apiUrl}/User/ResendVerification`, { email });
+    }
+
     async updateEmergencyContact(req: { name: string; phone: string }) {
         return axios.put(`${this.apiUrl}/User/Profile/EmergencyContact`, req);
     }

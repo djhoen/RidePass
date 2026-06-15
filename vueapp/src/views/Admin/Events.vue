@@ -13,6 +13,9 @@
             Times displayed in tenant timezone: <strong>{{ branding.timezone }}</strong>. Input fields are interpreted in that zone too.
         </p>
 
+        <EventCalendar v-model:monthStart="calendarMonth" :events="calendarEvents" :timezone="tz()"
+            @select="openEdit" />
+
         <v-card>
             <v-table>
                 <thead>
@@ -96,12 +99,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
 import { branding } from '@/stores/branding'
 import EventDialog from '@/components/EventDialog.vue'
+import EventCalendar from '@/components/EventCalendar.vue'
 import SocialShare, { type SocialSharePlatform } from '@/components/SocialShare.vue'
 
 const route = useRoute()
@@ -119,6 +123,11 @@ const rows = ref<EventDto[]>([])
 const loading = ref(false)
 const dialog = ref(false)
 const editing = ref<EventDto | null>(null)
+
+// Calendar: its own month + event set so navigating months doesn't disturb the
+// date-range table below. Always loads the full visible 6-week grid.
+const calendarMonth = ref(today.startOf('month').format('YYYY-MM-DD'))
+const calendarEvents = ref<EventDto[]>([])
 
 const shareOpen = ref(false)
 const sharing = ref<EventDto | null>(null)
@@ -157,9 +166,21 @@ const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
-onMounted(load)
+onMounted(() => { load(); loadCalendar() })
+watch(calendarMonth, loadCalendar)
 
 function tz(): string { return branding.timezone || 'UTC' }
+
+async function loadCalendar() {
+    // Cover the whole 6-week grid (the Sunday on/before the 1st, 42 days out) so events
+    // bleeding in from adjacent months still show in their trailing/leading cells.
+    const gridStart = dayjs(calendarMonth.value).startOf('month').startOf('week')
+    const gridEnd = gridStart.add(42, 'day')
+    const fromUtc = dayjs.tz(gridStart.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
+    const toUtc = dayjs.tz(gridEnd.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
+    const r = await eventService.list(fromUtc, toUtc)
+    calendarEvents.value = (r.data as any).data
+}
 
 function formatInTenant(utc: string): string {
     return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
@@ -206,8 +227,8 @@ function openEdit(row: EventDto) {
     dialog.value = true
 }
 
-async function onSaved(_ev: EventDto) { await load() }
-async function onDeleted(_id: string) { await load() }
+async function onSaved(_ev: EventDto) { await load(); await loadCalendar() }
+async function onDeleted(_id: string) { await load(); await loadCalendar() }
 
 function reservedChipColor(row: EventDto): string {
     if (!row.capacity) return 'default'

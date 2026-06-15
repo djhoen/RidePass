@@ -30,6 +30,10 @@ namespace webapi.Controllers.API.Data.Event
         [RegularExpression("^(scheduled|cancelled)$")]
         public string Status { get; set; } = "scheduled";
 
+        // Who the event admits. At least one must be true (validated server-side).
+        public bool AllowsRiders { get; set; } = true;
+        public bool AllowsSpectators { get; set; } = false;
+
         public bool RequiresRiderWaiver { get; set; } = true;
         public bool RequiresSpectatorWaiver { get; set; } = false;
 

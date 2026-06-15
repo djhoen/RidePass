@@ -22,6 +22,7 @@ namespace Services.Scheduling.Handlers
         private readonly ITenantRepository _tenants;
         private readonly ISmsSender _sms;
         private readonly ISmtpEmailer _emailer;
+        private readonly IEmailSuppressionRepository _suppression;
         private readonly ILogger<SendRiderMessageHandler> _logger;
 
         public SendRiderMessageHandler(
@@ -30,6 +31,7 @@ namespace Services.Scheduling.Handlers
             ITenantRepository tenants,
             ISmsSender sms,
             ISmtpEmailer emailer,
+            IEmailSuppressionRepository suppression,
             ILogger<SendRiderMessageHandler> logger)
         {
             _reports = reports;
@@ -37,6 +39,7 @@ namespace Services.Scheduling.Handlers
             _tenants = tenants;
             _sms = sms;
             _emailer = emailer;
+            _suppression = suppression;
             _logger = logger;
         }
 
@@ -80,6 +83,13 @@ namespace Services.Scheduling.Handlers
             var sent = 0;
             var skipped = new List<string>();
 
+            // Email blasts are admin-authored and can carry promotional content, so treat the
+            // email channel as marketing: skip anyone on the suppression list (opt-outs +
+            // complaints + hard bounces). Fetched once; SMS opt-outs are handled by Twilio.
+            var blocklist = channel == "email"
+                ? await _suppression.ListMarketingBlocklist(task.TenantId)
+                : new HashSet<string>();
+
             foreach (var row in targets)
             {
                 ct.ThrowIfCancellationRequested();
@@ -99,6 +109,11 @@ namespace Services.Scheduling.Handlers
                     if (string.IsNullOrWhiteSpace(row.PurchaserEmail))
                     {
                         skipped.Add($"{row.PurchaserName} (no email)");
+                        continue;
+                    }
+                    if (blocklist.Contains(row.PurchaserEmail))
+                    {
+                        skipped.Add($"{row.PurchaserName} (unsubscribed)");
                         continue;
                     }
                     var subject = string.IsNullOrWhiteSpace(payload.Subject)

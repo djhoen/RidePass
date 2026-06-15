@@ -213,6 +213,14 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("ConcessionsEnabled")]
+        public async Task<IActionResult> UpdateConcessionsEnabled([FromBody] UpdateConcessionsEnabledRequest request)
+        {
+            await _tenants.UpdateConcessionsEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("CancellationPolicy")]
         public async Task<IActionResult> UpdateCancellationPolicy([FromBody] UpdateCancellationPolicyRequest request)
         {
@@ -366,6 +374,7 @@ namespace webapi.Controllers
                 RentalsEnabled = tenant.RentalsEnabled,
                 ExtrasEnabled = tenant.ExtrasEnabled,
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
+                ConcessionsEnabled = tenant.ConcessionsEnabled,
                 AllowSelfCancel = tenant.AllowSelfCancel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,

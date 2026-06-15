@@ -79,8 +79,20 @@ namespace webapi.Controllers
 
             if (verifyResult == PasswordVerificationResult.SuccessRehashNeeded)
             {
+                // The hasher's parameters strengthened since this hash was written; recompute
+                // and persist so the stronger hash actually sticks (not just this request).
                 user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
-                // TODO: persist re-hashed password.
+                await _userRepository.UpdatePasswordHash(user.Id, user.PasswordHash);
+            }
+
+            // Riders must confirm their email before signing in. Only the 'rider' role
+            // is gated (admins/staff are provisioned by trusted admins and never go
+            // through public signup), and every pre-existing account was grandfathered
+            // verified, so this only affects new public signups.
+            if (user.Role == "rider" && !user.EmailVerified)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Please verify your email before signing in. Check your inbox for the verification link.");
             }
 
             var token = _jwtIssuer.IssueForUser(user);
@@ -147,7 +159,28 @@ namespace webapi.Controllers
             var id = await _userRepository.Create(user);
             user.Id = id;
 
-            return new ApiResponses().OkResult(new { user.Id, user.Email, user.FirstName, user.LastName, user.Role });
+            // Email verification: when SMTP is configured the rider starts unverified and
+            // must click a link before they can sign in. When SMTP is NOT configured we
+            // can't deliver the link, so auto-verify rather than lock the account out.
+            bool emailVerificationSent = false;
+            if (_emailer.IsConfigured)
+            {
+                var verifyToken = GenerateResetToken();
+                await _userRepository.SetEmailVerificationToken(
+                    user.Id, HashToken(verifyToken), DateTime.UtcNow.AddDays(7));
+                await SendVerificationEmail(user, verifyToken);
+                emailVerificationSent = true;
+            }
+            else
+            {
+                await _userRepository.MarkEmailVerified(user.Id);
+            }
+
+            return new ApiResponses().OkResult(new
+            {
+                user.Id, user.Email, user.FirstName, user.LastName, user.Role,
+                emailVerificationSent,
+            });
         }
 
         [Authorize]
@@ -274,6 +307,19 @@ namespace webapi.Controllers
             if (!IsValidBirthdate(request.Birthdate))
             {
                 return new ApiResponses().BadRequestResult("Please enter a valid birthdate.");
+            }
+            var user = await _userRepository.GetById(userId);
+            if (user is null) return new ApiResponses().NotFoundResult("User not found.");
+
+            // Birthdate drives the minor / parent-guardian waiver requirement, so it is
+            // set-once via self-serve. A rider could otherwise sign a waiver as an adult
+            // and then flip their DOB to a minor (or vice versa) to dodge the guardian
+            // signature. First-time set is allowed; corrections after that go through
+            // track staff, who can update it on the rider's behalf.
+            if (user.Birthdate.HasValue)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Your date of birth is already on file and can't be changed here. Contact the track if it needs correcting.");
             }
             await _userRepository.UpdateBirthdate(userId, request.Birthdate.Date);
             return new ApiResponses().OkResult(new { birthdate = request.Birthdate.Date });
@@ -515,6 +561,60 @@ namespace webapi.Controllers
             await _resetTokens.MarkUsed(token.Id);
 
             return new ApiResponses().OkResult(new { message = "Password updated. You can now sign in." });
+        }
+
+        // ── Email verification ────────────────────────────────────────────────────
+
+        /// <summary>Public: consume a verification token and mark the rider's email verified.</summary>
+        [AllowAnonymous]
+        [HttpPost("VerifyEmail")]
+        public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Token))
+            {
+                return new ApiResponses().BadRequestResult("Missing verification token.");
+            }
+            var user = await _userRepository.GetByEmailVerificationTokenHash(HashToken(request.Token.Trim()));
+            if (user is null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This verification link is invalid or has expired. Request a new one and try again.");
+            }
+            await _userRepository.MarkEmailVerified(user.Id);
+            return new ApiResponses().OkResult(new { message = "Email verified. You can now sign in." });
+        }
+
+        /// <summary>
+        /// Public: re-send a verification link. Always returns 200 so it never reveals
+        /// which addresses have accounts or their verification state.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("ResendVerification")]
+        public async Task<IActionResult> ResendVerification([FromBody] ResendVerificationRequest request)
+        {
+            var email = request.Email?.Trim() ?? string.Empty;
+            var user = await _userRepository.GetGlobalByEmail(email);
+            if (user is not null && user.Role == "rider" && user.Status == "active"
+                && !user.EmailVerified && _emailer.IsConfigured)
+            {
+                var verifyToken = GenerateResetToken();
+                await _userRepository.SetEmailVerificationToken(
+                    user.Id, HashToken(verifyToken), DateTime.UtcNow.AddDays(7));
+                await SendVerificationEmail(user, verifyToken);
+            }
+            return new ApiResponses().OkResult(new { message = "If that account needs verification, we've sent a new link." });
+        }
+
+        private async Task SendVerificationEmail(User user, string token)
+        {
+            if (!_emailer.IsConfigured) return;
+            // Riders are global, so the link works on whichever host they signed up from.
+            var url = $"{Request.Scheme}://{Request.Host.Value}/VerifyEmail?token={Uri.EscapeDataString(token)}";
+            var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
+<p>Welcome to RidePass! Please confirm your email to activate your account.</p>
+<p><a href=""{url}"">Verify my email</a>. This link expires in 7 days and can only be used once.</p>
+<p>If you didn't create an account, you can safely ignore this email.</p>";
+            await _emailer.Send(user.Email, "Verify your RidePass email", html);
         }
 
         private async Task<string> BuildResetUrl(User user, string token)

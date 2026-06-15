@@ -10,17 +10,20 @@ namespace Services.Rewards
         private readonly IRewardRepository _rewards;
         private readonly ITenantRepository _tenants;
         private readonly ISmtpEmailer _emailer;
+        private readonly IEmailSuppressionRepository _suppression;
         private readonly ILogger<RewardEngine> _logger;
 
         public RewardEngine(
             IRewardRepository rewards,
             ITenantRepository tenants,
             ISmtpEmailer emailer,
+            IEmailSuppressionRepository suppression,
             ILogger<RewardEngine> logger)
         {
             _rewards = rewards;
             _tenants = tenants;
             _emailer = emailer;
+            _suppression = suppression;
             _logger = logger;
         }
 
@@ -53,7 +56,7 @@ namespace Services.Rewards
                 if (progressTowardNext >= program.RequirementCount)
                 {
                     await _rewards.CreateRedemption(program.Id, userId);
-                    await SendRewardEmail(riderEmail, riderFirstName, program);
+                    await SendRewardEmail(tenantId, riderEmail, riderFirstName, program);
                     continue;
                 }
 
@@ -62,16 +65,18 @@ namespace Services.Rewards
                     var remaining = program.RequirementCount - progressTowardNext;
                     if (remaining == threshold && enrollment.LastProximityEmailedAtCount != progressTowardNext)
                     {
-                        await SendProximityEmail(riderEmail, riderFirstName, program, remaining);
+                        await SendProximityEmail(tenantId, riderEmail, riderFirstName, program, remaining);
                         await _rewards.UpdateLastProximityEmailedAtCount(enrollment.Id, progressTowardNext);
                     }
                 }
             }
         }
 
-        private async Task SendRewardEmail(string toEmail, string firstName, RewardProgram program)
+        private async Task SendRewardEmail(Guid tenantId, string toEmail, string firstName, RewardProgram program)
         {
             if (!_emailer.IsConfigured) return;
+            // Reward-earned is transactional; skip only hard-bounced addresses, not marketing opt-outs.
+            if (await _suppression.IsSuppressed(toEmail, tenantId, marketing: false)) return;
             var rewardLine = program.RewardPercentOff == 100
                 ? "a free pass / ticket"
                 : $"{program.RewardPercentOff}% off your next {KindLabel(program.RequirementKind)}";
@@ -81,9 +86,12 @@ namespace Services.Rewards
             await _emailer.Send(toEmail, $"You earned a reward — {program.Name}", html);
         }
 
-        private async Task SendProximityEmail(string toEmail, string firstName, RewardProgram program, int remaining)
+        private async Task SendProximityEmail(Guid tenantId, string toEmail, string firstName, RewardProgram program, int remaining)
         {
             if (!_emailer.IsConfigured) return;
+            // Proximity nudges are marketing: honor unsubscribes and complaints (and hard bounces).
+            // The reward-EARNED email stays transactional and is not gated here.
+            if (await _suppression.IsSuppressed(toEmail, tenantId, marketing: true)) return;
             var rewardLine = program.RewardPercentOff == 100
                 ? "a free pass / ticket"
                 : $"{program.RewardPercentOff}% off";

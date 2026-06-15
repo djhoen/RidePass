@@ -11,6 +11,7 @@ namespace Services.Repositories
             title, description,
             starts_at AS StartsAt, ends_at AS EndsAt, all_day AS AllDay,
             capacity, location_label AS LocationLabel, status,
+            allows_riders AS AllowsRiders, allows_spectators AS AllowsSpectators,
             requires_rider_waiver AS RequiresRiderWaiver,
             requires_spectator_waiver AS RequiresSpectatorWaiver,
             spectator_waiver_id AS SpectatorWaiverId,
@@ -56,10 +57,12 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO event (tenant_id, event_type_id, title, description,
                                    starts_at, ends_at, all_day, capacity, location_label, status,
+                                   allows_riders, allows_spectators,
                                    requires_rider_waiver, requires_spectator_waiver,
                                    spectator_waiver_id, racer_waiver_id, image_url, schedule_json)
                 VALUES (@TenantId, @EventTypeId, @Title, @Description,
                         @StartsAt, @EndsAt, @AllDay, @Capacity, @LocationLabel, @Status,
+                        @AllowsRiders, @AllowsSpectators,
                         @RequiresRiderWaiver, @RequiresSpectatorWaiver,
                         @SpectatorWaiverId, @RacerWaiverId, @ImageUrl,
                         COALESCE(@ScheduleJson::jsonb, '[]'::jsonb))
@@ -81,6 +84,8 @@ namespace Services.Repositories
                     capacity        = @Capacity,
                     location_label  = @LocationLabel,
                     status          = @Status,
+                    allows_riders     = @AllowsRiders,
+                    allows_spectators = @AllowsSpectators,
                     requires_rider_waiver     = @RequiresRiderWaiver,
                     requires_spectator_waiver = @RequiresSpectatorWaiver,
                     spectator_waiver_id = @SpectatorWaiverId,

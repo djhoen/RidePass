@@ -6,6 +6,7 @@ export interface CampaignListItem {
     status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed'
     recipientCount: number
     sentAtUtc: string | null
+    scheduledForUtc: string | null
     createdAtUtc: string
 }
 

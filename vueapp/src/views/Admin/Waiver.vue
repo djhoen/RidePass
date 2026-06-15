@@ -57,18 +57,18 @@
             </v-table>
         </v-card>
 
-        <v-dialog v-model="dialog" max-width="900" scrollable>
-            <v-card>
+        <v-dialog v-model="dialog" max-width="900">
+            <v-card class="d-flex flex-column" style="max-height: 90vh">
                 <v-card-title class="d-flex align-center">
                     <span>{{ editing ? 'Edit Waiver' : 'New Waiver' }}</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
                 </v-card-title>
-                <v-tabs v-model="activeTab" color="primary" grow>
+                <v-tabs v-model="activeTab" color="primary" grow style="flex: 0 0 auto">
                     <v-tab value="waiver">Waiver</v-tab>
                     <v-tab value="events">Associated Events</v-tab>
                 </v-tabs>
-                <v-card-text style="min-height: 520px">
+                <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
                     <v-window v-model="activeTab" class="mt-4">
                         <v-window-item value="waiver">
                             <v-row>

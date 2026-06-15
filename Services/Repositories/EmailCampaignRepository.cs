@@ -78,6 +78,23 @@ namespace Services.Repositories
             await _db.Execute(sql, new { id });
         }
 
+        public async Task MarkScheduled(Guid id, DateTime scheduledForUtc)
+        {
+            const string sql = "UPDATE email_campaign SET status = 'scheduled', scheduled_for = @scheduledForUtc WHERE id = @id";
+            await _db.Execute(sql, new { id, scheduledForUtc });
+        }
+
+        public async Task RevertToDraft(Guid id)
+        {
+            const string sql = "UPDATE email_campaign SET status = 'draft', scheduled_for = NULL WHERE id = @id";
+            await _db.Execute(sql, new { id });
+        }
+
+        public async Task DeleteSendRows(Guid campaignId)
+        {
+            await _db.Execute("DELETE FROM email_campaign_send WHERE campaign_id = @campaignId", new { campaignId });
+        }
+
         public async Task MarkSent(Guid id, int recipientCount)
         {
             const string sql = @"
@@ -99,6 +116,45 @@ namespace Services.Repositories
                 s.CampaignId = campaignId;
                 await _db.Execute(sql, s);
             }
+        }
+
+        public async Task<List<EmailCampaignSend>> ListSends(Guid campaignId)
+        {
+            const string sql = @"
+                SELECT id, campaign_id AS CampaignId, subscriber_id AS SubscriberId,
+                       email, name, sent_at AS SentAt, status, error
+                FROM email_campaign_send
+                WHERE campaign_id = @campaignId
+                ORDER BY id";
+            var r = await _db.Query<EmailCampaignSend>(sql, new { campaignId });
+            return r.ToList();
+        }
+
+        public async Task UpdateSendStatus(Guid sendId, string status, string? error)
+        {
+            const string sql = @"
+                UPDATE email_campaign_send
+                SET status = @status,
+                    error = @error,
+                    sent_at = CASE WHEN @status = 'sent' THEN now() ELSE sent_at END
+                WHERE id = @sendId";
+            await _db.Execute(sql, new { sendId, status, error });
+        }
+
+        public async Task<int> CountSentEmailsInMonth(Guid tenantId, DateTime fromUtc, Guid excludeCampaignId)
+        {
+            // Tenant-scoped via the campaign join; counts delivered ('sent') rows since fromUtc,
+            // excluding the campaign being billed so its own rows don't inflate the baseline.
+            const string sql = @"
+                SELECT COUNT(*)::int
+                FROM email_campaign_send s
+                JOIN email_campaign c ON c.id = s.campaign_id
+                WHERE c.tenant_id = @tenantId
+                  AND s.status = 'sent'
+                  AND s.sent_at >= @fromUtc
+                  AND s.campaign_id <> @excludeCampaignId";
+            var r = await _db.Query<int>(sql, new { tenantId, fromUtc, excludeCampaignId });
+            return r.FirstOrDefault();
         }
     }
 }

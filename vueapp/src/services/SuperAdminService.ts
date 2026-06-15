@@ -9,6 +9,7 @@ export interface TenantSummary {
     serviceChargeBps: number
     monthlyServiceChargeCapCents: number | null
     isPublished: boolean
+    concessionsEnabled: boolean
     addressLine: string | null
     city: string | null
     region: string | null
@@ -69,6 +70,44 @@ export interface SuperAdminUser {
     lastName: string
     role: string
     status: string
+    phone: string | null
+}
+
+export interface SuperAdminUserDetail extends SuperAdminUser {
+    birthdate: string | null
+    emergencyContactName: string | null
+    emergencyContactPhone: string | null
+    addressLine: string | null
+    addressLine2: string | null
+    city: string | null
+    state: string | null
+    postalCode: string | null
+    country: string | null
+    bike: string | null
+    raceNumber: string | null
+    emailVerified: boolean
+    createdAtUtc: string
+}
+
+export interface UpdateUserPayload {
+    email: string
+    firstName: string
+    lastName: string
+    role: string
+    status: string
+    phone: string | null
+    birthdate: string | null
+    emergencyContactName: string | null
+    emergencyContactPhone: string | null
+    addressLine: string | null
+    addressLine2: string | null
+    city: string | null
+    state: string | null
+    postalCode: string | null
+    country: string | null
+    bike: string | null
+    raceNumber: string | null
+    emailVerified: boolean
 }
 
 export interface ImpersonationResult {
@@ -107,6 +146,14 @@ export class SuperAdminService {
 
     listUsers(q?: string) {
         return axios.get<{ data: SuperAdminUser[] }>(`${this.apiUrl}/SuperAdmin/Users`, { params: { q } })
+    }
+
+    getUser(id: string) {
+        return axios.get<{ data: SuperAdminUserDetail }>(`${this.apiUrl}/SuperAdmin/Users/${id}`)
+    }
+
+    updateUser(id: string, body: UpdateUserPayload) {
+        return axios.put<{ data: SuperAdminUserDetail }>(`${this.apiUrl}/SuperAdmin/Users/${id}`, body)
     }
 
     impersonate(userId: string) {
@@ -184,6 +231,10 @@ export class SuperAdminService {
 
     updateTenant(tenantId: string, body: UpdateTenantPayload) {
         return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}`, body)
+    }
+
+    updateTenantConcessionsEnabled(tenantId: string, enabled: boolean) {
+        return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/ConcessionsEnabled`, { enabled })
     }
 
     getReconciliation(fromUtc: string, toUtc: string) {

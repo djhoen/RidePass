@@ -61,6 +61,7 @@ export interface BrandingState {
     rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
+    concessionsEnabled: boolean
     allowSelfCancel: boolean
     waitlistEnabled: boolean
     waitlistConfirmWindowMinutes: number
@@ -128,6 +129,7 @@ const defaults: BrandingState = {
     rentalsEnabled: false,
     extrasEnabled: false,
     seasonPassesEnabled: true,
+    concessionsEnabled: false,
     allowSelfCancel: false,
     waitlistEnabled: true,
     waitlistConfirmWindowMinutes: 20,
@@ -227,6 +229,7 @@ export async function loadBranding(): Promise<void> {
         branding.rentalsEnabled = !!data.rentalsEnabled
         branding.extrasEnabled = !!data.extrasEnabled
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
+        branding.concessionsEnabled = !!data.concessionsEnabled
         branding.allowSelfCancel = !!data.allowSelfCancel
         branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20

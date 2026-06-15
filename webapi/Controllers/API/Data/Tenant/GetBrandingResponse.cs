@@ -55,6 +55,7 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool RentalsEnabled { get; set; }
         public bool ExtrasEnabled { get; set; }
         public bool SeasonPassesEnabled { get; set; } = true;
+        public bool ConcessionsEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; }

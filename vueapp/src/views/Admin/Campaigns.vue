@@ -12,10 +12,6 @@
             </v-btn>
         </div>
 
-        <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            Email delivery isn't wired up yet. Sending is disabled until an email provider is connected, so campaigns stay as drafts and nothing leaves the system.
-        </v-alert>
-
         <v-card>
             <v-table>
                 <thead>
@@ -39,17 +35,10 @@
                             <v-btn v-if="c.status === 'draft'" variant="text" size="small" @click="openCompose(c.id)">
                                 Edit
                             </v-btn>
-                            <!-- Send is disabled while email delivery is not built (see backend DeliveryEnabled guard). -->
-                            <v-tooltip v-if="c.status === 'draft'" text="Email delivery coming soon" location="top">
-                                <template #activator="{ props }">
-                                    <span v-bind="props">
-                                        <v-btn size="small" color="primary" variant="tonal" disabled
-                                            @click="sendCampaign(c)">
-                                            Send
-                                        </v-btn>
-                                    </span>
-                                </template>
-                            </v-tooltip>
+                            <v-btn v-if="c.status === 'draft'" size="small" color="primary" variant="tonal"
+                                @click="sendCampaign(c)">
+                                Send
+                            </v-btn>
                             <v-btn v-if="c.status !== 'sent' && c.status !== 'sending'" variant="text" size="small"
                                 color="error" @click="deleteCampaign(c)">
                                 Delete
@@ -92,16 +81,9 @@
                     <v-spacer></v-spacer>
                     <v-btn :disabled="saving" @click="composeOpen = false">{{ composeReadonly ? 'Close' : 'Cancel' }}</v-btn>
                     <v-btn v-if="!composeReadonly" :loading="saving" color="primary" @click="saveDraft">Save Draft</v-btn>
-                    <!-- Save & Send is disabled while email delivery is not built (see backend DeliveryEnabled guard). -->
-                    <v-tooltip v-if="!composeReadonly" text="Email delivery coming soon" location="top">
-                        <template #activator="{ props }">
-                            <span v-bind="props">
-                                <v-btn :loading="sending" color="success" disabled @click="saveAndSend">
-                                    Save &amp; Send
-                                </v-btn>
-                            </span>
-                        </template>
-                    </v-tooltip>
+                    <v-btn v-if="!composeReadonly" :loading="sending" color="success" @click="saveAndSend">
+                        Save &amp; Send
+                    </v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -118,6 +100,7 @@ import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import RichTextView from '@/components/RichTextView.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatEmailCost } from '@/helpers/EmailPricing'
 
 const confirm = useConfirm()
 const campaignService = new CampaignService()
@@ -246,7 +229,7 @@ async function deleteCampaign(c: CampaignListItem) {
 
 function buildSendConfirm(subject: string): string {
     const n = activeSubscriberCount.value ?? 0
-    return `Send "${subject}" to ${n} active subscribers?\n\nEstimated cost: free`
+    return `Send "${subject}" to ${n} active subscribers?\n\nEstimated cost: ${formatEmailCost(n)} (${n} emails this send)`
 }
 
 function validate(): boolean {

@@ -65,6 +65,7 @@ builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
 // Scheduled-task handlers — add one line per kind. The dispatcher resolves
 // them via IEnumerable<IScheduledTaskHandler> and routes by Kind.
 builder.Services.AddScoped<Services.Scheduling.IScheduledTaskHandler, Services.Scheduling.Handlers.SendRiderMessageHandler>();
+builder.Services.AddScoped<Services.Scheduling.IScheduledTaskHandler, Services.Scheduling.Handlers.SendCampaignHandler>();
 builder.Services.AddScoped<Services.Scheduling.ScheduledTaskDispatcher>();
 builder.Services.AddScoped<IDiscoverRepository, DiscoverRepository>();
 // IP geolocation for the apex Events page (US vs out-of-country branch + radius
@@ -72,6 +73,9 @@ builder.Services.AddScoped<IDiscoverRepository, DiscoverRepository>();
 builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpService>();
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
+builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();
+builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
+builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();
 builder.Services.AddScoped<ITenantLedgerRepository, TenantLedgerRepository>();
@@ -105,6 +109,7 @@ builder.Services.AddScoped<IEventNotifier, EventNotifier>();
 builder.Services.AddScoped<IAuditLogger, webapi.Helpers.HttpContextAuditLogger>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
+builder.Services.AddSingleton<IEmailLinkTokens, EmailLinkTokens>();
 // Scoped (not Singleton) because TwilioSmsSender now persists outbound
 // messages to tenant_message via ITenantConversationRepository, which is
 // scoped per request. The static HttpClient inside the sender continues to

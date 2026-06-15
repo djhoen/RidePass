@@ -47,6 +47,7 @@ namespace Services.Repositories
             rentals_enabled AS RentalsEnabled,
             extras_enabled AS ExtrasEnabled,
             season_passes_enabled AS SeasonPassesEnabled,
+            concessions_enabled AS ConcessionsEnabled,
             allow_self_cancel AS AllowSelfCancel,
             waitlist_enabled AS WaitlistEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
@@ -329,6 +330,12 @@ namespace Services.Repositories
         public async Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled)
         {
             const string sql = "UPDATE tenant SET season_passes_enabled = @enabled WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateConcessionsEnabled(Guid tenantId, bool enabled)
+        {
+            const string sql = "UPDATE tenant SET concessions_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
         }
 

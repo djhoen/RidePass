@@ -7,6 +7,7 @@ const routes = [
     { path: '/Login', name: 'Login', component: () => import('../views/Login.vue') },
     { path: '/CreateAccount', name: 'CreateAccount', component: () => import('../views/CreateAccount.vue') },
     { path: '/ResetPassword', name: 'ResetPassword', component: () => import('../views/ResetPassword.vue') },
+    { path: '/VerifyEmail', name: 'VerifyEmail', component: () => import('../views/VerifyEmail.vue') },
     { path: '/Calendar', name: 'Calendar', component: () => import('../views/Calendar.vue') },
     { path: '/Events', name: 'Events', component: () => import('../views/Events.vue') },
     { path: '/Waiver', name: 'Waiver', component: () => import('../views/Waiver.vue'), meta: { requiresAuth: true } },
@@ -227,6 +228,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Concessions',
+        name: 'AdminConcessions',
+        component: () => import('../views/Admin/Concessions.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Rentals',
         name: 'AdminRentals',
         component: () => import('../views/Admin/Rentals.vue'),
@@ -355,6 +362,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Suppression',
+        name: 'AdminSuppression',
+        component: () => import('../views/Admin/Suppression.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Surveys',
         name: 'AdminSurveys',
         component: () => import('../views/Admin/Surveys.vue'),
@@ -386,6 +399,12 @@ const routes = [
         path: '/Unsubscribe/:token',
         name: 'Unsubscribe',
         component: () => import('../views/Unsubscribe.vue'),
+    },
+    // New suppression-based one-click unsubscribe (campaigns/marketing). Token is in the query.
+    {
+        path: '/EmailUnsubscribe',
+        name: 'EmailUnsubscribe',
+        component: () => import('../views/EmailUnsubscribe.vue'),
     },
     // Legacy path — redirect to the new name so existing bookmarks keep working.
     { path: '/Admin/Scanner', redirect: '/Admin/RedeemTickets' },

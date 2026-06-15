@@ -214,7 +214,7 @@ interface AdminGroup { value: string; title: string; icon: string; links: AdminL
 // Direct links: pinned at top of admin menu, no group header.
 const allDirectLinks: AdminLink[] = [
     { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null },
-    { to: '/Events',          icon: 'mdi-calendar',         title: 'Events',    perm: null },
+    { to: '/Admin/Events',    icon: 'mdi-calendar',         title: 'Events',    perm: Perm.CatalogManage },
     { to: '/Admin/Users',     icon: 'mdi-account-multiple', title: 'Users',     perm: Perm.UsersManage },
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
@@ -246,6 +246,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage },
             { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage },
+            { to: '/Admin/Concessions',  icon: 'mdi-storefront',           title: 'Concessions',   perm: Perm.CatalogManage },
         ],
     },
     {
@@ -267,6 +268,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
             { to: '/Admin/Campaigns',   icon: 'mdi-email-newsletter',  title: 'Campaigns',   perm: Perm.CampaignsManage },
+            { to: '/Admin/Suppression', icon: 'mdi-email-off',         title: 'Suppression', perm: Perm.CampaignsManage },
             { to: '/Admin/Surveys',     icon: 'mdi-poll',              title: 'Surveys',     perm: Perm.CampaignsManage },
         ],
     },

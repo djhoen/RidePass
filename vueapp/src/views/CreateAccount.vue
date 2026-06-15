@@ -3,6 +3,26 @@
         <v-row align="center" justify="center">
             <v-col cols="12" sm="8" md="5">
                 <v-card class="pa-4">
+                    <!-- Verification-sent confirmation: shown instead of the form once the
+                         rider has been emailed a verification link and must verify before login. -->
+                    <template v-if="verificationSent">
+                        <v-card-text class="text-center py-8">
+                            <v-icon color="primary" size="64" class="mb-4">mdi-email-check-outline</v-icon>
+                            <h2 class="text-h5 font-weight-bold mb-2">Almost there!</h2>
+                            <p class="text-body-1 text-medium-emphasis mb-2">
+                                We sent a verification link to <strong>{{ sentToEmail }}</strong>.
+                                Click it to activate your account, then sign in.
+                            </p>
+                            <v-btn color="primary" size="large" class="text-none mt-4" rounded="lg"
+                                to="/Login">Go to sign in</v-btn>
+                            <div class="text-body-2 text-medium-emphasis mt-6">
+                                Didn't get it?
+                                <a href="#" class="resend-link ml-1" @click.prevent="resend">Resend</a>
+                            </div>
+                        </v-card-text>
+                    </template>
+
+                    <template v-else>
                     <v-card-title class="text-h5 text-center">Create Account</v-card-title>
                     <v-card-text>
                         <v-form @submit.prevent="createAccount">
@@ -43,6 +63,7 @@
                     <v-card-actions class="justify-center">
                         <router-link to="/Login">Already have an account? Login</router-link>
                     </v-card-actions>
+                    </template>
                 </v-card>
             </v-col>
         </v-row>
@@ -69,6 +90,11 @@ const loading = ref(false)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('error')
+
+// When the rider must verify their email before logging in, we swap the form for
+// a confirmation message instead of redirecting to the login page.
+const verificationSent = ref(false)
+const sentToEmail = ref('')
 
 const form = ref({
     firstName: '',
@@ -113,13 +139,22 @@ async function createAccount() {
     }
     try {
         loading.value = true
-        await userService.createAccount(form.value)
+        const response = await userService.createAccount(form.value)
         if (form.value.subscribeNewsletter && !isApex.value) {
             // Best-effort: a failed newsletter signup shouldn't block account creation success.
             try {
                 await newsletterService.subscribe(form.value.email, `${form.value.firstName} ${form.value.lastName}`.trim() || null)
             } catch { /* ignore */ }
         }
+        const sent = response.data?.data?.emailVerificationSent
+        if (sent) {
+            // The rider must click the emailed link before they can sign in, so hold
+            // them on a confirmation screen rather than bouncing to the login page.
+            sentToEmail.value = form.value.email
+            verificationSent.value = true
+            return
+        }
+        // No verification needed (SMTP not configured): the account is usable now.
         snackbarText.value = 'Account created successfully!'
         snackbarColor.value = 'success'
         snackbar.value = true
@@ -132,4 +167,22 @@ async function createAccount() {
         loading.value = false
     }
 }
+
+async function resend() {
+    try {
+        await userService.resendVerification(sentToEmail.value)
+    } catch { /* endpoint always returns 200; ignore */ }
+    snackbarText.value = "If that account needs verification, we've sent a new link."
+    snackbarColor.value = 'success'
+    snackbar.value = true
+}
 </script>
+
+<style scoped>
+.resend-link {
+    color: rgb(var(--v-theme-primary));
+    text-decoration: none;
+    font-weight: 600;
+}
+.resend-link:hover { text-decoration: underline; }
+</style>

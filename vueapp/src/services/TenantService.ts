@@ -31,6 +31,10 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/SeasonPassesEnabled`, req)
     }
 
+    async updateConcessionsEnabled(req: { enabled: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/ConcessionsEnabled`, req)
+    }
+
     async updateCancellationPolicy(req: {
         allowSelfCancel: boolean
         waitlistEnabled: boolean

@@ -67,6 +67,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateRentalsEnabled(Guid tenantId, bool enabled);
         Task UpdateExtrasEnabled(Guid tenantId, bool enabled);
         Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled);
+        Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
         Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, bool waitlistEnabled, int waitlistConfirmWindowMinutes);
         Task UpdateMembershipSettings(
             Guid tenantId, bool enabled, string name, int priceCents, string durationKind,

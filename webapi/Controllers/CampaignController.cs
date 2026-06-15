@@ -14,25 +14,28 @@ namespace webapi.Controllers
     [Authorize(Policy = TenantPermissions.Policy.CampaignsManage)]
     public class CampaignController : ControllerBase
     {
-        // Bulk email delivery is not built yet. While this is false, the Send action is a
-        // hard no-op: it does not change the campaign to a "sent" state and does not write
-        // fake send rows, so the UI can never claim a campaign went out during client testing.
-        // Flip to true (and finish the SMTP/SES wiring in Send) to re-enable delivery.
-        private const bool DeliveryEnabled = false;
-
         private readonly IEmailCampaignRepository _campaigns;
         private readonly INewsletterRepository _subscribers;
+        private readonly IEmailSuppressionRepository _suppression;
+        private readonly ISmtpEmailer _emailer;
+        private readonly IScheduledTaskRepository _scheduledTasks;
         private readonly ITenantContext _tenantContext;
         private readonly ILogger<CampaignController> _logger;
 
         public CampaignController(
             IEmailCampaignRepository campaigns,
             INewsletterRepository subscribers,
+            IEmailSuppressionRepository suppression,
+            ISmtpEmailer emailer,
+            IScheduledTaskRepository scheduledTasks,
             ITenantContext tenantContext,
             ILogger<CampaignController> logger)
         {
             _campaigns = campaigns;
             _subscribers = subscribers;
+            _suppression = suppression;
+            _emailer = emailer;
+            _scheduledTasks = scheduledTasks;
             _tenantContext = tenantContext;
             _logger = logger;
         }
@@ -112,21 +115,19 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// Send action. Real bulk delivery is out of scope right now, so while
-        /// <see cref="DeliveryEnabled"/> is false this short-circuits to a clear no-op:
-        /// it does NOT mark the campaign "sent" and does NOT write per-recipient send rows.
-        /// The recipient-materialization helper code below is kept (behind the guard) so
-        /// delivery can be re-enabled later by flipping the const and finishing the wiring.
+        /// Materializes the (suppression-filtered) recipient rows, flips the campaign to
+        /// 'sending', and enqueues a background task that does the actual SMTP delivery
+        /// (SendCampaignHandler). Returns immediately so a large list doesn't time out the
+        /// request. Delivery is gated on SMTP being configured, so during client testing
+        /// (no SES yet) this safely refuses rather than pretending to send.
         /// </summary>
         [HttpPost("{id:guid}/Send")]
-        public async Task<IActionResult> Send(Guid id)
+        public async Task<IActionResult> Send(Guid id, [FromQuery] DateTime? scheduledForUtc)
         {
-            // Guard: never let an operator "send" while delivery is unbuilt. Returning a
-            // BadRequest here means the campaign stays in its current (draft) state and the
-            // UI cannot falsely show it as sent.
-            if (!DeliveryEnabled)
+            if (!_emailer.IsConfigured)
             {
-                return new ApiResponses().BadRequestResult("Email campaign delivery isn't enabled yet.");
+                return new ApiResponses().BadRequestResult(
+                    "Email isn't configured yet. Set up the SMTP / SES credentials before sending campaigns.");
             }
 
             var campaign = await _campaigns.GetById(id, _tenantContext.TenantId);
@@ -145,31 +146,87 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("No active subscribers to send to.");
             }
 
-            await _campaigns.MarkSending(id);
+            // Compliance gate: drop anyone on the suppression list (hard bounces + marketing
+            // opt-outs, tenant or platform-wide) before they ever become a send row. The handler
+            // re-checks at send time too, in case someone opts out between now and delivery.
+            var blocklist = await _suppression.ListMarketingBlocklist(_tenantContext.TenantId);
+            var beforeCount = recipients.Count;
+            recipients = recipients.Where(r => !blocklist.Contains(r.Email)).ToList();
+            var suppressedCount = beforeCount - recipients.Count;
+            if (recipients.Count == 0)
+            {
+                return new ApiResponses().BadRequestResult("Every subscriber is on the suppression list; nothing to send.");
+            }
 
-            var sendRows = recipients.Select(r => new EmailCampaignSend
+            // A future time (60s grace for clock skew) schedules; otherwise send now. The
+            // audience is snapshotted now; the handler re-checks suppression at delivery time
+            // so opt-outs between scheduling and sending are still honored.
+            var runAt = scheduledForUtc?.ToUniversalTime();
+            var isScheduled = runAt.HasValue && runAt.Value > DateTime.UtcNow.AddSeconds(60);
+
+            await _campaigns.CreateSendRows(id, recipients.Select(r => new EmailCampaignSend
             {
                 SubscriberId = r.Id,
                 Email = r.Email,
                 Name = r.Name,
                 Status = "pending",
-            });
-            await _campaigns.CreateSendRows(id, sendRows);
+            }));
+            if (isScheduled) await _campaigns.MarkScheduled(id, runAt!.Value);
+            else await _campaigns.MarkSending(id);
 
-            // TODO: deliver via SMTP/SES here before marking sent.
-            _logger.LogInformation(
-                "Campaign {CampaignId} delivering subject '{Subject}' to {Count} subscribers for tenant {TenantId}",
-                id, campaign.Subject, recipients.Count, _tenantContext.TenantId);
+            // Hand delivery to the background runner (now, or at the scheduled time).
+            Guid? createdBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            var payloadJson = System.Text.Json.JsonSerializer.Serialize(
+                new Services.Scheduling.Handlers.SendCampaignPayload { CampaignId = id });
+            await _scheduledTasks.Enqueue(_tenantContext.TenantId, "send_campaign", payloadJson,
+                isScheduled ? runAt!.Value : DateTime.UtcNow, createdBy);
 
-            await _campaigns.MarkSent(id, recipients.Count);
-
+            var suppressedNote = suppressedCount > 0 ? $" ({suppressedCount} suppressed skipped)" : "";
             return new ApiResponses().OkResult(new SendCampaignResponse
             {
                 CampaignId = id,
                 RecipientCount = recipients.Count,
-                Status = "sent",
-                SendNotice = null,
+                Status = isScheduled ? "scheduled" : "sending",
+                SendNotice = isScheduled
+                    ? $"Scheduled for {runAt!.Value:yyyy-MM-dd HH:mm} UTC, {recipients.Count} recipient{(recipients.Count == 1 ? "" : "s")}{suppressedNote}."
+                    : $"Sending to {recipients.Count} subscriber{(recipients.Count == 1 ? "" : "s")} in the background{suppressedNote}.",
             });
+        }
+
+        // Cancel a scheduled campaign before it sends: cancel the pending task, drop the
+        // materialized send rows, and revert to draft so it can be edited / re-sent.
+        [HttpPost("{id:guid}/Unschedule")]
+        public async Task<IActionResult> Unschedule(Guid id)
+        {
+            var campaign = await _campaigns.GetById(id, _tenantContext.TenantId);
+            if (campaign is null)
+            {
+                return new ApiResponses().NotFoundResult("Campaign not found.");
+            }
+            if (campaign.Status != "scheduled")
+            {
+                return new ApiResponses().BadRequestResult("Only a scheduled campaign can be unscheduled.");
+            }
+            if (!TryGetUserId(out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+
+            var pending = await _scheduledTasks.ListPendingForTenant(_tenantContext.TenantId, null);
+            foreach (var t in pending.Where(t => t.Kind == "send_campaign"))
+            {
+                try
+                {
+                    var p = System.Text.Json.JsonSerializer.Deserialize<Services.Scheduling.Handlers.SendCampaignPayload>(
+                        t.Payload, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (p?.CampaignId == id) await _scheduledTasks.Cancel(t.Id, _tenantContext.TenantId, userId);
+                }
+                catch { /* skip unparseable payloads */ }
+            }
+
+            await _campaigns.DeleteSendRows(id);
+            await _campaigns.RevertToDraft(id);
+            return new ApiResponses().OkResult(new { unscheduled = true });
         }
 
         private static CampaignListItem ToListItem(EmailCampaign c) => new()
@@ -179,6 +236,7 @@ namespace webapi.Controllers
             Status = c.Status,
             RecipientCount = c.RecipientCount,
             SentAtUtc = c.SentAt.HasValue ? DateTime.SpecifyKind(c.SentAt.Value, DateTimeKind.Utc) : null,
+            ScheduledForUtc = c.ScheduledFor.HasValue ? DateTime.SpecifyKind(c.ScheduledFor.Value, DateTimeKind.Utc) : null,
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
         };
 

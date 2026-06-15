@@ -9,6 +9,9 @@ namespace Services.Helpers
     {
         bool IsConfigured { get; }
         Task<bool> Send(string toEmail, string subject, string htmlBody);
+        // Overload that stamps extra headers (e.g. List-Unsubscribe / List-Unsubscribe-Post
+        // for marketing one-click unsubscribe).
+        Task<bool> Send(string toEmail, string subject, string htmlBody, IReadOnlyDictionary<string, string>? headers);
     }
 
     /// <summary>
@@ -31,7 +34,11 @@ namespace Services.Helpers
                         && !string.IsNullOrWhiteSpace(config["Email:FromAddress"]);
         }
 
-        public async Task<bool> Send(string toEmail, string subject, string htmlBody)
+        public Task<bool> Send(string toEmail, string subject, string htmlBody)
+            => Send(toEmail, subject, htmlBody, null);
+
+        public async Task<bool> Send(string toEmail, string subject, string htmlBody,
+            IReadOnlyDictionary<string, string>? headers)
         {
             if (!IsConfigured) return false;
             try
@@ -56,6 +63,10 @@ namespace Services.Helpers
                     IsBodyHtml = true,
                 };
                 msg.To.Add(toEmail);
+                if (headers is not null)
+                {
+                    foreach (var h in headers) msg.Headers.Add(h.Key, h.Value);
+                }
                 await client.SendMailAsync(msg);
                 return true;
             }

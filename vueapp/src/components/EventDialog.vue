@@ -1,6 +1,6 @@
 <template>
-    <v-dialog :model-value="open" @update:model-value="$emit('update:open', $event)" max-width="800" scrollable>
-        <v-card>
+    <v-dialog :model-value="open" @update:model-value="$emit('update:open', $event)" fullscreen>
+        <v-card class="d-flex flex-column" style="height: 100%">
             <v-card-title class="d-flex align-center">
                 <span>{{ editing ? 'Edit Event' : 'Add Event' }}</span>
                 <v-spacer></v-spacer>
@@ -8,25 +8,18 @@
             </v-card-title>
             <!-- Tabs: General | Race Classes (race events only) | Add-ons | Waivers.
                  Tickets are gone — use a Gate Fee add-on for spectator admissions. -->
-            <v-tabs v-model="activeTab" color="primary" grow>
+            <v-tabs v-model="activeTab" color="primary" grow style="flex: 0 0 auto">
                 <v-tab value="info">Details</v-tab>
-                <v-tab v-if="isRaceEvent" value="race" :disabled="!editing">
-                    Race Classes
-                    <v-tooltip v-if="!editing" location="bottom" activator="parent">
-                        Save the event first, then add race classes here.
-                    </v-tooltip>
-                </v-tab>
-                <v-tab v-if="branding.extrasEnabled" value="extras">Add-ons &amp; Gate Fees</v-tab>
+                <v-tab value="entry">Entry &amp; Add-ons</v-tab>
                 <v-tab value="waivers">Waivers</v-tab>
             </v-tabs>
 
-            <v-card-text style="min-height: 460px">
+            <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
                 <v-window v-model="activeTab" class="mt-4">
                     <v-window-item value="info">
                         <p class="text-caption text-medium-emphasis mt-2 mb-0">
-                            Set the basics here. Use the tabs above for
-                            <template v-if="isRaceEvent">race classes, </template>
-                            spectator gate fees and add-ons, and waiver requirements.
+                            Set the basics and who can attend here. Use the <strong>Entry &amp; Add-ons</strong> tab to set up
+                            rider entry, gate fees, and add-ons, and the <strong>Waivers</strong> tab for required signatures.
                         </p>
                         <v-row class="mt-1">
                             <v-col cols="12" md="8">
@@ -61,36 +54,36 @@
                         </p>
                         <v-text-field v-model="form.locationLabel" label="Location" density="compact" class="mt-4"></v-text-field>
 
-                        <!-- Day-pass eligibility (non-race events only). The product list
-                             determines which passes the rider can use to reserve a spot
-                             at this event. Empty = no pass reservation option. -->
-                        <template v-if="!isRaceEvent">
-                            <label class="text-subtitle-2 d-block mt-5 mb-1">Rider entry: accepted passes</label>
-                            <p class="text-caption text-medium-emphasis mb-2">
-                                Which day passes riders can use to reserve a spot. Leave all unchecked for a
-                                spectator-only event.
-                            </p>
-                            <div v-if="passProducts.length === 0" class="text-medium-emphasis text-caption">
-                                No pass products defined yet.
-                                <router-link to="/Admin/Passes">Add some first.</router-link>
-                            </div>
-                            <div v-else class="d-flex flex-column">
-                                <v-checkbox v-for="p in passProducts" :key="p.id"
-                                    v-model="form.eligiblePassProductIds"
-                                    :value="p.id"
-                                    :label="`${p.name} — $${(p.priceCents / 100).toFixed(2)}${p.isActive ? '' : ' (inactive)'}`"
-                                    density="compact" hide-details></v-checkbox>
-                            </div>
-                        </template>
+                        <!-- Audience: the first-class "who can attend" choice. Drives which
+                             entry options show in the Entry & Add-ons tab and which waivers
+                             show in the Waivers tab. At least one must be on. -->
+                        <label class="text-subtitle-2 d-block mt-5 mb-1">Who can attend</label>
+                        <p class="text-caption text-medium-emphasis mb-1">
+                            Sets which entry options and waivers apply. Configure each enabled audience in the
+                            Entry &amp; Add-ons and Waivers tabs.
+                        </p>
+                        <v-switch v-model="form.allowsRiders" label="Allow riders"
+                            color="primary" density="compact" hide-details class="ml-2"></v-switch>
+                        <v-switch v-model="form.allowsSpectators" label="Allow spectators"
+                            color="primary" density="compact" hide-details class="ml-2"></v-switch>
+                        <v-alert v-if="!form.allowsRiders && !form.allowsSpectators"
+                            type="warning" variant="tonal" density="compact" class="mt-2 mb-1">
+                            Pick at least one audience — riders, spectators, or both.
+                        </v-alert>
 
                         <label class="text-subtitle-2 d-block mt-6 mb-1">Event details</label>
                         <p class="text-caption text-medium-emphasis mb-2">
-                            Put one detail per line. Each line shows up as its own bullet point in the
-                            "Event Details" list on the public event page.
+                            Each row shows up as its own bullet point in the "Event Details" list on the
+                            public event page.
                         </p>
-                        <v-textarea v-model="form.description" rows="4" density="compact"
-                            placeholder="Gates open at 7:00 AM&#10;Practice starts at 8:30 AM&#10;Concessions on site all day&#10;Free parking"
-                            hint="Each line becomes its own bullet point." persistent-hint></v-textarea>
+                        <div v-for="(row, i) in form.details" :key="i" class="d-flex align-center ga-2 mb-2">
+                            <v-text-field v-model="row.text" label="Detail"
+                                placeholder="Gates open at 7:00 AM" density="compact" hide-details></v-text-field>
+                            <v-btn icon="mdi-close" variant="text" size="small"
+                                @click="form.details.splice(i, 1)"></v-btn>
+                        </div>
+                        <v-btn variant="tonal" size="small" prepend-icon="mdi-plus"
+                            @click="form.details.push({ text: '' })">Add detail</v-btn>
 
                         <label class="text-subtitle-2 d-block mt-4 mb-2">Event schedule (optional)</label>
                         <p class="text-caption text-medium-emphasis mb-2">
@@ -127,67 +120,105 @@
                         </div>
                     </v-window-item>
 
-                    <v-window-item v-if="isRaceEvent" value="race">
-                        <p class="text-caption text-medium-emphasis mb-2">
-                            Race classes — riders pay to enter a class (Open, Beginner, Pro, etc.). You can attach bundled coupons that get auto-issued at purchase.
-                        </p>
-                        <TicketTiersList :event-id="editing ? editing.id : null" kind="race_entry" />
-                    </v-window-item>
+                    <v-window-item value="entry">
+                        <!-- Rider entry: race classes for race events, accepted day passes otherwise. -->
+                        <template v-if="form.allowsRiders">
+                            <label class="text-subtitle-2 d-block mb-1">Rider entry</label>
+                            <template v-if="isRaceEvent">
+                                <p class="text-caption text-medium-emphasis mb-2">
+                                    Race classes — riders pay to enter a class (Open, Beginner, Pro, etc.). You can attach bundled coupons that get auto-issued at purchase.
+                                </p>
+                                <TicketTiersList v-if="editing" :event-id="editing.id" kind="race_entry" />
+                                <p v-else class="text-medium-emphasis text-caption mb-2">
+                                    Save the event first, then add race classes here.
+                                </p>
+                            </template>
+                            <template v-else>
+                                <p class="text-caption text-medium-emphasis mb-2">
+                                    Which day passes riders can use to reserve a spot at this event.
+                                </p>
+                                <div v-if="passProducts.length === 0" class="text-medium-emphasis text-caption">
+                                    No pass products defined yet.
+                                    <router-link to="/Admin/Passes">Add some first.</router-link>
+                                </div>
+                                <div v-else class="d-flex flex-column">
+                                    <v-checkbox v-for="p in passProducts" :key="p.id"
+                                        v-model="form.eligiblePassProductIds"
+                                        :value="p.id"
+                                        :label="`${p.name} — $${(p.priceCents / 100).toFixed(2)}${p.isActive ? '' : ' (inactive)'}`"
+                                        density="compact" hide-details></v-checkbox>
+                                </div>
+                            </template>
+                        </template>
 
-                    <v-window-item v-if="branding.extrasEnabled" value="extras">
-                        <p class="text-caption text-medium-emphasis mb-2">
-                            Add-ons offered at this event — Gate Fees for spectator admission, plus camping, parking,
-                            pit-vehicle, merch, etc. Inventory is per-event; leave blank for unlimited.
-                        </p>
-                        <div v-if="extraProducts.length === 0" class="text-medium-emphasis text-caption">
-                            No add-on products defined yet.
-                            <router-link to="/Admin/Extras">Add some first.</router-link>
-                        </div>
-                        <div v-else>
-                            <div v-for="p in extraProducts" :key="p.id" class="d-flex align-center ga-2 py-1">
-                                <v-checkbox :model-value="extraEnabled(p.id)"
-                                    @update:model-value="toggleExtra(p.id, $event)"
-                                    :label="`${p.name} ($${(p.priceCents / 100).toFixed(2)})`"
-                                    density="compact" hide-details
-                                    style="flex: 1"></v-checkbox>
-                                <v-text-field v-if="extraEnabled(p.id)"
-                                    :model-value="extraInventory(p.id)"
-                                    @update:model-value="setExtraInventory(p.id, $event)"
-                                    type="number" min="1" max="100000"
-                                    label="Inventory" placeholder="Unlimited"
-                                    density="compact" hide-details
-                                    style="max-width: 130px"></v-text-field>
+                        <v-divider v-if="form.allowsRiders && branding.extrasEnabled" class="my-5"></v-divider>
+
+                        <!-- Spectator gate fees + general add-ons. Gate Fees (kind=gate_fee) are how
+                             spectators are admitted; other add-ons are available to anyone. -->
+                        <template v-if="branding.extrasEnabled">
+                            <label class="text-subtitle-2 d-block mb-1">
+                                {{ form.allowsSpectators ? 'Gate fees & add-ons' : 'Add-ons' }}
+                            </label>
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                <template v-if="form.allowsSpectators">Enable a Gate Fee for spectator admission, plus optional </template>
+                                <template v-else>Optional </template>
+                                camping, parking, pit-vehicle, merch, etc. Inventory is per-event; leave blank for unlimited.
+                            </p>
+                            <div v-if="extraProducts.length === 0" class="text-medium-emphasis text-caption">
+                                No add-on products defined yet.
+                                <router-link to="/Admin/Extras">Add some first.</router-link>
                             </div>
-                        </div>
+                            <div v-else>
+                                <div v-for="p in extraProducts" :key="p.id" class="d-flex align-center ga-2 py-1">
+                                    <v-checkbox :model-value="extraEnabled(p.id)"
+                                        @update:model-value="toggleExtra(p.id, $event)"
+                                        :label="`${p.name} ($${(p.priceCents / 100).toFixed(2)})`"
+                                        density="compact" hide-details
+                                        style="flex: 1"></v-checkbox>
+                                    <v-text-field v-if="extraEnabled(p.id)"
+                                        :model-value="extraInventory(p.id)"
+                                        @update:model-value="setExtraInventory(p.id, $event)"
+                                        type="number" min="1" max="100000"
+                                        label="Inventory" placeholder="Unlimited"
+                                        density="compact" hide-details
+                                        style="max-width: 130px"></v-text-field>
+                                </div>
+                            </div>
+                        </template>
+
+                        <p v-if="!form.allowsRiders && !branding.extrasEnabled"
+                            class="text-medium-emphasis text-caption">
+                            Nothing to configure here yet — enable riders on the Details tab, or turn on add-ons in settings.
+                        </p>
                     </v-window-item>
 
                     <v-window-item value="waivers">
                         <p class="text-caption text-medium-emphasis mb-3">
-                            Toggle each audience independently — racers and spectators can be required to sign
-                            different waivers, or just one of them. Leave a waiver blank to fall back to the tenant default.
+                            Only the audiences you allowed on the Details tab appear here. Each can be required to
+                            sign its own waiver, or none. Leave a waiver blank to fall back to the tenant default.
                         </p>
 
-                        <v-switch v-if="isRaceEvent" v-model="form.requiresRiderWaiver"
+                        <v-switch v-if="form.allowsRiders" v-model="form.requiresRiderWaiver"
                             label="Require Rider Signed Waiver"
                             color="primary" density="compact" hide-details class="mb-2 ml-2"></v-switch>
-                        <template v-if="isRaceEvent && form.requiresRiderWaiver">
+                        <template v-if="form.allowsRiders && form.requiresRiderWaiver">
                             <v-select v-model="form.racerWaiverId"
                                 :items="racerWaiverOptions" item-title="title" item-value="value"
-                                label="Racer waiver" density="compact" clearable hide-details
-                                hint="Signed by riders entering a race class. Leave blank for tenant default."
+                                :label="isRaceEvent ? 'Racer waiver' : 'Rider waiver'" density="compact" clearable hide-details
+                                :hint="isRaceEvent ? 'Signed by riders entering a race class. Leave blank for tenant default.' : 'Signed by riders entering this event. Leave blank for tenant default.'"
                                 persistent-hint class="mb-3"></v-select>
                             <v-alert v-if="racerWaiverInvalid"
                                 type="warning" variant="tonal" density="compact" class="mb-3">
-                                The selected racer waiver expires before this event ends. Pick another or extend its expiration.
+                                The selected rider waiver expires before this event ends. Pick another or extend its expiration.
                             </v-alert>
                         </template>
 
-                        <v-divider v-if="isRaceEvent" class="my-4"></v-divider>
+                        <v-divider v-if="form.allowsRiders && form.allowsSpectators" class="my-4"></v-divider>
 
-                        <v-switch v-model="form.requiresSpectatorWaiver"
+                        <v-switch v-if="form.allowsSpectators" v-model="form.requiresSpectatorWaiver"
                             label="Require Spectator Signed Waiver"
                             color="primary" density="compact" hide-details class="mb-2 ml-2"></v-switch>
-                        <template v-if="form.requiresSpectatorWaiver">
+                        <template v-if="form.allowsSpectators && form.requiresSpectatorWaiver">
                             <v-select v-model="form.spectatorWaiverId"
                                 :items="spectatorWaiverOptions" item-title="title" item-value="value"
                                 label="Spectator waiver" density="compact" clearable hide-details
@@ -212,7 +243,8 @@
                 <v-btn v-if="editing" variant="text" prepend-icon="mdi-content-copy" @click="dup">Duplicate</v-btn>
                 <v-spacer></v-spacer>
                 <v-btn @click="$emit('update:open', false)">Cancel</v-btn>
-                <v-btn v-if="activeTab !== 'race'" color="primary" :loading="saving" @click="save">
+                <v-btn color="primary" :loading="saving"
+                    :disabled="!form.allowsRiders && !form.allowsSpectators" @click="save">
                     {{ saveLabel }}
                 </v-btn>
             </v-card-actions>
@@ -254,7 +286,7 @@ const eventTypeService = new EventTypeService()
 const typeOptions = ref<EventType[]>([])
 const editing = ref<EventDto | null>(null)
 const saving = ref(false)
-const activeTab = ref<'info' | 'tickets' | 'race'>('info')
+const activeTab = ref<'info' | 'entry' | 'waivers'>('info')
 
 // Race events get their capacity from the sum of race-entry tier inventories,
 // so the event-level capacity field is hidden + always saved as null.
@@ -263,8 +295,8 @@ const isRaceEvent = computed(() =>
 )
 
 watch(isRaceEvent, (race) => {
+    // Race events take capacity from the sum of race-class inventories.
     if (race) form.value.capacity = null
-    else if (activeTab.value !== 'info') activeTab.value = 'info'
 })
 
 const saveLabel = computed(() => {
@@ -275,13 +307,15 @@ const saveLabel = computed(() => {
 const form = ref({
     eventTypeId: '',
     title: '',
-    description: '' as string | null,
+    details: [] as { text: string }[],
     startsLocal: '',
     endsLocal: '',
     allDay: false,
     capacity: null as number | null,
     locationLabel: '' as string | null,
     status: 'scheduled' as 'scheduled' | 'cancelled',
+    allowsRiders: true,
+    allowsSpectators: false,
     requiresRiderWaiver: true,
     requiresSpectatorWaiver: false,
     spectatorWaiverId: null as string | null,
@@ -420,13 +454,15 @@ watch(() => props.open, (open) => {
         form.value = {
             eventTypeId: row.eventTypeId,
             title: row.title,
-            description: row.description ?? '',
+            details: descriptionToRows(row.description),
             startsLocal: utcToLocalInput(row.startsAtUtc),
             endsLocal: utcToLocalInput(row.endsAtUtc),
             allDay: row.allDay,
             capacity: row.capacity,
             locationLabel: row.locationLabel ?? '',
             status: row.status,
+            allowsRiders: row.allowsRiders,
+            allowsSpectators: row.allowsSpectators,
             requiresRiderWaiver: row.requiresRiderWaiver,
             requiresSpectatorWaiver: row.requiresSpectatorWaiver,
             spectatorWaiverId: row.spectatorWaiverId ?? null,
@@ -449,13 +485,15 @@ watch(() => props.open, (open) => {
         form.value = {
             eventTypeId: typeOptions.value[0]?.id ?? '',
             title: '',
-            description: '',
+            details: [],
             startsLocal: start.format('YYYY-MM-DDTHH:mm'),
             endsLocal: start.add(2, 'hour').format('YYYY-MM-DDTHH:mm'),
             allDay: false,
             capacity: null,
             locationLabel: '',
             status: 'scheduled',
+            allowsRiders: true,
+            allowsSpectators: false,
             requiresRiderWaiver: true,
             requiresSpectatorWaiver: false,
             spectatorWaiverId: null,
@@ -477,13 +515,15 @@ function seedFromDuplicate(src: EventDto) {
     form.value = {
         eventTypeId: src.eventTypeId,
         title: src.title,
-        description: src.description ?? '',
+        details: descriptionToRows(src.description),
         startsLocal: start.format('YYYY-MM-DDTHH:mm'),
         endsLocal: end.format('YYYY-MM-DDTHH:mm'),
         allDay: src.allDay,
         capacity: src.capacity,
         locationLabel: src.locationLabel ?? '',
         status: src.status,
+        allowsRiders: src.allowsRiders,
+        allowsSpectators: src.allowsSpectators,
         requiresRiderWaiver: src.requiresRiderWaiver,
         requiresSpectatorWaiver: src.requiresSpectatorWaiver,
         spectatorWaiverId: src.spectatorWaiverId ?? null,
@@ -498,6 +538,17 @@ function seedFromDuplicate(src: EventDto) {
         imageUrl: src.imageUrl,
     }
     imageFile.value = null
+}
+
+// Event "details" round-trip: stored as a newline-joined string in `description`
+// (the public page renders each line as a bullet), but edited here as discrete rows.
+function descriptionToRows(desc: string | null | undefined): { text: string }[] {
+    if (!desc) return []
+    return desc.split('\n').map(text => ({ text }))
+}
+function rowsToDescription(rows: { text: string }[]): string | null {
+    const joined = rows.map(r => r.text.trim()).filter(t => t.length > 0).join('\n')
+    return joined.length > 0 ? joined : null
 }
 
 async function onImageSelected(v: File | File[] | null) {
@@ -516,26 +567,34 @@ async function onImageSelected(v: File | File[] | null) {
 }
 
 async function save() {
+    if (!form.value.allowsRiders && !form.value.allowsSpectators) {
+        emit('flash', 'Pick at least one audience — riders, spectators, or both.', 'error')
+        activeTab.value = 'info'
+        return
+    }
     try {
         saving.value = true
         const body = {
             eventTypeId: form.value.eventTypeId,
             title: form.value.title.trim(),
-            description: form.value.description && form.value.description.trim().length > 0 ? form.value.description : null,
+            description: rowsToDescription(form.value.details),
             startsAtUtc: localToUtc(form.value.startsLocal),
             endsAtUtc: localToUtc(form.value.endsLocal),
             allDay: form.value.allDay,
             capacity: isRaceEvent.value ? null : (form.value.capacity || null),
             locationLabel: form.value.locationLabel && form.value.locationLabel.trim().length > 0 ? form.value.locationLabel : null,
             status: form.value.status,
-            requiresRiderWaiver: form.value.requiresRiderWaiver,
-            requiresSpectatorWaiver: form.value.requiresSpectatorWaiver,
-            spectatorWaiverId: form.value.requiresSpectatorWaiver ? form.value.spectatorWaiverId : null,
-            racerWaiverId: form.value.requiresRiderWaiver ? form.value.racerWaiverId : null,
+            allowsRiders: form.value.allowsRiders,
+            allowsSpectators: form.value.allowsSpectators,
+            // Waivers only apply to an allowed audience.
+            requiresRiderWaiver: form.value.allowsRiders && form.value.requiresRiderWaiver,
+            requiresSpectatorWaiver: form.value.allowsSpectators && form.value.requiresSpectatorWaiver,
+            spectatorWaiverId: (form.value.allowsSpectators && form.value.requiresSpectatorWaiver) ? form.value.spectatorWaiverId : null,
+            racerWaiverId: (form.value.allowsRiders && form.value.requiresRiderWaiver) ? form.value.racerWaiverId : null,
             imageUrl: form.value.imageUrl,
             // Race events use tier-based admissions, not pass reservations —
             // always send an empty list to clear any stray entries.
-            eligiblePassProductIds: isRaceEvent.value ? [] : form.value.eligiblePassProductIds,
+            eligiblePassProductIds: (isRaceEvent.value || !form.value.allowsRiders) ? [] : form.value.eligiblePassProductIds,
             eligibleExtras: form.value.eligibleExtras,
             schedule: form.value.schedule
                 .map(s => ({ time: s.time.trim(), label: s.label.trim() }))
@@ -556,7 +615,7 @@ async function save() {
             const isRaceEvent = typeOptions.value.find(t => t.id === created.eventTypeId)?.code === 'race'
             if (isRaceEvent) {
                 editing.value = created
-                activeTab.value = 'race'
+                activeTab.value = 'entry'
                 emit('saved', created)
                 emit('flash', 'Event saved — add race classes below.', 'success')
             } else {
@@ -607,5 +666,21 @@ function dup() {
 }
 .event-image-preview.empty {
     background: rgba(0, 0, 0, 0.04);
+}
+
+/* Active-tab indicator.
+   Vuetify's native .v-tab__slider is sized/positioned by VSlideGroup's layout
+   measurement. The Details tab is the only one whose content scrolls, so its scrollbar
+   appears/disappears as you switch tabs, shifting the layout the slider was measured
+   against and leaving the Details underline missing. Replace the measured slider with a
+   plain class-driven border that needs no measurement and so is scroll/resize-proof. */
+:deep(.v-tab__slider) {
+    display: none;
+}
+:deep(.v-tab) {
+    border-bottom: 2px solid transparent;
+}
+:deep(.v-tab.v-tab--selected) {
+    border-bottom-color: currentColor;
 }
 </style>

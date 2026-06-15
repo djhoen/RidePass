@@ -67,6 +67,7 @@ namespace Services.Repositories.Data.TenantData
         public bool RentalsEnabled { get; set; } = false;
         public bool ExtrasEnabled { get; set; } = false;
         public bool SeasonPassesEnabled { get; set; } = true;
+        public bool ConcessionsEnabled { get; set; } = false;
         public bool AllowSelfCancel { get; set; } = false;
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; } = 20;

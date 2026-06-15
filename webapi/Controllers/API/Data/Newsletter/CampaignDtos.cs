@@ -9,6 +9,7 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string Status { get; set; } = null!;
         public int RecipientCount { get; set; }
         public DateTime? SentAtUtc { get; set; }
+        public DateTime? ScheduledForUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 

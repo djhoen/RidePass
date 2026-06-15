@@ -23,6 +23,7 @@ namespace Services.Repositories
             country,
             bike AS Bike,
             race_number AS RaceNumber,
+            email_verified AS EmailVerified,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         public UserRepository(IDbHelper db)
@@ -130,6 +131,40 @@ namespace Services.Repositories
             await _db.Execute(sql, new { userId, birthdate });
         }
 
+        // ── Email verification ───────────────────────────────────────────────────
+        public async Task SetEmailVerificationToken(Guid userId, string tokenHash, DateTime expiresAtUtc)
+        {
+            const string sql = @"
+                UPDATE users
+                SET email_verification_token_hash = @tokenHash,
+                    email_verification_expires_at = @expiresAtUtc,
+                    updated_at = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId, tokenHash, expiresAtUtc });
+        }
+
+        public async Task<User?> GetByEmailVerificationTokenHash(string tokenHash)
+        {
+            // Expired tokens return null so the caller surfaces "invalid or expired".
+            var sql = $@"SELECT {SelectUserColumns} FROM users
+                        WHERE email_verification_token_hash = @tokenHash
+                          AND email_verification_expires_at > now()
+                        LIMIT 1";
+            return (await _db.Query<User>(sql, new { tokenHash })).FirstOrDefault();
+        }
+
+        public async Task MarkEmailVerified(Guid userId)
+        {
+            const string sql = @"
+                UPDATE users
+                SET email_verified = true,
+                    email_verification_token_hash = NULL,
+                    email_verification_expires_at = NULL,
+                    updated_at = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId });
+        }
+
         public async Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
             string? city, string? state, string? postalCode, string? country)
         {
@@ -217,6 +252,36 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE users SET password_hash = @passwordHash WHERE id = @id";
             await _db.Execute(sql, new { id, passwordHash });
+        }
+
+        // Super-admin full-profile edit: updates every editable column in one statement.
+        // Identity columns (id, tenant_id), the password hash, and verification-token fields
+        // are intentionally not touched here.
+        public async Task SuperAdminUpdateUser(User u)
+        {
+            const string sql = @"
+                UPDATE users SET
+                    email                   = @Email,
+                    first_name              = @FirstName,
+                    last_name               = @LastName,
+                    role                    = @Role,
+                    status                  = @Status,
+                    phone                   = @Phone,
+                    birthdate               = @Birthdate,
+                    emergency_contact_name  = @EmergencyContactName,
+                    emergency_contact_phone = @EmergencyContactPhone,
+                    address_line            = @AddressLine,
+                    address_line2           = @AddressLine2,
+                    city                    = @City,
+                    state                   = @State,
+                    postal_code             = @PostalCode,
+                    country                 = @Country,
+                    bike                    = @Bike,
+                    race_number             = @RaceNumber,
+                    email_verified          = @EmailVerified,
+                    updated_at              = now()
+                WHERE id = @Id";
+            await _db.Execute(sql, u);
         }
 
         public async Task<string?> GetDashboardConfig(Guid userId)

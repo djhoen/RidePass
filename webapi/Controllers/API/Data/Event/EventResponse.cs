@@ -16,6 +16,8 @@
         public int? Capacity { get; set; }
         public string? LocationLabel { get; set; }
         public string Status { get; set; } = null!;
+        public bool AllowsRiders { get; set; }
+        public bool AllowsSpectators { get; set; }
         public bool RequiresRiderWaiver { get; set; }
         public bool RequiresSpectatorWaiver { get; set; }
         public Guid? SpectatorWaiverId { get; set; }

@@ -36,6 +36,8 @@ namespace webapi.Payments
         private readonly IEventWaitlistRepository _waitlist;
         private readonly IEventExtraRepository _extras;
         private readonly IMembershipRepository _memberships;
+        private readonly IConcessionRepository _concessions;
+        private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly IConfiguration _config;
         private readonly ILogger<StripePurchaseFinalizer> _logger;
@@ -61,6 +63,8 @@ namespace webapi.Payments
             IEventWaitlistRepository waitlist,
             IEventExtraRepository extras,
             IMembershipRepository memberships,
+            IConcessionRepository concessions,
+            IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             IConfiguration configuration,
             ILogger<StripePurchaseFinalizer> logger)
@@ -84,6 +88,8 @@ namespace webapi.Payments
             _waitlist = waitlist;
             _extras = extras;
             _memberships = memberships;
+            _concessions = concessions;
+            _suppression = suppression;
             _emailer = emailer;
             _config = configuration;
             _logger = logger;
@@ -102,8 +108,9 @@ namespace webapi.Payments
             var waitlistPrepay = await _waitlist.GetByPrepayPaymentIntentId(paymentIntentId);
             var extras = await _extras.ListByPaymentIntentId(paymentIntentId);
             var membership = await _memberships.GetByPaymentIntentId(paymentIntentId);
+            var concessionSale = await _concessions.GetSaleByPaymentIntentId(paymentIntentId);
 
-            if (passes.Count == 0 && tickets.Count == 0 && seasonPass is null && giftCard is null && rental is null && waitlistPrepay is null && extras.Count == 0 && membership is null)
+            if (passes.Count == 0 && tickets.Count == 0 && seasonPass is null && giftCard is null && rental is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null)
             {
                 _logger.LogWarning("Received Stripe event {EventType} for unknown payment_intent {IntentId}",
                     eventType, paymentIntentId);
@@ -194,6 +201,21 @@ namespace webapi.Payments
                 else if (eventType == "payment_intent.payment_failed" && rental.Status == "pending")
                 {
                     await _rentals.UpdateStatus(rental.Id, "failed");
+                }
+                return;
+            }
+
+            // Concession sale (cashier tap-to-pay, anonymous buyer): always standalone on its
+            // own PaymentIntent, so flip pending -> paid + write the ledger entry, then return.
+            if (concessionSale is not null)
+            {
+                if (eventType == "payment_intent.succeeded" && concessionSale.Status == "pending")
+                {
+                    await OnConcessionPaid(concessionSale);
+                }
+                else if (eventType == "payment_intent.payment_failed" && concessionSale.Status == "pending")
+                {
+                    await _concessions.MarkSaleFailed(concessionSale.Id);
                 }
                 return;
             }
@@ -360,10 +382,44 @@ namespace webapi.Payments
             }
         }
 
+        // Concession sale: standalone on its own PI, so it owns the whole Stripe fee.
+        // All-in pricing means no rider service charge (serviceChargeCents = 0); the RidePass
+        // cut is computed from the tenant's bps on the gross.
+        private async Task OnConcessionPaid(Services.Repositories.Data.ConcessionData.ConcessionSale sale)
+        {
+            var stripeFee = await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0;
+            await _concessions.MarkSalePaid(sale.Id);
+            try
+            {
+                var calc = await _feeCalculator.Calculate(sale.TenantId, sale.TotalCents, stripeFee, 0, DateTime.UtcNow);
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = sale.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "concession",
+                    SourceId = sale.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = sale.TotalCents,
+                    StripeFeeCents = stripeFee,
+                    RidepassCutCents = calc.RidepassCutCents,
+                    NetToTenantCents = calc.NetToTenantCents,
+                    StripePaymentIntentId = sale.StripePaymentIntentId,
+                    PaymentMethod = "stripe",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                _logger.LogDebug("Ledger entry for concession sale {Id} already exists; skipping.", sale.Id);
+            }
+        }
+
         private async Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
             string kind, int amountCents, DateTime? validOnDate)
         {
             if (!_emailer.IsConfigured) return;
+            // Skip hard-bounced addresses (scope='all'); a dead address only inflates the
+            // account-wide bounce rate. Marketing opt-outs don't block a transactional receipt.
+            if (await _suppression.IsSuppressed(toEmail, tenantId, marketing: false)) return;
             try
             {
                 var tenant = await _tenants.GetById(tenantId);
