@@ -338,6 +338,30 @@ namespace webapi.Controllers
             "tenant_admin", "tenant_manager", "tenant_cashier", "tenant_scanner", "tenant_accountant",
         };
 
+        // Resolve a request that may carry Roles[] (preferred) and/or a single Role into a
+        // validated, de-duplicated set plus its derived primary. Returns false with a message
+        // if the set is empty or any role isn't assignable.
+        private static bool TryResolveRoles(string? singleRole, string[]? roles,
+            out string[] resolved, out string primary, out string? error)
+        {
+            var set = (roles ?? System.Array.Empty<string>())
+                .Concat(string.IsNullOrWhiteSpace(singleRole) ? System.Array.Empty<string>() : new[] { singleRole })
+                .Select(r => r.Trim())
+                .Where(r => r.Length > 0)
+                .Distinct()
+                .ToArray();
+            resolved = set;
+            primary = "";
+            error = null;
+            if (set.Length == 0) { error = "At least one role is required."; return false; }
+            foreach (var r in set)
+            {
+                if (!AssignableRoles.Contains(r)) { error = $"Role '{r}' is not assignable."; return false; }
+            }
+            primary = TenantPermissions.PrimaryRole(set);
+            return true;
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
         [HttpGet("Tenant")]
         public async Task<IActionResult> ListTenantUsers()
@@ -350,6 +374,7 @@ namespace webapi.Controllers
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 Role = u.Role,
+                Roles = u.Roles,
                 Status = u.Status,
                 CreatedAtUtc = DateTime.SpecifyKind(u.CreatedAt, DateTimeKind.Utc),
             });
@@ -360,9 +385,9 @@ namespace webapi.Controllers
         [HttpPost("Tenant")]
         public async Task<IActionResult> CreateTenantUser([FromBody] CreateTenantUserRequest request)
         {
-            if (!AssignableRoles.Contains(request.Role))
+            if (!TryResolveRoles(request.Role, request.Roles, out var newRoles, out var primaryRole, out var roleError))
             {
-                return new ApiResponses().BadRequestResult($"Role '{request.Role}' is not assignable.");
+                return new ApiResponses().BadRequestResult(roleError!);
             }
             var email = request.Email.Trim();
 
@@ -385,7 +410,8 @@ namespace webapi.Controllers
                 Email = email,
                 FirstName = request.FirstName.Trim(),
                 LastName = request.LastName.Trim(),
-                Role = request.Role,
+                Role = primaryRole,
+                Roles = newRoles,
                 Status = "active",
             };
             user.PasswordHash = _passwordHasher.HashPassword(user, tempPassword);
@@ -396,7 +422,7 @@ namespace webapi.Controllers
                 var loginUrl = $"{Request.Scheme}://{Request.Host.Value}/Login";
                 var resetUrl = $"{Request.Scheme}://{Request.Host.Value}/ResetPassword";
                 var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
-<p>You've been added as a <strong>{System.Net.WebUtility.HtmlEncode(user.Role)}</strong> on RidePass.</p>
+<p>You've been added as a <strong>{System.Net.WebUtility.HtmlEncode(string.Join(", ", user.Roles))}</strong> on RidePass.</p>
 <p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
 <strong>Email:</strong> {System.Net.WebUtility.HtmlEncode(user.Email)}<br/>
 <strong>Temporary password:</strong> <code>{tempPassword}</code></p>
@@ -409,6 +435,7 @@ namespace webapi.Controllers
                 Id = user.Id,
                 Email = user.Email,
                 Role = user.Role,
+                Roles = user.Roles,
                 TemporaryPassword = tempPassword,
             });
         }
@@ -417,21 +444,21 @@ namespace webapi.Controllers
         [HttpPut("Tenant/{id:guid}/Role")]
         public async Task<IActionResult> UpdateTenantUserRole(Guid id, [FromBody] UpdateTenantUserRoleRequest request)
         {
-            if (!AssignableRoles.Contains(request.Role))
+            if (!TryResolveRoles(request.Role, request.Roles, out var newRoles, out var primaryRole, out var roleError))
             {
-                return new ApiResponses().BadRequestResult($"Role '{request.Role}' is not assignable.");
+                return new ApiResponses().BadRequestResult(roleError!);
             }
             var target = await _userRepository.GetById(id);
             if (target is null || target.TenantId != _tenantContext.TenantId)
             {
                 return new ApiResponses().NotFoundResult("User not found on this tenant.");
             }
-            if (SelfId() == id && request.Role != "tenant_admin")
+            if (SelfId() == id && !newRoles.Contains("tenant_admin"))
             {
-                return new ApiResponses().BadRequestResult("You can't demote your own admin role.");
+                return new ApiResponses().BadRequestResult("You can't remove your own admin role.");
             }
-            await _userRepository.UpdateRole(id, request.Role);
-            return new ApiResponses().OkResult(new { id, role = request.Role });
+            await _userRepository.UpdateRoles(id, primaryRole, newRoles);
+            return new ApiResponses().OkResult(new { id, role = primaryRole, roles = newRoles });
         }
 
         [Authorize(Policy = TenantPermissions.Policy.UsersManage)]

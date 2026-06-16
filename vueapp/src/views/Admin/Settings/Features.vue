@@ -195,6 +195,17 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
+        key: 'blog',
+        title: 'Blog',
+        description: 'Publish posts with photos and feature one on your home page. Adds a Blog link to your public nav.',
+        icon: 'mdi-post',
+        enabled: branding.blogEnabled,
+        configureTo: '/Admin/Blog',
+        apply: async (next) => {
+            await tenantService.updateBlogEnabled({ enabled: next })
+        },
+    },
+    {
         key: 'allowSelfCancel',
         title: 'Self-cancel purchases',
         description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).',

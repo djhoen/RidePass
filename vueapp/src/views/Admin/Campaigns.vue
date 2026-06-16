@@ -19,7 +19,7 @@
                         <th>Subject</th>
                         <th style="width: 130px">Status</th>
                         <th style="width: 140px">Recipients</th>
-                        <th style="width: 180px">Sent</th>
+                        <th style="width: 180px">Sent / Scheduled</th>
                         <th style="width: 160px">Created</th>
                         <th style="width: 260px" class="text-right"></th>
                     </tr>
@@ -29,7 +29,12 @@
                         <td>{{ c.subject }}</td>
                         <td><v-chip size="small" :color="statusColor(c.status)">{{ c.status }}</v-chip></td>
                         <td>{{ c.recipientCount }}</td>
-                        <td>{{ c.sentAtUtc ? formatDate(c.sentAtUtc) : '—' }}</td>
+                        <td>
+                            <span v-if="c.status === 'scheduled' && c.scheduledForUtc" class="text-info">
+                                {{ formatDate(c.scheduledForUtc) }}
+                            </span>
+                            <span v-else>{{ c.sentAtUtc ? formatDate(c.sentAtUtc) : '—' }}</span>
+                        </td>
                         <td>{{ formatDate(c.createdAtUtc) }}</td>
                         <td class="text-right">
                             <v-btn v-if="c.status === 'draft'" variant="text" size="small" @click="openCompose(c.id)">
@@ -39,8 +44,12 @@
                                 @click="sendCampaign(c)">
                                 Send
                             </v-btn>
-                            <v-btn v-if="c.status !== 'sent' && c.status !== 'sending'" variant="text" size="small"
-                                color="error" @click="deleteCampaign(c)">
+                            <v-btn v-if="c.status === 'scheduled'" size="small" color="warning" variant="tonal"
+                                @click="cancelSchedule(c)">
+                                Cancel send
+                            </v-btn>
+                            <v-btn v-if="c.status !== 'sent' && c.status !== 'sending' && c.status !== 'scheduled'"
+                                variant="text" size="small" color="error" @click="deleteCampaign(c)">
                                 Delete
                             </v-btn>
                             <v-btn v-if="c.status === 'sent'" variant="text" size="small" @click="openCompose(c.id)">
@@ -73,6 +82,10 @@
                     <div v-else class="rendered-body">
                         <RichTextView :html="composeForm.bodyHtml" />
                     </div>
+                    <v-text-field v-if="!composeReadonly" v-model="scheduleLocal" type="datetime-local"
+                        label="Schedule for (optional)" density="compact" class="mt-4"
+                        hint="Leave blank to send now. Time is in your track's timezone." persistent-hint
+                        prepend-inner-icon="mdi-clock-outline"></v-text-field>
                     <p class="text-caption text-medium-emphasis mt-3">
                         An unsubscribe link and a short footer are added automatically when campaigns are delivered.
                     </p>
@@ -82,7 +95,7 @@
                     <v-btn :disabled="saving" @click="composeOpen = false">{{ composeReadonly ? 'Close' : 'Cancel' }}</v-btn>
                     <v-btn v-if="!composeReadonly" :loading="saving" color="primary" @click="saveDraft">Save Draft</v-btn>
                     <v-btn v-if="!composeReadonly" :loading="sending" color="success" @click="saveAndSend">
-                        Save &amp; Send
+                        {{ scheduleLocal ? 'Save & Schedule' : 'Save & Send' }}
                     </v-btn>
                 </v-card-actions>
             </v-card>
@@ -101,8 +114,10 @@ import RichTextEditor from '@/components/RichTextEditor.vue'
 import RichTextView from '@/components/RichTextView.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { formatEmailCost } from '@/helpers/EmailPricing'
+import { branding } from '@/stores/branding'
 
 const confirm = useConfirm()
+const tz = () => branding.timezone || 'UTC'
 const campaignService = new CampaignService()
 const newsletterService = new NewsletterService()
 
@@ -114,6 +129,8 @@ const composeOpen = ref(false)
 const composeId = ref<string | null>(null)
 const composeReadonly = ref(false)
 const composeForm = ref({ subject: '', bodyHtml: '' })
+// datetime-local string in the tenant's timezone; blank = send immediately.
+const scheduleLocal = ref('')
 const saving = ref(false)
 const sending = ref(false)
 
@@ -144,6 +161,7 @@ async function load() {
 async function openCompose(id: string | null) {
     composeId.value = id
     composeReadonly.value = false
+    scheduleLocal.value = ''
     if (id) {
         try {
             const r = await campaignService.get(id)
@@ -182,7 +200,20 @@ async function saveDraft() {
 
 async function saveAndSend() {
     if (!validate()) return
-    if (!await confirm({ title: 'Send campaign?', message: buildSendConfirm(composeForm.value.subject), confirmText: 'Send' })) return
+    // Blank schedule = send now. A future time schedules it.
+    let scheduledForUtc: string | null = null
+    if (scheduleLocal.value) {
+        const when = dayjs.tz(scheduleLocal.value, tz())
+        if (!when.isValid()) { flash('That schedule time is invalid.', 'error'); return }
+        if (when.isBefore(dayjs())) { flash('Schedule time must be in the future.', 'error'); return }
+        scheduledForUtc = when.utc().toISOString()
+    }
+    const isScheduling = scheduledForUtc !== null
+    if (!await confirm({
+        title: isScheduling ? 'Schedule campaign?' : 'Send campaign?',
+        message: buildSendConfirm(composeForm.value.subject, scheduledForUtc),
+        confirmText: isScheduling ? 'Schedule' : 'Send',
+    })) return
     sending.value = true
     try {
         let id = composeId.value
@@ -192,7 +223,7 @@ async function saveAndSend() {
             const r = await campaignService.create(composeForm.value)
             id = (r.data as any).data.id
         }
-        const sendR = await campaignService.send(id!)
+        const sendR = await campaignService.send(id!, scheduledForUtc)
         const notice = (sendR.data as any).data.sendNotice
         flash(notice ? `Queued ${(sendR.data as any).data.recipientCount} recipients. ${notice}` : `Sent to ${(sendR.data as any).data.recipientCount} recipients.`, 'success')
         composeOpen.value = false
@@ -227,9 +258,28 @@ async function deleteCampaign(c: CampaignListItem) {
     }
 }
 
-function buildSendConfirm(subject: string): string {
+function buildSendConfirm(subject: string, scheduledForUtc?: string | null): string {
     const n = activeSubscriberCount.value ?? 0
-    return `Send "${subject}" to ${n} active subscribers?\n\nEstimated cost: ${formatEmailCost(n)} (${n} emails this send)`
+    const lead = scheduledForUtc
+        ? `Schedule "${subject}" for ${formatDate(scheduledForUtc)} to ${n} active subscribers?`
+        : `Send "${subject}" to ${n} active subscribers?`
+    return `${lead}\n\nEstimated cost: ${formatEmailCost(n)} (${n} emails this send)`
+}
+
+async function cancelSchedule(c: CampaignListItem) {
+    if (!await confirm({
+        title: 'Cancel scheduled send?',
+        message: `"${c.subject}" will return to draft and won't send at its scheduled time.`,
+        confirmText: 'Cancel send',
+        confirmColor: 'warning',
+    })) return
+    try {
+        await campaignService.unschedule(c.id)
+        flash('Schedule cancelled; campaign is back to draft.', 'success')
+        await load()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not cancel the schedule.', 'error')
+    }
 }
 
 function validate(): boolean {

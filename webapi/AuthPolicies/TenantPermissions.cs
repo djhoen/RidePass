@@ -18,6 +18,7 @@ namespace webapi.AuthPolicies
         public const string DisputesView   = "disputes.view";
         public const string CampaignsManage = "campaigns.manage";
         public const string CustomersView  = "customers.view";
+        public const string BlogManage     = "blog.manage";
 
         // Compile-time policy names for [Authorize(Policy = ...)] attributes.
         // Must match TenantPermissionRequirement.PolicyName(perm) format.
@@ -34,6 +35,7 @@ namespace webapi.AuthPolicies
             public const string DisputesView   = "TenantPerm:disputes.view";
             public const string CampaignsManage = "TenantPerm:campaigns.manage";
             public const string CustomersView  = "TenantPerm:customers.view";
+            public const string BlogManage     = "TenantPerm:blog.manage";
         }
 
         public static readonly string[] All =
@@ -41,6 +43,7 @@ namespace webapi.AuthPolicies
             UsersManage, SettingsManage, CatalogManage,
             SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
+            BlogManage,
         };
 
         public static IReadOnlySet<string> ForRole(string role) =>
@@ -55,6 +58,39 @@ namespace webapi.AuthPolicies
                 _                   => EmptySet,
             };
 
+        /// <summary>Union of the permission sets for every role the user holds.</summary>
+        public static IReadOnlySet<string> ForRoles(IEnumerable<string> roles)
+        {
+            var union = new HashSet<string>();
+            foreach (var r in roles)
+            {
+                union.UnionWith(ForRole(r));
+            }
+            return union;
+        }
+
+        // Highest-privilege role wins as the primary (scope/identity/display). Lower index =
+        // higher privilege. Anything unknown sorts last so a real role is always preferred.
+        private static readonly string[] Precedence =
+        {
+            "super_admin", "tenant_admin", "tenant_manager", "tenant_accountant",
+            "tenant_cashier", "tenant_scanner", "tenant_staff", "rider",
+        };
+
+        /// <summary>Pick the canonical primary role from a set (for JWT identity / display).</summary>
+        public static string PrimaryRole(IEnumerable<string> roles)
+        {
+            string? best = null;
+            var bestRank = int.MaxValue;
+            foreach (var r in roles)
+            {
+                var rank = System.Array.IndexOf(Precedence, r);
+                if (rank < 0) rank = Precedence.Length;
+                if (rank < bestRank) { bestRank = rank; best = r; }
+            }
+            return best ?? "";
+        }
+
         private static readonly HashSet<string> EmptySet = new();
 
         private static readonly HashSet<string> AdminSet = new(All);
@@ -63,6 +99,7 @@ namespace webapi.AuthPolicies
         {
             CatalogManage, SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
+            BlogManage,
         };
 
         private static readonly HashSet<string> CashierSet = new()

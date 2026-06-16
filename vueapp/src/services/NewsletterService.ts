@@ -18,8 +18,8 @@ export interface UnsubscribeStatus {
 
 export interface ImportResult {
     added: number
-    reactivated: number
     skipped: number
+    suppressed: number
 }
 
 export class NewsletterService {
@@ -70,8 +70,9 @@ export class NewsletterService {
         return axios.post(`${this.apiUrl}/Newsletter/Admin/Subscribers`, { email, name })
     }
 
-    importSubscribers(rawLines: string) {
-        return axios.post<{ data: ImportResult }>(`${this.apiUrl}/Newsletter/Admin/Subscribers/Import`, { rawLines })
+    importSubscribers(rawLines: string, consentConfirmed: boolean) {
+        return axios.post<{ data: ImportResult }>(`${this.apiUrl}/Newsletter/Admin/Subscribers/Import`,
+            { rawLines, consentConfirmed })
     }
 
     deleteSubscriber(id: string) {

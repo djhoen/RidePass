@@ -32,6 +32,9 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? HoursJson { get; set; }
         public string? HomeNextUpTitle { get; set; }
         public Guid[]? HomeNextUpEventTypeIds { get; set; }
+        public string? HomeBenefitsHtml { get; set; }
+        public string? HomeBenefitsImageUrl { get; set; }
+        public string? HomeSectionsJson { get; set; }   // { sectionKey: bool }; missing key = visible
         public bool? DailyStatusOpen { get; set; }
         public string? DailyStatusMessage { get; set; }
         public DateTime? DailyStatusUpdatedAt { get; set; }
@@ -56,6 +59,7 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool ExtrasEnabled { get; set; }
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
+        public bool BlogEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; }

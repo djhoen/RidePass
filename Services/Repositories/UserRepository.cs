@@ -10,7 +10,7 @@ namespace Services.Repositories
 
         private const string SelectUserColumns = @"
             id, tenant_id AS TenantId, email, password_hash AS PasswordHash,
-            first_name AS FirstName, last_name AS LastName, role, status,
+            first_name AS FirstName, last_name AS LastName, role, roles AS Roles, status,
             phone,
             birthdate AS Birthdate,
             emergency_contact_name AS EmergencyContactName,
@@ -91,9 +91,11 @@ namespace Services.Repositories
         public async Task<Guid> Create(User user)
         {
             const string sql = @"
-                INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, status, phone, birthdate,
+                INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, roles, status, phone, birthdate,
                                    emergency_contact_name, emergency_contact_phone)
-                VALUES (@TenantId, @Email, @PasswordHash, @FirstName, @LastName, @Role, @Status, @Phone, @Birthdate,
+                VALUES (@TenantId, @Email, @PasswordHash, @FirstName, @LastName, @Role,
+                        CASE WHEN cardinality(@Roles::text[]) > 0 THEN @Roles::text[] ELSE ARRAY[@Role] END,
+                        @Status, @Phone, @Birthdate,
                         @EmergencyContactName, @EmergencyContactPhone)
                 RETURNING id";
 
@@ -238,8 +240,16 @@ namespace Services.Repositories
 
         public async Task UpdateRole(Guid id, string role)
         {
-            const string sql = "UPDATE users SET role = @role WHERE id = @id";
+            // Single-role callers (signup, super-admin edit): keep the full set in lock-step.
+            const string sql = "UPDATE users SET role = @role, roles = ARRAY[@role], updated_at = now() WHERE id = @id";
             await _db.Execute(sql, new { id, role });
+        }
+
+        // Multi-role setter for tenant staff: stores the full set and the derived primary.
+        public async Task UpdateRoles(Guid id, string primaryRole, string[] roles)
+        {
+            const string sql = "UPDATE users SET role = @primaryRole, roles = @roles, updated_at = now() WHERE id = @id";
+            await _db.Execute(sql, new { id, primaryRole, roles });
         }
 
         public async Task UpdateStatus(Guid id, string status)
@@ -265,6 +275,7 @@ namespace Services.Repositories
                     first_name              = @FirstName,
                     last_name               = @LastName,
                     role                    = @Role,
+                    roles                   = ARRAY[@Role],
                     status                  = @Status,
                     phone                   = @Phone,
                     birthdate               = @Birthdate,

@@ -49,7 +49,13 @@ export class CampaignService {
         return axios.delete(`${this.apiUrl}/Campaign/${id}`)
     }
 
-    send(id: string) {
-        return axios.post<{ data: SendCampaignResponse }>(`${this.apiUrl}/Campaign/${id}/Send`)
+    // scheduledForUtc (ISO) in the future schedules the send; omit/null sends now.
+    send(id: string, scheduledForUtc?: string | null) {
+        return axios.post<{ data: SendCampaignResponse }>(`${this.apiUrl}/Campaign/${id}/Send`,
+            null, { params: scheduledForUtc ? { scheduledForUtc } : undefined })
+    }
+
+    unschedule(id: string) {
+        return axios.post(`${this.apiUrl}/Campaign/${id}/Unschedule`)
     }
 }

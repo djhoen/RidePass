@@ -10,6 +10,8 @@ const routes = [
     { path: '/VerifyEmail', name: 'VerifyEmail', component: () => import('../views/VerifyEmail.vue') },
     { path: '/Calendar', name: 'Calendar', component: () => import('../views/Calendar.vue') },
     { path: '/Events', name: 'Events', component: () => import('../views/Events.vue') },
+    { path: '/Blog', name: 'Blog', component: () => import('../views/Blog.vue') },
+    { path: '/Blog/:slug', name: 'BlogPost', component: () => import('../views/BlogPost.vue') },
     { path: '/Waiver', name: 'Waiver', component: () => import('../views/Waiver.vue'), meta: { requiresAuth: true } },
     { path: '/EventUnsubscribe/:token', name: 'EventUnsubscribe', component: () => import('../views/EventUnsubscribe.vue') },
     { path: '/SeasonPasses', name: 'SeasonPasses', component: () => import('../views/BuySeasonPass.vue') },
@@ -360,6 +362,25 @@ const routes = [
         name: 'AdminCampaigns',
         component: () => import('../views/Admin/Campaigns.vue'),
         meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/Blog',
+        name: 'AdminBlog',
+        component: () => import('../views/Admin/Blog.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'blog.manage', hideFooter: true }
+    },
+    {
+        // Literal "New" must precede the ":id" route so it isn't captured as an id.
+        path: '/Admin/Blog/New',
+        name: 'AdminBlogNew',
+        component: () => import('../views/Admin/BlogPostEditor.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'blog.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/Blog/:id',
+        name: 'AdminBlogEdit',
+        component: () => import('../views/Admin/BlogPostEditor.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'blog.manage', hideFooter: true }
     },
     {
         path: '/Admin/Suppression',

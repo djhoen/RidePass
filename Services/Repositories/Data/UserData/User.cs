@@ -8,7 +8,8 @@ namespace Services.Repositories.Data.UserData
         public string PasswordHash { get; set; } = null!;
         public string FirstName { get; set; } = null!;
         public string LastName { get; set; } = null!;
-        public string Role { get; set; } = null!;
+        public string Role { get; set; } = null!;        // primary role (scope/identity/display)
+        public string[] Roles { get; set; } = System.Array.Empty<string>();  // full set; permissions = union
         public string Status { get; set; } = null!;
         public string? Phone { get; set; }
         public DateTime? Birthdate { get; set; }

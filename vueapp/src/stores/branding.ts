@@ -38,6 +38,9 @@ export interface BrandingState {
     hoursJson: string | null
     homeNextUpTitle: string | null
     homeNextUpEventTypeIds: string[] | null
+    benefitsHtml: string | null
+    benefitsImageUrl: string | null
+    homeSections: Record<string, boolean>   // sectionKey -> visible; missing key = visible
     dailyStatusOpen: boolean | null
     dailyStatusMessage: string | null
     dailyStatusUpdatedAt: string | null
@@ -62,6 +65,7 @@ export interface BrandingState {
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    blogEnabled: boolean
     allowSelfCancel: boolean
     waitlistEnabled: boolean
     waitlistConfirmWindowMinutes: number
@@ -106,6 +110,9 @@ const defaults: BrandingState = {
     hoursJson: null,
     homeNextUpTitle: null,
     homeNextUpEventTypeIds: null,
+    benefitsHtml: null,
+    benefitsImageUrl: null,
+    homeSections: {},
     dailyStatusOpen: null,
     dailyStatusMessage: null,
     dailyStatusUpdatedAt: null,
@@ -130,6 +137,7 @@ const defaults: BrandingState = {
     extrasEnabled: false,
     seasonPassesEnabled: true,
     concessionsEnabled: false,
+    blogEnabled: false,
     allowSelfCancel: false,
     waitlistEnabled: true,
     waitlistConfirmWindowMinutes: 20,
@@ -160,6 +168,21 @@ function toAbsoluteUrl(url: string | null | undefined): string | null {
     if (!url) return null
     if (/^https?:\/\//i.test(url)) return url
     return `${apiOrigin()}${url}`
+}
+
+// Parse the home section-visibility map. Only keeps real booleans; anything
+// malformed falls back to {} (which the home page treats as "all visible").
+function parseSections(json: string | null | undefined): Record<string, boolean> {
+    if (!json) return {}
+    try {
+        const obj = JSON.parse(json)
+        if (obj && typeof obj === 'object') {
+            const out: Record<string, boolean> = {}
+            for (const [k, v] of Object.entries(obj)) if (typeof v === 'boolean') out[k] = v
+            return out
+        }
+    } catch { /* ignore */ }
+    return {}
 }
 
 export async function loadBranding(): Promise<void> {
@@ -206,6 +229,9 @@ export async function loadBranding(): Promise<void> {
         branding.hoursJson = data.hoursJson ?? null
         branding.homeNextUpTitle = data.homeNextUpTitle ?? null
         branding.homeNextUpEventTypeIds = Array.isArray(data.homeNextUpEventTypeIds) ? data.homeNextUpEventTypeIds : null
+        branding.benefitsHtml = data.homeBenefitsHtml ?? null
+        branding.benefitsImageUrl = toAbsoluteUrl(data.homeBenefitsImageUrl)
+        branding.homeSections = parseSections(data.homeSectionsJson)
         branding.dailyStatusOpen = (typeof data.dailyStatusOpen === 'boolean') ? data.dailyStatusOpen : null
         branding.dailyStatusMessage = data.dailyStatusMessage ?? null
         branding.dailyStatusUpdatedAt = data.dailyStatusUpdatedAt ?? null
@@ -230,6 +256,7 @@ export async function loadBranding(): Promise<void> {
         branding.extrasEnabled = !!data.extrasEnabled
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
+        branding.blogEnabled = !!data.blogEnabled
         branding.allowSelfCancel = !!data.allowSelfCancel
         branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20

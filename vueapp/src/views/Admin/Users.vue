@@ -24,7 +24,10 @@
                         <td>{{ u.firstName }} {{ u.lastName }}</td>
                         <td>{{ u.email }}</td>
                         <td>
-                            <v-chip size="small" :color="roleColor(u.role)">{{ roleTitle(u.role) }}</v-chip>
+                            <div class="d-flex flex-wrap ga-1">
+                                <v-chip v-for="r in (u.roles?.length ? u.roles : [u.role])" :key="r"
+                                    size="small" :color="roleColor(r)">{{ roleTitle(r) }}</v-chip>
+                            </div>
                         </td>
                         <td>
                             <v-chip size="small" :color="u.status === 'active' ? 'success' : 'grey'">
@@ -85,10 +88,10 @@
                         </v-col>
                     </v-row>
                     <v-text-field v-model="createForm.email" type="email" label="Email" density="compact" class="mt-4"></v-text-field>
-                    <v-select v-model="createForm.role" :items="roleOptions" item-title="title" item-value="value"
-                        label="Role" density="compact" class="mt-4"></v-select>
-                    <p v-if="selectedRoleDescription" class="text-caption text-medium-emphasis">
-                        {{ selectedRoleDescription }}
+                    <v-select v-model="createForm.roles" :items="roleOptions" item-title="title" item-value="value"
+                        label="Roles" density="compact" class="mt-4" multiple chips closable-chips></v-select>
+                    <p class="text-caption text-medium-emphasis">
+                        Pick one or more. The user's permissions are the union of every role selected.
                     </p>
                 </v-card-text>
                 <v-card-actions>
@@ -99,19 +102,21 @@
             </v-card>
         </v-dialog>
 
-        <!-- Change role -->
+        <!-- Change roles -->
         <v-dialog v-model="roleDialog" max-width="500">
             <v-card>
                 <v-card-title class="d-flex align-center">
-                    <span>Change Role</span>
+                    <span>Change Roles</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="roleDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
                     <p class="mb-3">{{ roleTarget?.firstName }} {{ roleTarget?.lastName }} — {{ roleTarget?.email }}</p>
-                    <v-select v-model="roleFormValue" :items="roleOptions" item-title="title" item-value="value"
-                        label="Role" density="compact"></v-select>
-                    <p class="text-caption text-medium-emphasis">{{ descriptionFor(roleFormValue) }}</p>
+                    <v-select v-model="roleFormValues" :items="roleOptions" item-title="title" item-value="value"
+                        label="Roles" density="compact" multiple chips closable-chips></v-select>
+                    <p class="text-caption text-medium-emphasis">
+                        Permissions are the union of every selected role.
+                    </p>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
@@ -148,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { UserService, type TenantUserListItem } from '@/services/UserService'
 import { ASSIGNABLE_ROLES } from '@/helpers/TenantPermissions'
@@ -160,12 +165,13 @@ const loading = ref(false)
 
 const createDialog = ref(false)
 const creating = ref(false)
-const createForm = ref({ email: '', firstName: '', lastName: '', role: 'tenant_cashier' })
+const createForm = ref<{ email: string; firstName: string; lastName: string; roles: string[] }>(
+    { email: '', firstName: '', lastName: '', roles: ['tenant_cashier'] })
 
 const roleDialog = ref(false)
 const savingRole = ref(false)
 const roleTarget = ref<TenantUserListItem | null>(null)
-const roleFormValue = ref<string>('tenant_cashier')
+const roleFormValues = ref<string[]>(['tenant_cashier'])
 
 const credsDialog = ref(false)
 const credsTitle = ref('')
@@ -177,7 +183,6 @@ const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
 const roleOptions = ASSIGNABLE_ROLES
-const selectedRoleDescription = computed(() => descriptionFor(createForm.value.role))
 
 onMounted(load)
 
@@ -194,7 +199,7 @@ async function load() {
 }
 
 function openCreate() {
-    createForm.value = { email: '', firstName: '', lastName: '', role: 'tenant_cashier' }
+    createForm.value = { email: '', firstName: '', lastName: '', roles: ['tenant_cashier'] }
     createDialog.value = true
 }
 
@@ -203,13 +208,17 @@ async function submitCreate() {
         flash('First name, last name, and email are required.', 'error')
         return
     }
+    if (createForm.value.roles.length === 0) {
+        flash('Pick at least one role.', 'error')
+        return
+    }
     creating.value = true
     try {
         const r = await service.createTenantUser({
             email: createForm.value.email.trim(),
             firstName: createForm.value.firstName.trim(),
             lastName: createForm.value.lastName.trim(),
-            role: createForm.value.role,
+            roles: createForm.value.roles,
         })
         const data: any = (r.data as any).data
         credsTitle.value = 'User created'
@@ -227,20 +236,24 @@ async function submitCreate() {
 
 function openChangeRole(u: TenantUserListItem) {
     roleTarget.value = u
-    roleFormValue.value = u.role
+    roleFormValues.value = u.roles?.length ? [...u.roles] : [u.role]
     roleDialog.value = true
 }
 
 async function saveRole() {
     if (!roleTarget.value) return
+    if (roleFormValues.value.length === 0) {
+        flash('Pick at least one role.', 'error')
+        return
+    }
     savingRole.value = true
     try {
-        await service.updateTenantUserRole(roleTarget.value.id, roleFormValue.value)
+        await service.updateTenantUserRoles(roleTarget.value.id, roleFormValues.value)
         roleDialog.value = false
-        flash('Role updated.', 'success')
+        flash('Roles updated.', 'success')
         await load()
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to change role.', 'error')
+        flash(err.response?.data?.error || 'Failed to change roles.', 'error')
     } finally {
         savingRole.value = false
     }
@@ -272,10 +285,6 @@ async function resetPassword(u: TenantUserListItem) {
 
 function roleTitle(role: string): string {
     return ASSIGNABLE_ROLES.find(r => r.value === role)?.title ?? role
-}
-
-function descriptionFor(role: string): string {
-    return ASSIGNABLE_ROLES.find(r => r.value === role)?.description ?? ''
 }
 
 function roleColor(role: string): string {

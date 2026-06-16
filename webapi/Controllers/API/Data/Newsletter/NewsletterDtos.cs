@@ -17,6 +17,9 @@ namespace webapi.Controllers.API.Data.Newsletter
     public class ImportSubscribersRequest
     {
         [Required] public string RawLines { get; set; } = null!; // one email (or email,name) per line
+        // The track must affirm these recipients opted in to receive email from them.
+        // Imports are rejected unless this is true.
+        public bool ConsentConfirmed { get; set; }
     }
 
     public class SubscriberListItem
@@ -40,7 +43,7 @@ namespace webapi.Controllers.API.Data.Newsletter
     public class ImportSubscribersResponse
     {
         public int Added { get; set; }
-        public int Reactivated { get; set; }
-        public int Skipped { get; set; }
+        public int Skipped { get; set; }      // already present, previously unsubscribed, or malformed
+        public int Suppressed { get; set; }   // skipped because on the suppression list (bounce/complaint/unsubscribe)
     }
 }

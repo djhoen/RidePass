@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Services.Helpers;
 using Services.Payments;
 using Services.Repositories.Interfaces;
@@ -16,7 +17,7 @@ namespace webapi.Controllers
     {
         private static readonly HashSet<string> AllowedImageKinds = new(StringComparer.Ordinal)
         {
-            "logo", "favicon", "hero", "secondaryHero"
+            "logo", "favicon", "hero", "secondaryHero", "benefits"
         };
 
         private static readonly Dictionary<string, string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -38,6 +39,7 @@ namespace webapi.Controllers
         private readonly IPaymentProvider _payments;
         private readonly IHomePageRepository _homePage;
         private readonly IConfiguration _configuration;
+        private readonly IMemoryCache _cache;
 
         public TenantController(
             ITenantBrandingRepository branding,
@@ -46,7 +48,8 @@ namespace webapi.Controllers
             IImageStorage imageStorage,
             IPaymentProvider payments,
             IHomePageRepository homePage,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IMemoryCache cache)
         {
             _branding = branding;
             _tenants = tenants;
@@ -55,6 +58,18 @@ namespace webapi.Controllers
             _payments = payments;
             _homePage = homePage;
             _configuration = configuration;
+            _cache = cache;
+        }
+
+        // Evict the middleware's cached tenant (tenant:{subdomain}) so a just-saved
+        // setting/feature change takes effect on the very next request instead of
+        // lagging up to 5 minutes behind the resolution cache.
+        private void InvalidateTenantCache()
+        {
+            if (_tenantContext.IsResolved)
+            {
+                _cache.Remove($"tenant:{_tenantContext.Tenant.Subdomain.ToLowerInvariant()}");
+            }
         }
 
         // ── Stripe Connect onboarding ───────────────────────────────────────────
@@ -78,6 +93,7 @@ namespace webapi.Controllers
                     tenantDisplayName: tenant.DisplayName,
                     ct: ct);
                 await _tenants.SetStripeConnectAccount(tenant.Id, accountId, "pending");
+                InvalidateTenantCache();
             }
             else
             {
@@ -111,6 +127,7 @@ namespace webapi.Controllers
             }
             var status = await _payments.GetConnectAccountStatusAsync(tenant.StripeConnectAccountId, ct);
             await _tenants.UpdateStripeConnectStatus(tenant.StripeConnectAccountId, status);
+            InvalidateTenantCache();
             return new ApiResponses().OkResult(new { status });
         }
 
@@ -124,6 +141,7 @@ namespace webapi.Controllers
         public async Task<IActionResult> DisconnectStripe()
         {
             await _tenants.ClearStripeConnect(_tenantContext.TenantId);
+            InvalidateTenantCache();
             return new ApiResponses().OkResult();
         }
 
@@ -221,6 +239,14 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("BlogEnabled")]
+        public async Task<IActionResult> UpdateBlogEnabled([FromBody] UpdateBlogEnabledRequest request)
+        {
+            await _tenants.UpdateBlogEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("CancellationPolicy")]
         public async Task<IActionResult> UpdateCancellationPolicy([FromBody] UpdateCancellationPolicyRequest request)
         {
@@ -274,7 +300,9 @@ namespace webapi.Controllers
                 aboutHtml: Trim(request.AboutHtml),
                 hoursJson: request.HoursJson,
                 homeNextUpTitle: Trim(request.HomeNextUpTitle),
-                homeNextUpEventTypeIds: typeIds);
+                homeNextUpEventTypeIds: typeIds,
+                homeBenefitsHtml: Trim(request.HomeBenefitsHtml),
+                homeSectionsJson: request.HomeSectionsJson);
             return await GetBranding();
         }
 
@@ -309,6 +337,14 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("No tenant resolved for this request.");
             }
 
+            // The tenant setting/feature mutations all `return await GetBranding()`. When we
+            // arrive here on a non-GET request, this tenant's row just changed, so evict the
+            // cached tenant; the next request (e.g. public /Blog gating) reads the new value.
+            if (!HttpMethods.IsGet(Request.Method))
+            {
+                InvalidateTenantCache();
+            }
+
             var row = await _branding.GetByTenantId(_tenantContext.TenantId);
             if (row is null)
             {
@@ -335,6 +371,7 @@ namespace webapi.Controllers
                 FaviconUrl = row.FaviconUrl,
                 HeroImageUrl = row.HeroImageUrl,
                 SecondaryHeroUrl = row.SecondaryHeroUrl,
+                HomeBenefitsImageUrl = row.HomeBenefitsImageUrl,
                 NavBarColor = row.NavBarColor,
                 NavBarTextColor = row.NavBarTextColor,
                 NavBarHomeColor = row.NavBarHomeColor,
@@ -351,6 +388,8 @@ namespace webapi.Controllers
                 HoursJson = tenant.HoursJson,
                 HomeNextUpTitle = tenant.HomeNextUpTitle,
                 HomeNextUpEventTypeIds = tenant.HomeNextUpEventTypeIds,
+                HomeBenefitsHtml = tenant.HomeBenefitsHtml,
+                HomeSectionsJson = tenant.HomeSectionsJson,
                 DailyStatusOpen = tenant.DailyStatusOpen,
                 DailyStatusMessage = tenant.DailyStatusMessage,
                 DailyStatusUpdatedAt = tenant.DailyStatusUpdatedAt,
@@ -375,6 +414,7 @@ namespace webapi.Controllers
                 ExtrasEnabled = tenant.ExtrasEnabled,
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
+                BlogEnabled = tenant.BlogEnabled,
                 AllowSelfCancel = tenant.AllowSelfCancel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,
@@ -440,6 +480,7 @@ namespace webapi.Controllers
                 "favicon"       => existing.FaviconUrl,
                 "hero"          => existing.HeroImageUrl,
                 "secondaryHero" => existing.SecondaryHeroUrl,
+                "benefits"      => existing.HomeBenefitsImageUrl,
                 _               => null
             };
 
@@ -471,6 +512,7 @@ namespace webapi.Controllers
                 "favicon"       => existing.FaviconUrl,
                 "hero"          => existing.HeroImageUrl,
                 "secondaryHero" => existing.SecondaryHeroUrl,
+                "benefits"      => existing.HomeBenefitsImageUrl,
                 _               => null
             };
 

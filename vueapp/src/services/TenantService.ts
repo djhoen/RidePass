@@ -35,6 +35,10 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/ConcessionsEnabled`, req)
     }
 
+    async updateBlogEnabled(req: { enabled: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/BlogEnabled`, req)
+    }
+
     async updateCancellationPolicy(req: {
         allowSelfCancel: boolean
         waitlistEnabled: boolean
@@ -70,7 +74,7 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/Branding`, req)
     }
 
-    async uploadBrandingImage(kind: 'logo' | 'favicon' | 'hero' | 'secondaryHero', file: File) {
+    async uploadBrandingImage(kind: 'logo' | 'favicon' | 'hero' | 'secondaryHero' | 'benefits', file: File) {
         const form = new FormData()
         form.append('file', file)
         return axios.post(`${this.apiUrl}/Tenant/Branding/Image/${kind}`, form, {
@@ -78,7 +82,7 @@ export class TenantService {
         })
     }
 
-    async deleteBrandingImage(kind: 'logo' | 'favicon' | 'hero' | 'secondaryHero') {
+    async deleteBrandingImage(kind: 'logo' | 'favicon' | 'hero' | 'secondaryHero' | 'benefits') {
         return axios.delete(`${this.apiUrl}/Tenant/Branding/Image/${kind}`)
     }
 
@@ -99,6 +103,8 @@ export class TenantService {
         hoursJson: string | null
         homeNextUpTitle: string | null
         homeNextUpEventTypeIds: string[] | null
+        homeBenefitsHtml: string | null
+        homeSectionsJson: string | null
     }) {
         return axios.put(`${this.apiUrl}/Tenant/Home/Content`, req)
     }

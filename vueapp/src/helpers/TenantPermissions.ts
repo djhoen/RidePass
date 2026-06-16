@@ -13,6 +13,7 @@ export const Perm = {
     DisputesView: 'disputes.view',
     CampaignsManage: 'campaigns.manage',
     CustomersView: 'customers.view',
+    BlogManage: 'blog.manage',
 } as const
 
 export type Permission = typeof Perm[keyof typeof Perm]
@@ -22,7 +23,7 @@ const ADMIN: Permission[] = Object.values(Perm)
 const MANAGER: Permission[] = [
     Perm.CatalogManage, Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView,
     Perm.SalesCancel, Perm.ReportsView, Perm.DisputesView, Perm.CampaignsManage,
-    Perm.CustomersView,
+    Perm.CustomersView, Perm.BlogManage,
 ]
 
 const CASHIER: Permission[] = [Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView]
@@ -42,6 +43,15 @@ export function permissionsForRole(role: string | null): ReadonlySet<Permission>
         case 'tenant_accountant': return new Set(ACCOUNTANT)
         default: return new Set()
     }
+}
+
+// A multi-role staffer's effective permissions are the union of each role's set.
+export function permissionsForRoles(roles: readonly string[] | null): ReadonlySet<Permission> {
+    const union = new Set<Permission>()
+    for (const r of roles ?? []) {
+        for (const p of permissionsForRole(r)) union.add(p)
+    }
+    return union
 }
 
 export const ASSIGNABLE_ROLES: { value: string; title: string; description: string }[] = [

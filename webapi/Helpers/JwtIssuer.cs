@@ -26,9 +26,16 @@ namespace webapi.Helpers
             var claims = new List<Claim>
             {
                 new("UserId", user.Id.ToString()),
-                new("role", user.Role),
+                new("role", user.Role),   // primary first, so FindFirst("role") is the identity role
                 new(ClaimTypes.NameIdentifier, user.Id.ToString())
             };
+
+            // Additional roles a multi-role staffer holds. The permission handlers union over
+            // every "role" claim; the primary above stays first for identity checks.
+            foreach (var extra in (user.Roles ?? System.Array.Empty<string>()))
+            {
+                if (extra != user.Role) claims.Add(new Claim("role", extra));
+            }
 
             if (user.TenantId.HasValue)
             {

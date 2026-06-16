@@ -21,6 +21,7 @@
                 <v-btn to="/Events" variant="text">Events</v-btn>
                 <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
                 <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
+                <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
                 <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
                 <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
             </template>
@@ -99,6 +100,16 @@
 
             <!-- Non-super-admin: tenant-context drawer (existing behavior). -->
             <template v-else>
+                <!-- Mobile only: the public top-bar links (hidden on small screens up
+                     top) collapse into the drawer so visitors can still reach them. -->
+                <template v-if="isMobile">
+                    <v-list-item to="/" title="Home" prepend-icon="mdi-home"></v-list-item>
+                    <v-list-item to="/Events" title="Events" prepend-icon="mdi-calendar"></v-list-item>
+                    <v-list-item v-if="branding.giftCardsEnabled" to="/GiftCard" title="Gift Cards" prepend-icon="mdi-gift"></v-list-item>
+                    <v-list-item v-if="branding.rentalsEnabled" to="/Rentals" title="Rentals" prepend-icon="mdi-bike-fast"></v-list-item>
+                    <v-list-item v-if="branding.blogEnabled" to="/Blog" title="Blog" prepend-icon="mdi-post"></v-list-item>
+                    <v-divider></v-divider>
+                </template>
                 <v-list-item v-if="isApex" to="/ForTracks" title="For Tracks" prepend-icon="mdi-store-plus"></v-list-item>
                 <v-divider v-if="isApex"></v-divider>
                 <template v-if="isAuthenticated">
@@ -264,12 +275,14 @@ const allGroups: AdminGroup[] = [
         title: 'Marketing',
         icon: 'mdi-bullhorn',
         links: [
+            { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage },
             { to: '/Admin/Rewards',     icon: 'mdi-trophy',            title: 'Rewards',     perm: Perm.CatalogManage },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
             { to: '/Admin/Campaigns',   icon: 'mdi-email-newsletter',  title: 'Campaigns',   perm: Perm.CampaignsManage },
             { to: '/Admin/Suppression', icon: 'mdi-email-off',         title: 'Suppression', perm: Perm.CampaignsManage },
             { to: '/Admin/Surveys',     icon: 'mdi-poll',              title: 'Surveys',     perm: Perm.CampaignsManage },
+            { to: '/Admin/Settings/Sms', icon: 'mdi-cellphone-message', title: 'SMS',        perm: Perm.SettingsManage },
         ],
     },
     {
@@ -283,7 +296,6 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage },
-            { to: '/Admin/Settings/Sms',      icon: 'mdi-cellphone-message', title: 'SMS',     perm: Perm.SettingsManage },
             { to: '/Admin/Waiver',            icon: 'mdi-file-sign',     title: 'Waivers',    perm: Perm.CatalogManage },
         ],
     },
@@ -363,8 +375,23 @@ const logout = () => {
     align-items: center;
 }
 .nav-logo {
+    margin-left: 12px;          /* breathing room from the bar's left edge */
     max-height: 40px;
+    max-width: 160px;
     width: auto;
+    object-fit: contain;
+    display: block;
+}
+/* v-app-bar-title clips its content for text ellipsis, which cropped wide logos.
+   Let the title slot show the full image, and flex-center it vertically so a
+   block logo doesn't top-align and leave a gap under it. */
+.nav-bar-themed :deep(.v-toolbar-title__placeholder) {
+    overflow: visible;
+    display: flex;
+    align-items: center;
+}
+.nav-bar-themed :deep(.v-toolbar-title) {
+    margin-inline-start: 0;
 }
 /* Pin child buttons + icons to the bar's configured foreground. Variant="text"
    buttons normally derive color from the Vuetify theme; the !important here

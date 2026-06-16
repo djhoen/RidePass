@@ -27,6 +27,11 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? HomeNextUpTitle { get; set; }
         // Whitelist of event type IDs to surface in the row (null/empty = all).
         public Guid[]? HomeNextUpEventTypeIds { get; set; }
+
+        // Benefits section rich-text content.
+        public string? HomeBenefitsHtml { get; set; }
+        // Per-section visibility map as JSON: { "sectionKey": bool }. Missing key = visible.
+        public string? HomeSectionsJson { get; set; }
     }
 
     public class UpdateTenantDailyStatusRequest

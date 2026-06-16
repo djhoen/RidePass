@@ -13,8 +13,8 @@
             Times displayed in tenant timezone: <strong>{{ branding.timezone }}</strong>. Input fields are interpreted in that zone too.
         </p>
 
-        <EventCalendar v-model:monthStart="calendarMonth" :events="calendarEvents" :timezone="tz()"
-            @select="openEdit" />
+        <EventCalendar v-model:monthStart="calendarMonth" :events="calendarEvents" :blackouts="calendarBlackouts"
+            :timezone="tz()" @select="openEdit" />
 
         <v-card>
             <v-table>
@@ -103,6 +103,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
+import { BlackoutService, type BlackoutDto } from '@/services/BlackoutService'
 import { branding } from '@/stores/branding'
 import EventDialog from '@/components/EventDialog.vue'
 import EventCalendar from '@/components/EventCalendar.vue'
@@ -112,6 +113,7 @@ const route = useRoute()
 const router = useRouter()
 
 const eventService = new EventService()
+const blackoutService = new BlackoutService()
 
 const today = dayjs()
 // Default window: start of this month → 6 months out. Most upcoming-event browsing
@@ -128,6 +130,7 @@ const editing = ref<EventDto | null>(null)
 // date-range table below. Always loads the full visible 6-week grid.
 const calendarMonth = ref(today.startOf('month').format('YYYY-MM-DD'))
 const calendarEvents = ref<EventDto[]>([])
+const calendarBlackouts = ref<BlackoutDto[]>([])
 
 const shareOpen = ref(false)
 const sharing = ref<EventDto | null>(null)
@@ -178,8 +181,12 @@ async function loadCalendar() {
     const gridEnd = gridStart.add(42, 'day')
     const fromUtc = dayjs.tz(gridStart.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
     const toUtc = dayjs.tz(gridEnd.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
-    const r = await eventService.list(fromUtc, toUtc)
+    const [r, b] = await Promise.all([
+        eventService.list(fromUtc, toUtc),
+        blackoutService.list(fromUtc, toUtc),
+    ])
     calendarEvents.value = (r.data as any).data
+    calendarBlackouts.value = (b.data as any).data
 }
 
 function formatInTenant(utc: string): string {

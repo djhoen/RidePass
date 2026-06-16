@@ -200,35 +200,34 @@
         </div>
 
         <template v-else>
-            <!-- ── 1. Hero ──────────────────────────────────────────────────────── -->
-            <section v-if="branding.heroImageUrl" class="hero" :style="{ backgroundImage: `url(${branding.heroImageUrl})` }">
-                <div class="hero-overlay text-center">
-                    <h1 class="text-h2 font-weight-bold text-white mb-2">{{ branding.displayName }}</h1>
-                    <p v-if="branding.tagline" class="text-h6 text-white mb-4">{{ branding.tagline }}</p>
-                    <div v-if="effectiveStatus" class="status-badge" :class="`status-${effectiveStatus.tone}`">
-                        <v-icon size="small">{{ effectiveStatus.icon }}</v-icon>
-                        <strong>{{ effectiveStatus.label }}</strong>
-                        <span v-if="effectiveStatus.message" class="ml-2 text-body-2">— {{ effectiveStatus.message }}</span>
-                    </div>
-                    <div class="mt-6">
-                        <v-btn color="primary" size="x-large" to="/Events" class="mr-3">See Events</v-btn>
-                        <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large" color="white"
-                            to="/SeasonPasses">Season Passes</v-btn>
-                    </div>
+            <!-- ── 1. Hero (apex-style: full-bleed photo, left-aligned, keeps the
+                 live track-status badge). Always shown. ──────────────────────── -->
+            <section class="apex-hero" :style="tenantHeroStyle">
+                <div class="apex-hero-overlay">
+                    <v-container>
+                        <v-row>
+                            <v-col cols="12" md="8" lg="7">
+                                <h1 class="text-h2 text-md-h1 mb-3 font-display apex-hero-headline text-left text-white">
+                                    {{ branding.displayName }}
+                                </h1>
+                                <p v-if="branding.tagline" class="text-h6 text-white mb-5 hero-subhead">
+                                    {{ branding.tagline }}
+                                </p>
+                                <div v-if="effectiveStatus" class="status-badge mb-6" :class="`status-${effectiveStatus.tone}`">
+                                    <v-icon size="small">{{ effectiveStatus.icon }}</v-icon>
+                                    <strong>{{ effectiveStatus.label }}</strong>
+                                    <span v-if="effectiveStatus.message" class="ml-2 text-body-2">— {{ effectiveStatus.message }}</span>
+                                </div>
+                                <div class="d-flex flex-wrap ga-3">
+                                    <v-btn color="primary" size="x-large" to="/Events">See Events</v-btn>
+                                    <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large" color="white"
+                                        to="/SeasonPasses">Season Passes</v-btn>
+                                </div>
+                            </v-col>
+                        </v-row>
+                    </v-container>
                 </div>
             </section>
-            <v-container v-else class="text-center my-8">
-                <h1 class="text-h2 font-weight-bold mb-2">{{ branding.displayName }}</h1>
-                <p v-if="branding.tagline" class="text-h6 text-medium-emphasis mb-4">{{ branding.tagline }}</p>
-                <v-chip v-if="effectiveStatus" :color="effectiveStatus.color" class="mb-4">
-                    {{ effectiveStatus.label }}<span v-if="effectiveStatus.message"> — {{ effectiveStatus.message }}</span>
-                </v-chip>
-                <div>
-                    <v-btn color="primary" size="x-large" to="/Events" class="mr-3">See Events</v-btn>
-                    <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large"
-                        to="/SeasonPasses">Season Passes</v-btn>
-                </div>
-            </v-container>
 
             <v-container>
                 <!-- ── 2. Next events row ──────────────────────────────────────── -->
@@ -236,9 +235,9 @@
                      like a typical carousel — only visible while scrolling is possible
                      in that direction. Native scroll keeps touch + keyboard
                      accessibility free; we just script the buttons. -->
-                <section v-if="nextEvents.length > 0" class="mb-12">
+                <section v-if="sectionVisible('nextEvents') && nextEvents.length > 0" class="mb-12">
                     <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4">{{ nextUpTitle }}</h2>
+                        <h2 class="text-h4 font-weight-bold font-display">{{ nextUpTitle }}</h2>
                         <v-spacer></v-spacer>
                         <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">All events</v-btn>
                     </div>
@@ -254,32 +253,55 @@
                         <div ref="nextUpTrack" class="next-up-track"
                             @scroll.passive="updateNextUpScrollState">
                             <div v-for="e in nextEvents" :key="e.id" class="next-up-card">
-                                <v-card class="event-card d-flex flex-column" style="height: 100%">
-                                <div class="event-cover" :class="{ 'event-cover--text': !hasCoverImage(e) }"
-                                    :style="eventCoverStyle(e)">
-                                    <v-chip size="small" class="event-chip">{{ e.eventTypeName }}</v-chip>
-                                    <div v-if="!hasCoverImage(e)" class="event-cover-title">{{ e.title }}</div>
+                                <!-- Whole card links to the event landing page. The Race Entry button
+                                     stops propagation so it opens the buy dialog instead of navigating. -->
+                                <v-card class="apex-event-card d-flex flex-column" style="height: 100%"
+                                    :to="`/Event/${e.id}`">
+                                <!-- Cover image with the black day/month date badge floated over the
+                                     top-left corner (matches the apex home cards); chip moves right. -->
+                                <div class="apex-event-image" :style="eventCoverStyle(e)">
+                                    <div class="apex-event-datebadge">
+                                        <div class="apex-event-day">{{ eventDayBadge(e) }}</div>
+                                        <div class="apex-event-month">{{ eventMonthBadge(e) }}</div>
+                                    </div>
+                                    <v-chip size="small" class="event-chip event-chip--right">{{ e.eventTypeName }}</v-chip>
                                 </div>
-                                <v-card-text class="pa-3 flex-grow-1 d-flex flex-column">
-                                    <div class="font-weight-bold">{{ e.title }}</div>
+                                <v-card-text class="pa-4 flex-grow-1 d-flex flex-column">
+                                    <div class="text-h6 font-display-upright mb-1">{{ e.title }}</div>
                                     <div class="text-caption text-medium-emphasis">{{ formatEventDate(e) }}</div>
                                     <div v-if="e.minTicketPriceCents" class="text-body-2 mt-2">
                                         From <strong>${{ (e.minTicketPriceCents / 100).toFixed(2) }}</strong>
                                     </div>
-                                    <div class="d-flex flex-wrap ga-2 mt-auto pt-3">
-                                        <v-btn v-if="e.hasRaceEntryTiers" size="small" color="deep-orange"
-                                            @click="openBuy(e, 'race_entry')">
+                                    <div v-if="e.hasRaceEntryTiers" class="d-flex flex-wrap ga-2 mt-auto pt-3">
+                                        <v-btn size="small" color="deep-orange"
+                                            @click.stop.prevent="openBuy(e, 'race_entry')">
                                             Race Entry
-                                        </v-btn>
-                                        <v-btn v-if="!e.hasRaceEntryTiers"
-                                            size="small" variant="text"
-                                            :to="{ path: '/Events', query: { eventId: e.id } }">
-                                            View event
                                         </v-btn>
                                     </div>
                                 </v-card-text>
                             </v-card>
                         </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Featured blog post: contained card under the events row, with a Read
+                     more CTA. Shown only when the blog is on and a post is featured. -->
+                <section v-if="branding.blogEnabled && featuredPost" class="featured-blog my-12">
+                    <div class="featured-blog-grid">
+                        <div class="featured-blog-media"
+                            :style="featuredPost.mainImageUrl ? { backgroundImage: `url(${absoluteUrl(featuredPost.mainImageUrl)})` } : {}">
+                        </div>
+                        <div class="featured-blog-content">
+                            <div class="text-overline text-primary mb-1">From the blog</div>
+                            <h2 class="text-h4 text-md-h3 font-display mb-3">{{ featuredPost.title }}</h2>
+                            <p v-if="featuredPost.excerpt" class="text-body-1 mb-6 featured-blog-excerpt">
+                                {{ featuredPost.excerpt }}
+                            </p>
+                            <div>
+                                <v-btn color="primary" size="large" :to="`/Blog/${featuredPost.slug}`"
+                                    append-icon="mdi-arrow-right">Read more</v-btn>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -304,8 +326,8 @@
                 </v-dialog>
 
                 <!-- ── 3. Pricing snapshot ─────────────────────────────────────── -->
-                <section v-if="passFromCents !== null || (seasonPassFromCents !== null)" class="mb-12">
-                    <h2 class="text-h4 mb-4">Passes</h2>
+                <section v-if="sectionVisible('passes') && (passFromCents !== null || (seasonPassFromCents !== null))" class="my-12">
+                    <h2 class="text-h4 font-weight-bold font-display mb-4">Passes</h2>
                     <v-row>
                         <v-col v-if="passFromCents !== null" cols="12" md="6">
                             <v-card class="pa-6" variant="outlined">
@@ -330,17 +352,33 @@
                     </v-row>
                 </section>
 
+                <!-- ── Benefits (apex dark band: photo left, checkmark perks right) ── -->
+                <section v-if="sectionVisible('benefits') && (branding.benefitsHtml || branding.benefitsImageUrl)"
+                    class="apex-benefits my-12">
+                    <v-row no-gutters>
+                        <v-col cols="12" md="4">
+                            <div v-if="branding.benefitsImageUrl" class="apex-benefits-photo"
+                                :style="{ backgroundImage: `url(${branding.benefitsImageUrl})` }"></div>
+                            <div v-else class="apex-benefits-photo apex-benefits-photo--placeholder"></div>
+                        </v-col>
+                        <v-col cols="12" md="8" class="apex-benefits-content">
+                            <h2 class="text-h4 mb-4 font-display">Why ride with {{ branding.displayName }}</h2>
+                            <div v-if="branding.benefitsHtml" v-html="benefitsHtmlSafe"></div>
+                        </v-col>
+                    </v-row>
+                </section>
+
                 <!-- ── 4. About ──────────────────────────────────────────────── -->
-                <section v-if="branding.aboutHtml" class="mb-12">
-                    <h2 class="text-h4 mb-4">About</h2>
+                <section v-if="sectionVisible('about') && branding.aboutHtml" class="my-12">
+                    <h2 class="text-h4 font-weight-bold font-display mb-4">About</h2>
                     <div class="rich-text-body" v-html="aboutHtmlSafe"></div>
                     <v-img v-if="branding.secondaryHeroUrl" :src="branding.secondaryHeroUrl"
                         max-height="400" cover class="mt-6 rounded"></v-img>
                 </section>
 
                 <!-- ── 5. Photo gallery ──────────────────────────────────────── -->
-                <section v-if="gallery.length > 0" class="mb-12">
-                    <h2 class="text-h4 mb-4">Photos</h2>
+                <section v-if="sectionVisible('gallery') && gallery.length > 0" class="my-12">
+                    <h2 class="text-h4 font-weight-bold font-display mb-4">Photos</h2>
                     <v-row>
                         <v-col v-for="(img, idx) in gallery" :key="img.id" cols="6" md="4" lg="3">
                             <!-- Thumbnail: caption hidden here; only shown inside the slideshow. -->
@@ -353,8 +391,8 @@
                 <!-- ── 6. Track Layout ──────────────────────────────────────── -->
                 <!-- Park location info (map + address) was removed — riders find that
                      in the footer now. Track-layout images are unique content, kept here. -->
-                <section v-if="trackGraphics.length > 0" class="mb-12">
-                    <h2 class="text-h4 mb-4">Track Layout</h2>
+                <section v-if="sectionVisible('trackLayout') && trackGraphics.length > 0" class="my-12">
+                    <h2 class="text-h4 font-weight-bold font-display mb-4">Track Layout</h2>
                     <div>
                         <v-card v-for="g in trackGraphics" :key="g.id" variant="outlined" class="mb-3">
                             <v-row no-gutters>
@@ -373,8 +411,8 @@
                 </section>
 
                 <!-- ── 7. Hours of operation ─────────────────────────────────── -->
-                <section v-if="weekHours.length > 0" class="mb-12">
-                    <h2 class="text-h4 mb-4">Hours</h2>
+                <section v-if="sectionVisible('hours') && weekHours.length > 0" class="my-12">
+                    <h2 class="text-h4 font-weight-bold font-display mb-4">Hours</h2>
                     <v-card variant="outlined" class="pa-4 hours-card">
                         <div v-for="day in weekHours" :key="day.key" class="hours-row">
                             <span class="hours-day">{{ day.label }}</span>
@@ -385,7 +423,7 @@
                 </section>
 
                 <!-- ── 9. Sign up / log in strip ─────────────────────────────── -->
-                <section v-if="!isAuthenticated" class="mb-12">
+                <section v-if="sectionVisible('signup') && !isAuthenticated" class="mb-12">
                     <v-card variant="tonal" color="primary" class="pa-6 text-center">
                         <h3 class="text-h5 mb-2">Have a season pass?</h3>
                         <p class="mb-4">Log in to check in at the gate, see your purchases, or buy more passes.</p>
@@ -441,6 +479,7 @@ import { PassService, type PassProduct } from '../services/PassService'
 import { SeasonPassService, type SeasonPassProduct } from '../services/SeasonPassService'
 import { TenantService, type GalleryImage, type TrackGraphic } from '../services/TenantService'
 import { DiscoverService, type TrackDiscoverItem, type EventDiscoverItem } from '../services/DiscoverService'
+import { BlogService, type BlogPostDetail } from '../services/BlogService'
 import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import authHelper from '../helpers/AuthHelper'
@@ -454,6 +493,20 @@ const isAuthenticated = computed(() => authHelper.isAuthenticated())
 // Admin-authored "About" copy is rendered as HTML, so sanitize it before it
 // hits v-html. The wrapper keeps the rich-text-body class for its layout rules.
 const aboutHtmlSafe = computed(() => DOMPurify.sanitize(branding.aboutHtml ?? ''))
+const benefitsHtmlSafe = computed(() => DOMPurify.sanitize(branding.benefitsHtml ?? ''))
+
+// Tenant hero background (reuses the apex hero styling). With no hero photo we
+// paint a brand-colored diagonal gradient instead of a flat block so the band
+// still looks intentional.
+const tenantHeroStyle = computed(() =>
+    branding.heroImageUrl
+        ? { backgroundImage: `url(${branding.heroImageUrl})` }
+        : { backgroundImage: 'linear-gradient(135deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-secondary)))' })
+
+// A non-hero section is visible unless its key is explicitly toggled off.
+function sectionVisible(key: string): boolean {
+    return branding.homeSections[key] !== false
+}
 
 const apiUrl: string = (import.meta as any).env?.VITE_API_ENDPOINT ?? ''
 function apiOrigin(): string {
@@ -471,7 +524,9 @@ const passService = new PassService()
 const seasonPassService = new SeasonPassService()
 const tenantService = new TenantService()
 const discoverService = new DiscoverService()
+const blogService = new BlogService()
 
+const featuredPost = ref<BlogPostDetail | null>(null)
 const events = ref<EventDto[]>([])
 const blackouts = ref<BlackoutDto[]>([])
 const passProducts = ref<PassProduct[]>([])
@@ -539,6 +594,15 @@ async function load() {
         seasonPassProducts.value = (sp.data as any).data
         gallery.value = (gal.data as any).data
         trackGraphics.value = (tg.data as any).data
+        // Featured blog post for the home-page band (only when the blog is on).
+        if (branding.blogEnabled) {
+            try {
+                const f = await blogService.getFeatured()
+                featuredPost.value = (f.data as any).data
+            } catch { featuredPost.value = null }
+        } else {
+            featuredPost.value = null
+        }
     } catch (err) {
         console.error('Failed to load home page data', err)
     }
@@ -676,6 +740,14 @@ function formatApexEventDay(utc: string): string {
 function formatApexEventMonth(utc: string): string {
     return dayjs.utc(utc).local().format('MMM').toUpperCase()
 }
+// Tenant event-card date badge (day / month) in the tenant's timezone, matching
+// the rest of the tenant page's date display.
+function eventDayBadge(e: EventDto): string {
+    return dayjs.utc(e.startsAtUtc).tz(branding.timezone || 'UTC').format('D')
+}
+function eventMonthBadge(e: EventDto): string {
+    return dayjs.utc(e.startsAtUtc).tz(branding.timezone || 'UTC').format('MMM').toUpperCase()
+}
 
 // Background style for the apex track card cover. Reuses the tenant's own
 // hero image; falls back to a flat themed background so the card never
@@ -736,9 +808,6 @@ const nextEvents = computed(() => {
         .slice(0, 12)
 })
 
-function hasCoverImage(e: EventDto): boolean {
-    return !!(e.imageUrl ?? e.eventTypeImageUrl)
-}
 
 // ── Next-Up carousel ────────────────────────────────────────────────────────
 // Native horizontal scroll-snap with chevron buttons. Buttons disable at the
@@ -874,6 +943,41 @@ function formatTime12(hhmm: string): string {
 </script>
 
 <style scoped>
+/* ── Featured blog band (full-bleed; image left, copy right on desktop) ── */
+.featured-blog {
+    width: 100%;
+    background: rgb(var(--v-theme-surface));
+    /* Contained card within the page container (no longer a full-bleed band). */
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 16px;
+    overflow: hidden;
+}
+.featured-blog-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 300px;
+}
+.featured-blog-media {
+    background-size: cover;
+    background-position: center;
+    background-color: rgba(0, 0, 0, 0.06);
+    min-height: 240px;
+}
+.featured-blog-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 48px;
+}
+.featured-blog-excerpt {
+    max-width: 52ch;
+    color: rgba(var(--v-theme-on-surface), 0.8);
+}
+@media (max-width: 960px) {
+    .featured-blog-grid { grid-template-columns: 1fr; }
+    .featured-blog-content { padding: 28px; }
+}
+
 /* ── Apex landing page ───────────────────────────────────────────────────
    Hero is full-bleed with a configurable background image; falls back to a
    dark gradient when the super admin hasn't uploaded one. The overlay sits
@@ -924,6 +1028,11 @@ function formatTime12(hhmm: string): string {
 }
 .apex-hero-line {
     display: block;
+}
+
+.hero-subhead {
+    max-width: 640px;
+    opacity: 0.92;
 }
 
 .apex-stats {
@@ -1106,22 +1215,6 @@ function formatTime12(hhmm: string): string {
     .apex-benefits-content { padding: 2rem 1.5rem; }
 }
 
-.hero {
-    position: relative;
-    height: 60vh;
-    min-height: 360px;
-    background-size: cover;
-    background-position: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.hero-overlay {
-    background: rgba(0, 0, 0, 0.45);
-    padding: 2rem 3rem;
-    border-radius: 8px;
-    max-width: 90%;
-}
 .status-badge {
     display: inline-flex;
     align-items: center;
@@ -1134,13 +1227,6 @@ function formatTime12(hhmm: string): string {
 .status-open { background: rgba(76, 175, 80, 0.9); }
 .status-closed { background: rgba(244, 67, 54, 0.9); }
 .status-caution { background: rgba(255, 152, 0, 0.9); }
-
-.event-card {
-    text-decoration: none;
-    transition: transform 0.15s ease;
-    height: 100%;
-}
-.event-card:hover { transform: translateY(-2px); }
 
 /* Carousel wrapper hosts the absolutely-positioned chevrons. The track itself
    handles the actual scroll; the arrows sit over the left + right edges,
@@ -1195,6 +1281,9 @@ function formatTime12(hhmm: string): string {
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
     scroll-behavior: smooth;
+    /* Top room so the date badge, floated -6px above each card, isn't clipped by
+       overflow-y: hidden (which overflow-x: auto forces on this axis). */
+    padding-top: 10px;
     padding-bottom: 4px;          /* room for hover translate without clipping */
     /* Hide the native scrollbar — chevrons are the affordance. */
     scrollbar-width: none;
@@ -1218,38 +1307,6 @@ function formatTime12(hhmm: string): string {
 @media (max-width: 600px) {   /* < sm → 1 up, lean a bit so the next card peeks */
     .next-up-card { width: 88%; }
 }
-.event-cover {
-    height: 140px;
-    background-size: cover;
-    background-position: center;
-    position: relative;
-    flex-shrink: 0;
-}
-/* Stylized-title cover (no image fallback). The chip stays pinned top-left;
-   the title takes the rest of the card with a tracked-out, drop-shadowed look
-   so a flat background reads as intentional design rather than missing media. */
-.event-cover--text {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px 18px;
-    overflow: hidden;
-}
-.event-cover-title {
-    color: #fff;
-    font-weight: 800;
-    font-size: 22px;
-    line-height: 1.15;
-    letter-spacing: 0.01em;
-    text-align: center;
-    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-    /* Clamp to 3 lines so a marathon-long title doesn't blow past the chip. */
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    width: 100%;
-}
 /* The chip uses a white background regardless of theme so it pops against the event
    cover image; pin the foreground color too so dark-mode (where chip text would
    otherwise be white) doesn't render white-on-white. */
@@ -1259,6 +1316,12 @@ function formatTime12(hhmm: string): string {
     left: 8px;
     background: rgba(255, 255, 255, 0.92) !important;
     color: rgba(0, 0, 0, 0.87) !important;
+}
+/* Event-type chip moves to the top-right on the apex-style cards so it clears
+   the date badge pinned top-left. */
+.event-chip--right {
+    left: auto;
+    right: 8px;
 }
 :deep(.event-chip .v-chip__content) {
     color: rgba(0, 0, 0, 0.87) !important;

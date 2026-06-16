@@ -16,17 +16,20 @@ namespace webapi.Controllers
         private readonly INewsletterRepository _subscribers;
         private readonly ITenantRepository _tenants;
         private readonly IUserRepository _users;
+        private readonly IEmailSuppressionRepository _suppression;
         private readonly ITenantContext _tenantContext;
 
         public NewsletterController(
             INewsletterRepository subscribers,
             ITenantRepository tenants,
             IUserRepository users,
+            IEmailSuppressionRepository suppression,
             ITenantContext tenantContext)
         {
             _subscribers = subscribers;
             _tenants = tenants;
             _users = users;
+            _suppression = suppression;
             _tenantContext = tenantContext;
         }
 
@@ -223,7 +226,20 @@ namespace webapi.Controllers
         [HttpPost("Admin/Subscribers/Import")]
         public async Task<IActionResult> ImportSubscribers([FromBody] ImportSubscribersRequest request)
         {
-            int added = 0, reactivated = 0, skipped = 0;
+            // Guardrail 1: the track must affirm these recipients opted in. This is the
+            // attestation AWS/SES expects for any uploaded list and our CAN-SPAM basis.
+            if (!request.ConsentConfirmed)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Confirm that these recipients opted in to receive email from your track before importing.");
+            }
+
+            // Guardrail 2: never (re)add anyone on the suppression list (hard bounces,
+            // complaints, one-click unsubscribes). Load it once, compare case-insensitively.
+            var blocklist = await _suppression.ListMarketingBlocklist(_tenantContext.TenantId);
+            var suppressedSet = new HashSet<string>(blocklist, StringComparer.OrdinalIgnoreCase);
+
+            int added = 0, skipped = 0, suppressed = 0;
             var lines = (request.RawLines ?? "")
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             foreach (var line in lines)
@@ -235,19 +251,24 @@ namespace webapi.Controllers
                     skipped++;
                     continue;
                 }
+                if (suppressedSet.Contains(email))
+                {
+                    suppressed++;
+                    continue;
+                }
                 var name = parts.Length > 1 ? NormalizeString(parts[1]) : null;
-                var existing = await _subscribers.GetByEmail(_tenantContext.TenantId, email);
-                var wasUnsub = existing?.UnsubscribedAt.HasValue == true;
-                await _subscribers.UpsertFromSignup(_tenantContext.TenantId, email, name, "import");
-                if (existing is null) added++;
-                else if (wasUnsub) reactivated++;
+                // InsertFromImport only adds brand-new rows; existing subscribers (including
+                // anyone previously unsubscribed) are left exactly as they are, so an import
+                // can never resurrect an opt-out.
+                var inserted = await _subscribers.InsertFromImport(_tenantContext.TenantId, email, name);
+                if (inserted) added++;
                 else skipped++;
             }
             return new ApiResponses().OkResult(new ImportSubscribersResponse
             {
                 Added = added,
-                Reactivated = reactivated,
                 Skipped = skipped,
+                Suppressed = suppressed,
             });
         }
 

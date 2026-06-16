@@ -14,15 +14,15 @@ namespace webapi.AuthPolicies
 
         protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, TenantAdminRequirement requirement)
         {
-            var role = context.User.FindFirst("role")?.Value;
+            var roles = context.User.FindAll("role").Select(c => c.Value).ToList();
 
-            if (role == "super_admin")
+            if (roles.Contains("super_admin"))
             {
                 context.Succeed(requirement);
                 return Task.CompletedTask;
             }
 
-            if (role != "tenant_admin")
+            if (!roles.Contains("tenant_admin"))
             {
                 return Task.CompletedTask;
             }

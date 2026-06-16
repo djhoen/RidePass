@@ -35,19 +35,19 @@
                                 </v-col>
                             </v-row>
                             <v-text-field v-model="form.email" label="Email" type="email" required
-                                class="mb-2"></v-text-field>
+                                class="mb-2 mt-4"></v-text-field>
                             <PhoneField v-model="form.phone" label="Mobile phone" required
                                 hint="We text waitlist promotions and event-day alerts to this number." persistent-hint
-                                class="mb-2" />
+                                class="mb-2 mt-4" />
                             <v-text-field v-model="form.birthdate" label="Birthdate" type="date" required
                                 :max="todayIso" class="mb-2 mt-4"></v-text-field>
                             <v-row>
                                 <v-col cols="12" sm="6">
-                                    <v-text-field v-model="form.emergencyContactName" label="Emergency contact name" required
+                                    <v-text-field v-model="form.emergencyContactName" label="Emergency contact name" required class="mb-2 mt-4"
                                         hint="Someone to call if there's a problem at the track" persistent-hint></v-text-field>
                                 </v-col>
                                 <v-col cols="12" sm="6">
-                                    <PhoneField v-model="form.emergencyContactPhone" label="Emergency contact phone" required />
+                                    <PhoneField v-model="form.emergencyContactPhone" label="Emergency contact phone" required class="mb-2 mt-4" />
                                 </v-col>
                             </v-row>
                             <v-text-field v-model="form.password" label="Password" type="password" required

@@ -14,20 +14,21 @@ namespace webapi.AuthPolicies
 
         protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, TenantPermissionRequirement requirement)
         {
-            var role = context.User.FindFirst("role")?.Value;
-            if (string.IsNullOrEmpty(role))
+            // A multi-role staffer carries one "role" claim per role; permissions are the union.
+            var roles = context.User.FindAll("role").Select(c => c.Value).ToList();
+            if (roles.Count == 0)
             {
                 return Task.CompletedTask;
             }
 
             // Super admins always pass — they can act as any tenant admin during support work.
-            if (role == "super_admin")
+            if (roles.Contains("super_admin"))
             {
                 context.Succeed(requirement);
                 return Task.CompletedTask;
             }
 
-            if (!TenantPermissions.ForRole(role).Contains(requirement.Permission))
+            if (!TenantPermissions.ForRoles(roles).Contains(requirement.Permission))
             {
                 return Task.CompletedTask;
             }

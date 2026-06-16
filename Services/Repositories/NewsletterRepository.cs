@@ -65,6 +65,19 @@ namespace Services.Repositories
             return r.First();
         }
 
+        // Import-only insert: adds a brand-new subscriber, never touches an existing row.
+        // Crucially it does NOT clear unsubscribed_at, so re-importing a list can't
+        // resurrect someone who previously opted out. Returns true if a row was inserted.
+        public async Task<bool> InsertFromImport(Guid tenantId, string email, string? name)
+        {
+            const string sql = @"
+                INSERT INTO newsletter_subscriber (tenant_id, email, name, source)
+                VALUES (@tenantId, @email, @name, 'import')
+                ON CONFLICT (tenant_id, email) DO NOTHING";
+            var rows = await _db.Execute(sql, new { tenantId, email, name });
+            return rows > 0;
+        }
+
         public async Task Unsubscribe(Guid id)
         {
             const string sql = "UPDATE newsletter_subscriber SET unsubscribed_at = now() WHERE id = @id";

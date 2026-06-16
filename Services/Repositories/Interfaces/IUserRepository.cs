@@ -24,6 +24,7 @@ namespace Services.Repositories.Interfaces
         Task<List<User>> ListSuperAdmins();
         Task<List<User>> ListTenantUsersByRole(Guid tenantId, string role);
         Task UpdateRole(Guid id, string role);
+        Task UpdateRoles(Guid id, string primaryRole, string[] roles);
         Task UpdateStatus(Guid id, string status);
         Task UpdatePasswordHash(Guid id, string passwordHash);
         Task SuperAdminUpdateUser(User u);

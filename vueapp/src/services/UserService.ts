@@ -75,12 +75,12 @@ export class UserService {
         return axios.get<{ data: TenantUserListItem[] }>(`${this.apiUrl}/User/Tenant`)
     }
 
-    createTenantUser(req: { email: string; firstName: string; lastName: string; role: string }) {
+    createTenantUser(req: { email: string; firstName: string; lastName: string; roles: string[] }) {
         return axios.post<{ data: CreateTenantUserResponse }>(`${this.apiUrl}/User/Tenant`, req)
     }
 
-    updateTenantUserRole(id: string, role: string) {
-        return axios.put(`${this.apiUrl}/User/Tenant/${id}/Role`, { role })
+    updateTenantUserRoles(id: string, roles: string[]) {
+        return axios.put(`${this.apiUrl}/User/Tenant/${id}/Role`, { roles })
     }
 
     updateTenantUserStatus(id: string, status: 'active' | 'disabled') {
@@ -98,6 +98,7 @@ export interface TenantUserListItem {
     firstName: string
     lastName: string
     role: string
+    roles: string[]
     status: string
     createdAtUtc: string
 }

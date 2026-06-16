@@ -14,8 +14,12 @@
 
         <div class="cal-grid">
             <div v-for="day in days" :key="day.key" class="cal-cell"
-                :class="{ 'cal-cell--muted': !day.inMonth, 'cal-cell--today': day.isToday }">
+                :class="{ 'cal-cell--muted': !day.inMonth, 'cal-cell--today': day.isToday, 'cal-cell--blackout': day.blackoutReasons.length > 0 }">
                 <div class="cal-daynum">{{ day.dayNum }}</div>
+                <div v-if="day.blackoutReasons.length" class="cal-blackout"
+                    :title="day.blackoutReasons.join(', ')">
+                    <v-icon size="11" class="mr-1">mdi-calendar-remove</v-icon>{{ day.blackoutReasons[0] }}
+                </div>
                 <div class="cal-events">
                     <button v-for="ev in day.events" :key="ev.id" type="button" class="cal-event"
                         :style="{ backgroundColor: ev.eventTypeColor || '#1976d2' }"
@@ -32,8 +36,9 @@
 import { computed } from 'vue'
 import dayjs from 'dayjs'
 import type { EventDto } from '@/services/EventService'
+import type { BlackoutDto } from '@/services/BlackoutService'
 
-const props = defineProps<{ monthStart: string; events: EventDto[]; timezone: string }>()
+const props = defineProps<{ monthStart: string; events: EventDto[]; timezone: string; blackouts?: BlackoutDto[] }>()
 const emit = defineEmits<{ (e: 'update:monthStart', v: string): void; (e: 'select', ev: EventDto): void }>()
 
 const tz = computed(() => props.timezone || 'UTC')
@@ -52,12 +57,34 @@ const eventsByDate = computed(() => {
     return map
 })
 
+// Mark every day a blackout covers (in the tenant tz) with its reason(s). A blackout
+// can span multiple days; we mark from its start day through its end day. Backing the
+// end off by a second keeps a blackout that ends at the next midnight from bleeding into
+// the following day.
+const blackoutsByDate = computed(() => {
+    const map: Record<string, string[]> = {}
+    for (const b of props.blackouts ?? []) {
+        const start = dayjs.utc(b.startsAtUtc).tz(tz.value).startOf('day')
+        const endDay = dayjs.utc(b.endsAtUtc).tz(tz.value).subtract(1, 'second').startOf('day')
+        if (endDay.isBefore(start, 'day')) { // bad/instant range: just mark the start day
+            ;(map[start.format('YYYY-MM-DD')] ??= []).push(b.reason || 'Blackout')
+            continue
+        }
+        let cur = start
+        for (let guard = 0; !cur.isAfter(endDay, 'day') && guard < 400; guard++) {
+            ;(map[cur.format('YYYY-MM-DD')] ??= []).push(b.reason || 'Blackout')
+            cur = cur.add(1, 'day')
+        }
+    }
+    return map
+})
+
 // A fixed 6-row grid (42 cells) starting on the Sunday on/before the 1st.
 const days = computed(() => {
     const first = monthRef.value.startOf('month')
     const gridStart = first.startOf('week')
     const todayKey = dayjs().tz(tz.value).format('YYYY-MM-DD')
-    const out: Array<{ key: string; dayNum: number; inMonth: boolean; isToday: boolean; events: EventDto[] }> = []
+    const out: Array<{ key: string; dayNum: number; inMonth: boolean; isToday: boolean; events: EventDto[]; blackoutReasons: string[] }> = []
     for (let i = 0; i < 42; i++) {
         const d = gridStart.add(i, 'day')
         const key = d.format('YYYY-MM-DD')
@@ -67,6 +94,7 @@ const days = computed(() => {
             inMonth: d.month() === first.month(),
             isToday: key === todayKey,
             events: eventsByDate.value[key] ?? [],
+            blackoutReasons: blackoutsByDate.value[key] ?? [],
         })
     }
     return out
@@ -115,6 +143,30 @@ function timeLabel(ev: EventDto): string {
 
 .cal-cell--today {
     background: rgba(25, 118, 210, 0.08);
+}
+
+/* Blacked-out days: subtle red wash + a small label so they read as "closed". */
+.cal-cell--blackout {
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(211, 47, 47, 0.06),
+        rgba(211, 47, 47, 0.06) 6px,
+        rgba(211, 47, 47, 0.12) 6px,
+        rgba(211, 47, 47, 0.12) 12px
+    );
+}
+
+.cal-blackout {
+    display: flex;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: #c62828;
+    line-height: 1.3;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cal-daynum {

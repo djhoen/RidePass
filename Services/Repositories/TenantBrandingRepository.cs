@@ -12,6 +12,7 @@ namespace Services.Repositories
             ["favicon"]       = "favicon_url",
             ["hero"]          = "hero_image_url",
             ["secondaryHero"] = "secondary_hero_url",
+            ["benefits"]      = "home_benefits_image_url",
         };
 
         private readonly IDbHelper _db;
@@ -34,6 +35,7 @@ namespace Services.Repositories
                        favicon_url          AS FaviconUrl,
                        hero_image_url       AS HeroImageUrl,
                        secondary_hero_url   AS SecondaryHeroUrl,
+                       home_benefits_image_url AS HomeBenefitsImageUrl,
                        nav_bar_color           AS NavBarColor,
                        nav_bar_text_color      AS NavBarTextColor,
                        nav_bar_home_color      AS NavBarHomeColor,

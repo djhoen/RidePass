@@ -28,6 +28,8 @@ namespace Services.Repositories
             hours_json::text AS HoursJson,
             home_next_up_title AS HomeNextUpTitle,
             home_next_up_event_type_ids AS HomeNextUpEventTypeIds,
+            home_benefits_html AS HomeBenefitsHtml,
+            home_sections_json::text AS HomeSectionsJson,
             daily_status_open AS DailyStatusOpen,
             daily_status_message AS DailyStatusMessage,
             daily_status_updated_at AS DailyStatusUpdatedAt,
@@ -48,6 +50,7 @@ namespace Services.Repositories
             extras_enabled AS ExtrasEnabled,
             season_passes_enabled AS SeasonPassesEnabled,
             concessions_enabled AS ConcessionsEnabled,
+            blog_enabled AS BlogEnabled,
             allow_self_cancel AS AllowSelfCancel,
             waitlist_enabled AS WaitlistEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
@@ -263,18 +266,22 @@ namespace Services.Repositories
         }
 
         public async Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,
-            string? homeNextUpTitle, Guid[]? homeNextUpEventTypeIds)
+            string? homeNextUpTitle, Guid[]? homeNextUpEventTypeIds,
+            string? homeBenefitsHtml, string? homeSectionsJson)
         {
-            // hours_json is jsonb in Postgres; coerce the text param via cast.
+            // hours_json / home_sections_json are jsonb in Postgres; coerce the text params via cast.
             // home_next_up_event_type_ids is uuid[] — null clears the whitelist (= show all).
             const string sql = @"
                 UPDATE tenant
                 SET about_html = @aboutHtml,
                     hours_json = COALESCE(@hoursJson::jsonb, '{}'::jsonb),
                     home_next_up_title = @homeNextUpTitle,
-                    home_next_up_event_type_ids = @homeNextUpEventTypeIds
+                    home_next_up_event_type_ids = @homeNextUpEventTypeIds,
+                    home_benefits_html = @homeBenefitsHtml,
+                    home_sections_json = COALESCE(@homeSectionsJson::jsonb, '{}'::jsonb)
                 WHERE id = @tenantId";
-            await _db.Execute(sql, new { tenantId, aboutHtml, hoursJson, homeNextUpTitle, homeNextUpEventTypeIds });
+            await _db.Execute(sql, new { tenantId, aboutHtml, hoursJson, homeNextUpTitle,
+                homeNextUpEventTypeIds, homeBenefitsHtml, homeSectionsJson });
         }
 
         public async Task UpdateDailyStatus(Guid tenantId, bool? open, string? message)
@@ -336,6 +343,12 @@ namespace Services.Repositories
         public async Task UpdateConcessionsEnabled(Guid tenantId, bool enabled)
         {
             const string sql = "UPDATE tenant SET concessions_enabled = @enabled WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateBlogEnabled(Guid tenantId, bool enabled)
+        {
+            const string sql = "UPDATE tenant SET blog_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
         }
 

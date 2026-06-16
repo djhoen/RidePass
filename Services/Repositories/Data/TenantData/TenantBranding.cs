@@ -12,6 +12,7 @@ namespace Services.Repositories.Data.TenantData
         public string? FaviconUrl { get; set; }
         public string? HeroImageUrl { get; set; }
         public string? SecondaryHeroUrl { get; set; }
+        public string? HomeBenefitsImageUrl { get; set; }
         public string? NavBarColor { get; set; }
         public string? NavBarTextColor { get; set; }
         public string? NavBarHomeColor { get; set; }

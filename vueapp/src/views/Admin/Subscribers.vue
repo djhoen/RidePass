@@ -84,11 +84,16 @@
                         <br><code>alice@example.com, Alice Smith</code>
                     </p>
                     <v-textarea v-model="importRaw" label="Emails" rows="10" density="compact"></v-textarea>
+                    <v-checkbox v-model="importConsent" density="compact" class="mt-2"
+                        label="I confirm these recipients opted in to receive email from this track."></v-checkbox>
+                    <p class="text-caption text-medium-emphasis">
+                        Addresses that previously bounced, complained, or unsubscribed are skipped automatically.
+                    </p>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
                     <v-btn :disabled="importing" @click="importDialog = false">Close</v-btn>
-                    <v-btn color="primary" :loading="importing" @click="submitImport">Import</v-btn>
+                    <v-btn color="primary" :loading="importing" :disabled="!importConsent" @click="submitImport">Import</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -117,6 +122,7 @@ const addForm = ref({ email: '', name: '' })
 const importDialog = ref(false)
 const importing = ref(false)
 const importRaw = ref('')
+const importConsent = ref(false)
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -166,13 +172,14 @@ async function submitAdd() {
 }
 
 async function submitImport() {
-    if (!importRaw.value.trim()) return
+    if (!importRaw.value.trim() || !importConsent.value) return
     importing.value = true
     try {
-        const r = await service.importSubscribers(importRaw.value)
+        const r = await service.importSubscribers(importRaw.value, importConsent.value)
         const data = (r.data as any).data
-        flash(`Imported: ${data.added} new, ${data.reactivated} re-activated, ${data.skipped} skipped.`, 'success')
+        flash(`Imported: ${data.added} new, ${data.skipped} skipped, ${data.suppressed} suppressed.`, 'success')
         importRaw.value = ''
+        importConsent.value = false
         importDialog.value = false
         await load()
     } catch (err: any) {

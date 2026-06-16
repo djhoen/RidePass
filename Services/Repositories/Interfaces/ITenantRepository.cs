@@ -59,7 +59,8 @@ namespace Services.Repositories.Interfaces
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);
         Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,
-            string? homeNextUpTitle, Guid[]? homeNextUpEventTypeIds);
+            string? homeNextUpTitle, Guid[]? homeNextUpEventTypeIds,
+            string? homeBenefitsHtml, string? homeSectionsJson);
         Task UpdateDailyStatus(Guid tenantId, bool? open, string? message);
         Task UpdateFooter(Guid tenantId, string? contactEmail, string? phone,
             string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml);
@@ -68,6 +69,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateExtrasEnabled(Guid tenantId, bool enabled);
         Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled);
         Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
+        Task UpdateBlogEnabled(Guid tenantId, bool enabled);
         Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, bool waitlistEnabled, int waitlistConfirmWindowMinutes);
         Task UpdateMembershipSettings(
             Guid tenantId, bool enabled, string name, int priceCents, string durationKind,

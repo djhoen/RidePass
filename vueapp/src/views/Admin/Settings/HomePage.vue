@@ -66,6 +66,34 @@
             </v-card-text>
         </v-card>
 
+        <!-- ── Benefits ("why ride here" band) ──────────────────────────────── -->
+        <v-card class="mb-6 pa-4">
+            <v-card-title>Benefits</v-card-title>
+            <v-card-subtitle>A "why ride here" band on the home page. The side image is optional.</v-card-subtitle>
+            <v-card-text>
+                <RichTextEditor v-model="content.benefitsHtml" />
+                <div class="text-subtitle-2 mt-4 mb-2">Benefits image (optional)</div>
+                <BrandingImageSlot label="Benefits Image" kind="benefits" :url="branding.benefitsImageUrl"
+                    @uploaded="onUploaded" @removed="onRemoved" />
+                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Benefits</v-btn>
+            </v-card-text>
+        </v-card>
+
+        <!-- ── Section visibility ───────────────────────────────────────────── -->
+        <v-card class="mb-6 pa-4">
+            <v-card-title>Page Sections</v-card-title>
+            <v-card-subtitle>Turn home page sections on or off. The hero is always shown.</v-card-subtitle>
+            <v-card-text>
+                <v-switch v-for="s in SECTION_DEFS" :key="s.key" v-model="sections[s.key]"
+                    :label="s.label" color="primary" density="compact" hide-details inset
+                    :disabled="s.key === 'benefits' && !benefitsHasContent"></v-switch>
+                <p v-if="!benefitsHasContent" class="text-caption text-medium-emphasis mt-1">
+                    Add Benefits content (text or an image) above to enable that section.
+                </p>
+                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Sections</v-btn>
+            </v-card-text>
+        </v-card>
+
         <v-card class="mb-6 pa-4">
             <v-card-title>Hours of Operation</v-card-title>
             <v-card-subtitle>When riding is allowed. The public page can warn riders before they buy a pass for a day you're closed.</v-card-subtitle>
@@ -193,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { TenantService, type GalleryImage, type TrackGraphic } from '@/services/TenantService'
@@ -243,9 +271,33 @@ function blankHours(): Record<DayKey, DayHours> {
 
 const content = ref({
     aboutHtml: '' as string,
+    benefitsHtml: '' as string,
     nextUpTitle: '' as string,
     nextUpEventTypeIds: [] as string[],
 })
+
+// Toggleable home sections (everything except the always-on hero). A section is
+// visible unless its key is explicitly false.
+const SECTION_DEFS: { key: string; label: string }[] = [
+    { key: 'nextEvents', label: 'Upcoming events' },
+    { key: 'passes', label: 'Passes pricing' },
+    { key: 'benefits', label: 'Benefits' },
+    { key: 'about', label: 'About' },
+    { key: 'gallery', label: 'Photo gallery' },
+    { key: 'trackLayout', label: 'Track layout' },
+    { key: 'hours', label: 'Hours of operation' },
+    { key: 'signup', label: 'Sign-up strip' },
+]
+const sections = ref<Record<string, boolean>>({})
+
+// The Benefits section can't be enabled until it has content (rich text or an image),
+// otherwise toggling it on does nothing on the public page.
+const benefitsHasContent = computed(() =>
+    content.value.benefitsHtml.trim().length > 0 || !!branding.benefitsImageUrl)
+
+// If benefits content is removed, drop the section back off so a content-less
+// section can't stay enabled.
+watch(benefitsHasContent, (has) => { if (!has) sections.value.benefits = false })
 const eventTypeOptions = ref<EventType[]>([])
 const hours = ref<Record<DayKey, DayHours>>(blankHours())
 const status = ref<{ open: boolean | null; message: string }>({ open: null, message: '' })
@@ -394,8 +446,12 @@ async function removeTrackGraphic(g: TrackGraphic) {
 
 function populateForm() {
     content.value.aboutHtml = branding.aboutHtml ?? ''
+    content.value.benefitsHtml = branding.benefitsHtml ?? ''
     content.value.nextUpTitle = branding.homeNextUpTitle ?? ''
     content.value.nextUpEventTypeIds = branding.homeNextUpEventTypeIds ?? []
+    const sec: Record<string, boolean> = {}
+    for (const s of SECTION_DEFS) sec[s.key] = branding.homeSections[s.key] !== false
+    sections.value = sec
     if (branding.hoursJson) {
         try {
             const parsed = JSON.parse(branding.hoursJson) as Record<string, Partial<DayHours>>
@@ -428,10 +484,14 @@ async function saveContent() {
         savingContent.value = true
         const hoursJson = JSON.stringify(hours.value)
         const aboutHtml = content.value.aboutHtml.trim().length > 0 ? content.value.aboutHtml : null
+        const homeBenefitsHtml = content.value.benefitsHtml.trim().length > 0 ? content.value.benefitsHtml : null
         const homeNextUpTitle = content.value.nextUpTitle.trim().length > 0 ? content.value.nextUpTitle.trim() : null
         const homeNextUpEventTypeIds = content.value.nextUpEventTypeIds.length > 0
             ? content.value.nextUpEventTypeIds : null
-        await tenantService.updateHomeContent({ aboutHtml, hoursJson, homeNextUpTitle, homeNextUpEventTypeIds })
+        const homeSectionsJson = JSON.stringify(sections.value)
+        await tenantService.updateHomeContent({
+            aboutHtml, hoursJson, homeNextUpTitle, homeNextUpEventTypeIds, homeBenefitsHtml, homeSectionsJson,
+        })
         await loadBranding()
         flash('Saved.', 'success')
     } catch (err: any) {

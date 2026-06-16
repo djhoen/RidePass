@@ -248,9 +248,9 @@
                     </div>
                     <v-text-field v-if="customMode" v-model="form.kind" class="mt-6"
                         label="Custom type"
-                        placeholder="Enter type name"
+                        placeholder="e.g. VIP Parking"
                         density="compact"
-                        hint="Lowercase letters, numbers, underscores or hyphens. You can group reports by type later."
+                        :hint="customKindPreview ? `Saved as: ${customKindPreview}` : 'Spaces and capitals are fine; we tidy it into a tag for reports.'"
                         persistent-hint
                         :error-messages="kindError ? [kindError] : []"></v-text-field>
 
@@ -424,11 +424,21 @@ const serviceChargePercent = computed({
     set: (v: number) => { form.value.riderPaidServiceChargeBps = Math.max(0, Math.min(10000, Math.round((v || 0) * 100))) },
 })
 
+// Normalize a human-typed type name ("VIP Parking", "Camping") into a tag slug
+// ("vip-parking", "camping"). We accept whatever they type and slugify on save instead
+// of rejecting spaces/capitals, which used to leave the field stuck red.
+function slugifyKind(s: string): string {
+    return (s || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
 const kindError = computed(() => {
-    if (!form.value.kind) return 'Pick or enter a type.'
-    if (!/^[a-z0-9_-]+$/.test(form.value.kind)) return 'Lowercase letters, numbers, underscores or hyphens only.'
+    if (!form.value.kind.trim()) return 'Pick or enter a type.'
+    if (!slugifyKind(form.value.kind)) return 'Use at least one letter or number.'
     return ''
 })
+
+// Live preview of how a custom type will be stored.
+const customKindPreview = computed(() => slugifyKind(form.value.kind))
 
 const canSave = computed(() =>
     form.value.name.trim().length > 0 && !kindError.value)
@@ -499,7 +509,7 @@ async function save() {
             name: form.value.name.trim(),
             description: form.value.description?.trim() || null,
             imageUrl: form.value.imageUrl?.trim() || null,
-            kind: form.value.kind.trim().toLowerCase(),
+            kind: slugifyKind(form.value.kind),
             priceCents: form.value.priceCents,
             riderPaidServiceChargeBps: form.value.riderPaidServiceChargeBps,
             requiresWaiver: form.value.requiresWaiver,

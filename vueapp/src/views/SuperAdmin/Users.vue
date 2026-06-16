@@ -307,17 +307,25 @@ async function startImpersonation(u: SuperAdminUser) {
         impersonatingId.value = u.id
         const r = await service.impersonate(u.id)
         const data = (r.data as any).data
-        authHelper.startImpersonation({
-            token: data.token,
-            userId: data.userId,
-            role: data.role,
-            label: `${data.firstName} ${data.lastName} <${data.email}>`,
-        })
         if (data.tenantSubdomain) {
+            // The tenant lives on its own subdomain, and localStorage is per-origin, so
+            // we can't seed the session from here. Hand the JWT to the subdomain via the
+            // URL fragment; main.ts adopts it on load (the "preview_token" bridge) so the
+            // super admin lands logged in instead of on the signed-out page. We deliberately
+            // do NOT call startImpersonation() here — that would clobber the super admin's
+            // own apex session with the impersonated token.
             const rootDomain = import.meta.env.VITE_ROOT_DOMAIN ?? 'ridepass.local'
             const port = window.location.port ? `:${window.location.port}` : ''
-            window.location.href = `${window.location.protocol}//${data.tenantSubdomain}.${rootDomain}${port}/`
+            window.location.href = `${window.location.protocol}//${data.tenantSubdomain}.${rootDomain}${port}/#preview_token=${encodeURIComponent(data.token)}`
         } else {
+            // Same origin (e.g. a global rider): seed the session in place so the
+            // stop-impersonation banner works without a cross-origin round trip.
+            authHelper.startImpersonation({
+                token: data.token,
+                userId: data.userId,
+                role: data.role,
+                label: `${data.firstName} ${data.lastName} <${data.email}>`,
+            })
             router.push('/')
         }
     } catch (err: any) {

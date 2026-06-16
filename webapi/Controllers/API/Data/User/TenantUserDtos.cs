@@ -8,7 +8,8 @@ namespace webapi.Controllers.API.Data.User
         public string Email { get; set; } = null!;
         public string FirstName { get; set; } = null!;
         public string LastName { get; set; } = null!;
-        public string Role { get; set; } = null!;
+        public string Role { get; set; } = null!;            // primary (highest-privilege)
+        public string[] Roles { get; set; } = System.Array.Empty<string>();  // full set
         public string Status { get; set; } = null!;
         public DateTime CreatedAtUtc { get; set; }
     }
@@ -18,7 +19,10 @@ namespace webapi.Controllers.API.Data.User
         [Required, EmailAddress] public string Email { get; set; } = null!;
         [Required] public string FirstName { get; set; } = null!;
         [Required] public string LastName { get; set; } = null!;
-        [Required] public string Role { get; set; } = null!;
+        // One or more roles. Role is kept for backward compatibility; if Roles is non-empty
+        // it wins. The controller derives the primary from the resulting set.
+        public string? Role { get; set; }
+        public string[] Roles { get; set; } = System.Array.Empty<string>();
     }
 
     public class CreateTenantUserResponse
@@ -26,12 +30,14 @@ namespace webapi.Controllers.API.Data.User
         public Guid Id { get; set; }
         public string Email { get; set; } = null!;
         public string Role { get; set; } = null!;
+        public string[] Roles { get; set; } = System.Array.Empty<string>();
         public string TemporaryPassword { get; set; } = null!;
     }
 
     public class UpdateTenantUserRoleRequest
     {
-        [Required] public string Role { get; set; } = null!;
+        public string? Role { get; set; }
+        public string[] Roles { get; set; } = System.Array.Empty<string>();
     }
 
     public class UpdateTenantUserStatusRequest
