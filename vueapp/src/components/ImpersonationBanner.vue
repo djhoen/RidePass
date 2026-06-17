@@ -1,15 +1,13 @@
 <template>
-    <v-banner v-if="showing" color="warning" density="compact" class="impersonation-banner">
-        <template #prepend>
-            <v-icon color="warning">mdi-account-switch</v-icon>
-        </template>
-        <v-banner-text>
-            Impersonating <strong>{{ label }}</strong>
-        </v-banner-text>
-        <template #actions>
-            <v-btn variant="text" density="compact" @click="stop">Stop</v-btn>
-        </template>
-    </v-banner>
+    <!-- A layout-aware app bar (order=-1) so Vuetify stacks it ABOVE the main nav bar
+         and pushes the nav + page content down, instead of overlapping them. v-app-bar
+         also vertically centers its content, so the Stop button sits centered. -->
+    <v-app-bar v-if="showing" color="warning" :height="44" :order="-1" flat class="impersonation-bar">
+        <v-icon class="ms-4" size="small">mdi-account-switch</v-icon>
+        <span class="ms-2 text-body-2">Impersonating <strong>{{ label }}</strong></span>
+        <v-spacer></v-spacer>
+        <v-btn variant="text" density="comfortable" class="me-2" @click="stop">Stop</v-btn>
+    </v-app-bar>
 </template>
 
 <script setup lang="ts">
@@ -44,9 +42,8 @@ function stop() {
 </script>
 
 <style scoped>
-.impersonation-banner {
-    position: sticky;
-    top: 0;
-    z-index: 1100;
+/* Keep the impersonation text from going invisible on the warning background. */
+.impersonation-bar {
+    color: rgba(0, 0, 0, 0.87);
 }
 </style>
