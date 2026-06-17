@@ -126,8 +126,11 @@ axios.interceptors.response.use(
 // mount so the first API calls (branding, etc.) already carry the token.
 const previewMatch = window.location.hash.match(/[#&]preview_token=([^&]+)/)
 if (previewMatch) {
+    // Optional label so the impersonation banner can name who we're acting as.
+    const labelMatch = window.location.hash.match(/[#&]preview_label=([^&]+)/)
     try {
-        authHelper.adoptToken(decodeURIComponent(previewMatch[1]))
+        const label = labelMatch ? decodeURIComponent(labelMatch[1]) : null
+        authHelper.adoptToken(decodeURIComponent(previewMatch[1]), label)
     } catch { /* ignore a malformed token */ }
     history.replaceState(null, '', window.location.pathname + window.location.search)
 }

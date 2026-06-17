@@ -34,10 +34,19 @@ const label = computed(() => {
 })
 
 function stop() {
-    authHelper.stopImpersonation()
-    tick.value++
-    // Go back to the super admin dashboard.
-    router.push('/SuperAdmin')
+    if (authHelper.canRestoreLocally()) {
+        // Same-origin (e.g. a rider on the apex): restore the stashed super-admin session.
+        authHelper.stopImpersonation()
+        tick.value++
+        router.push('/SuperAdmin')
+    } else {
+        // Cross-origin tenant-admin preview: the super-admin session lives on the apex,
+        // not this subdomain. Clear the impersonation token and bounce back to the apex.
+        authHelper.logout()
+        const rootDomain = import.meta.env.VITE_ROOT_DOMAIN ?? 'ridepass.local'
+        const port = window.location.port ? `:${window.location.port}` : ''
+        window.location.href = `${window.location.protocol}//${rootDomain}${port}/SuperAdmin`
+    }
 }
 </script>
 

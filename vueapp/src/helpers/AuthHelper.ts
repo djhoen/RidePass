@@ -101,7 +101,18 @@ if (state.token) {
 
 export const authState = state
 
-export const isImpersonating = computed(() => sessionStorage.getItem(ORIGINAL_TOKEN_KEY) !== null)
+// True when the active token was minted by the super-admin Impersonate endpoint
+// (it stamps an `impersonated_by` claim). Detecting it from the token works on any
+// origin, unlike the sessionStorage marker which only exists for same-origin
+// impersonation (a cross-origin tenant-admin preview adopts the token via the URL
+// fragment and never sets that marker).
+function tokenIsImpersonation(token: string | null): boolean {
+    if (!token) return false
+    const d = decodeJwt(token)
+    return !!(d && d.impersonated_by)
+}
+
+export const isImpersonating = computed(() => tokenIsImpersonation(state.token))
 
 export default {
     isAuthenticated(): boolean {
@@ -150,10 +161,16 @@ export default {
     },
 
     // Adopt a token handed in out-of-band (the super-admin "Preview" bridge that
-    // carries the JWT to a tenant subdomain via the URL fragment). Stores the
-    // token and decodes role + userId from it so the session is fully hydrated.
-    adoptToken(token: string): void {
+    // carries the JWT to a tenant subdomain via the URL fragment). Stores the token
+    // and decodes role + userId from it so the session is fully hydrated. When it's an
+    // impersonation token, stash the label so the banner can name who we're acting as
+    // (persisted to sessionStorage so it survives a refresh on the subdomain).
+    adoptToken(token: string, label?: string | null): void {
         hydrateSessionFromToken(token)
+        if (tokenIsImpersonation(token) && label) {
+            state.impersonatedLabel = label
+            sessionStorage.setItem(IMPERSONATED_LABEL_KEY, label)
+        }
     },
 
     hasRole(...roles: string[]): boolean {
@@ -172,6 +189,12 @@ export default {
     },
 
     isImpersonating(): boolean {
+        return tokenIsImpersonation(state.token)
+    },
+
+    // Same-origin impersonation stashed the original session locally; cross-origin
+    // (tenant-admin) preview did not, so the banner must bounce back to the apex.
+    canRestoreLocally(): boolean {
         return sessionStorage.getItem(ORIGINAL_TOKEN_KEY) !== null
     },
 

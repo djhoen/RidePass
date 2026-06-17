@@ -316,7 +316,9 @@ async function startImpersonation(u: SuperAdminUser) {
             // own apex session with the impersonated token.
             const rootDomain = import.meta.env.VITE_ROOT_DOMAIN ?? 'ridepass.local'
             const port = window.location.port ? `:${window.location.port}` : ''
-            window.location.href = `${window.location.protocol}//${data.tenantSubdomain}.${rootDomain}${port}/#preview_token=${encodeURIComponent(data.token)}`
+            const label = encodeURIComponent(`${data.firstName} ${data.lastName} <${data.email}>`)
+            window.location.href = `${window.location.protocol}//${data.tenantSubdomain}.${rootDomain}${port}/`
+                + `#preview_token=${encodeURIComponent(data.token)}&preview_label=${label}`
         } else {
             // Same origin (e.g. a global rider): seed the session in place so the
             // stop-impersonation banner works without a cross-origin round trip.
