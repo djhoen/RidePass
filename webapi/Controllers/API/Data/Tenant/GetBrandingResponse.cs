@@ -60,6 +60,9 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
         public bool BlogEnabled { get; set; }
+        // True when this tenant is a LoamPassMx track (a destination id is configured).
+        // The destination id itself stays server-side.
+        public bool LoampassMxEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; }

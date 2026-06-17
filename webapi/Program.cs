@@ -51,6 +51,9 @@ builder.Services.AddScoped<ITenantBrandingRepository, TenantBrandingRepository>(
 builder.Services.AddScoped<ITenantEventTypeRepository, TenantEventTypeRepository>();
 builder.Services.AddScoped<IEventRepository, EventRepository>();
 builder.Services.AddScoped<IBlogRepository, BlogRepository>();
+builder.Services.AddScoped<IRiderLoampassLinkRepository, RiderLoampassLinkRepository>();
+builder.Services.AddScoped<ILoampassRedemptionRepository, LoampassRedemptionRepository>();
+builder.Services.AddSingleton<Services.LoamPassMx.ILoamPassMxService, Services.LoamPassMx.LoamPassMxService>();
 builder.Services.AddScoped<IBlackoutRepository, BlackoutRepository>();
 builder.Services.AddScoped<IPassProductRepository, PassProductRepository>();
 builder.Services.AddScoped<ISeasonPassRepository, SeasonPassRepository>();

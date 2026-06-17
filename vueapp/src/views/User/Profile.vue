@@ -23,6 +23,71 @@
             </v-col>
         </v-row>
 
+        <v-row v-if="!loading && branding.loampassMxEnabled && loampass.trackParticipates">
+            <v-col cols="12">
+                <v-card class="mb-4">
+                    <v-card-title class="d-flex align-center">
+                        <span>Loam Pass</span>
+                        <v-spacer></v-spacer>
+                        <v-chip v-if="loampass.linked" size="small" color="success" variant="tonal">Connected</v-chip>
+                    </v-card-title>
+                    <v-card-text>
+                        <template v-if="loampass.accounts.length > 0">
+                            <p v-if="loampass.creditsAvailable !== null" class="text-body-2 text-medium-emphasis mb-2">
+                                You have <strong>{{ loampass.creditsAvailable }}</strong>
+                                Loam Pass credit{{ loampass.creditsAvailable === 1 ? '' : 's' }} available here.
+                                Use one to pay for entry at checkout.
+                            </p>
+                            <v-list density="compact" class="py-0 mb-2">
+                                <v-list-item v-for="a in loampass.accounts" :key="a.loampassAccountId" class="px-0">
+                                    <template #prepend>
+                                        <v-icon size="small" class="mr-2">mdi-ticket-account</v-icon>
+                                    </template>
+                                    <v-list-item-title>{{ a.loampassEmail }}</v-list-item-title>
+                                    <template #append>
+                                        <v-btn variant="text" color="error" size="small" :loading="loampassBusy"
+                                            @click="disconnectLoampass(a.loampassAccountId)">Disconnect</v-btn>
+                                    </template>
+                                </v-list-item>
+                            </v-list>
+                            <v-divider class="mb-3"></v-divider>
+                        </template>
+
+                        <p class="text-body-2 text-medium-emphasis mb-3">
+                            {{ loampass.accounts.length > 0
+                                ? 'Connect another Loam Pass account.'
+                                : 'Connect your Loam Pass account to redeem credits for entry at this track.' }}
+                        </p>
+                        <template v-if="loampassStep === 'email'">
+                            <v-row>
+                                <v-col cols="12" sm="6">
+                                    <v-text-field v-model="loampassEmail" type="email" label="Loam Pass email"
+                                        density="compact" hide-details></v-text-field>
+                                </v-col>
+                            </v-row>
+                            <v-btn color="primary" class="mt-2" :loading="loampassBusy"
+                                :disabled="!loampassEmail.trim()" @click="sendLoampassCode">Email me a code</v-btn>
+                        </template>
+                        <template v-else>
+                            <p class="text-body-2 mb-2">We sent a 6-digit code to <strong>{{ loampassEmail }}</strong>.</p>
+                            <v-row>
+                                <v-col cols="12" sm="4">
+                                    <v-text-field v-model="loampassCode" label="Code" density="compact"
+                                        hide-details maxlength="6"></v-text-field>
+                                </v-col>
+                            </v-row>
+                            <div class="d-flex ga-2 mt-2">
+                                <v-btn color="primary" :loading="loampassBusy" :disabled="!loampassCode.trim()"
+                                    @click="confirmLoampassCode">Connect</v-btn>
+                                <v-btn variant="text" :disabled="loampassBusy"
+                                    @click="loampassStep = 'email'">Use a different email</v-btn>
+                            </div>
+                        </template>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+        </v-row>
+
         <v-row v-if="!loading">
             <v-col cols="12">
                 <v-card class="mb-4">
@@ -113,10 +178,20 @@ import Spinner from '@/components/Spinner.vue'
 import PhoneField from '@/components/PhoneField.vue'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
+import { LoampassLinkService, type LoampassStatus } from '@/services/LoampassLinkService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const userService = new UserService()
 const newsletterService = new NewsletterService()
+const loampassService = new LoampassLinkService()
+const confirm = useConfirm()
 const isApex = computed(() => !tenantHelper.getSubdomain())
+
+const loampass = ref<LoampassStatus>({ trackParticipates: false, linked: false, accounts: [], creditsAvailable: null })
+const loampassStep = ref<'email' | 'code'>('email')
+const loampassEmail = ref('')
+const loampassCode = ref('')
+const loampassBusy = ref(false)
 
 const newsletterStatus = ref<{ subscribed: boolean; email: string } | null>(null)
 const newsletterSubscribed = ref(false)
@@ -164,8 +239,73 @@ onMounted(async () => {
             newsletterStatus.value = (r.data as any).data
             newsletterSubscribed.value = newsletterStatus.value!.subscribed
         } catch { /* non-critical */ }
+        if (branding.loampassMxEnabled) await loadLoampassStatus()
     }
 })
+
+async function loadLoampassStatus() {
+    try {
+        const r = await loampassService.status()
+        loampass.value = (r.data as any).data
+    } catch { /* non-critical */ }
+}
+
+async function sendLoampassCode() {
+    if (!loampassEmail.value.trim()) return
+    loampassBusy.value = true
+    try {
+        await loampassService.linkStart(loampassEmail.value.trim())
+        loampassStep.value = 'code'
+        flash('Code sent. Check your Loam Pass email.', 'success')
+    } catch (e: any) {
+        flash(e.response?.data?.error || 'Could not send a code.', 'error')
+    } finally {
+        loampassBusy.value = false
+    }
+}
+
+async function confirmLoampassCode() {
+    if (!loampassCode.value.trim()) return
+    loampassBusy.value = true
+    try {
+        await loampassService.linkConfirm(loampassEmail.value.trim(), loampassCode.value.trim())
+        loampassCode.value = ''
+        loampassEmail.value = ''
+        loampassStep.value = 'email'
+        await loadLoampassStatus()
+        flash('Loam Pass connected.', 'success')
+    } catch (e: any) {
+        flash(e.response?.data?.error || 'That code was invalid or expired.', 'error')
+    } finally {
+        loampassBusy.value = false
+    }
+}
+
+async function disconnectLoampass(accountId: string) {
+    const ok = await confirm({
+        title: 'Disconnect this Loam Pass?',
+        message: 'You can reconnect it any time.',
+        confirmText: 'Disconnect',
+        confirmColor: 'error',
+    })
+    if (!ok) return
+    loampassBusy.value = true
+    try {
+        await loampassService.unlink(accountId)
+        await loadLoampassStatus()
+        flash('Loam Pass disconnected.', 'success')
+    } catch (e: any) {
+        flash(e.response?.data?.error || 'Could not disconnect.', 'error')
+    } finally {
+        loampassBusy.value = false
+    }
+}
+
+function flash(text: string, color: 'success' | 'error') {
+    snackbarText.value = text
+    snackbarColor.value = color
+    snackbar.value = true
+}
 
 async function toggleNewsletter(next: boolean | null) {
     const target = !!next

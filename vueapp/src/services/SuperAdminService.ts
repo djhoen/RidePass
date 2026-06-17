@@ -19,6 +19,7 @@ export interface TenantSummary {
     longitude: number | null
     contactEmail: string | null
     phone: string | null
+    loampassMxDestinationId: string | null
     createdAtUtc: string
 }
 
@@ -38,6 +39,7 @@ export interface UpdateTenantPayload {
     longitude: number | null
     contactEmail: string | null
     phone: string | null
+    loampassMxDestinationId: string | null
 }
 
 export interface CreateTenantPayload {

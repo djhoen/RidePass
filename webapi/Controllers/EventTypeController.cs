@@ -87,6 +87,24 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        // Tenant toggle: accept Loam Pass credits for entry to this event type. Practice is
+        // forced on and can't be turned off. Only meaningful when the tenant is a LoamPassMx track.
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("{id:guid}/LoampassRedemption")]
+        public async Task<IActionResult> SetLoampassRedemption(Guid id, [FromBody] SetEventTypeLoampassRequest request)
+        {
+            var existing = await _repo.GetById(id, _tenantContext.TenantId);
+            if (existing is null)
+            {
+                return new ApiResponses().NotFoundResult("Event type not found.");
+            }
+
+            var allow = existing.Code == "practice" || request.Allow;   // practice can't be disabled
+            await _repo.SetLoampassRedemption(id, _tenantContext.TenantId, allow);
+            existing.AllowLoampassRedemption = allow;
+            return new ApiResponses().OkResult(ToResponse(existing));
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> Delete(Guid id)
@@ -148,6 +166,8 @@ namespace webapi.Controllers
             ImageUrl = row.ImageUrl,
             SortOrder = row.SortOrder,
             IsSystem = row.IsSystem,
+            // Practice always accepts Loam Pass credits, regardless of the stored flag.
+            AllowLoampassRedemption = row.Code == "practice" || row.AllowLoampassRedemption,
         };
     }
 }

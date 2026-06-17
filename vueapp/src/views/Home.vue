@@ -425,10 +425,9 @@
                 <!-- ── 9. Sign up / log in strip ─────────────────────────────── -->
                 <section v-if="sectionVisible('signup') && !isAuthenticated" class="mb-12">
                     <v-card variant="tonal" color="primary" class="pa-6 text-center">
-                        <h3 class="text-h5 mb-2">Have a season pass?</h3>
-                        <p class="mb-4">Log in to check in at the gate, see your purchases, or buy more passes.</p>
-                        <v-btn to="/Login" class="mr-2">Log In</v-btn>
-                        <v-btn variant="outlined" to="/CreateAccount">Sign Up</v-btn>
+                        <h3 class="text-h5 mb-2">Already have an account?</h3>
+                        <p class="mb-4">Log in to check in at the gate, see your purchases, or buy more passes. New here? Your account is created automatically at your first purchase.</p>
+                        <v-btn to="/Login">Log In</v-btn>
                     </v-card>
                 </section>
 

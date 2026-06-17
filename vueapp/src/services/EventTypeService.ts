@@ -8,6 +8,7 @@ export interface EventType {
     imageUrl: string | null
     sortOrder: number
     isSystem: boolean
+    allowLoampassRedemption: boolean
 }
 
 export class EventTypeService {
@@ -43,5 +44,9 @@ export class EventTypeService {
 
     async reorder(items: { id: string; sortOrder: number }[]) {
         return axios.post(`${this.apiUrl}/EventType/Reorder`, { items })
+    }
+
+    async setLoampassRedemption(id: string, allow: boolean) {
+        return axios.put(`${this.apiUrl}/EventType/${id}/LoampassRedemption`, { allow })
     }
 }

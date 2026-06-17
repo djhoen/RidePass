@@ -731,7 +731,7 @@ namespace webapi.Controllers
                 Norm(request.AddressLine), Norm(request.City), Norm(request.Region),
                 Norm(request.PostalCode), Norm(request.Country),
                 request.Latitude, request.Longitude,
-                Norm(request.ContactEmail), Norm(request.Phone));
+                Norm(request.ContactEmail), Norm(request.Phone), Norm(request.LoampassMxDestinationId));
             await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
 
             // Evict the cached tenant so changes (especially publish status) take
@@ -1071,6 +1071,7 @@ namespace webapi.Controllers
             Longitude = t.Longitude,
             ContactEmail = t.ContactEmail,
             Phone = t.Phone,
+            LoampassMxDestinationId = t.LoampassMxDestinationId,
             CreatedAtUtc = DateTime.SpecifyKind(t.CreatedAt, DateTimeKind.Utc),
         };
 

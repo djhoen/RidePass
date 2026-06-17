@@ -9,6 +9,7 @@ using Services.Repositories.Data.ExtrasData;
 using Services.Repositories.Data.GiftCardData;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
+using Services.LoamPassMx;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Extras;
 using webapi.Controllers.API.Data.Purchase;
@@ -41,6 +42,11 @@ namespace webapi.Controllers
         private readonly IRecentSalesRepository _recentSales;
         private readonly IDbHelper _db;
         private readonly ITenantContext _tenantContext;
+        private readonly ITenantEventTypeRepository _eventTypes;
+        private readonly IRiderLoampassLinkRepository _loampassLinks;
+        private readonly ILoamPassMxService _loampass;
+        private readonly ILoampassRedemptionRepository _loampassRedemptions;
+        private readonly ISeasonPassRepository _seasonPasses;
 
         public PurchaseController(
             IPassProductRepository products,
@@ -63,7 +69,12 @@ namespace webapi.Controllers
             IMembershipRepository memberships,
             IRecentSalesRepository recentSales,
             IDbHelper db,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            ITenantEventTypeRepository eventTypes,
+            IRiderLoampassLinkRepository loampassLinks,
+            ILoamPassMxService loampass,
+            ILoampassRedemptionRepository loampassRedemptions,
+            ISeasonPassRepository seasonPasses)
         {
             _products = products;
             _purchases = purchases;
@@ -86,6 +97,11 @@ namespace webapi.Controllers
             _recentSales = recentSales;
             _db = db;
             _tenantContext = tenantContext;
+            _eventTypes = eventTypes;
+            _loampassLinks = loampassLinks;
+            _loampass = loampass;
+            _loampassRedemptions = loampassRedemptions;
+            _seasonPasses = seasonPasses;
         }
 
         // Mirrors ExtraController.ResolveVariantOrError. Variants short-circuit the
@@ -1243,6 +1259,303 @@ namespace webapi.Controllers
                 return (null, $"That voucher only applies to {(program.RequirementKind == "pass" ? "passes" : "event tickets")}.");
             }
             return (program.RewardPercentOff, null);
+        }
+
+        // Redeem ONE Loam Pass credit to cover a rider's entry to an event, instead of paying by
+        // card. Only for a LoamPassMx track, a linked rider, a race_entry tier, and an event whose
+        // type accepts Loam Pass (practice always; others per the tenant's event-type toggle).
+        // Records the entry as paid at $0 via 'loampass_credits' (the track is reimbursed off-platform).
+        [Authorize]
+        [HttpPost("EventTicket/RedeemLoampass")]
+        public async Task<IActionResult> RedeemLoampassForTicket([FromBody] RedeemLoampassTicketRequest request, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var destinationId = _tenantContext.Tenant.LoampassMxDestinationId;
+            if (string.IsNullOrWhiteSpace(destinationId))
+                return new ApiResponses().BadRequestResult("This track doesn't accept Loam Pass credits.");
+
+            var links = await _loampassLinks.ListByUserId(userId, _tenantContext.TenantId);
+            if (links.Count == 0)
+                return new ApiResponses().BadRequestResult("Connect your Loam Pass on your profile first.");
+
+            var tier = await _tiers.GetById(request.TierId, _tenantContext.TenantId);
+            if (tier is null || !tier.IsActive)
+                return new ApiResponses().NotFoundResult("Ticket option not found.");
+            if (tier.Kind != "race_entry")
+                return new ApiResponses().BadRequestResult("Loam Pass credits cover rider entry only.");
+
+            var ev = await _events.GetById(tier.EventId, _tenantContext.TenantId);
+            if (ev is null || ev.Status != "scheduled")
+                return new ApiResponses().NotFoundResult("Event not found.");
+
+            var eventType = await _eventTypes.GetById(ev.EventTypeId, _tenantContext.TenantId);
+            var typeAllows = eventType is not null && (eventType.Code == "practice" || eventType.AllowLoampassRedemption);
+            if (!typeAllows)
+                return new ApiResponses().BadRequestResult("Loam Pass credits aren't accepted for this event.");
+
+            // Waiver gate — mirror the card buy flow so credit redeemers can't skip a required waiver.
+            if (ev.RequiresRiderWaiver)
+            {
+                var activeWaiver = await _waivers.GetActive(_tenantContext.TenantId);
+                if (activeWaiver is not null && await _waivers.GetSignature(userId, activeWaiver.Id) is null)
+                    return new ApiResponses().BadRequestResult("You must sign the current waiver before redeeming a credit for this entry.");
+            }
+
+            var buyer = await _users.GetById(userId);
+
+            // Capacity recheck + dedupe + pending-row insert under the same advisory lock the buy
+            // flow uses, so concurrent requests can't oversell or let a rider double-enter (which
+            // would also double-spend a credit). The lock is released before the network redeem call.
+            Guid purchaseId;
+            Guid redemptionToken;
+            {
+                await using var capacityLock = await _db.AcquireAdvisoryLock($"event-capacity:{ev.Id}");
+
+                if (tier.Inventory.HasValue)
+                {
+                    var sold = await _tiers.SoldCount(tier.Id);
+                    if (sold + 1 > tier.Inventory.Value)
+                        return new ApiResponses().BadRequestResult($"'{tier.Name}' is sold out.");
+                }
+                if (await _ticketPurchases.HasActiveRaceEntry(_tenantContext.TenantId, tier.Id, userId, null))
+                    return new ApiResponses().BadRequestResult("You're already entered in this class.");
+
+                var purchase = new EventTicketPurchase
+                {
+                    TenantId = _tenantContext.TenantId,
+                    TierId = tier.Id,
+                    PurchaserUserId = userId,
+                    AmountCents = 0,
+                    ServiceChargeCents = 0,
+                    PaymentMethod = "loampass_credits",
+                    Status = "pending",
+                    PurchaserEmail = buyer?.Email ?? links[0].LoampassEmail,
+                    PurchaserName = buyer is not null ? $"{buyer.FirstName} {buyer.LastName}".Trim() : string.Empty,
+                };
+                (purchaseId, redemptionToken) = await _ticketPurchases.Create(purchase);
+            }
+
+            // Redeem one credit on LoamMx, idempotent on the purchase id (a retry can't double-spend).
+            // A rider may have several linked accounts; draw from the first that has a credit. Each
+            // attempt writes a usage row only when it actually decrements, so trying several is safe.
+            string? chargedAccountId = null;
+            string? lastError = null;
+            foreach (var l in links)
+            {
+                var attempt = await _loampass.RedeemAsync(l.LoampassAccountId, destinationId!, purchaseId.ToString(), ct);
+                if (attempt.Redeemed) { chargedAccountId = l.LoampassAccountId; break; }
+                lastError = attempt.Error;
+            }
+            if (chargedAccountId is null)
+            {
+                // No linked account had a credit — free the held spot; the rider keeps their credits.
+                await _ticketPurchases.UpdateStatus(purchaseId, "cancelled");
+                return new ApiResponses().BadRequestResult(lastError ?? "No Loam Pass credits available.");
+            }
+
+            // Record which account + key the credit came from so a refund reverses exactly this one.
+            await _loampassRedemptions.Create(new Services.Repositories.Data.UserData.LoampassRedemption
+            {
+                TenantId = _tenantContext.TenantId,
+                EventTicketPurchaseId = purchaseId,
+                LoampassAccountId = chargedAccountId,
+                DestinationId = destinationId!,
+                IdempotencyKey = purchaseId.ToString(),
+                Status = "redeemed",
+            });
+
+            // Finalize: paid + a $0 'loampass_credits' ledger row (the track is reimbursed off-platform).
+            await _ticketPurchases.UpdateStatus(purchaseId, "paid");
+            try
+            {
+                await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
+                {
+                    TenantId = _tenantContext.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "event_ticket",
+                    SourceId = purchaseId,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = 0,
+                    StripeFeeCents = 0,
+                    RidepassCutCents = 0,
+                    NetToTenantCents = 0,
+                    PaymentMethod = "loampass_credits",
+                    Memo = "Loam Pass credit redeemed for rider entry",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // Idempotent — duplicate sale row for this source.
+            }
+
+            return new ApiResponses().OkResult(new CreatePurchaseResponse
+            {
+                PurchaseId = purchaseId,
+                RedemptionToken = redemptionToken,
+                ClientSecret = string.Empty,
+                AmountCents = 0,
+                RiderServiceChargeCents = 0,
+            });
+        }
+
+        // Tenant-admin refund of any single purchase (gift cards excluded; rentals/concessions
+        // out of scope). Discretionary: staff choose full or partial via AmountCents (default is
+        // amount minus the service charge). Executes the money directly — Stripe refund for card,
+        // return-the-credit for Loam Pass (un-redeem), no money for cash/voucher — then cancels the
+        // purchase, tears down the entitlement (season-pass reservations), and writes a refund ledger row.
+        [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
+        [HttpPost("Refund")]
+        public async Task<IActionResult> Refund([FromBody] RefundRequest request, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var staffId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var tenantId = _tenantContext.TenantId;
+
+            int amount = 0, serviceCharge = 0;
+            string paymentMethod = "stripe", status = "";
+            string? stripePi = null;
+            string ledgerSourceKind;
+
+            switch (request.Kind)
+            {
+                case "pass":
+                {
+                    var p = await _purchases.GetById(request.PurchaseId, tenantId);
+                    if (p is null) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    ledgerSourceKind = "pass";
+                    break;
+                }
+                case "event_ticket":
+                {
+                    var p = await _ticketPurchases.GetById(request.PurchaseId, tenantId);
+                    if (p is null) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    ledgerSourceKind = "event_ticket";
+                    break;
+                }
+                case "season_pass":
+                {
+                    var p = await _seasonPasses.GetPurchase(request.PurchaseId);
+                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    ledgerSourceKind = "season_pass";
+                    break;
+                }
+                case "membership":
+                {
+                    var p = await _memberships.GetById(request.PurchaseId);
+                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    ledgerSourceKind = "membership";
+                    break;
+                }
+                case "event_extra":
+                {
+                    var p = await _extras.GetPurchase(request.PurchaseId);
+                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    ledgerSourceKind = "extras";   // ledger uses 'extras'; v_recent_sales kind is 'event_extra'
+                    break;
+                }
+                default:
+                    return new ApiResponses().BadRequestResult("This purchase type can't be refunded here.");
+            }
+
+            if (status != "paid")
+                return new ApiResponses().BadRequestResult("Only a paid purchase can be refunded.");
+
+            // Default withholds the service charge; admin discretion can set any amount in [0, amount].
+            var refundCents = request.AmountCents ?? Math.Max(0, amount - serviceCharge);
+            if (refundCents < 0) refundCents = 0;
+            if (refundCents > amount) refundCents = amount;
+
+            string? refundId = null;
+            if (paymentMethod == "loampass_credits")
+            {
+                // Return the Loam Pass credit on the LoamMx side (keyed by the redemption we recorded).
+                var redemption = await _loampassRedemptions.GetByPurchaseId(request.PurchaseId, tenantId);
+                if (redemption is not null && redemption.Status != "refunded")
+                {
+                    await _loampass.RefundAsync(redemption.IdempotencyKey, ct);
+                    await _loampassRedemptions.MarkRefunded(redemption.Id);
+                }
+                refundCents = 0;   // no money moved; the credit is given back
+            }
+            else if ((paymentMethod == "stripe" || paymentMethod == "stripe_connect")
+                     && !string.IsNullOrEmpty(stripePi) && refundCents > 0)
+            {
+                try
+                {
+                    var r = await _payments.RefundAsync(stripePi!, refundCents,
+                        idempotencyKey: $"refund-{request.Kind}-{request.PurchaseId}-{refundCents}", ct: ct);
+                    refundId = r.RefundId;
+                }
+                catch (Exception ex)
+                {
+                    return new ApiResponses().BadRequestResult($"Refund failed at the payment processor: {ex.Message}");
+                }
+            }
+            // cash / voucher: nothing to move.
+
+            var note = $"Tenant refund {refundCents}c{(refundId is null ? "" : $" stripe={refundId}")}";
+            switch (request.Kind)
+            {
+                case "pass":
+                    await _purchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    await _purchases.MarkRefunded(request.PurchaseId, note);
+                    break;
+                case "event_ticket":
+                    await _ticketPurchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    await _ticketPurchases.MarkRefunded(request.PurchaseId, note);
+                    break;
+                case "season_pass":
+                    await _seasonPasses.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    // Release the pass's reservations so it no longer holds event spots.
+                    foreach (var rsv in (await _seasonPasses.ListReservationsForPurchase(request.PurchaseId))
+                                 .Where(x => x.Status != "cancelled"))
+                    {
+                        await _seasonPasses.UpdateReservationStatus(rsv.Id, tenantId, "cancelled");
+                    }
+                    await _seasonPasses.MarkRefunded(request.PurchaseId, note);
+                    break;
+                case "membership":
+                    await _memberships.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    await _memberships.MarkRefunded(request.PurchaseId);
+                    break;
+                case "event_extra":
+                    await _extras.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    await _extras.MarkRefunded(request.PurchaseId, note);
+                    break;
+            }
+
+            // Refund ledger row: record the money returned as a negative. Platform cut/fees aren't
+            // clawed back here (a tenant-initiated refund leaves the prior cut as-is).
+            try
+            {
+                await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
+                {
+                    TenantId = tenantId,
+                    EntryKind = "refund",
+                    SourceKind = ledgerSourceKind,
+                    SourceId = request.PurchaseId,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = -refundCents,
+                    StripeFeeCents = 0,
+                    RidepassCutCents = 0,
+                    NetToTenantCents = -refundCents,
+                    PaymentMethod = paymentMethod,
+                    Memo = $"Tenant refund{(refundId is null ? "" : $" {refundId}")}",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // Idempotent — duplicate refund row for this source.
+            }
+
+            return new ApiResponses().OkResult(new { refunded = true, kind = request.Kind, amountCents = refundCents, refundId });
         }
 
         private async Task InsertZeroLedger(Guid tenantId, string sourceKind, Guid sourceId)

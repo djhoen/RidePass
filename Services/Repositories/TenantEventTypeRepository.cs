@@ -9,6 +9,7 @@ namespace Services.Repositories
         private const string SelectColumns = @"
             id, tenant_id AS TenantId, code, name, color, image_url AS ImageUrl,
             sort_order AS SortOrder, is_system AS IsSystem,
+            allow_loampass_redemption AS AllowLoampassRedemption,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -63,6 +64,15 @@ namespace Services.Repositories
         {
             const string sql = "DELETE FROM tenant_event_type WHERE id = @id AND tenant_id = @tenantId AND is_system = false";
             await _db.Execute(sql, new { id, tenantId });
+        }
+
+        public async Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow)
+        {
+            const string sql = @"
+                UPDATE tenant_event_type
+                SET allow_loampass_redemption = @allow
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, allow });
         }
 
         public async Task<bool> IsInUseByEvents(Guid id, Guid tenantId)

@@ -167,6 +167,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { Html5Qrcode } from 'html5-qrcode'
+import { LoampassLinkService } from '@/services/LoampassLinkService'
 import { ReportsService, type CheckInLookup, type CheckInRegistration, type EventRiderReport } from '@/services/ReportsService'
 import { EventService, type EventDto } from '@/services/EventService'
 import { TicketService } from '@/services/TicketService'
@@ -174,6 +175,7 @@ import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 
 const reportsService = new ReportsService()
+const loampassService = new LoampassLinkService()
 const eventService = new EventService()
 const ticketService = new TicketService()
 const seasonPassService = new SeasonPassService()
@@ -261,6 +263,13 @@ async function stopScan() {
 }
 
 async function onDecoded(decodedText: string) {
+    // A Loam Pass QR ("{issuer}/QR/{passId}") checks in the rider's reservation for the selected
+    // event instead of resolving a RidePass ticket token.
+    if (isLoamPassQr(decodedText)) {
+        await stopScan()
+        await handleLoampassScan(decodedText)
+        return
+    }
     const token = extractToken(decodedText)
     if (!token) return
     await stopScan()
@@ -272,11 +281,31 @@ function extractToken(raw: string): string | null {
     return m ? m[0] : null
 }
 
+function isLoamPassQr(raw: string): boolean {
+    return /\/QR\//i.test(raw)
+}
+
+async function handleLoampassScan(passQr: string) {
+    if (!selectedEventId.value) {
+        flash('Pick an event first, then scan the Loam Pass.', 'error')
+        return
+    }
+    try {
+        const r = await loampassService.gateCheckIn(passQr, selectedEventId.value)
+        const d = (r.data as any).data
+        flash(`Checked in ${d.riderName || 'rider'}${d.item ? ` — ${d.item}` : ''}.`, 'success')
+        await loadRoster()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Loam Pass check-in failed.', 'error')
+    }
+}
+
 // ── Manual lookup ───────────────────────────────────────────────────────────
 const manualInput = ref('')
 const lookingUp = ref(false)
 
 async function lookupManual() {
+    if (isLoamPassQr(manualInput.value)) { await handleLoampassScan(manualInput.value); return }
     const token = extractToken(manualInput.value)
     if (!token) { flash('No token found in input.', 'error'); return }
     await doLookup(token)

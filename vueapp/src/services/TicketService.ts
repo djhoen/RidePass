@@ -131,6 +131,11 @@ export class TicketService {
         return axios.post<{ data: TicketPurchaseResponse }>(`${this.apiUrl}/Purchase/EventTicket`, req)
     }
 
+    // Redeem one Loam Pass credit to cover a single rider-entry (race_entry) tier instead of paying.
+    redeemLoampassForTicket(tierId: string) {
+        return axios.post<{ data: TicketPurchaseResponse }>(`${this.apiUrl}/Purchase/EventTicket/RedeemLoampass`, { tierId })
+    }
+
     // My Purchases
     getMyPurchases() {
         return axios.get<{ data: MyPurchase[] }>(`${this.apiUrl}/Me/Purchases`)

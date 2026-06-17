@@ -55,8 +55,7 @@
                 </v-alert>
 
                 <div class="text-center text-body-2 text-medium-emphasis mt-6">
-                    Don't have an account?
-                    <router-link to="/CreateAccount" class="login-link ml-1">Create one</router-link>
+                    No account yet? One is created for you automatically at your first purchase.
                 </div>
             </div>
         </div>

@@ -41,6 +41,10 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task UpdateReservationStatus(Guid id, Guid tenantId, string status, Guid? checkedInByUserId = null);
 
+        /// <summary>Tenant-scoped cancel of a paid season-pass purchase (mirrors pass/ticket).</summary>
+        Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
+        Task MarkRefunded(Guid id, string? refundNote);
+
         // Capacity helper — number of active (reserved + checked_in) season pass spots per event.
         Task<Dictionary<Guid, int>> ActiveReservationsForEvents(IEnumerable<Guid> eventIds);
     }

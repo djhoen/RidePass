@@ -219,6 +219,12 @@
                         </v-col>
                     </v-row>
 
+                    <div class="text-subtitle-2 mt-4 mb-1">LoamPassMx</div>
+                    <v-text-field v-model="editForm.loampassMxDestinationId" label="LoamMx destination ID"
+                        density="compact" clearable
+                        hint="Set this to make the track a LoamPassMx track (riders can link their Loam Pass and redeem credits). Blank = not a LoamPassMx track."
+                        persistent-hint></v-text-field>
+
                     <div v-if="editError" class="text-error text-caption mt-2">{{ editError }}</div>
                 </v-card-text>
                 <v-card-actions>
@@ -300,6 +306,7 @@ interface TenantEditForm {
     longitude: number | null
     contactEmail: string | null
     phone: string | null
+    loampassMxDestinationId: string | null
 }
 
 const editDialog = ref(false)
@@ -384,6 +391,7 @@ function emptyEditForm(): TenantEditForm {
         serviceChargePct: 3, serviceChargeCapDollars: null,
         addressLine: null, city: null, region: null, postalCode: null, country: null,
         latitude: null, longitude: null, contactEmail: null, phone: null,
+        loampassMxDestinationId: null,
     }
 }
 
@@ -406,6 +414,7 @@ function openEdit(t: TenantSummary) {
         longitude: t.longitude,
         contactEmail: t.contactEmail,
         phone: t.phone,
+        loampassMxDestinationId: t.loampassMxDestinationId,
     }
     editDialog.value = true
 }
@@ -463,6 +472,7 @@ async function saveEdit() {
             longitude: numOrNull(f.longitude),
             contactEmail: norm(f.contactEmail),
             phone: norm(f.phone),
+            loampassMxDestinationId: norm(f.loampassMxDestinationId),
         }
         await service.updateTenant(editTenant.value.id, body)
         flash('Tenant updated.', 'success')

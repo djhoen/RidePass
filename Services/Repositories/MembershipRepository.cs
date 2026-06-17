@@ -27,6 +27,24 @@ namespace Services.Repositories
         private readonly IDbHelper _db;
         public MembershipRepository(IDbHelper db) => _db = db;
 
+        public async Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason)
+        {
+            const string sql = @"
+                UPDATE membership_purchase
+                SET status = 'cancelled',
+                    cancelled_reason = @reason,
+                    cancelled_at = now(),
+                    cancelled_by_user_id = @cancelledByUserId
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
+            await _db.Execute(sql, new { id, tenantId, cancelledByUserId, reason });
+        }
+
+        public async Task MarkRefunded(Guid id)
+        {
+            const string sql = "UPDATE membership_purchase SET status = 'refunded' WHERE id = @id";
+            await _db.Execute(sql, new { id });
+        }
+
         public async Task<Guid> Create(MembershipPurchase p)
         {
             const string sql = @"

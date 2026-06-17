@@ -50,6 +50,24 @@ namespace Services.Repositories
         private readonly IDbHelper _db;
         public EventExtraRepository(IDbHelper db) => _db = db;
 
+        public async Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason)
+        {
+            const string sql = @"
+                UPDATE event_extra_purchase
+                SET status = 'cancelled',
+                    cancelled_reason = @reason,
+                    cancelled_at = now(),
+                    cancelled_by_user_id = @cancelledByUserId
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
+            await _db.Execute(sql, new { id, tenantId, cancelledByUserId, reason });
+        }
+
+        public async Task MarkRefunded(Guid id, string? refundNote)
+        {
+            const string sql = "UPDATE event_extra_purchase SET status = 'refunded', refund_note = @refundNote WHERE id = @id";
+            await _db.Execute(sql, new { id, refundNote });
+        }
+
         // ── Products ─────────────────────────────────────────────────────────
         public async Task<List<EventExtraProduct>> ListProducts(Guid tenantId, bool activeOnly)
         {

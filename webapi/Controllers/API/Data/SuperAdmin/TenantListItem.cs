@@ -20,6 +20,7 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public double? Longitude { get; set; }
         public string? ContactEmail { get; set; }
         public string? Phone { get; set; }
+        public string? LoampassMxDestinationId { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }

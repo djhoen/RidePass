@@ -71,6 +71,9 @@ namespace Services.Repositories.Data.TenantData
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; } = false;
         public bool BlogEnabled { get; set; } = false;
+        // When set, this tenant is a LoamPassMx track mapped to this LoamMx destination id.
+        // NULL = not a LoamPassMx track. Super-admin controlled.
+        public string? LoampassMxDestinationId { get; set; }
         public bool AllowSelfCancel { get; set; } = false;
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; } = 20;

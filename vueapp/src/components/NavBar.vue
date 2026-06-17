@@ -73,7 +73,6 @@
             </template>
             <template v-else>
                 <v-btn to="/Login" variant="text">Login</v-btn>
-                <v-btn to="/CreateAccount" variant="outlined">Sign Up</v-btn>
             </template>
         </template>
 
@@ -138,7 +137,6 @@
                 </template>
                 <template v-else>
                     <v-list-item to="/Login" title="Login" prepend-icon="mdi-login"></v-list-item>
-                    <v-list-item to="/CreateAccount" title="Sign Up" prepend-icon="mdi-account-plus"></v-list-item>
                 </template>
             </template>
         </v-list>

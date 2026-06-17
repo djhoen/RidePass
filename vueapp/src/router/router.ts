@@ -5,7 +5,6 @@ const routes = [
     // Public routes
     { path: '/', name: 'Home', component: () => import('../views/Home.vue') },
     { path: '/Login', name: 'Login', component: () => import('../views/Login.vue') },
-    { path: '/CreateAccount', name: 'CreateAccount', component: () => import('../views/CreateAccount.vue') },
     { path: '/ResetPassword', name: 'ResetPassword', component: () => import('../views/ResetPassword.vue') },
     { path: '/VerifyEmail', name: 'VerifyEmail', component: () => import('../views/VerifyEmail.vue') },
     { path: '/Calendar', name: 'Calendar', component: () => import('../views/Calendar.vue') },

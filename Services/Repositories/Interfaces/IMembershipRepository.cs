@@ -16,5 +16,10 @@ namespace Services.Repositories.Interfaces
 
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
+
+        /// <summary>Tenant-scoped cancel of a paid membership purchase.</summary>
+        Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
+        /// <summary>Mark a membership purchase refunded (membership_purchase has no refund_note column).</summary>
+        Task MarkRefunded(Guid id);
     }
 }

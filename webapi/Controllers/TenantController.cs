@@ -415,6 +415,7 @@ namespace webapi.Controllers
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BlogEnabled = tenant.BlogEnabled,
+                LoampassMxEnabled = !string.IsNullOrWhiteSpace(tenant.LoampassMxDestinationId),
                 AllowSelfCancel = tenant.AllowSelfCancel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,

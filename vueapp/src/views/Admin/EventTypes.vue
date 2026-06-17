@@ -15,6 +15,7 @@
                         <th>Name</th>
                         <th style="width: 120px">Code</th>
                         <th style="width: 110px">Kind</th>
+                        <th v-if="branding.loampassMxEnabled" style="width: 130px">Loam Pass</th>
                         <th style="width: 180px" class="text-right"></th>
                     </tr>
                 </thead>
@@ -35,6 +36,15 @@
                                 <v-chip v-if="row.isSystem" size="small" color="primary">system</v-chip>
                                 <v-chip v-else size="small">custom</v-chip>
                             </td>
+                            <td v-if="branding.loampassMxEnabled">
+                                <v-switch
+                                    :model-value="row.code === 'practice' ? true : row.allowLoampassRedemption"
+                                    :disabled="row.code === 'practice' || togglingId === row.id"
+                                    :loading="togglingId === row.id"
+                                    color="primary" density="compact" hide-details inset
+                                    @update:model-value="(v: boolean | null) => toggleLoampass(row, !!v)"></v-switch>
+                                <span v-if="row.code === 'practice'" class="text-caption text-medium-emphasis">always on</span>
+                            </td>
                             <td class="text-right">
                                 <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>
                                 <v-btn v-if="!row.isSystem" variant="text" size="small" color="error" @click="remove(row)">Delete</v-btn>
@@ -44,7 +54,7 @@
                 </draggable>
                 <tbody v-if="!loading && rows.length === 0">
                     <tr>
-                        <td colspan="6" class="text-center text-medium-emphasis py-8">No event types.</td>
+                        <td :colspan="branding.loampassMxEnabled ? 7 : 6" class="text-center text-medium-emphasis py-8">No event types.</td>
                     </tr>
                 </tbody>
             </v-table>
@@ -100,6 +110,7 @@ import { ref, onMounted } from 'vue'
 import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
+import { branding, loadBranding } from '@/stores/branding'
 
 const service = new EventTypeService()
 
@@ -114,6 +125,7 @@ const { visibleRows, onReorderEnd } = useDragReorder<EventType>({
     },
 })
 const loading = ref(false)
+const togglingId = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<EventType | null>(null)
 const saving = ref(false)
@@ -146,7 +158,25 @@ function normalizeHex(hex: string): string {
     return v
 }
 
-onMounted(load)
+// Practice is locked on (server-enforced); other types are tenant-controlled. Only visible
+// when this tenant is a LoamPassMx track.
+async function toggleLoampass(row: EventType, allow: boolean) {
+    if (row.code === 'practice') return
+    togglingId.value = row.id
+    try {
+        await service.setLoampassRedemption(row.id, allow)
+        row.allowLoampassRedemption = allow
+    } catch (e: any) {
+        flash(e?.response?.data?.error || 'Failed to update Loam Pass setting.', 'error')
+    } finally {
+        togglingId.value = null
+    }
+}
+
+onMounted(async () => {
+    if (!branding.loaded) await loadBranding()
+    await load()
+})
 
 async function load() {
     loading.value = true

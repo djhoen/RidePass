@@ -66,6 +66,7 @@ export interface BrandingState {
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
     blogEnabled: boolean
+    loampassMxEnabled: boolean
     allowSelfCancel: boolean
     waitlistEnabled: boolean
     waitlistConfirmWindowMinutes: number
@@ -138,6 +139,7 @@ const defaults: BrandingState = {
     seasonPassesEnabled: true,
     concessionsEnabled: false,
     blogEnabled: false,
+    loampassMxEnabled: false,
     allowSelfCancel: false,
     waitlistEnabled: true,
     waitlistConfirmWindowMinutes: 20,
@@ -257,6 +259,7 @@ export async function loadBranding(): Promise<void> {
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
         branding.blogEnabled = !!data.blogEnabled
+        branding.loampassMxEnabled = !!data.loampassMxEnabled
         branding.allowSelfCancel = !!data.allowSelfCancel
         branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20

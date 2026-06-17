@@ -79,7 +79,9 @@
                             <v-chip size="small" :color="statusColor(p.status)">{{ p.status }}</v-chip>
                         </td>
                         <td>
-                            <v-btn v-if="canCancel(p)" size="small" color="error" variant="tonal"
+                            <v-btn v-if="canRefund(p)" size="small" color="error" variant="tonal"
+                                @click="openRefund(p)">Refund</v-btn>
+                            <v-btn v-else-if="canCancel(p)" size="small" color="error" variant="tonal"
                                 @click="openCancel(p)">Cancel</v-btn>
                         </td>
                     </tr>
@@ -119,6 +121,35 @@
             </v-card>
         </v-dialog>
 
+        <v-dialog v-model="refundDialog" max-width="520">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Refund purchase</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="refundDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <div v-if="refundTarget" class="mb-3">
+                        <div class="text-caption text-medium-emphasis">Purchaser</div>
+                        <div>{{ refundTarget.purchaserName }} — {{ refundTarget.purchaserEmail }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">Item</div>
+                        <div>{{ refundTarget.productName }} ({{ kindLabel(refundTarget.kind) }})</div>
+                    </div>
+                    <v-text-field v-model.number="refundDollars" type="number" min="0" step="0.01" prefix="$"
+                        label="Refund amount" density="compact"
+                        hint="Defaults to the full amount; set per your refund policy. Loam Pass credit entries show $0 and return the credit instead."
+                        persistent-hint></v-text-field>
+                    <v-textarea v-model="refundReason" label="Reason (optional)" rows="2" density="compact"
+                        class="mt-4" hide-details></v-textarea>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" :disabled="refunding" @click="refundDialog = false">Close</v-btn>
+                    <v-btn color="error" :loading="refunding" @click="confirmRefund">Refund</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -128,6 +159,8 @@ import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { PassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/PassService'
 import { branding } from '@/stores/branding'
+import authHelper from '@/helpers/AuthHelper'
+import { Perm } from '@/helpers/TenantPermissions'
 
 const service = new PassService()
 
@@ -146,6 +179,13 @@ const cancelDialog = ref(false)
 const cancelTarget = ref<PurchaseRow | null>(null)
 const cancelReason = ref('')
 const cancelling = ref(false)
+
+const refundDialog = ref(false)
+const refundTarget = ref<PurchaseRow | null>(null)
+const refundReason = ref('')
+const refundDollars = ref<number>(0)
+const refunding = ref(false)
+const REFUNDABLE_KINDS = ['pass', 'event_ticket', 'season_pass', 'membership', 'event_extra']
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -282,6 +322,45 @@ async function confirmCancel() {
         snackbar.value = true
     } finally {
         cancelling.value = false
+    }
+}
+
+// Direct tenant refund (needs sales.refund). Covers the kinds with refund wiring; gift cards
+// excluded. Riders without the permission fall back to the legacy Cancel-and-queue button.
+function canRefund(p: PurchaseRow): boolean {
+    return p.status === 'paid'
+        && REFUNDABLE_KINDS.includes(p.kind)
+        && authHelper.hasPermission(Perm.SalesRefund)
+}
+
+function openRefund(p: PurchaseRow) {
+    refundTarget.value = p
+    refundReason.value = ''
+    refundDollars.value = Math.round(p.amountCents) / 100
+    refundDialog.value = true
+}
+
+async function confirmRefund() {
+    if (!refundTarget.value) return
+    refunding.value = true
+    try {
+        const t = refundTarget.value
+        const reason = refundReason.value.trim().length > 0 ? refundReason.value.trim() : null
+        const amountCents = Number.isFinite(refundDollars.value)
+            ? Math.max(0, Math.round(refundDollars.value * 100))
+            : null
+        await service.refund(t.kind, t.id, amountCents, reason)
+        refundDialog.value = false
+        snackbarText.value = 'Refund processed.'
+        snackbarColor.value = 'success'
+        snackbar.value = true
+        await load()
+    } catch (err: any) {
+        snackbarText.value = err.response?.data?.error || 'Failed to process refund.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
+    } finally {
+        refunding.value = false
     }
 }
 </script>

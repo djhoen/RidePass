@@ -47,6 +47,24 @@ namespace Services.Repositories
 
         public SeasonPassRepository(IDbHelper db) => _db = db;
 
+        public async Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason)
+        {
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET status = 'cancelled',
+                    cancellation_reason = @reason,
+                    cancelled_at = now(),
+                    cancelled_by_user_id = @cancelledByUserId
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
+            await _db.Execute(sql, new { id, tenantId, cancelledByUserId, reason });
+        }
+
+        public async Task MarkRefunded(Guid id, string? refundNote)
+        {
+            const string sql = "UPDATE season_pass_purchase SET status = 'refunded', refund_note = @refundNote WHERE id = @id";
+            await _db.Execute(sql, new { id, refundNote });
+        }
+
         public async Task<List<SeasonPassProduct>> ListProductsForTenant(Guid tenantId, bool activeOnly)
         {
             var filter = activeOnly ? " AND is_active = true" : "";

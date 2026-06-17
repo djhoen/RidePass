@@ -11,6 +11,9 @@ namespace Services.Repositories.Interfaces
         Task Delete(Guid id, Guid tenantId);
         Task<bool> IsInUseByEvents(Guid id, Guid tenantId);
 
+        /// <summary>Set whether Loam Pass credits are accepted for entry to this event type.</summary>
+        Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow);
+
         /// <summary>Atomic bulk update of sort_order for many event types at once.</summary>
         Task UpdateSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
     }

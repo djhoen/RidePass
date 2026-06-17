@@ -51,6 +51,7 @@ namespace Services.Repositories
             season_passes_enabled AS SeasonPassesEnabled,
             concessions_enabled AS ConcessionsEnabled,
             blog_enabled AS BlogEnabled,
+            loampass_mx_destination_id AS LoampassMxDestinationId,
             allow_self_cancel AS AllowSelfCancel,
             waitlist_enabled AS WaitlistEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
@@ -223,7 +224,7 @@ namespace Services.Repositories
 
         public async Task UpdateAdminDetails(Guid tenantId, string displayName, string status, string timezone, bool isPublished,
             string? addressLine, string? city, string? region, string? postalCode, string? country,
-            double? latitude, double? longitude, string? contactEmail, string? phone)
+            double? latitude, double? longitude, string? contactEmail, string? phone, string? loampassMxDestinationId)
         {
             const string sql = @"
                 UPDATE tenant
@@ -239,12 +240,13 @@ namespace Services.Repositories
                     latitude = @latitude,
                     longitude = @longitude,
                     contact_email = @contactEmail,
-                    phone = @phone
+                    phone = @phone,
+                    loampass_mx_destination_id = @loampassMxDestinationId
                 WHERE id = @tenantId";
             await _db.Execute(sql, new
             {
                 tenantId, displayName, status, timezone, isPublished, addressLine, city, region,
-                postalCode, country, latitude, longitude, contactEmail, phone,
+                postalCode, country, latitude, longitude, contactEmail, phone, loampassMxDestinationId,
             });
         }
 

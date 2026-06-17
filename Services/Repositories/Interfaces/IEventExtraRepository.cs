@@ -47,6 +47,10 @@ namespace Services.Repositories.Interfaces
         Task UpdateStatus(Guid id, string status);
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
 
+        /// <summary>Tenant-scoped cancel of a paid extra purchase (releases held inventory via status).</summary>
+        Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
+        Task MarkRefunded(Guid id, string? refundNote);
+
         Task<List<EventExtraPurchase>> ListMine(Guid userId, Guid tenantId);
         Task<List<EventExtraPurchase>> ListForEvent(Guid eventId);
 

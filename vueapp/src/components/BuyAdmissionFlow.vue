@@ -387,6 +387,17 @@
                         <v-card class="mb-4 pa-4">
                             <v-card-title>Payment</v-card-title>
                             <v-card-text>
+                                <div v-if="loampassEligible" class="mb-4 pa-3 rounded" style="border: 1px solid rgba(0,0,0,0.12)">
+                                    <div class="text-subtitle-2 mb-1">Loam Pass</div>
+                                    <p class="text-body-2 text-medium-emphasis mb-2">
+                                        You have {{ loampassCredits }} Loam Pass credit{{ loampassCredits === 1 ? '' : 's' }}.
+                                        Use one to cover this entry instead of paying.
+                                    </p>
+                                    <v-btn color="success" :loading="loampassBusy" prepend-icon="mdi-ticket-confirmation"
+                                        @click="redeemWithLoampassCredit">Use a Loam Pass credit</v-btn>
+                                    <div v-if="loampassError" class="text-error text-caption mt-2">{{ loampassError }}</div>
+                                    <div class="text-caption text-medium-emphasis mt-3">Or pay below.</div>
+                                </div>
                                 <div v-if="!branding.stripePublishableKey" class="text-error">Stripe publishable key is not configured.</div>
                                 <template v-else>
                                     <v-table v-if="riderServiceChargeCents > 0 || giftCardAppliedCents > 0" density="compact" class="mb-3">
@@ -590,6 +601,7 @@ import PhoneField from '@/components/PhoneField.vue'
 import SignaturePad from '@/components/SignaturePad.vue'
 import RichTextView from '@/components/RichTextView.vue'
 import { WaiverService, type WaiverDto, type WaiverSignatureStatus } from '@/services/WaiverService'
+import { LoampassLinkService } from '@/services/LoampassLinkService'
 
 const props = defineProps<{
     eventId: string
@@ -612,6 +624,12 @@ const rewardService = new RewardService()
 const waitlistService = new WaitlistService()
 const userService = new UserService()
 const waiverService = new WaiverService()
+const loampassLinkService = new LoampassLinkService()
+
+const loampassLinked = ref(false)
+const loampassCredits = ref(0)
+const loampassBusy = ref(false)
+const loampassError = ref('')
 
 // Unique element id per mount so multiple instances (e.g. dialog re-opened for a
 // different event) never clash with each other or with the route page version.
@@ -637,6 +655,20 @@ const cartLineItems = computed(() =>
         .filter(t => (quantities[t.id] ?? 0) > 0)
         .map(t => ({ tierId: t.id, name: t.name, priceCents: t.priceCents, quantity: quantities[t.id] ?? 0 }))
 )
+
+// Loam Pass credit is offered only for the clean case: a participating track, a linked rider
+// with at least one credit, and a cart of exactly one rider-entry (race_entry) tier at qty 1
+// (one credit covers one entry). Server re-validates eligibility regardless.
+const loampassEligibleTierId = computed<string | null>(() => {
+    if (!branding.loampassMxEnabled || !isAuthenticated.value) return null
+    if (!loampassLinked.value || loampassCredits.value < 1) return null
+    if (cartLineItems.value.length !== 1) return null
+    const line = cartLineItems.value[0]
+    if (line.quantity !== 1) return null
+    const tier = tiers.value.find(t => t.id === line.tierId)
+    return tier && tier.kind === 'race_entry' ? tier.id : null
+})
+const loampassEligible = computed(() => loampassEligibleTierId.value !== null)
 
 // ── Event extras (camping/parking/etc.) ─────────────────────────────────────
 // Show every extra that's available outright OR has variants (variant inventory
@@ -1350,6 +1382,14 @@ async function load() {
                 availableVouchers.value = ((v.data as any).data as RiderRewardRedemption[]).filter(x => !x.redeemedAtUtc)
             } catch { /* no rewards yet */ }
         }
+        if (isAuthenticated.value && branding.loampassMxEnabled) {
+            try {
+                const s = await loampassLinkService.status()
+                const data = (s.data as any).data
+                loampassLinked.value = !!data.linked
+                loampassCredits.value = data.creditsAvailable ?? 0
+            } catch { /* non-critical */ }
+        }
     } finally {
         loading.value = false
     }
@@ -1446,6 +1486,32 @@ async function createIntent() {
         }
     } finally {
         creating.value = false
+    }
+}
+
+async function redeemWithLoampassCredit() {
+    const tierId = loampassEligibleTierId.value
+    if (!tierId) return
+    loampassBusy.value = true
+    loampassError.value = ''
+    try {
+        const line = cartLineItems.value[0]
+        const r = await service.redeemLoampassForTicket(tierId)
+        const data = (r.data as any).data
+        purchaseId.value = data.purchaseId
+        redemptionToken.value = data.redemptionToken
+        purchasedTickets.value = (data.tickets && data.tickets.length > 0)
+            ? data.tickets
+            : [{ purchaseId: data.purchaseId, redemptionToken: data.redemptionToken, tierName: line?.name ?? 'Entry', amountCents: 0 }]
+        clientSecret.value = ''
+        amountCents.value = 0
+        completed.value = true
+        flash('Loam Pass credit redeemed — your entry is ready!', 'success')
+        emit('completed')
+    } catch (e: any) {
+        loampassError.value = e.response?.data?.error || 'Could not redeem your Loam Pass credit.'
+    } finally {
+        loampassBusy.value = false
     }
 }
 

@@ -9,5 +9,6 @@ namespace webapi.Controllers.API.Data.EventType
         public string? ImageUrl { get; set; }
         public int SortOrder { get; set; }
         public bool IsSystem { get; set; }
+        public bool AllowLoampassRedemption { get; set; }
     }
 }

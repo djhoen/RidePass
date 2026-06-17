@@ -102,6 +102,12 @@ export class PassService {
     cancelTicket(id: string, reason: string | null) {
         return axios.post(`${this.apiUrl}/Purchase/Ticket/${id}/Cancel`, { reason })
     }
+    // Tenant-admin direct refund of any single purchase (gift cards excluded). amountCents
+    // null = full-minus-service-charge default; the server clamps and executes the money.
+    refund(kind: string, purchaseId: string, amountCents: number | null, reason: string | null) {
+        return axios.post<{ data: { refunded: boolean; amountCents: number; refundId: string | null } }>(
+            `${this.apiUrl}/Purchase/Refund`, { kind, purchaseId, amountCents, reason })
+    }
 
     listDisputes() {
         return axios.get<{ data: TenantDisputeListItem[] }>(`${this.apiUrl}/Purchase/Admin/Disputes`)

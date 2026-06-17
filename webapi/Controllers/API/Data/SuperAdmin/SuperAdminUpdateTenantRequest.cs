@@ -40,5 +40,8 @@ namespace webapi.Controllers.API.Data.SuperAdmin
 
         [MaxLength(200)] public string? ContactEmail { get; set; }
         [MaxLength(40)] public string? Phone { get; set; }
+
+        // LoamMx destination id. Non-empty marks this tenant as a LoamPassMx track; blank clears it.
+        [MaxLength(64)] public string? LoampassMxDestinationId { get; set; }
     }
 }

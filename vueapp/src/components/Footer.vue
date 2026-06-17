@@ -71,7 +71,6 @@
                         <div class="mt-2">
                             <div><router-link to="/" class="footer-link">Home</router-link></div>
                             <div v-if="!isApex"><router-link to="/Login" class="footer-link">Sign In</router-link></div>
-                            <div v-if="!isApex"><router-link to="/CreateAccount" class="footer-link">Sign Up</router-link></div>
                             <div v-if="!isApex"><router-link to="/Feedback" class="footer-link">Send Feedback</router-link></div>
                             <div v-if="isApex"><router-link to="/Discover" class="footer-link">Find Tracks</router-link></div>
                         </div>
