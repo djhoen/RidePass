@@ -19,12 +19,9 @@
                     <span class="text-medium-emphasis"> (${{ (e.priceCents / 100).toFixed(2) }})</span>
                 </div>
                 <div class="text-caption text-medium-emphasis">
-                    <span v-if="!hasVariants(e)">
-                        <span v-if="e.remaining < 0">Unlimited</span>
-                        <span v-else>{{ e.remaining }} left</span>
-                    </span>
-                    <span v-else>{{ e.variants.length }} option{{ e.variants.length === 1 ? '' : 's' }} available</span>
-                    <span v-if="e.requiresWaiver"> · waiver required</span>
+                    <span v-if="hasVariants(e)">{{ e.variants.length }} option{{ e.variants.length === 1 ? '' : 's' }} available</span>
+                    <span v-else-if="e.remaining >= 0">{{ e.remaining }} left</span>
+                    <span v-if="e.requiresWaiver">{{ (hasVariants(e) || e.remaining >= 0) ? ' · ' : '' }}waiver required</span>
                 </div>
                 <!-- Selection summary for variant products: "M Red × 2, L Blue × 1". -->
                 <div v-if="hasVariants(e) && totalQty(e) > 0" class="text-caption text-success mt-1">
@@ -82,9 +79,8 @@
                             <div class="text-body-2"><strong>{{ variantLabel(v) }}</strong></div>
                             <div class="text-caption text-medium-emphasis">
                                 ${{ (v.priceCents / 100).toFixed(2) }}
-                                <span v-if="v.remaining < 0"> · unlimited</span>
-                                <span v-else-if="v.remaining === 0" class="text-error"> · sold out</span>
-                                <span v-else> · {{ v.remaining }} left</span>
+                                <span v-if="v.remaining === 0" class="text-error"> · sold out</span>
+                                <span v-else-if="v.remaining > 0"> · {{ v.remaining }} left</span>
                             </div>
                         </div>
                         <div class="d-flex align-center ga-1" style="flex: 0 0 auto">

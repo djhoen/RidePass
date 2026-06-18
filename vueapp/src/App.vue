@@ -79,6 +79,22 @@ watchEffect(() => {
 </script>
 
 <style scoped>
+/* Min content height = viewport minus the footer height, so on short pages the
+   footer rests at the bottom without forcing a scrollbar. NOT a sticky footer:
+   it still follows the content and scrolls off on tall pages. The footer height
+   is a fixed estimate (it restacks taller on narrow widths, hence the
+   breakpoint); tweak --footer-h if it looks off on your content. */
+:deep(.v-main) {
+    --footer-h: 360px;
+    min-height: calc(100vh - var(--footer-h));
+    min-height: calc(100dvh - var(--footer-h));
+}
+@media (max-width: 600px) {
+    :deep(.v-main) {
+        --footer-h: 620px;
+    }
+}
+
 .branding-splash {
     position: fixed;
     inset: 0;

@@ -33,8 +33,8 @@
                     @keydown.enter="emit('select', p.track)"
                     @mouseenter="show(p)" @mouseleave="scheduleHide()"
                     @focus="show(p)" @blur="scheduleHide()">
-                    <circle :r="isHover(p) ? haloR * 1.7 : haloR" class="pin-halo" />
-                    <circle :r="isHover(p) ? dotR * 1.8 : dotR" class="pin-dot" />
+                    <circle :r="emphasized(p) ? haloR * 1.7 : haloR" class="pin-halo" />
+                    <circle :r="emphasized(p) ? dotR * 1.8 : dotR" class="pin-dot" />
                 </g>
             </g>
         </svg>
@@ -95,8 +95,13 @@ import 'd3-transition' // augments d3 selections with .transition() for smooth z
 import statesTopo from 'us-atlas/states-10m.json'
 import type { TrackDiscoverItem } from '@/services/DiscoverService'
 
-const props = defineProps<{ tracks: TrackDiscoverItem[] }>()
-const emit = defineEmits<{ (e: 'select', track: TrackDiscoverItem): void }>()
+const props = defineProps<{ tracks: TrackDiscoverItem[]; highlightedId?: string | null }>()
+const emit = defineEmits<{
+    (e: 'select', track: TrackDiscoverItem): void
+    // Emitted as the pointer enters/leaves a pin so a parent can sync a hovered
+    // track card. Null when nothing is hovered.
+    (e: 'hover', tenantId: string | null): void
+}>()
 
 const { mobile } = useDisplay()
 
@@ -187,6 +192,11 @@ let hideTimer: number | undefined
 function isHover(p: PlacedPin): boolean {
     return hovered.value?.track.tenantId === p.track.tenantId
 }
+// A pin is emphasized when hovered locally OR when the parent flags it as the
+// active track (e.g. the matching track card is hovered).
+function emphasized(p: PlacedPin): boolean {
+    return isHover(p) || p.track.tenantId === props.highlightedId
+}
 // Mobile (no hover): a tap opens the card. Desktop: do nothing on click — the
 // card already shows on hover, and navigation is via its "Visit track" button.
 function onPinClick(p: PlacedPin) {
@@ -196,11 +206,12 @@ function show(p: PlacedPin) {
     cancelHide()
     hovered.value = p
     wrapperW.value = mapEl.value?.clientWidth ?? 0
+    emit('hover', p.track.tenantId)
 }
 // Short delay so the pointer can cross the gap from the pin into the card.
 function scheduleHide() {
     cancelHide()
-    hideTimer = window.setTimeout(() => { hovered.value = null }, 160)
+    hideTimer = window.setTimeout(() => { hovered.value = null; emit('hover', null) }, 160)
 }
 function cancelHide() {
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = undefined }

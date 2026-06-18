@@ -28,8 +28,6 @@ namespace webapi.Controllers
     {
         private readonly IUserRepository _users;
         private readonly IWaiverRepository _waivers;
-        private readonly IPassProductRepository _products;
-        private readonly IPassPurchaseRepository _passPurchases;
         private readonly IEventRepository _events;
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
@@ -47,8 +45,6 @@ namespace webapi.Controllers
         public CounterController(
             IUserRepository users,
             IWaiverRepository waivers,
-            IPassProductRepository products,
-            IPassPurchaseRepository passPurchases,
             IEventRepository events,
             IEventTicketTierRepository tiers,
             IEventTicketPurchaseRepository ticketPurchases,
@@ -65,8 +61,6 @@ namespace webapi.Controllers
         {
             _users = users;
             _waivers = waivers;
-            _products = products;
-            _passPurchases = passPurchases;
             _events = events;
             _tiers = tiers;
             _ticketPurchases = ticketPurchases;
@@ -227,7 +221,6 @@ namespace webapi.Controllers
             // Validate every cart item up front and compute total before writing anything.
             // We also collect whether any item requires the waiver — purely tenant-active-waiver
             // alone is no longer enough; per-item flags govern.
-            var passItems = new List<(CounterCartItem Item, PassProduct Product, int AmountCents, int ServiceChargeCents)>();
             var ticketItems = new List<(CounterCartItem Item, EventTicketTier Tier, int UnitAmountCents, int UnitServiceChargeCents)>();
             var extrasItems = new List<(CounterCartItem Item, EventExtraProduct Product, EventExtraVariant? Variant,
                                         int UnitAmountCents, int UnitServiceChargeCents, int UnitPriceFrozen)>();
@@ -238,20 +231,7 @@ namespace webapi.Controllers
             var tenant = _tenantContext.Tenant;
             foreach (var item in request.Items)
             {
-                if (item.Kind == "pass")
-                {
-                    var product = await _products.GetById(item.ItemId, _tenantContext.TenantId);
-                    if (product is null || !product.IsActive)
-                    {
-                        return new ApiResponses().BadRequestResult($"Day pass product {item.ItemId} is not available.");
-                    }
-                    var (lineAmount, lineServiceCharge) = ComputeWithServiceCharge(
-                        product.PriceCents, item.Quantity, tenant.ServiceChargeBps, product.RiderPaidServiceChargeBps);
-                    passItems.Add((item, product, lineAmount, lineServiceCharge));
-                    totalCents += lineAmount;
-                    if (product.RequiresWaiver) waiverRequiredByCart = true;
-                }
-                else if (item.Kind == "event_ticket")
+                if (item.Kind == "event_ticket")
                 {
                     var tier = await _tiers.GetById(item.ItemId, _tenantContext.TenantId);
                     if (tier is null || !tier.IsActive)
@@ -392,7 +372,6 @@ namespace webapi.Controllers
             // Voucher: applies to ONE unit of ONE qualifying line. Day-pass lines must be
             // quantity=1 to be eligible (we don't split rows). Tickets are 1-row-per-unit
             // already so the first ticket of the chosen line gets the discount.
-            int? voucherPassIdx = null;
             int? voucherTicketIdx = null;
             int voucherPercentOff = 0;
             if (request.RewardRedemptionId.HasValue)
@@ -412,38 +391,20 @@ namespace webapi.Controllers
                     return new ApiResponses().BadRequestResult("That voucher's program is no longer active.");
                 }
                 voucherPercentOff = voucherProgram.RewardPercentOff;
-                var allowsPass = voucherProgram.RequirementKind is "pass" or "any";
                 var allowsTicket = voucherProgram.RequirementKind is "event_ticket" or "any";
 
-                if (allowsPass)
-                {
-                    for (var i = 0; i < passItems.Count; i++)
-                    {
-                        if (passItems[i].Item.Quantity == 1) { voucherPassIdx = i; break; }
-                    }
-                }
-                if (voucherPassIdx is null && allowsTicket && ticketItems.Count > 0)
+                if (allowsTicket && ticketItems.Count > 0)
                 {
                     voucherTicketIdx = 0;
                 }
-                if (voucherPassIdx is null && voucherTicketIdx is null)
+                if (voucherTicketIdx is null)
                 {
                     return new ApiResponses().BadRequestResult(
-                        "No qualifying line for this voucher. Day-pass lines must be quantity 1 (add a single pass) or pick a ticket.");
+                        "No qualifying line for this voucher — pick a race entry or gate fee.");
                 }
 
                 // Recompute discounted line + adjust totalCents.
-                if (voucherPassIdx is int dpi)
-                {
-                    var entry = passItems[dpi];
-                    var discountedPrice = entry.Product.PriceCents - (entry.Product.PriceCents * voucherPercentOff / 100);
-                    var (newAmt, newSc) = ComputeWithServiceCharge(
-                        discountedPrice, 1, tenant.ServiceChargeBps, entry.Product.RiderPaidServiceChargeBps);
-                    totalCents -= entry.AmountCents;
-                    totalCents += newAmt;
-                    passItems[dpi] = (entry.Item, entry.Product, newAmt, newSc);
-                }
-                else if (voucherTicketIdx is int tki)
+                if (voucherTicketIdx is int tki)
                 {
                     var entry = ticketItems[tki];
                     var discountedPrice = entry.Tier.PriceCents - (entry.Tier.PriceCents * voucherPercentOff / 100);
@@ -508,38 +469,6 @@ namespace webapi.Controllers
             // writes can use the right ridepass_cut for each row.
             var ledgerLines = new List<(string Kind, Guid PurchaseId, int Gross, int ServiceCharge)>();
 
-            for (var dpiIdx = 0; dpiIdx < passItems.Count; dpiIdx++)
-            {
-                var (item, product, lineAmount, lineServiceCharge) = passItems[dpiIdx];
-                var p = new PassPurchase
-                {
-                    TenantId = _tenantContext.TenantId,
-                    PurchaserUserId = rider.Id,
-                    ProductId = product.Id,
-                    WaiverSignatureId = waiverSignatureId,
-                    Quantity = item.Quantity,
-                    AmountCents = lineAmount,
-                    ServiceChargeCents = lineServiceCharge,
-                    AppliedRewardRedemptionId = dpiIdx == voucherPassIdx ? request.RewardRedemptionId : null,
-                    PaymentMethod = paymentMethod,
-                    Status = "pending",
-                    PurchaserEmail = rider.Email,
-                    PurchaserName = purchaserName,
-                    SoldByUserId = cashierId,
-                };
-                var created = await _passPurchases.Create(p);
-                lineItems.Add(new CounterSaleLineItem
-                {
-                    Kind = "pass",
-                    PurchaseId = created.Id,
-                    RedemptionToken = created.RedemptionToken,
-                    DisplayName = product.Name,
-                    Quantity = item.Quantity,
-                    UnitPriceCents = product.PriceCents,
-                    LineAmountCents = lineAmount,
-                });
-                ledgerLines.Add(("pass", created.Id, lineAmount, lineServiceCharge));
-            }
             // Serialize the capacity recheck + ticket inserts per event so a counter sale
             // can't oversell a tier or double-enter a race class against a concurrent online
             // or counter sale (review item #4). A counter cart may span multiple events, so
@@ -708,8 +637,7 @@ namespace webapi.Controllers
                 var occurredAt = DateTime.UtcNow;
                 foreach (var (kind, purchaseId, gross, serviceCharge) in ledgerLines)
                 {
-                    if (kind == "pass") await _passPurchases.UpdateStatus(purchaseId, "paid");
-                    else if (kind == "event_ticket") await _ticketPurchases.UpdateStatus(purchaseId, "paid");
+                    if (kind == "event_ticket") await _ticketPurchases.UpdateStatus(purchaseId, "paid");
                     else if (kind == "membership") await _memberships.UpdateStatus(purchaseId, "paid");
                     try
                     {
@@ -754,8 +682,7 @@ namespace webapi.Controllers
             {
                 foreach (var li in lineItems)
                 {
-                    if (li.Kind == "pass") await _passPurchases.UpdateStatus(li.PurchaseId, "paid");
-                    else if (li.Kind == "event_ticket") await _ticketPurchases.UpdateStatus(li.PurchaseId, "paid");
+                    if (li.Kind == "event_ticket") await _ticketPurchases.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "extras") await _extras.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "membership") await _memberships.UpdateStatus(li.PurchaseId, "paid");
                     // Extras still has no source_kind in the ledger CHECK, so skip them here too.
@@ -820,9 +747,6 @@ namespace webapi.Controllers
             {
                 switch (li.Kind)
                 {
-                    case "pass":
-                        await _passPurchases.SetStripePaymentIntentId(li.PurchaseId, intent.IntentId);
-                        break;
                     case "event_ticket":
                         await _ticketPurchases.SetStripePaymentIntentId(li.PurchaseId, intent.IntentId);
                         break;

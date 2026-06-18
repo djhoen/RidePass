@@ -21,6 +21,10 @@ namespace webapi.Controllers.API.Data.Redemption
         public string? NotRedeemableReason { get; set; }
         public DateTime? RedeemedAtUtc { get; set; }
         public string? RedeemedByName { get; set; }
+        // For deferred-checkout event tickets: false when the rider hasn't finished
+        // registration (rider details + required waiver). The gate surfaces this as a
+        // warning so staff can collect the waiver before letting them on track.
+        public bool RegistrationComplete { get; set; } = true;
     }
 
     public class BulkRedeemRequest

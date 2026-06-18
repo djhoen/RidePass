@@ -10,21 +10,6 @@ namespace Services.Repositories
 
         public ReportsRepository(IDbHelper db) => _db = db;
 
-        public async Task<SalesTotals> GetPassTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc)
-        {
-            const string sql = @"
-                SELECT
-                    COALESCE(SUM(CASE WHEN status IN ('paid','redeemed') THEN amount_cents ELSE 0 END), 0) AS RevenueCents,
-                    COALESCE(SUM(CASE WHEN status IN ('paid','redeemed') THEN quantity ELSE 0 END), 0)::int AS SoldCount,
-                    COALESCE(SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END), 0)::int AS RefundedCount,
-                    COALESCE(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0)::int AS CancelledCount,
-                    COALESCE(SUM(CASE WHEN status = 'refunded' THEN amount_cents ELSE 0 END), 0) AS RefundedCents
-                FROM pass_purchase
-                WHERE tenant_id = @tenantId AND created_at >= @fromUtc AND created_at < @toUtc";
-            var r = await _db.Query<SalesTotals>(sql, new { tenantId, fromUtc, toUtc });
-            return r.FirstOrDefault() ?? new SalesTotals();
-        }
-
         public async Task<SalesTotals> GetTicketTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
             const string sql = @"
@@ -45,10 +30,6 @@ namespace Services.Repositories
             // Union distinct purchaser emails across passes and tickets within the range.
             const string sql = @"
                 SELECT COUNT(DISTINCT email)::int FROM (
-                    SELECT LOWER(purchaser_email) AS email FROM pass_purchase
-                    WHERE tenant_id = @tenantId AND status IN ('paid','redeemed')
-                      AND created_at >= @fromUtc AND created_at < @toUtc
-                    UNION
                     SELECT LOWER(purchaser_email) AS email FROM event_ticket_purchase
                     WHERE tenant_id = @tenantId AND status IN ('paid','redeemed')
                       AND created_at >= @fromUtc AND created_at < @toUtc
@@ -77,14 +58,6 @@ namespace Services.Repositories
                 FROM (
                     SELECT to_char((created_at AT TIME ZONE @timezone)::date, 'YYYY-MM-DD') AS date,
                            amount_cents AS revenue,
-                           quantity AS passes,
-                           0 AS tickets
-                    FROM pass_purchase
-                    WHERE tenant_id = @tenantId AND status IN ('paid','redeemed')
-                      AND created_at >= @fromUtc AND created_at < @toUtc
-                    UNION ALL
-                    SELECT to_char((created_at AT TIME ZONE @timezone)::date, 'YYYY-MM-DD') AS date,
-                           amount_cents AS revenue,
                            0 AS passes,
                            1 AS tickets
                     FROM event_ticket_purchase
@@ -94,23 +67,6 @@ namespace Services.Repositories
                 GROUP BY date
                 ORDER BY date";
             var r = await _db.Query<DailyRevenuePoint>(sql, new { tenantId, fromUtc, toUtc, timezone });
-            return r.ToList();
-        }
-
-        public async Task<List<TopPassProductRow>> GetTopPassProducts(Guid tenantId, DateTime fromUtc, DateTime toUtc, int limit = 10)
-        {
-            const string sql = @"
-                SELECT p.id AS ProductId, p.name AS ProductName,
-                       COALESCE(SUM(dpp.quantity), 0)::int AS SoldCount,
-                       COALESCE(SUM(dpp.amount_cents), 0)::bigint AS RevenueCents
-                FROM pass_purchase dpp
-                JOIN pass_product p ON p.id = dpp.product_id
-                WHERE dpp.tenant_id = @tenantId AND dpp.status IN ('paid','redeemed')
-                  AND dpp.created_at >= @fromUtc AND dpp.created_at < @toUtc
-                GROUP BY p.id, p.name
-                ORDER BY RevenueCents DESC
-                LIMIT @limit";
-            var r = await _db.Query<TopPassProductRow>(sql, new { tenantId, fromUtc, toUtc, limit });
             return r.ToList();
         }
 
@@ -129,14 +85,6 @@ namespace Services.Repositories
                     JOIN event_ticket_tier ett ON ett.id = etp.tier_id
                     WHERE etp.tenant_id = @tenantId AND etp.status IN ('paid','redeemed')
                       AND etp.created_at >= @fromUtc AND etp.created_at < @toUtc
-                    UNION ALL
-                    SELECT dpp.event_id AS event_id,
-                           dpp.quantity AS sold,
-                           dpp.amount_cents AS revenue
-                    FROM pass_purchase dpp
-                    WHERE dpp.tenant_id = @tenantId AND dpp.status IN ('paid','redeemed')
-                      AND dpp.event_id IS NOT NULL
-                      AND dpp.created_at >= @fromUtc AND dpp.created_at < @toUtc
                 ) s
                 JOIN event e ON e.id = s.event_id
                 GROUP BY e.id, e.title, e.starts_at
@@ -150,20 +98,14 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT
-                    (SELECT COALESCE(SUM(amount_cents), 0) FROM pass_purchase
-                        WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc)
-                  + (SELECT COALESCE(SUM(amount_cents), 0) FROM event_ticket_purchase
+                    (SELECT COALESCE(SUM(amount_cents), 0) FROM event_ticket_purchase
                         WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc)
                   AS RevenueCents,
-                    (SELECT COALESCE(SUM(quantity), 0) FROM pass_purchase
-                        WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc)::int
-                  AS PassesSold,
+                    0 AS PassesSold,
                     (SELECT COUNT(*) FROM event_ticket_purchase
                         WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc)::int
                   AS TicketsSold,
-                    (SELECT COUNT(*) FROM pass_purchase
-                        WHERE status = 'refunded' AND created_at >= @fromUtc AND created_at < @toUtc)::int
-                  + (SELECT COUNT(*) FROM event_ticket_purchase
+                    (SELECT COUNT(*) FROM event_ticket_purchase
                         WHERE status = 'refunded' AND created_at >= @fromUtc AND created_at < @toUtc)::int
                   AS RefundedCount,
                     (SELECT COUNT(*) FROM dispute
@@ -171,9 +113,6 @@ namespace Services.Repositories
                   AS DisputedCount,
                     (SELECT COUNT(*) FROM tenant)::int AS TotalTenants,
                     (SELECT COUNT(DISTINCT tenant_id) FROM (
-                        SELECT tenant_id FROM pass_purchase
-                            WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc
-                        UNION
                         SELECT tenant_id FROM event_ticket_purchase
                             WHERE status IN ('paid','redeemed') AND created_at >= @fromUtc AND created_at < @toUtc
                     ) s)::int AS ActiveTenants";
@@ -189,14 +128,6 @@ namespace Services.Repositories
                        SUM(passes)::int AS PassesSold,
                        SUM(tickets)::int AS TicketsSold
                 FROM (
-                    SELECT to_char((created_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS date,
-                           amount_cents AS revenue,
-                           quantity AS passes,
-                           0 AS tickets
-                    FROM pass_purchase
-                    WHERE status IN ('paid','redeemed')
-                      AND created_at >= @fromUtc AND created_at < @toUtc
-                    UNION ALL
                     SELECT to_char((created_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS date,
                            amount_cents AS revenue,
                            0 AS passes,
@@ -215,21 +146,12 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT t.id AS TenantId, t.subdomain AS Subdomain, t.display_name AS DisplayName,
-                       COALESCE(dp.passes_sold, 0)::int AS PassesSold,
+                       0 AS PassesSold,
                        COALESCE(tk.tickets_sold, 0)::int AS TicketsSold,
-                       (COALESCE(dp.revenue, 0) + COALESCE(tk.revenue, 0))::bigint AS RevenueCents,
-                       (COALESCE(dp.refunded, 0) + COALESCE(tk.refunded, 0))::int AS RefundedCount,
+                       COALESCE(tk.revenue, 0)::bigint AS RevenueCents,
+                       COALESCE(tk.refunded, 0)::int AS RefundedCount,
                        COALESCE(disp.disputed, 0)::int AS DisputedCount
                 FROM tenant t
-                LEFT JOIN (
-                    SELECT tenant_id,
-                           SUM(CASE WHEN status IN ('paid','redeemed') THEN quantity ELSE 0 END) AS passes_sold,
-                           SUM(CASE WHEN status IN ('paid','redeemed') THEN amount_cents ELSE 0 END) AS revenue,
-                           SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded
-                    FROM pass_purchase
-                    WHERE created_at >= @fromUtc AND created_at < @toUtc
-                    GROUP BY tenant_id
-                ) dp ON dp.tenant_id = t.id
                 LEFT JOIN (
                     SELECT tenant_id,
                            SUM(CASE WHEN status IN ('paid','redeemed') THEN 1 ELSE 0 END) AS tickets_sold,
@@ -265,34 +187,6 @@ namespace Services.Repositories
             // checked_in_at column we can surface directly.
             const string sql = @"
                 SELECT
-                    p.id AS PurchaseId,
-                    'pass' AS Source,
-                    p.purchaser_name AS PurchaserName,
-                    u.first_name AS FirstName,
-                    u.last_name AS LastName,
-                    p.purchaser_email AS PurchaserEmail,
-                    u.phone AS PurchaserPhone,
-                    pp.name AS ItemName,
-                    NULL::text AS TierKind,
-                    NULL::text AS RaceNumber,
-                    u.race_number AS UserRaceNumber,
-                    NULLIF(TRIM(BOTH ', ' FROM CONCAT_WS(', ', u.city, u.state)), '') AS Hometown,
-                    p.quantity AS Quantity,
-                    p.amount_cents AS AmountCents,
-                    p.status AS Status,
-                    (p.status = 'redeemed') AS CheckedIn,
-                    p.redeemed_at_utc AS CheckedInAtUtc,
-                    p.created_at AS CreatedAtUtc
-                FROM pass_purchase p
-                JOIN pass_product pp ON pp.id = p.product_id
-                LEFT JOIN users u ON u.id = p.purchaser_user_id
-                WHERE p.tenant_id = @tenantId
-                  AND p.event_id = @eventId
-                  AND p.status <> 'cancelled'
-
-                UNION ALL
-
-                SELECT
                     t.id AS PurchaseId,
                     'event_ticket' AS Source,
                     t.purchaser_name AS PurchaserName,
@@ -302,6 +196,7 @@ namespace Services.Repositories
                     u.phone AS PurchaserPhone,
                     tier.name AS ItemName,
                     tier.kind AS TierKind,
+                    tier.audience AS TierAudience,
                     t.race_number AS RaceNumber,
                     u.race_number AS UserRaceNumber,
                     NULLIF(TRIM(BOTH ', ' FROM CONCAT_WS(', ', u.city, u.state)), '') AS Hometown,
@@ -330,6 +225,7 @@ namespace Services.Repositories
                     u.phone AS PurchaserPhone,
                     sp.name AS ItemName,
                     NULL::text AS TierKind,
+                    NULL::text AS TierAudience,
                     NULL::text AS RaceNumber,
                     u.race_number AS UserRaceNumber,
                     NULLIF(TRIM(BOTH ', ' FROM CONCAT_WS(', ', u.city, u.state)), '') AS Hometown,
@@ -357,27 +253,14 @@ namespace Services.Repositories
             // First identify the rider — the token may match any of three tables. We need
             // user_id (so we can find their other registrations), name/email/phone, the
             // photo if it's a season pass, and which kind matched (used by the UI).
-            const string identifySql = @"
-                SELECT 'pass' AS MatchedTokenKind, p.purchaser_user_id AS UserId,
-                       p.purchaser_name AS PurchaserName, p.purchaser_email AS PurchaserEmail,
+            const string ticketSql = @"
+                SELECT 'event_ticket' AS MatchedTokenKind, t.purchaser_user_id AS UserId,
+                       t.purchaser_name AS PurchaserName, t.purchaser_email AS PurchaserEmail,
                        NULL::text AS PhotoDataUrl
-                FROM pass_purchase p
-                WHERE p.redemption_token = @token AND p.tenant_id = @tenantId
+                FROM event_ticket_purchase t
+                WHERE t.redemption_token = @token AND t.tenant_id = @tenantId
                 LIMIT 1";
-            var passRider = (await _db.Query<RiderIdentity>(identifySql, new { token, tenantId })).FirstOrDefault();
-
-            RiderIdentity? rider = passRider;
-            if (rider is null)
-            {
-                const string ticketSql = @"
-                    SELECT 'event_ticket' AS MatchedTokenKind, t.purchaser_user_id AS UserId,
-                           t.purchaser_name AS PurchaserName, t.purchaser_email AS PurchaserEmail,
-                           NULL::text AS PhotoDataUrl
-                    FROM event_ticket_purchase t
-                    WHERE t.redemption_token = @token AND t.tenant_id = @tenantId
-                    LIMIT 1";
-                rider = (await _db.Query<RiderIdentity>(ticketSql, new { token, tenantId })).FirstOrDefault();
-            }
+            RiderIdentity? rider = (await _db.Query<RiderIdentity>(ticketSql, new { token, tenantId })).FirstOrDefault();
             if (rider is null)
             {
                 const string spSql = @"
@@ -413,30 +296,6 @@ namespace Services.Repositories
             // the parent event so we can return event title + start time. Pass + ticket
             // resolve via purchaser_user_id; season pass via the purchase → reservation chain.
             const string regsSql = @"
-                SELECT
-                    p.id AS Id,
-                    'pass' AS Source,
-                    e.id AS EventId,
-                    e.title AS EventTitle,
-                    e.starts_at AS EventStartsAtUtc,
-                    e.ends_at AS EventEndsAtUtc,
-                    pp.name AS ItemName,
-                    p.status AS Status,
-                    (p.status = 'redeemed') AS CheckedIn,
-                    NULL::timestamptz AS CheckedInAtUtc,
-                    p.redemption_token AS RedemptionToken
-                FROM pass_purchase p
-                JOIN pass_product pp ON pp.id = p.product_id
-                JOIN event e ON e.id = p.event_id
-                WHERE p.tenant_id = @tenantId
-                  AND p.purchaser_user_id = @userId
-                  AND p.event_id IS NOT NULL
-                  AND p.status IN ('paid','redeemed')
-                  AND e.starts_at >= @fromUtc
-                  AND e.starts_at < @toUtc
-
-                UNION ALL
-
                 SELECT
                     t.id AS Id,
                     'event_ticket' AS Source,
@@ -527,25 +386,13 @@ namespace Services.Repositories
                     e.all_day AS AllDay,
                     e.capacity AS Capacity,
                     e.status AS Status,
-                    COALESCE(pass_agg.registered, 0)
-                        + COALESCE(tk_agg.registered, 0)
+                    COALESCE(tk_agg.registered, 0)
                         + COALESCE(spr_agg.registered, 0) AS Registered,
-                    COALESCE(pass_agg.checked_in, 0)
-                        + COALESCE(tk_agg.checked_in, 0)
+                    COALESCE(tk_agg.checked_in, 0)
                         + COALESCE(spr_agg.checked_in, 0) AS CheckedIn,
-                    COALESCE(pass_agg.revenue, 0)
-                        + COALESCE(tk_agg.revenue, 0) AS RevenueCents
+                    COALESCE(tk_agg.revenue, 0) AS RevenueCents
                 FROM event e
                 LEFT JOIN tenant_event_type et ON et.id = e.event_type_id
-                LEFT JOIN (
-                    SELECT event_id,
-                           SUM(CASE WHEN status IN ('paid','redeemed') THEN quantity ELSE 0 END) AS registered,
-                           SUM(CASE WHEN status = 'redeemed' THEN quantity ELSE 0 END) AS checked_in,
-                           SUM(CASE WHEN status IN ('paid','redeemed') THEN amount_cents ELSE 0 END) AS revenue
-                    FROM pass_purchase
-                    WHERE tenant_id = @tenantId AND event_id IS NOT NULL
-                    GROUP BY event_id
-                ) pass_agg ON pass_agg.event_id = e.id
                 LEFT JOIN (
                     SELECT tier.event_id,
                            SUM(CASE WHEN t.status IN ('paid','redeemed') THEN 1 ELSE 0 END) AS registered,

@@ -19,9 +19,6 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
-        private readonly IPassPurchaseRepository _passes;
-        private readonly IPassPurchaseRepository _passPurchases;
-        private readonly IPassProductRepository _passProducts;
         private readonly IUserRepository _users;
         private readonly IPaymentProvider _payments;
         private readonly ITenantContext _tenantContext;
@@ -31,8 +28,6 @@ namespace webapi.Controllers
             IEventRepository events,
             IEventTicketTierRepository tiers,
             IEventTicketPurchaseRepository ticketPurchases,
-            IPassPurchaseRepository passes,
-            IPassProductRepository passProducts,
             IUserRepository users,
             IPaymentProvider payments,
             ITenantContext tenantContext)
@@ -41,9 +36,6 @@ namespace webapi.Controllers
             _events = events;
             _tiers = tiers;
             _ticketPurchases = ticketPurchases;
-            _passes = passes;
-            _passPurchases = passes;
-            _passProducts = passProducts;
             _users = users;
             _payments = payments;
             _tenantContext = tenantContext;
@@ -79,41 +71,28 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("You're already on this waitlist.");
             }
 
-            // Bucket-specific capacity check — only allow joining when actually full.
+            // Waitlists are per-tier (race class or gate fee) — the rider waitlists for the
+            // exact admission that was full, and a promotion later charges that same tier.
             int prepayAmountCents = 0;
-            if (req.TierId.HasValue)
-            {
-                var tier = await _tiers.GetById(req.TierId.Value, _tenantContext.TenantId);
-                if (tier is null || tier.EventId != req.EventId || !tier.IsActive)
-                    return new ApiResponses().BadRequestResult("Selected admission isn't available.");
-                if (!tier.Inventory.HasValue)
-                    return new ApiResponses().BadRequestResult("This admission has unlimited capacity — no waitlist needed.");
-                var sold = await _tiers.SoldCount(tier.Id);
-                if (sold < tier.Inventory.Value)
-                    return new ApiResponses().BadRequestResult("Spots are still available — buy directly instead.");
+            if (!req.TierId.HasValue)
+                return new ApiResponses().BadRequestResult("Pick an admission to join its waitlist.");
+            var tier = await _tiers.GetById(req.TierId.Value, _tenantContext.TenantId);
+            if (tier is null || tier.EventId != req.EventId || !tier.IsActive)
+                return new ApiResponses().BadRequestResult("Selected admission isn't available.");
+            if (!tier.Inventory.HasValue)
+                return new ApiResponses().BadRequestResult("This admission has unlimited capacity — no waitlist needed.");
+            var sold = await _tiers.SoldCount(tier.Id);
+            if (sold < tier.Inventory.Value)
+                return new ApiResponses().BadRequestResult("Spots are still available — buy directly instead.");
 
-                if (req.Prepay)
-                {
-                    // Compute pre-pay amount the same way regular checkout does so the rider
-                    // ends up with no surprise charge when promoted. ServiceCharge is the
-                    // tenant fee; rider pays their share per tier.RiderPaidServiceChargeBps.
-                    var serviceChargePerUnit = (int)((long)tier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
-                    var riderPortion = (int)((long)serviceChargePerUnit * tier.RiderPaidServiceChargeBps / 10_000L);
-                    prepayAmountCents = tier.PriceCents + riderPortion;
-                }
-            }
-            else
+            if (req.Prepay)
             {
-                // Day-pass reservation waitlist: only valid when the event has capacity AND
-                // is fully reserved. Pre-pay isn't supported here (rider hasn't picked a
-                // pass product yet).
-                if (!ev.Capacity.HasValue)
-                    return new ApiResponses().BadRequestResult("This event has unlimited capacity — no waitlist needed.");
-                var reserved = await _passes.ActiveSpotsReservedForEvent(req.EventId);
-                if (reserved < ev.Capacity.Value)
-                    return new ApiResponses().BadRequestResult("Spots are still available — buy a pass directly instead.");
-                if (req.Prepay)
-                    return new ApiResponses().BadRequestResult("Pre-pay isn't available on pass waitlists; you'll choose a pass at confirmation.");
+                // Compute pre-pay amount the same way regular checkout does so the rider
+                // ends up with no surprise charge when promoted. ServiceCharge is the
+                // tenant fee; rider pays their share per tier.RiderPaidServiceChargeBps.
+                var serviceChargePerUnit = (int)((long)tier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
+                var riderPortion = (int)((long)serviceChargePerUnit * tier.RiderPaidServiceChargeBps / 10_000L);
+                prepayAmountCents = tier.PriceCents + riderPortion;
             }
 
             var entry = new EventWaitlistEntry
@@ -254,21 +233,6 @@ namespace webapi.Controllers
                     resp.TierPriceCents = tier.PriceCents;
                 }
             }
-            else
-            {
-                // Day-pass alternate — list eligible products so the rider can pick.
-                var productIds = await _events.ListEligiblePassProductIds(entry.EventId);
-                if (productIds.Count > 0)
-                {
-                    var products = await _passProducts.GetAllForTenant(_tenantContext.TenantId, activeOnly: true);
-                    resp.EligiblePasses = products.Where(p => productIds.Contains(p.Id))
-                        .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
-                        .Select(p => new EligiblePassChoice
-                        {
-                            Id = p.Id, Name = p.Name, PriceCents = p.PriceCents, RequiresWaiver = p.RequiresWaiver,
-                        }).ToList();
-                }
-            }
 
             // Pre-paid + already auto-confirmed: surface the redemption token so the
             // page can deep-link the rider to their QR.
@@ -343,50 +307,9 @@ namespace webapi.Controllers
                 return new ApiResponses().OkResult(new ConfirmPayResponse { ClientSecret = pi.ClientSecret, AmountCents = amountCents });
             }
 
-            // ── Day-pass: rider picks a product from the event's eligibility list ─
-            if (!req.PassProductId.HasValue)
-                return new ApiResponses().BadRequestResult("Pick a pass product to confirm your spot.");
-            var product = await _passProducts.GetById(req.PassProductId.Value, _tenantContext.TenantId);
-            if (product is null || !product.IsActive)
-                return new ApiResponses().BadRequestResult("Selected pass not available.");
-            var eligible = await _events.IsPassProductEligible(entry.EventId, product.Id);
-            if (!eligible)
-                return new ApiResponses().BadRequestResult("Selected pass isn't accepted at this event.");
-
-            var dpServiceChargePerUnit = (int)((long)product.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
-            var dpRiderPortion = (int)((long)dpServiceChargePerUnit * product.RiderPaidServiceChargeBps / 10_000L);
-            var dpAmountCents = product.PriceCents + dpRiderPortion;
-
-            var dpPurchase = new PassPurchase
-            {
-                TenantId = _tenantContext.TenantId,
-                PurchaserUserId = userId,
-                ProductId = product.Id,
-                EventId = entry.EventId,
-                ValidOnDate = ev.StartsAt.Date,
-                Quantity = 1,
-                AmountCents = dpAmountCents,
-                ServiceChargeCents = dpServiceChargePerUnit,
-                PaymentMethod = "stripe",
-                Status = "pending",
-                PurchaserEmail = user.Email,
-                PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
-            };
-            var createdDp = await _passPurchases.Create(dpPurchase);
-            var dpMetadata = new Dictionary<string, string>
-            {
-                ["tenant_id"] = _tenantContext.TenantId.ToString(),
-                ["purchase_id"] = createdDp.Id.ToString(),
-                ["user_id"] = userId.ToString(),
-                ["product_id"] = product.Id.ToString(),
-                ["event_id"] = entry.EventId.ToString(),
-                ["sale_kind"] = "pass",
-                ["waitlist_id"] = entry.Id.ToString(),
-            };
-            var dpPi = await _payments.CreatePaymentIntentAsync(dpAmountCents, "usd", dpMetadata, user.Email, ct);
-            await _passPurchases.SetStripePaymentIntentId(createdDp.Id, dpPi.IntentId);
-            await _waitlist.MarkConfirmed(entry.Id, createdDp.Id, "pass");
-            return new ApiResponses().OkResult(new ConfirmPayResponse { ClientSecret = dpPi.ClientSecret, AmountCents = dpAmountCents });
+            // Every waitlist entry is tier-based now (the admission that was full), so a
+            // promotion always charges that tier above. A tier-less entry is legacy/invalid.
+            return new ApiResponses().BadRequestResult("This waitlist entry has no admission to confirm.");
         }
 
         [HttpDelete("{id:guid}")]

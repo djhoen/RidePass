@@ -9,8 +9,8 @@
     <v-app-bar color="transparent" :style="navBarVars" class="nav-bar-themed">
         <v-app-bar-title>
             <router-link to="/" class="nav-title">
-                <img v-if="branding.logoUrl" :src="branding.logoUrl" class="nav-logo" :alt="branding.displayName" />
-                <span v-else>{{ branding.displayName }}</span>
+                <img v-if="navLogoUrl" :src="navLogoUrl" class="nav-logo" :alt="navDisplayName" />
+                <span v-else>{{ navDisplayName }}</span>
             </router-link>
         </v-app-bar-title>
 
@@ -149,7 +149,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import authHelper from '../helpers/AuthHelper'
 import { branding } from '../stores/branding'
-import { platformBranding } from '../stores/platformBranding'
+import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import NotificationBell from './NotificationBell.vue'
 import { Perm, type Permission } from '@/helpers/TenantPermissions'
@@ -169,6 +169,14 @@ const isAuthenticated = computed(() => authHelper.isAuthenticated())
 // primary for background and white for text/icons.
 const isApex = computed(() => !tenantHelper.getSubdomain())
 const isHomeRoute = computed(() => route.path === '/' || route.path === '/Home')
+
+// Nav-bar branding: the apex domain pulls its logo from the platform branding
+// singleton (super-admin editable); tenant subdomains use the per-tenant logo.
+// platformImageUrl makes a relative /uploads/... path absolute against the API host.
+const navLogoUrl = computed(() => isApex.value
+    ? platformImageUrl(platformBranding.data?.logoUrl)
+    : branding.logoUrl)
+const navDisplayName = computed(() => branding.displayName)
 
 // Emit the resolved colors as CSS custom properties on the v-app-bar root.
 // The :deep selectors in <style> below pull them onto `.v-toolbar__background`
@@ -214,6 +222,7 @@ const superAdminLinks: SuperAdminLink[] = [
     { to: '/SuperAdmin/Audit',     icon: 'mdi-shield-check',        title: 'Audit log' },
     { to: '/SuperAdmin/Reconcile', icon: 'mdi-scale-balance',       title: 'Reconcile' },
     { to: '/SuperAdmin/HomePage',  icon: 'mdi-home-edit',           title: 'Home page' },
+    { to: '/SuperAdmin/ForTracks', icon: 'mdi-store-plus',          title: 'For Tracks page' },
     { to: '/SuperAdmin/Marketing', icon: 'mdi-bullhorn',            title: 'Marketing' },
 ]
 
@@ -240,7 +249,6 @@ const allGroups: AdminGroup[] = [
         links: [
             { to: '/Admin/Counter',       icon: 'mdi-cash-register',       title: 'Counter Sale',  perm: Perm.SalesCounter },
             { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan',         title: 'Redeem Tickets', perm: Perm.SalesRedeem },
-            { to: '/Admin/PassCheckIn',   icon: 'mdi-card-account-details', title: 'Pass Check-In', perm: Perm.SalesRedeem },
         ],
     },
     {
@@ -251,7 +259,6 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Events',       icon: 'mdi-calendar-month',       title: 'Events',        perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
-            { to: '/Admin/Passes',    icon: 'mdi-ticket-confirmation',  title: 'Passes',    perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage },
             { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage },

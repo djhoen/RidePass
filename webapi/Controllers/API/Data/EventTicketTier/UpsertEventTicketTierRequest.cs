@@ -4,14 +4,24 @@ namespace webapi.Controllers.API.Data.EventTicketTier
 {
     public class UpsertEventTicketTierRequest
     {
-        [Required, RegularExpression("^(spectator_pass|race_entry)$",
-            ErrorMessage = "Kind must be 'spectator_pass' or 'race_entry'.")]
-        public string Kind { get; set; } = "spectator_pass";
+        [Required, RegularExpression("^(race_entry|gate_fee)$",
+            ErrorMessage = "Kind must be 'race_entry' or 'gate_fee'.")]
+        public string Kind { get; set; } = "gate_fee";
+
+        // gate_fee: 'rider' or 'spectator'. race_entry is always rider (server enforces).
+        [Required, RegularExpression("^(rider|spectator)$",
+            ErrorMessage = "Audience must be 'rider' or 'spectator'.")]
+        public string Audience { get; set; } = "rider";
+
+        // gate_fee only: a required gate fee must be bought by that audience (for a race,
+        // a required rider gate fee forces "race class + one rider gate fee").
+        public bool Required { get; set; }
 
         [Required, MaxLength(120)]
         public string Name { get; set; } = null!;
 
-        [Range(1, 1_000_000)]
+        // 0 allowed for free kids entry / free gate fees.
+        [Range(0, 1_000_000)]
         public int PriceCents { get; set; }
 
         [Range(1, int.MaxValue)]

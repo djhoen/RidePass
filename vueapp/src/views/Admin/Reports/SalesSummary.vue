@@ -21,9 +21,8 @@
             </v-col>
             <v-col cols="12" sm="6" md="3">
                 <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Passes Sold</div>
-                    <div class="text-h4">{{ summary.passesSold }}</div>
-                    <div class="text-caption text-medium-emphasis">{{ summary.ticketsSold }} tickets</div>
+                    <div class="text-caption text-medium-emphasis">Tickets Sold</div>
+                    <div class="text-h4">{{ summary.ticketsSold }}</div>
                 </v-card-text></v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
@@ -53,18 +52,7 @@
         </v-card>
 
         <v-row v-if="summary">
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-card-title>Top Pass Products</v-card-title>
-                    <v-card-text>
-                        <div v-if="summary.topPassProducts.length === 0" class="text-medium-emphasis">No sales in range.</div>
-                        <div v-else style="position: relative; height: 320px;">
-                            <Bar :data="productsChartData" :options="horizontalBarOptions" />
-                        </div>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12">
                 <v-card>
                     <v-card-title>Top Events</v-card-title>
                     <v-card-text>
@@ -78,26 +66,7 @@
         </v-row>
 
         <v-row v-if="summary" class="mt-2">
-            <v-col cols="12" md="6">
-                <v-card>
-                    <v-table density="compact">
-                        <thead>
-                            <tr><th>Product</th><th style="width: 100px">Sold</th><th style="width: 120px">Revenue</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="p in summary.topPassProducts" :key="p.productId">
-                                <td>{{ p.productName }}</td>
-                                <td>{{ p.soldCount }}</td>
-                                <td>${{ (p.revenueCents / 100).toFixed(2) }}</td>
-                            </tr>
-                            <tr v-if="summary.topPassProducts.length === 0">
-                                <td colspan="3" class="text-center text-medium-emphasis py-4">—</td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </v-card>
-            </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12">
                 <v-card>
                     <v-table density="compact">
                         <thead>
@@ -220,14 +189,6 @@ const revenueChartData = computed(() => {
                 yAxisID: 'y',
             },
             {
-                label: 'Passes',
-                data: points.map(p => p.passesSold),
-                borderColor: '#43A047',
-                backgroundColor: 'transparent',
-                tension: 0.3,
-                yAxisID: 'y1',
-            },
-            {
                 label: 'Tickets',
                 data: points.map(p => p.ticketsSold),
                 borderColor: '#FB8C00',
@@ -257,19 +218,6 @@ const revenueChartOptions = {
         },
     },
 }
-
-const productsChartData = computed(() => {
-    if (!summary.value) return { labels: [], datasets: [] }
-    const rows = summary.value.topPassProducts
-    return {
-        labels: rows.map(r => r.productName),
-        datasets: [{
-            label: 'Revenue ($)',
-            data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#1976D2',
-        }],
-    }
-})
 
 const eventsChartData = computed(() => {
     if (!summary.value) return { labels: [], datasets: [] }

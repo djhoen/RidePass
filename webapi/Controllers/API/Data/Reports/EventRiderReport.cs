@@ -22,8 +22,10 @@ namespace webapi.Controllers.API.Data.Reports
         public string PurchaserEmail { get; set; } = null!;
         public string? PurchaserPhone { get; set; }
         public string ItemName { get; set; } = null!;       // tier/pass/season-pass product name (the "Class" column)
-        // For event_ticket rows: 'race_entry' | 'spectator_pass'. NULL for pass/season_pass rows.
+        // For event_ticket rows: 'race_entry' | 'gate_fee'. NULL for pass/season_pass rows.
         public string? TierKind { get; set; }
+        // For gate_fee rows: 'rider' | 'spectator'. NULL otherwise.
+        public string? TierAudience { get; set; }
         // Per-purchase race number (event_ticket only). Falls back to user.race_number if NULL.
         public string? RaceNumber { get; set; }
         public string? UserRaceNumber { get; set; }         // profile fallback

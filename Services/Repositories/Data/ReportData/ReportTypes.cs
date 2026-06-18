@@ -71,7 +71,8 @@
         public string PurchaserEmail { get; set; } = null!;
         public string? PurchaserPhone { get; set; }
         public string ItemName { get; set; } = null!;        // pass product / tier name / season pass name
-        public string? TierKind { get; set; }                // event_ticket: 'race_entry' | 'spectator_pass'
+        public string? TierKind { get; set; }                // event_ticket: 'race_entry' | 'gate_fee'
+        public string? TierAudience { get; set; }            // gate_fee: 'rider' | 'spectator'
         public string? RaceNumber { get; set; }              // per-purchase race number
         public string? UserRaceNumber { get; set; }          // rider's profile race number (fallback)
         public string? Hometown { get; set; }                // user.city + region (best-effort)

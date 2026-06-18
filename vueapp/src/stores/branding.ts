@@ -19,6 +19,7 @@ export interface BrandingState {
     tagline: string | null
     themeMode: 'light' | 'dark'
     logoUrl: string | null
+    logoWhiteUrl: string | null
     faviconUrl: string | null
     heroImageUrl: string | null
     secondaryHeroUrl: string | null
@@ -92,6 +93,7 @@ const defaults: BrandingState = {
     tagline: null,
     themeMode: 'light',
     logoUrl: null,
+    logoWhiteUrl: null,
     faviconUrl: null,
     heroImageUrl: null,
     secondaryHeroUrl: null,
@@ -212,6 +214,7 @@ export async function loadBranding(): Promise<void> {
         branding.tagline = data.tagline
         branding.themeMode = data.themeMode
         branding.logoUrl = toAbsoluteUrl(data.logoUrl)
+        branding.logoWhiteUrl = toAbsoluteUrl(data.logoWhiteUrl)
         branding.faviconUrl = toAbsoluteUrl(data.faviconUrl)
         branding.heroImageUrl = toAbsoluteUrl(data.heroImageUrl)
         branding.secondaryHeroUrl = toAbsoluteUrl(data.secondaryHeroUrl)

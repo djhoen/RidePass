@@ -12,6 +12,9 @@ namespace webapi.Controllers.API.Data.Me
         public string TenantSubdomain { get; set; } = null!;
         public string TenantDisplayName { get; set; } = null!;
         public string ItemName { get; set; } = null!;
+        public string? ImageUrl { get; set; }            // event cover; null for passes/memberships
+        public string? TenantLogoUrl { get; set; }       // track logo for the card band
+        public bool RegistrationComplete { get; set; } = true; // event_ticket: all entries registered + waivers signed
         public DateTime? OccursAtUtc { get; set; }       // event tickets, day passes
         public DateTime? ValidToUtc { get; set; }        // season passes, memberships
         public int AmountCents { get; set; }

@@ -21,8 +21,6 @@ namespace webapi.Controllers
     [Route("api/[controller]")]
     public class PurchaseController : ControllerBase
     {
-        private readonly IPassProductRepository _products;
-        private readonly IPassPurchaseRepository _purchases;
         private readonly IWaiverRepository _waivers;
         private readonly IUserRepository _users;
         private readonly IEventRepository _events;
@@ -49,8 +47,6 @@ namespace webapi.Controllers
         private readonly ISeasonPassRepository _seasonPasses;
 
         public PurchaseController(
-            IPassProductRepository products,
-            IPassPurchaseRepository purchases,
             IWaiverRepository waivers,
             IUserRepository users,
             IEventRepository events,
@@ -76,8 +72,6 @@ namespace webapi.Controllers
             ILoampassRedemptionRepository loampassRedemptions,
             ISeasonPassRepository seasonPasses)
         {
-            _products = products;
-            _purchases = purchases;
             _waivers = waivers;
             _users = users;
             _events = events;
@@ -174,474 +168,6 @@ namespace webapi.Controllers
             return new(null, product.PriceCents, null);
         }
 
-        // Centralised membership gate. Returns null when allowed, or an error message
-        // ready to surface as a 400. Friendly enough that the rider can recognise it
-        // and pivot to the /Membership page.
-        private async Task<string?> CheckMembershipGate(Guid? userId, bool gateOn)
-        {
-            if (!gateOn) return null;
-            var tenant = _tenantContext.Tenant;
-            if (!tenant.MembershipEnabled || tenant.MembershipPriceCents <= 0) return null;
-            if (!userId.HasValue)
-            {
-                return $"Participants are required to have a {tenant.MembershipName} — please sign in.";
-            }
-            var active = await _memberships.GetActive(userId.Value, tenant.Id, DateTime.UtcNow);
-            if (active is null)
-            {
-                return $"Participants are required to have an active {tenant.MembershipName}. ";
-            }
-            return null;
-        }
-
-        [Authorize]
-        [HttpPost("Pass")]
-        public async Task<IActionResult> BuyPass([FromBody] CreatePurchaseRequest request, CancellationToken ct)
-        {
-            if (!_tenantContext.IsResolved)
-            {
-                return new ApiResponses().BadRequestResult("No tenant resolved.");
-            }
-
-            if (!TryGetUserId(out var userId))
-            {
-                return new ApiResponses().BadRequestResult("Invalid token.");
-            }
-
-            var user = await _users.GetById(userId);
-            // Riders are global (tenant_id null) and may buy at any tenant. Tenant-scoped users
-            // (tenant_admin/tenant_staff) are pinned to their home tenant.
-            if (user is null || (user.TenantId.HasValue && user.TenantId != _tenantContext.TenantId))
-            {
-                return new ApiResponses().BadRequestResult("User not found in this tenant.");
-            }
-
-            var product = await _products.GetById(request.ProductId, _tenantContext.TenantId);
-            if (product is null || !product.IsActive)
-            {
-                return new ApiResponses().BadRequestResult("Product is not available.");
-            }
-
-            var quantity = Math.Max(1, request.Quantity);
-            var tenant = _tenantContext.Tenant;
-
-            // Membership gate (configured per tenant). Day passes are rider-bound, so
-            // the rider audience flag governs. When the rider opts to bundle the
-            // membership into this same checkout (addMembership=true) we skip the
-            // gate and create the membership purchase below alongside the pass row.
-            var bundleMembership = false;
-            if (request.AddMembership && tenant.MembershipEnabled && tenant.MembershipPriceCents > 0)
-            {
-                var existing = await _memberships.GetActive(userId, tenant.Id, DateTime.UtcNow);
-                bundleMembership = existing is null;
-            }
-            if (!bundleMembership)
-            {
-                var passGateError = await CheckMembershipGate(userId, tenant.MembershipRequiredForRiders);
-                if (passGateError is not null) return new ApiResponses().BadRequestResult(passGateError);
-            }
-
-            if (tenant.RequireEmergencyContact && string.IsNullOrWhiteSpace(user.EmergencyContactPhone))
-            {
-                return new ApiResponses().BadRequestResult("Please add an emergency contact on your profile before purchasing.");
-            }
-
-            // Day-pass purchases are always tied to an event now — riders pick the
-            // event first, see which products are eligible, then buy. Standalone
-            // (eventId=null) purchases are no longer accepted.
-            Guid? eventId = request.EventId;
-            if (!eventId.HasValue)
-            {
-                return new ApiResponses().BadRequestResult("Day passes must be tied to an event — pick one from the calendar first.");
-            }
-
-            DateTime? validOnDate = request.ValidOnDate?.Date;
-            bool eventRequiresWaiver = false;
-            int? lockEventCapacity = null;
-
-            if (eventId.HasValue)
-            {
-                var ev = await _events.GetById(eventId.Value, _tenantContext.TenantId);
-                if (ev is null || ev.Status != "scheduled")
-                {
-                    return new ApiResponses().BadRequestResult("Selected event is not available.");
-                }
-                if (ev.EndsAt < DateTime.UtcNow)
-                {
-                    return new ApiResponses().BadRequestResult("That event has already ended.");
-                }
-                if (!ev.Capacity.HasValue)
-                {
-                    return new ApiResponses().BadRequestResult("Selected event is not reservable (no capacity set).");
-                }
-
-                // Eligibility gate — selected product must be in the event's allow-list.
-                var eligible = await _events.IsPassProductEligible(eventId.Value, product.Id);
-                if (!eligible)
-                {
-                    return new ApiResponses().BadRequestResult(
-                        $"\"{product.Name}\" isn't accepted at this event. Pick an eligible pass.");
-                }
-
-                var reserved = await _purchases.ActiveSpotsReservedForEvent(eventId.Value);
-                var remaining = ev.Capacity.Value - reserved;
-                if (quantity > remaining)
-                {
-                    return new ApiResponses().BadRequestResult(
-                        remaining <= 0
-                            ? "This event is sold out."
-                            : $"Only {remaining} spot{(remaining == 1 ? string.Empty : "s")} left; requested {quantity}.");
-                }
-
-                // Auto-set valid_on_date to the event's start date.
-                validOnDate = ev.StartsAt.Date;
-                // Day-pass purchases are rider-audience.
-                eventRequiresWaiver = ev.RequiresRiderWaiver;
-                lockEventCapacity = ev.Capacity;
-            }
-
-            // Pre-validate extras cart so we can run waiver gating once for the combined order.
-            // Dedupe by (product, variant), sum quantities; reject zero-qty entries.
-            var extrasItems = (request.Extras ?? new List<BuyExtrasItem>())
-                .Where(i => i.Quantity > 0)
-                .GroupBy(i => new { i.ProductId, i.VariantId })
-                .Select(g => new BuyExtrasItem
-                {
-                    ProductId = g.Key.ProductId,
-                    VariantId = g.Key.VariantId,
-                    Quantity = g.Sum(x => x.Quantity),
-                })
-                .ToList();
-            var extrasLines = new List<(EventExtraProduct Product, EventExtraVariant? Variant, int Quantity,
-                                        int UnitAmount, int UnitServiceCharge, int UnitPriceFrozen)>();
-            int extrasTotalCents = 0;
-            int extrasServiceChargeCents = 0;
-            bool extrasNeedWaiver = false;
-            if (extrasItems.Count > 0)
-            {
-                if (!tenant.ExtrasEnabled)
-                {
-                    return new ApiResponses().BadRequestResult("Add-ons are not enabled at this track.");
-                }
-                // Per-extras membership gate (audience = spectators). Bundled-membership
-                // purchases satisfy the gate via the row we'll create below.
-                if (!bundleMembership)
-                {
-                    var extrasGateError = await CheckMembershipGate(userId, tenant.MembershipRequiredForSpectators);
-                    if (extrasGateError is not null) return new ApiResponses().BadRequestResult(extrasGateError);
-                }
-
-                foreach (var item in extrasItems)
-                {
-                    var ep = await _extras.GetProduct(item.ProductId, _tenantContext.TenantId);
-                    if (ep is null || !ep.IsActive)
-                    {
-                        return new ApiResponses().BadRequestResult("One of the selected add-ons isn't available.");
-                    }
-                    var elig = await _extras.GetEligibility(eventId.Value, ep.Id);
-                    if (elig is null)
-                    {
-                        return new ApiResponses().BadRequestResult($"\"{ep.Name}\" isn't offered at this event.");
-                    }
-
-                    var resolved = await ResolveExtraVariant(ep, item, elig);
-                    if (resolved.Error is not null) return new ApiResponses().BadRequestResult(resolved.Error);
-
-                    if (ep.RequiresWaiver) extrasNeedWaiver = true;
-
-                    var unitPriceFrozen = resolved.UnitPriceCents;
-                    var serviceChargePerUnit = (int)((long)unitPriceFrozen * tenant.ServiceChargeBps / 10_000L);
-                    var riderPortionPerUnit = (int)((long)serviceChargePerUnit * ep.RiderPaidServiceChargeBps / 10_000L);
-                    var unitAmount = unitPriceFrozen + riderPortionPerUnit;
-                    extrasLines.Add((ep, resolved.Variant, item.Quantity, unitAmount, serviceChargePerUnit, unitPriceFrozen));
-                    extrasTotalCents += unitAmount * item.Quantity;
-                    extrasServiceChargeCents += serviceChargePerUnit * item.Quantity;
-                }
-            }
-
-            // Enforce waiver if the pass, the event, OR any selected add-on opts in.
-            Guid? signatureId = null;
-            if (product.RequiresWaiver || eventRequiresWaiver || extrasNeedWaiver)
-            {
-                var activeWaiver = await _waivers.GetActive(_tenantContext.TenantId);
-                if (activeWaiver is not null)
-                {
-                    var sig = await _waivers.GetSignature(userId, activeWaiver.Id);
-                    if (sig is null)
-                    {
-                        return new ApiResponses().BadRequestResult("Rider must sign the current waiver before purchasing.");
-                    }
-                    signatureId = sig.Id;
-                }
-            }
-
-            // Voucher: if applied, must be on a single-pass purchase (quantity=1) so we don't have
-            // to split rows. Server validates ownership, redemption status, and program scope.
-            int effectiveUnitPrice = product.PriceCents;
-            if (request.RewardRedemptionId.HasValue)
-            {
-                if (quantity != 1)
-                {
-                    return new ApiResponses().BadRequestResult("Vouchers can only be applied to single-pass purchases — buy them one at a time to use a reward.");
-                }
-                var voucherCheck = await ValidateVoucher(request.RewardRedemptionId.Value, userId, "pass");
-                if (voucherCheck.error is not null) return new ApiResponses().BadRequestResult(voucherCheck.error);
-                effectiveUnitPrice = product.PriceCents - (product.PriceCents * voucherCheck.percentOff!.Value / 100);
-            }
-
-            // Coupon discount applies to the whole line (price * quantity) before service charge.
-            // Mutually exclusive with reward voucher.
-            CouponApplication? dpCoupon = null;
-            if (!string.IsNullOrWhiteSpace(request.CouponCode))
-            {
-                if (request.RewardRedemptionId.HasValue)
-                    return new ApiResponses().BadRequestResult("You can use either a reward voucher or a coupon, not both.");
-                var subtotal = effectiveUnitPrice * quantity;
-                var v = await _couponValidator.ValidateAsync(_tenantContext.TenantId, request.CouponCode!,
-                    scope: "pass", eventId: eventId, subtotalCents: subtotal, userId: userId);
-                if (v.error is not null) return new ApiResponses().BadRequestResult(v.error);
-                dpCoupon = v.application;
-                // Distribute discount evenly across the unit price (last unit absorbs rounding).
-                var perUnit = dpCoupon!.DiscountCents / quantity;
-                effectiveUnitPrice -= perUnit;
-            }
-
-            var (amountCents, serviceChargeCents) = ComputeWithServiceCharge(
-                effectiveUnitPrice, quantity, tenant.ServiceChargeBps, product.RiderPaidServiceChargeBps);
-
-            var purchase = new PassPurchase
-            {
-                TenantId = _tenantContext.TenantId,
-                PurchaserUserId = userId,
-                ProductId = product.Id,
-                WaiverSignatureId = signatureId,
-                ValidOnDate = validOnDate,
-                EventId = eventId,
-                Quantity = quantity,
-                AmountCents = amountCents,
-                ServiceChargeCents = serviceChargeCents,
-                AppliedRewardRedemptionId = request.RewardRedemptionId,
-                PaymentMethod = amountCents == 0 ? "voucher" : "stripe",
-                Status = "pending",
-                PurchaserEmail = user.Email,
-                PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
-            };
-            // Serialize the capacity recheck + insert per event so concurrent last-spot
-            // day-pass buyers can't both pass the check and oversell (review item #4).
-            // eventId is guaranteed non-null here (enforced above). Released right after
-            // the insert, before the Stripe call.
-            var capacityLock = await _db.AcquireAdvisoryLock($"event-capacity:{eventId.Value}");
-            (Guid Id, Guid RedemptionToken) createdDay;
-            try
-            {
-                if (lockEventCapacity.HasValue)
-                {
-                    var reservedNow = await _purchases.ActiveSpotsReservedForEvent(eventId.Value);
-                    var remainingNow = lockEventCapacity.Value - reservedNow;
-                    if (quantity > remainingNow)
-                    {
-                        return new ApiResponses().BadRequestResult(
-                            remainingNow <= 0
-                                ? "This event is sold out."
-                                : $"Only {remainingNow} spot{(remainingNow == 1 ? string.Empty : "s")} left; requested {quantity}.");
-                    }
-                }
-                createdDay = await _purchases.Create(purchase);
-            }
-            finally
-            {
-                await capacityLock.DisposeAsync();
-            }
-            purchase.Id = createdDay.Id;
-            purchase.RedemptionToken = createdDay.RedemptionToken;
-
-            if (dpCoupon is not null)
-            {
-                await _coupons.RecordRedemption(new CouponRedemption
-                {
-                    CouponId = dpCoupon.Coupon.Id,
-                    TenantId = _tenantContext.TenantId,
-                    UserId = userId,
-                    SourceKind = "pass",
-                    SourceId = purchase.Id,
-                    DiscountCents = dpCoupon.DiscountCents,
-                });
-            }
-
-            // Gift card: applied AFTER discounts as a payment instrument.
-            GiftCardApplication? dpGift = null;
-            if (!string.IsNullOrWhiteSpace(request.GiftCardCode) && amountCents > 0)
-            {
-                var gcCheck = await _giftCardValidator.ResolveAsync(_tenantContext.TenantId,
-                    request.GiftCardCode!, amountCents);
-                if (gcCheck.error is not null) return new ApiResponses().BadRequestResult(gcCheck.error);
-                dpGift = gcCheck.application;
-                await _giftCards.RecordRedemption(new GiftCardRedemption
-                {
-                    GiftCardId = dpGift!.Card.Id,
-                    TenantId = _tenantContext.TenantId,
-                    UserId = userId,
-                    SourceKind = "pass",
-                    SourceId = purchase.Id,
-                    AmountCents = dpGift.AmountToApplyCents,
-                });
-                await _giftCards.ApplyToBalance(dpGift.Card.Id, dpGift.AmountToApplyCents);
-            }
-            var dpStripeChargeCents = amountCents - (dpGift?.AmountToApplyCents ?? 0);
-
-            // Persist extras rows (one per unit so each gets its own QR). They share
-            // the pass's PaymentIntent so the webhook flips them all together. Same
-            // pattern the standalone Extra/Buy endpoint uses. Variant attrs frozen.
-            var extraPurchaseIds = new List<Guid>();
-            foreach (var line in extrasLines)
-            {
-                for (int q = 0; q < line.Quantity; q++)
-                {
-                    var ep = new EventExtraPurchase
-                    {
-                        TenantId = _tenantContext.TenantId,
-                        EventId = eventId.Value,
-                        ProductId = line.Product.Id,
-                        PurchaserUserId = userId,
-                        PurchaserEmail = user.Email,
-                        PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
-                        WaiverSignatureId = line.Product.RequiresWaiver ? signatureId : null,
-                        Quantity = 1,
-                        UnitPriceCentsFrozen = line.UnitPriceFrozen,
-                        AmountCents = line.UnitAmount,
-                        ServiceChargeCents = line.UnitServiceCharge,
-                        Status = "pending",
-                        PaymentMethod = "stripe",
-                        VariantId = line.Variant?.Id,
-                        SizeAtPurchase = line.Variant?.Size,
-                        ColorAtPurchase = line.Variant?.Color,
-                        GenderAtPurchase = line.Variant?.Gender,
-                    };
-                    var created = await _extras.CreatePurchase(ep);
-                    extraPurchaseIds.Add(created.Id);
-                }
-            }
-
-            // Build the membership purchase up front so its price counts toward the
-            // combined PI. The row gets stamped with the PI id below alongside the
-            // pass / extras rows so the webhook flips it on payment_intent.succeeded.
-            Guid? bundledMembershipPurchaseId = null;
-            int membershipChargeCents = 0;
-            if (bundleMembership)
-            {
-                var nowUtc = DateTime.UtcNow;
-                DateTime? validTo = tenant.MembershipDurationKind == "yearly" ? nowUtc.AddDays(365) : (DateTime?)null;
-                var membershipServiceCharge = (int)((long)tenant.MembershipPriceCents * tenant.ServiceChargeBps / 10_000L);
-                var membership = new Services.Repositories.Data.MembershipData.MembershipPurchase
-                {
-                    TenantId = tenant.Id,
-                    UserId = userId,
-                    NameAtPurchase = tenant.MembershipName,
-                    PriceCents = tenant.MembershipPriceCents,
-                    DurationKind = tenant.MembershipDurationKind,
-                    ValidFromUtc = nowUtc,
-                    ValidToUtc = validTo,
-                    AmountCents = tenant.MembershipPriceCents,
-                    ServiceChargeCents = membershipServiceCharge,
-                    Status = "pending",
-                    PaymentMethod = "stripe",
-                };
-                bundledMembershipPurchaseId = await _memberships.Create(membership);
-                membershipChargeCents = tenant.MembershipPriceCents;
-            }
-
-            var combinedStripeChargeCents = dpStripeChargeCents + extrasTotalCents + membershipChargeCents;
-
-            // Free-order fast path: no Stripe involvement. Mark paid, write a $0 ledger row,
-            // mark the redemption used inline. Only kicks in when both the pass net amount
-            // AND the extras total are zero; otherwise we still need a PI for the extras.
-            if (combinedStripeChargeCents == 0)
-            {
-                await _purchases.UpdateStatus(purchase.Id, "paid");
-                await InsertZeroLedger(_tenantContext.TenantId, "pass", purchase.Id);
-                foreach (var exId in extraPurchaseIds)
-                {
-                    await _extras.UpdateStatus(exId, "paid");
-                }
-                if (request.RewardRedemptionId.HasValue)
-                {
-                    await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, "pass", purchase.Id);
-                }
-                return new ApiResponses().OkResult(new CreatePurchaseResponse
-                {
-                    PurchaseId = purchase.Id,
-                    RedemptionToken = purchase.RedemptionToken,
-                    ClientSecret = string.Empty,
-                    AmountCents = 0,
-                    RiderServiceChargeCents = 0,
-                    GiftCardAppliedCents = dpGift?.AmountToApplyCents ?? 0,
-                });
-            }
-
-            var metadata = new Dictionary<string, string>
-            {
-                ["tenant_id"] = _tenantContext.TenantId.ToString(),
-                ["purchase_id"] = purchase.Id.ToString(),
-                ["user_id"] = userId.ToString(),
-                ["product_id"] = product.Id.ToString(),
-                ["quantity"] = quantity.ToString(),
-            };
-            if (eventId.HasValue)
-            {
-                metadata["event_id"] = eventId.Value.ToString();
-            }
-            if (dpGift is not null)
-            {
-                metadata["gift_card_applied_cents"] = dpGift.AmountToApplyCents.ToString();
-                metadata["gift_card_id"] = dpGift.Card.Id.ToString();
-            }
-            if (extraPurchaseIds.Count > 0)
-            {
-                metadata["extra_purchase_ids"] = string.Join(",", extraPurchaseIds);
-                metadata["extras_total_cents"] = extrasTotalCents.ToString();
-            }
-            if (bundledMembershipPurchaseId.HasValue)
-            {
-                metadata["membership_purchase_id"] = bundledMembershipPurchaseId.Value.ToString();
-                metadata["membership_charge_cents"] = membershipChargeCents.ToString();
-            }
-
-            PaymentIntentCreated intent;
-            try
-            {
-                intent = await _payments.CreatePaymentIntentAsync(
-                    amountCents: combinedStripeChargeCents,
-                    currency: "usd",
-                    metadata: metadata,
-                    receiptEmail: user.Email,
-                    ct: ct);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return new ApiResponses().BadRequestResult(ex.Message);
-            }
-
-            await _purchases.SetStripePaymentIntentId(purchase.Id, intent.IntentId);
-            if (bundledMembershipPurchaseId.HasValue)
-            {
-                await _memberships.SetStripePaymentIntentId(bundledMembershipPurchaseId.Value, intent.IntentId);
-            }
-            foreach (var exId in extraPurchaseIds)
-            {
-                await _extras.SetPaymentIntentId(exId, intent.IntentId);
-            }
-
-            return new ApiResponses().OkResult(new CreatePurchaseResponse
-            {
-                PurchaseId = purchase.Id,
-                RedemptionToken = purchase.RedemptionToken,
-                ClientSecret = intent.ClientSecret,
-                AmountCents = combinedStripeChargeCents,
-                RiderServiceChargeCents = (amountCents - effectiveUnitPrice * quantity) + extrasServiceChargeCents,
-                GiftCardAppliedCents = dpGift?.AmountToApplyCents ?? 0,
-            });
-        }
-
         [AllowAnonymous]
         [HttpPost("EventTicket")]
         public async Task<IActionResult> BuyEventTicket([FromBody] CreateTicketPurchaseRequest request, CancellationToken ct)
@@ -715,9 +241,11 @@ namespace webapi.Controllers
                             $"Not enough '{tier.Name}' left ({remaining} remaining, you asked for {item.Quantity}).");
                     }
                 }
-                // Race classes are one-per-rider — both within this cart and across any
-                // earlier (non-cancelled) entry for the same tier by this user/email.
-                if (tier.Kind == "race_entry")
+                // Race classes are one-per-rider. In the legacy/POS path the purchaser IS
+                // the rider, so we enforce uniqueness here. In the deferred unified-checkout
+                // path a buyer can enter the same class for several different riders, so this
+                // moves to CompleteRegistration (uniqueness per registrant, not per buyer).
+                if (tier.Kind == "race_entry" && !request.DeferRegistration)
                 {
                     if (item.Quantity > 1)
                     {
@@ -751,6 +279,37 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("That event has already ended or is no longer available.");
             }
 
+            // Gate-fee enforcement: when this event has a REQUIRED rider gate fee and the
+            // cart includes race-class entries, the buyer must also include a rider gate
+            // fee — one per rider. Riders aren't identified until the post-payment step, so
+            // we bound the gate count to [1, number of class entries] here (a rider may hold
+            // several classes, so riders <= entries) and verify the exact per-rider
+            // assignment in CompleteRegistration.
+            var raceEntryUnits = items.Where(i => tierLookup[i.TierId].Kind == "race_entry").Sum(i => i.Quantity);
+            if (raceEntryUnits > 0)
+            {
+                var eventTiers = await _tiers.GetForEvent(parentEvent.Id, _tenantContext.TenantId, activeOnly: true);
+                var hasRequiredRiderGate = eventTiers.Any(t => t.Kind == "gate_fee" && t.Audience == "rider" && t.Required);
+                if (hasRequiredRiderGate)
+                {
+                    var riderGateUnits = items
+                        .Where(i => tierLookup[i.TierId].Kind == "gate_fee"
+                                 && tierLookup[i.TierId].Audience == "rider"
+                                 && tierLookup[i.TierId].Required)
+                        .Sum(i => i.Quantity);
+                    if (riderGateUnits < 1)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            "This race requires a rider gate fee. Add one rider gate fee per rider.");
+                    }
+                    if (riderGateUnits > raceEntryUnits)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            "You can't have more rider gate fees than race-class entries (a rider can enter several classes).");
+                    }
+                }
+            }
+
             // Membership gate. Tickets allow guest checkout, so the gate has to
             // route guests to sign-in (no way to verify membership without a user).
             // When the rider opts to bundle a membership into this same checkout
@@ -764,12 +323,10 @@ namespace webapi.Controllers
                 var existing = await _memberships.GetActive(purchaserUserId.Value, _tenantContext.TenantId, DateTime.UtcNow);
                 bundleMembership = existing is null;
             }
-            if (!bundleMembership)
-            {
-                // Race-entry tier purchases are rider-audience.
-                var ticketGateError = await CheckMembershipGate(purchaserUserId, _tenantContext.Tenant.MembershipRequiredForRiders);
-                if (ticketGateError is not null) return new ApiResponses().BadRequestResult(ticketGateError);
-            }
+            // Membership is no longer required to buy an entry — tracks that want a
+            // "member" relationship for liability fold it into a (waiver-backed) gate fee.
+            // Riders may still opt to bundle a membership via addMembership above.
+
             // Pre-validate extras cart so we can run waiver gating once for the combined order.
             var ticketTenantForExtras = _tenantContext.Tenant;
             var extrasItems = (request.Extras ?? new List<BuyExtrasItem>())
@@ -792,13 +349,6 @@ namespace webapi.Controllers
                 if (!ticketTenantForExtras.ExtrasEnabled)
                 {
                     return new ApiResponses().BadRequestResult("Add-ons are not enabled at this track.");
-                }
-                // Per-extras membership gate (audience = spectators).
-                // Bundled-membership purchases satisfy the gate via the row we'll create below.
-                if (!bundleMembership)
-                {
-                    var extrasGateError = await CheckMembershipGate(purchaserUserId, ticketTenantForExtras.MembershipRequiredForSpectators);
-                    if (extrasGateError is not null) return new ApiResponses().BadRequestResult(extrasGateError);
                 }
 
                 foreach (var item in extrasItems)
@@ -830,9 +380,10 @@ namespace webapi.Controllers
             }
 
             // Waiver gate: required by the event (rider audience for race entries),
-            // or by any selected add-on.
+            // or by any selected add-on. Skipped in DeferRegistration mode (unified
+            // checkout), which takes payment first and collects the waiver afterward.
             Guid? extrasSignatureId = null;
-            if (parentEvent.RequiresRiderWaiver || extrasNeedWaiver)
+            if (!request.DeferRegistration && (parentEvent.RequiresRiderWaiver || extrasNeedWaiver))
             {
                 if (!purchaserUserId.HasValue)
                 {
@@ -922,7 +473,7 @@ namespace webapi.Controllers
                             $"Not enough '{lockTier.Name}' left ({remainingNow} remaining, you asked for {item.Quantity}).");
                     }
                 }
-                if (lockTier.Kind == "race_entry")
+                if (lockTier.Kind == "race_entry" && !request.DeferRegistration)
                 {
                     var alreadyNow = await _ticketPurchases.HasActiveRaceEntry(
                         _tenantContext.TenantId, lockTier.Id, purchaserUserId, purchaserEmail);
@@ -973,6 +524,15 @@ namespace webapi.Controllers
                         Status = "pending",
                         PurchaserEmail = purchaserEmail,
                         PurchaserName = purchaserName,
+                        // Deferred (unified checkout) tickets collect rider + waiver after
+                        // payment. A race entry or a rider gate fee always needs a rider
+                        // (name + any rider waiver). A spectator gate fee only needs the
+                        // step when the event requires a spectator waiver — otherwise
+                        // there's nothing to collect, so it's complete.
+                        RegistrationComplete = !(request.DeferRegistration && (
+                            tier.Kind == "race_entry"
+                            || (tier.Kind == "gate_fee" && tier.Audience == "rider")
+                            || (tier.Kind == "gate_fee" && tier.Audience == "spectator" && parentEvent.RequiresSpectatorWaiver))),
                     };
                     var created = await _ticketPurchases.Create(purchase);
                     purchase.Id = created.Id;
@@ -1228,6 +788,139 @@ namespace webapi.Controllers
             });
         }
 
+        // Unified-checkout post-payment step: attach each paid ticket's rider identity +
+        // signed waiver. Guest-accessible (the ticket ids come from the checkout response).
+        // A ticket whose event requires a waiver for its audience (rider vs spectator) must
+        // include a signature, otherwise it's rejected and stays registration-incomplete
+        // (gate check-in flags it; a follow-up email nudges the purchaser to finish).
+        [AllowAnonymous]
+        [HttpPost("EventTicket/CompleteRegistration")]
+        public async Task<IActionResult> CompleteTicketRegistration([FromBody] CompleteTicketRegistrationRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+
+            Guid? activeWaiverId = null;
+            var activeFetched = false;
+            var completed = 0;
+
+            foreach (var reg in request.Registrants)
+            {
+                if (string.IsNullOrWhiteSpace(reg.FirstName) || string.IsNullOrWhiteSpace(reg.LastName))
+                {
+                    return new ApiResponses().BadRequestResult("Each rider needs a first and last name.");
+                }
+                if (reg.Tickets is null || reg.Tickets.Count == 0)
+                {
+                    return new ApiResponses().BadRequestResult($"{reg.FirstName} needs at least one ticket assigned.");
+                }
+
+                // Load + validate every ticket this registrant covers, and decide whether
+                // any of them needs a waiver (rider waiver for race entries / rider gate
+                // fees; spectator waiver for spectator gate fees).
+                var loaded = new List<(EventTicketPurchase ticket, bool isRace, bool needsWaiver, Guid? waiverId, string? raceNumber)>();
+                var seenRaceTiers = new HashSet<Guid>();
+                foreach (var ti in reg.Tickets)
+                {
+                    var ticket = await _ticketPurchases.GetById(ti.TicketId, tenantId);
+                    if (ticket is null) return new ApiResponses().NotFoundResult("Ticket not found.");
+                    // Registration is identity + waiver capture, not a money step, and the
+                    // webhook that flips 'pending' → 'paid' lands a few seconds after the
+                    // client-side payment confirmation. So accept a still-'pending' ticket
+                    // (the rider just paid); only reject genuinely dead ones. Check-in still
+                    // honors paid/redeemed only, so a never-paid ticket can't sneak in.
+                    if (ticket.Status is "cancelled" or "refunded" or "failed")
+                    {
+                        return new ApiResponses().BadRequestResult("That ticket is no longer valid.");
+                    }
+                    var tier = await _tiers.GetById(ticket.TierId, tenantId);
+                    var ev = tier is null ? null : await _events.GetById(tier.EventId, tenantId);
+                    if (tier is null || ev is null) return new ApiResponses().BadRequestResult("Ticket is missing its event.");
+
+                    var isRace = tier.Kind == "race_entry";
+                    // A rider can't be entered in the same class twice.
+                    if (isRace && !seenRaceTiers.Add(tier.Id))
+                    {
+                        return new ApiResponses().BadRequestResult($"A rider can only enter '{tier.Name}' once.");
+                    }
+
+                    // Rider audiences (race entry + rider gate fee) use the rider waiver;
+                    // a spectator gate fee uses the spectator waiver.
+                    var isRiderAudience = isRace || (tier.Kind == "gate_fee" && tier.Audience == "rider");
+                    var needsWaiver = isRiderAudience ? ev.RequiresRiderWaiver : ev.RequiresSpectatorWaiver;
+                    var waiverId = isRiderAudience ? ev.RacerWaiverId : ev.SpectatorWaiverId;
+                    loaded.Add((ticket, isRace, needsWaiver, waiverId, ti.RaceNumber));
+                }
+
+                if (loaded.Any(x => x.needsWaiver) && string.IsNullOrWhiteSpace(reg.WaiverSignatureDataUrl))
+                {
+                    return new ApiResponses().BadRequestResult($"{reg.FirstName} needs a signed waiver for this event.");
+                }
+
+                // One registrant id ties the rider's gate fee + their class entries together.
+                var registrantId = Guid.NewGuid();
+                foreach (var x in loaded)
+                {
+                    Guid? waiverId = null;
+                    string? signature = null;
+                    if (x.needsWaiver)
+                    {
+                        waiverId = x.waiverId;
+                        if (waiverId is null)
+                        {
+                            if (!activeFetched) { activeWaiverId = (await _waivers.GetActive(tenantId))?.Id; activeFetched = true; }
+                            waiverId = activeWaiverId;
+                        }
+                        signature = reg.WaiverSignatureDataUrl;
+                    }
+
+                    await _ticketPurchases.CompleteRegistration(x.ticket.Id, tenantId,
+                        riderFirstName: reg.FirstName!.Trim(), riderLastName: reg.LastName!.Trim(),
+                        riderBirthdate: reg.Birthdate, bike: x.isRace ? reg.Bike?.Trim() : null,
+                        raceNumber: x.isRace ? x.raceNumber?.Trim() : null,
+                        waiverId: waiverId, waiverSignatureDataUrl: signature,
+                        parentGuardianName: reg.ParentGuardianName?.Trim(),
+                        registrantId: registrantId);
+                    completed++;
+                }
+            }
+
+            return new ApiResponses().OkResult(new { completed });
+        }
+
+        // Resume page (from the "finish your registration" email): given any ticket's
+        // redemption token, return the still-incomplete entries in that order so the rider
+        // can finish them. Guest-accessible; tenant-scoped by the resolved subdomain.
+        [AllowAnonymous]
+        [HttpGet("EventTicket/Registration/{token:guid}")]
+        public async Task<IActionResult> GetRegistration(Guid token)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rows = await _ticketPurchases.ListIncompleteForRegistrationByToken(token, _tenantContext.TenantId);
+            var tickets = rows.Select(r =>
+            {
+                var isRace = r.Kind == "race_entry";
+                var isRiderGate = r.Kind == "gate_fee" && r.Audience == "rider";
+                var isSpectatorGate = r.Kind == "gate_fee" && r.Audience == "spectator";
+                return new
+                {
+                    ticketId = r.TicketId,
+                    tierName = r.TierName,
+                    kind = r.Kind,
+                    audience = r.Audience,
+                    isRace,
+                    isRiderGate,
+                    isSpectatorGate,
+                    needsWaiver = (isRace || isRiderGate) ? r.RequiresRiderWaiver : r.RequiresSpectatorWaiver,
+                };
+            }).ToList();
+            return new ApiResponses().OkResult(new
+            {
+                eventTitle = rows.FirstOrDefault()?.EventTitle,
+                tickets,
+            });
+        }
+
         private static (int amountCents, int serviceChargeCents) ComputeWithServiceCharge(
             int unitPriceCents, int quantity, int tenantServiceChargeBps, int riderPaidBps)
         {
@@ -1420,14 +1113,6 @@ namespace webapi.Controllers
 
             switch (request.Kind)
             {
-                case "pass":
-                {
-                    var p = await _purchases.GetById(request.PurchaseId, tenantId);
-                    if (p is null) return new ApiResponses().NotFoundResult("Purchase not found.");
-                    (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
-                    ledgerSourceKind = "pass";
-                    break;
-                }
                 case "event_ticket":
                 {
                     var p = await _ticketPurchases.GetById(request.PurchaseId, tenantId);
@@ -1503,10 +1188,6 @@ namespace webapi.Controllers
             var note = $"Tenant refund {refundCents}c{(refundId is null ? "" : $" stripe={refundId}")}";
             switch (request.Kind)
             {
-                case "pass":
-                    await _purchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
-                    await _purchases.MarkRefunded(request.PurchaseId, note);
-                    break;
                 case "event_ticket":
                     await _ticketPurchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
                     await _ticketPurchases.MarkRefunded(request.PurchaseId, note);
@@ -1611,35 +1292,6 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SalesCancel)]
-        [HttpPost("Pass/{id:guid}/Cancel")]
-        public async Task<IActionResult> CancelPass(Guid id, [FromBody] CancelPurchaseRequest request)
-        {
-            var existing = await _purchases.GetById(id, _tenantContext.TenantId);
-            if (existing is null)
-            {
-                return new ApiResponses().NotFoundResult("Purchase not found.");
-            }
-            if (existing.Status != "paid")
-            {
-                return new ApiResponses().BadRequestResult($"Cannot cancel a purchase with status '{existing.Status}'.");
-            }
-            if (!TryGetUserId(out var adminId))
-            {
-                return new ApiResponses().BadRequestResult("Invalid token.");
-            }
-
-            await _purchases.Cancel(id, _tenantContext.TenantId, adminId, request.Reason);
-            // Day-pass cancel frees an event-level spot — promote the next alternate
-            // in the (event, no-tier) bucket. Fire-and-forget so the admin's request
-            // returns immediately even if SMS is slow.
-            if (existing.EventId.HasValue)
-            {
-                _ = _waitlistPromoter.PromoteNext(existing.EventId.Value, null);
-            }
-            return new ApiResponses().OkResult(new { id, status = "cancelled" });
-        }
-
-        [Authorize(Policy = TenantPermissions.Policy.SalesCancel)]
         [HttpPost("Ticket/{id:guid}/Cancel")]
         public async Task<IActionResult> CancelTicket(Guid id, [FromBody] CancelPurchaseRequest request)
         {
@@ -1676,10 +1328,8 @@ namespace webapi.Controllers
             var items = rows.Select(d => new TenantDisputeListItem
             {
                 Id = d.Id,
-                Kind = d.PassPurchaseId.HasValue ? "pass"
-                     : d.EventTicketPurchaseId.HasValue ? "event_ticket"
-                     : "unlinked",
-                PurchaseId = d.PassPurchaseId ?? d.EventTicketPurchaseId,
+                Kind = d.EventTicketPurchaseId.HasValue ? "event_ticket" : "unlinked",
+                PurchaseId = d.EventTicketPurchaseId,
                 ItemName = d.ItemName,
                 PurchaserName = d.PurchaserName,
                 PurchaserEmail = d.PurchaserEmail,

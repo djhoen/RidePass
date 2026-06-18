@@ -17,7 +17,7 @@ namespace webapi.Controllers
     {
         private static readonly HashSet<string> AllowedImageKinds = new(StringComparer.Ordinal)
         {
-            "logo", "favicon", "hero", "secondaryHero", "benefits"
+            "logo", "logoWhite", "favicon", "hero", "secondaryHero", "benefits"
         };
 
         private static readonly Dictionary<string, string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -368,6 +368,7 @@ namespace webapi.Controllers
                 Tagline = row.Tagline,
                 ThemeMode = row.ThemeMode,
                 LogoUrl = row.LogoUrl,
+                LogoWhiteUrl = row.LogoWhiteUrl,
                 FaviconUrl = row.FaviconUrl,
                 HeroImageUrl = row.HeroImageUrl,
                 SecondaryHeroUrl = row.SecondaryHeroUrl,
@@ -478,6 +479,7 @@ namespace webapi.Controllers
             var oldUrl = existing is null ? null : kind switch
             {
                 "logo"          => existing.LogoUrl,
+                "logoWhite"     => existing.LogoWhiteUrl,
                 "favicon"       => existing.FaviconUrl,
                 "hero"          => existing.HeroImageUrl,
                 "secondaryHero" => existing.SecondaryHeroUrl,
@@ -510,6 +512,7 @@ namespace webapi.Controllers
             var oldUrl = existing is null ? null : kind switch
             {
                 "logo"          => existing.LogoUrl,
+                "logoWhite"     => existing.LogoWhiteUrl,
                 "favicon"       => existing.FaviconUrl,
                 "hero"          => existing.HeroImageUrl,
                 "secondaryHero" => existing.SecondaryHeroUrl,

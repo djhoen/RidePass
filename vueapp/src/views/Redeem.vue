@@ -14,8 +14,14 @@
             </v-card-title>
             <v-card-text>
                 <template v-if="preview.kind === 'event_ticket'">
+                    <v-alert v-if="!preview.registrationComplete" type="warning" variant="tonal" density="compact" class="mb-3">
+                        <strong>Registration not finished.</strong> Rider details / required waiver haven't been
+                        completed for this entry , collect the signed waiver before allowing them on track.
+                    </v-alert>
                     <div class="text-h6 mb-1">{{ preview.eventTitle }}</div>
-                    <div class="text-subtitle-2 text-medium-emphasis mb-2">Tier: {{ preview.tierName }}</div>
+                    <div class="text-subtitle-2 text-medium-emphasis mb-2">
+                        Tier: {{ preview.tierName }}<span v-if="preview.raceNumber"> · #{{ preview.raceNumber }}</span>
+                    </div>
                     <div class="mb-1">
                         <v-icon size="small" class="mr-1">mdi-clock-outline</v-icon>
                         <template v-if="preview.eventAllDay">

@@ -28,6 +28,9 @@ namespace webapi.Controllers.API.Data.Discover
         public string TenantDisplayName { get; set; } = null!;
         public string? TenantCity { get; set; }
         public string? TenantRegion { get; set; }
+        // Logo overlaid bottom-right on the apex event card photo: the tenant's white
+        // logo when set, otherwise their regular logo. Null when they have neither.
+        public string? TenantLogoUrl { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public double? DistanceKm { get; set; }

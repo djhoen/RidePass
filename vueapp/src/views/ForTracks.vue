@@ -10,14 +10,12 @@
                 <v-container>
                     <v-row justify="center" class="text-center">
                         <v-col cols="12" md="9" lg="8">
-                            <div class="ft-hero-eyebrow mb-3">RidePass for track operators</div>
+                            <div class="ft-hero-eyebrow mb-3">{{ heroEyebrow }}</div>
                             <h1 class="text-h2 font-weight-bold text-white mb-4 ft-hero-headline">
-                                Run your track on one platform
+                                {{ heroHeadline }}
                             </h1>
                             <p class="text-h6 text-white mb-8 mx-auto" style="max-width: 640px; opacity: 0.92">
-                                From the front gate to the finish line, RidePass handles your
-                                events, passes, and payments so you can spend less time at the
-                                computer and more time on the track.
+                                {{ heroSubhead }}
                             </p>
                             <div class="d-flex flex-wrap ga-3 justify-center">
                                 <v-btn color="primary" size="x-large" @click="scrollToForm">
@@ -43,6 +41,22 @@
                             <div class="text-h6 font-weight-bold mb-1">{{ v.title }}</div>
                             <div class="text-body-2 text-medium-emphasis">{{ v.text }}</div>
                         </div>
+                    </v-col>
+                </v-row>
+            </section>
+
+            <!-- ── WHY TRACKS LOVE RIDEPASS (benefits band, super-admin editable;
+                    moved here from the apex home) ──────────────────────────── -->
+            <section v-if="benefitsHtml" class="my-12">
+                <div class="text-center mb-8">
+                    <h2 class="text-h4 font-weight-bold">{{ benefitsTitle }}</h2>
+                </div>
+                <v-row align="center">
+                    <v-col v-if="benefitsImageUrl" cols="12" md="6">
+                        <div class="ft-benefits-photo" :style="{ backgroundImage: `url(${benefitsImageUrl})` }"></div>
+                    </v-col>
+                    <v-col cols="12" :md="benefitsImageUrl ? 6 : 12">
+                        <div class="ft-benefits-list" v-html="benefitsHtml"></div>
                     </v-col>
                 </v-row>
             </section>
@@ -208,9 +222,24 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import DOMPurify from 'dompurify'
 import { TrackLeadService } from '@/services/TrackLeadService'
+import { platformBranding, platformImageUrl } from '@/stores/platformBranding'
 
 const trackLeadService = new TrackLeadService()
+
+// Hero copy + the "Why Tracks love RidePass" benefits block are super-admin editable
+// (Super Admin -> For Tracks). Fall back to the original hardcoded hero copy when a
+// field hasn't been set. The benefits block reuses the platform benefits content that
+// used to render on the apex home page.
+const pb = computed(() => platformBranding.data)
+const heroEyebrow = computed(() => pb.value?.forTracksHeroEyebrow?.trim() || 'RidePass for track operators')
+const heroHeadline = computed(() => pb.value?.forTracksHeroHeadline?.trim() || 'Run your track on one platform')
+const heroSubhead = computed(() => pb.value?.forTracksHeroSubhead?.trim()
+    || 'From the front gate to the finish line, RidePass handles your events, passes, and payments so you can spend less time at the computer and more time on the track.')
+const benefitsTitle = computed(() => pb.value?.sectionBenefitsTitle?.trim() || 'Why Tracks love RidePass')
+const benefitsHtml = computed(() => DOMPurify.sanitize(pb.value?.benefitsHtml ?? ''))
+const benefitsImageUrl = computed(() => platformImageUrl(pb.value?.benefitsImageUrl))
 
 const valueProps = [
     { icon: 'mdi-palette', title: 'Your own branded site', text: 'Your logo, your colors, and your own web address. Riders get a site that looks like your track, not ours.' },
@@ -382,5 +411,34 @@ function resetForm() {
 /* Lead form sits on a primary-tinted band so it reads as the page's main CTA. */
 .ft-form-band {
     background: linear-gradient(135deg, #f57c00 0%, #e65100 100%);
+}
+
+/* "Why Tracks love RidePass" benefits band (moved from the apex home). */
+.ft-benefits-photo {
+    min-height: 300px;
+    height: 100%;
+    border-radius: 12px;
+    background-size: cover;
+    background-position: center;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+.ft-benefits-list :deep(ul) {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+.ft-benefits-list :deep(li) {
+    position: relative;
+    padding-left: 2rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+}
+.ft-benefits-list :deep(li::before) {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: rgb(var(--v-theme-primary));
+    font-weight: 700;
 }
 </style>

@@ -4,7 +4,9 @@ namespace webapi.Controllers.API.Data.EventTicketTier
     {
         public Guid Id { get; set; }
         public Guid EventId { get; set; }
-        public string Kind { get; set; } = "spectator_pass";
+        public string Kind { get; set; } = "gate_fee";
+        public string Audience { get; set; } = "rider";
+        public bool Required { get; set; }
         public string Name { get; set; } = null!;
         public int PriceCents { get; set; }
         public int? Inventory { get; set; }

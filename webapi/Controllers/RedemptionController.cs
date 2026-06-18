@@ -13,20 +13,17 @@ namespace webapi.Controllers
     [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
     public class RedemptionController : ControllerBase
     {
-        private readonly IPassPurchaseRepository _passes;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventExtraRepository _extras;
         private readonly IUserRepository _users;
         private readonly ITenantContext _tenantContext;
 
         public RedemptionController(
-            IPassPurchaseRepository passes,
             IEventTicketPurchaseRepository tickets,
             IEventExtraRepository extras,
             IUserRepository users,
             ITenantContext tenantContext)
         {
-            _passes = passes;
             _tickets = tickets;
             _extras = extras;
             _users = users;
@@ -70,16 +67,8 @@ namespace webapi.Controllers
             var staffId = TryGetStaffUserId();
             var nowUtc = DateTime.UtcNow;
             var tenantId = _tenantContext.TenantId;
-            if (preview.Kind == "pass")
-            {
-                if (staffId.HasValue) await _passes.MarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
-                else                 await _passes.UpdateStatus(preview.PurchaseId, "redeemed");
-            }
-            else
-            {
-                if (staffId.HasValue) await _tickets.MarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
-                else                 await _tickets.UpdateStatus(preview.PurchaseId, "redeemed");
-            }
+            if (staffId.HasValue) await _tickets.MarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
+            else                 await _tickets.UpdateStatus(preview.PurchaseId, "redeemed");
 
             preview.Status = "redeemed";
             return new ApiResponses().OkResult(preview);
@@ -113,32 +102,9 @@ namespace webapi.Controllers
             var tz = ResolveTenantTimeZone();
             var todayInTenant = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
 
-            // Pass purchases on this PI.
+            // Purchases on this PI.
             if (anchorPi.PaymentIntentId is not null)
             {
-                var passRows = await _passes.ListByStripePaymentIntentId(anchorPi.PaymentIntentId);
-                foreach (var p in passRows.Where(p => p.TenantId == tenantId))
-                {
-                    var (ok, reason) = CheckPassWindow(p.ValidOnDate, todayInTenant);
-                    var item = new webapi.Controllers.API.Data.Redemption.OrderItem
-                    {
-                        Kind = "pass",
-                        PurchaseId = p.Id,
-                        RedemptionToken = p.RedemptionToken,
-                        ItemName = "Pass",                    // name resolved below if needed
-                        AmountCents = p.AmountCents,
-                        Status = p.Status,
-                        IsRedeemableToday = ok && p.Status == "paid",
-                        NotRedeemableReason = !ok ? reason : (p.Status != "paid" ? $"Status is '{p.Status}'." : null),
-                        RedeemedAtUtc = p.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(p.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
-                    };
-                    // Hydrate product name via the WithContext lookup.
-                    var ctx = await _passes.GetByRedemptionToken(p.RedemptionToken, tenantId);
-                    if (ctx is not null) item.ItemName = ctx.ProductName;
-                    if (p.RedeemedByUserId.HasValue) redeemerIds.Add(p.RedeemedByUserId.Value);
-                    resp.Items.Add(item);
-                }
-
                 var ticketRows = await _tickets.ListByStripePaymentIntentId(anchorPi.PaymentIntentId);
                 foreach (var t in ticketRows.Where(t => t.TenantId == tenantId))
                 {
@@ -165,6 +131,7 @@ namespace webapi.Controllers
                         IsRedeemableToday = ok && t.Status == "paid",
                         NotRedeemableReason = !ok ? reason : (t.Status != "paid" ? $"Status is '{t.Status}'." : null),
                         RedeemedAtUtc = t.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(t.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
+                        RegistrationComplete = t.RegistrationComplete,
                     };
                     if (t.RedeemedByUserId.HasValue) redeemerIds.Add(t.RedeemedByUserId.Value);
                     resp.Items.Add(item);
@@ -204,7 +171,7 @@ namespace webapi.Controllers
                 var name = $"{u.FirstName} {u.LastName}".Trim();
                 foreach (var item in resp.Items)
                 {
-                    if ((item.Kind == "pass" || item.Kind == "event_ticket" || item.Kind == "extras")
+                    if ((item.Kind == "event_ticket" || item.Kind == "extras")
                         && item.RedeemedAtUtc.HasValue && item.RedeemedByName is null)
                     {
                         // We don't have the user-id on the response right here; fill via a second pass.
@@ -228,7 +195,6 @@ namespace webapi.Controllers
                 if (!item.RedeemedAtUtc.HasValue) continue;
                 Guid? byId = item.Kind switch
                 {
-                    "pass" => (await _passes.GetById(item.PurchaseId, tenantId))?.RedeemedByUserId,
                     "event_ticket" => (await _tickets.GetById(item.PurchaseId, tenantId))?.RedeemedByUserId,
                     "extras" => (await _extras.GetPurchase(item.PurchaseId))?.RedeemedByUserId,
                     _ => null,
@@ -263,21 +229,7 @@ namespace webapi.Controllers
             {
                 try
                 {
-                    if (entry.Kind == "pass")
-                    {
-                        var p = await _passes.GetById(entry.PurchaseId, tenantId);
-                        if (p is null) { resp.Errors.Add($"Pass {entry.PurchaseId} not found."); continue; }
-                        if (allowedPi is not null && p.StripePaymentIntentId != allowedPi)
-                        {
-                            resp.Errors.Add($"Pass {entry.PurchaseId} doesn't belong to this order."); continue;
-                        }
-                        if (p.Status == "redeemed") { resp.Errors.Add("A pass was already redeemed — skipped."); continue; }
-                        if (p.Status != "paid") { resp.Errors.Add($"Pass status is '{p.Status}' — can't redeem."); continue; }
-                        if (staffId.HasValue) await _passes.MarkRedeemed(p.Id, tenantId, staffId.Value, nowUtc);
-                        else                   await _passes.UpdateStatus(p.Id, "redeemed");
-                        resp.RedeemedCount++;
-                    }
-                    else if (entry.Kind == "event_ticket")
+                    if (entry.Kind == "event_ticket")
                     {
                         var t = await _tickets.GetById(entry.PurchaseId, tenantId);
                         if (t is null) { resp.Errors.Add($"Ticket {entry.PurchaseId} not found."); continue; }
@@ -324,28 +276,6 @@ namespace webapi.Controllers
         // bulk-redeem there falls back to single-item.
         private async Task<AnchorLookup> ResolveAnchorPaymentIntentId(Guid token, Guid tenantId)
         {
-            var dp = await _passes.GetByRedemptionToken(token, tenantId);
-            if (dp is not null)
-            {
-                return new AnchorLookup
-                {
-                    AnchorRow = dp,
-                    PaymentIntentId = dp.StripePaymentIntentId,
-                    PurchaserName = dp.PurchaserName,
-                    PurchaserEmail = dp.PurchaserEmail,
-                    AnchorItem = new webapi.Controllers.API.Data.Redemption.OrderItem
-                    {
-                        Kind = "pass",
-                        PurchaseId = dp.Id,
-                        RedemptionToken = dp.RedemptionToken,
-                        ItemName = dp.ProductName,
-                        AmountCents = dp.AmountCents,
-                        Status = dp.Status,
-                        IsRedeemableToday = dp.Status == "paid",
-                        NotRedeemableReason = dp.Status != "paid" ? $"Status is '{dp.Status}'." : null,
-                    },
-                };
-            }
             var tk = await _tickets.GetByRedemptionToken(token, tenantId);
             if (tk is not null)
             {
@@ -365,6 +295,7 @@ namespace webapi.Controllers
                         Status = tk.Status,
                         IsRedeemableToday = tk.Status == "paid",
                         NotRedeemableReason = tk.Status != "paid" ? $"Status is '{tk.Status}'." : null,
+                        RegistrationComplete = tk.RegistrationComplete,
                     },
                 };
             }
@@ -414,27 +345,6 @@ namespace webapi.Controllers
             var tz = ResolveTenantTimeZone();
             var todayInTenant = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
 
-            var dp = await _passes.GetByRedemptionToken(token, tenantId);
-            if (dp is not null)
-            {
-                var (ok, reason) = CheckPassWindow(dp.ValidOnDate, todayInTenant);
-                return new RedemptionPreviewResponse
-                {
-                    Kind = "pass",
-                    PurchaseId = dp.Id,
-                    RedemptionToken = dp.RedemptionToken,
-                    PurchaserName = dp.PurchaserName,
-                    PurchaserEmail = dp.PurchaserEmail,
-                    ItemName = dp.ProductName,
-                    AmountCents = dp.AmountCents,
-                    Status = dp.Status,
-                    ValidOnDate = dp.ValidOnDate,
-                    CreatedAtUtc = DateTime.SpecifyKind(dp.CreatedAt, DateTimeKind.Utc),
-                    IsRedeemableToday = ok,
-                    NotRedeemableReason = reason,
-                };
-            }
-
             var tk = await _tickets.GetByRedemptionToken(token, tenantId);
             if (tk is not null)
             {
@@ -472,20 +382,12 @@ namespace webapi.Controllers
                     CreatedAtUtc = DateTime.SpecifyKind(tk.CreatedAt, DateTimeKind.Utc),
                     IsRedeemableToday = ok,
                     NotRedeemableReason = reason,
+                    RegistrationComplete = tk.RegistrationComplete,
+                    RaceNumber = tk.RaceNumber,
                 };
             }
 
             return null;
-        }
-
-        private static (bool ok, string? reason) CheckPassWindow(DateTime? validOnDate, DateTime todayInTenant)
-        {
-            if (!validOnDate.HasValue) return (true, null);
-            var valid = validOnDate.Value.Date;
-            if (todayInTenant == valid) return (true, null);
-            return (false, todayInTenant < valid
-                ? $"Pass is valid on {valid:yyyy-MM-dd} — too early to redeem."
-                : $"Pass was valid on {valid:yyyy-MM-dd} — expired.");
         }
 
         private TimeZoneInfo ResolveTenantTimeZone()

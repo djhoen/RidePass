@@ -11,6 +11,7 @@ export interface PlatformTestimonial {
 }
 
 export interface PlatformBranding {
+    logoUrl: string | null
     heroImageUrl: string | null
     heroHeadline: string | null
     heroSubhead: string | null
@@ -45,7 +46,19 @@ export interface PlatformBranding {
     navBarHomeColor: string | null
     navBarHomeTextColor: string | null
 
+    forTracksHeroEyebrow: string | null
+    forTracksHeroHeadline: string | null
+    forTracksHeroSubhead: string | null
+
     testimonials: PlatformTestimonial[]
+}
+
+export interface SaveForTracks {
+    heroEyebrow: string | null
+    heroHeadline: string | null
+    heroSubhead: string | null
+    benefitsTitle: string | null
+    benefitsHtml: string | null
 }
 
 export interface SavePlatformBranding {
@@ -104,7 +117,13 @@ export class PlatformBrandingService {
         return axios.put<{ data: PlatformBranding }>(`${this.apiUrl}/PlatformBranding`, payload)
     }
 
-    uploadImage(kind: 'hero' | 'benefits', file: File) {
+    // Dedicated For Tracks page save (hero + benefits block) so it never overwrites
+    // the apex home-page fields that the main save() controls.
+    saveForTracks(payload: SaveForTracks) {
+        return axios.put<{ data: PlatformBranding }>(`${this.apiUrl}/PlatformBranding/ForTracks`, payload)
+    }
+
+    uploadImage(kind: 'logo' | 'hero' | 'benefits', file: File) {
         const fd = new FormData()
         fd.append('file', file)
         return axios.post<{ data: { url: string } }>(
@@ -112,7 +131,7 @@ export class PlatformBrandingService {
             { headers: { 'Content-Type': 'multipart/form-data' } })
     }
 
-    deleteImage(kind: 'hero' | 'benefits') {
+    deleteImage(kind: 'logo' | 'hero' | 'benefits') {
         return axios.delete<{ data: PlatformBranding }>(`${this.apiUrl}/PlatformBranding/Image/${kind}`)
     }
 

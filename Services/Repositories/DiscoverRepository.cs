@@ -55,12 +55,16 @@ namespace Services.Repositories
         }
 
         public async Task<List<EventDiscoverRow>> SearchEvents(double? lat, double? lng, double? radiusKm, string? q,
-            DateTime? fromUtc, DateTime? toUtc, string[]? eventTypeCodes = null, Guid[]? tenantIds = null, int limit = 200)
+            DateTime? fromUtc, DateTime? toUtc, string[]? eventTypeCodes = null, Guid[]? tenantIds = null,
+            string[]? excludeCodes = null, int limit = 200)
         {
             var qLike = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()}%";
             // Empty arrays would filter everything out; treat them as "no filter".
             var codes = (eventTypeCodes is { Length: > 0 }) ? eventTypeCodes : null;
             var tenants = (tenantIds is { Length: > 0 }) ? tenantIds : null;
+            // Deny-list (e.g. the apex page hides private bookings + lessons). These
+            // events are never returned, so they don't leak to the public client.
+            var excl = (excludeCodes is { Length: > 0 }) ? excludeCodes : null;
             const string sql = @"
                 WITH ranked AS (
                     SELECT e.id AS EventId, e.tenant_id AS TenantId, e.title, e.starts_at AS StartsAtUtc,
@@ -70,6 +74,7 @@ namespace Services.Repositories
                            t.city AS TenantCity, t.region AS TenantRegion, t.status AS tenant_status,
                            t.is_published AS tenant_is_published,
                            t.latitude, t.longitude,
+                           COALESCE(tb.logo_white_url, tb.logo_url) AS TenantLogoUrl,
                            et.code AS EventTypeCode, et.name AS EventTypeName, et.color AS EventTypeColor,
                            et.image_url AS EventTypeImageUrl,
                            CASE WHEN @lat::double precision IS NOT NULL
@@ -83,13 +88,15 @@ namespace Services.Repositories
                            END AS DistanceKm
                     FROM event e
                     JOIN tenant t ON t.id = e.tenant_id
+                    LEFT JOIN tenant_branding tb ON tb.tenant_id = t.id
                     JOIN tenant_event_type et ON et.id = e.event_type_id
                     WHERE e.status = 'scheduled'
                       AND (@codes::text[] IS NULL OR et.code = ANY(@codes))
+                      AND (@excl::text[] IS NULL OR NOT (et.code = ANY(@excl)))
                       AND (@tenants::uuid[] IS NULL OR e.tenant_id = ANY(@tenants))
                 )
                 SELECT EventId, TenantId, TenantSubdomain, TenantDisplayName, TenantCity, TenantRegion,
-                       Latitude, Longitude, DistanceKm,
+                       TenantLogoUrl, Latitude, Longitude, DistanceKm,
                        Title, StartsAtUtc, EndsAtUtc, LocationLabel,
                        EventTypeCode, EventTypeName, EventTypeColor,
                        ImageUrl, EventTypeImageUrl
@@ -107,11 +114,11 @@ namespace Services.Repositories
                        OR (DistanceKm IS NOT NULL AND DistanceKm <= @radiusKm::double precision))
                 ORDER BY StartsAtUtc ASC
                 LIMIT @limit";
-            var r = await _db.Query<EventDiscoverRow>(sql, new { lat, lng, radiusKm, qLike, fromUtc, toUtc, codes, tenants, limit });
+            var r = await _db.Query<EventDiscoverRow>(sql, new { lat, lng, radiusKm, qLike, fromUtc, toUtc, codes, excl, tenants, limit });
             return r.ToList();
         }
 
-        public async Task<List<EventTypeOptionRow>> ListEventTypeOptions(string[]? onlyCodes = null)
+        public async Task<List<EventTypeOptionRow>> ListEventTypeOptions(string[]? onlyCodes = null, string[]? excludeCodes = null)
         {
             // Event types are per-tenant rows, but the system codes (open_ride,
             // race, practice, ...) are shared across every tenant. Collapse to one
@@ -120,6 +127,7 @@ namespace Services.Repositories
             // tenant are returned, so the filter never lists a type with nothing
             // behind it. onlyCodes optionally restricts to an allow-list.
             var codes = (onlyCodes is { Length: > 0 }) ? onlyCodes : null;
+            var excl = (excludeCodes is { Length: > 0 }) ? excludeCodes : null;
             const string sql = @"
                 SELECT et.code AS Code,
                        MODE() WITHIN GROUP (ORDER BY et.name)  AS Name,
@@ -127,6 +135,7 @@ namespace Services.Repositories
                 FROM tenant_event_type et
                 JOIN tenant t ON t.id = et.tenant_id AND t.status = 'active' AND t.is_published
                 WHERE (@codes::text[] IS NULL OR et.code = ANY(@codes))
+                  AND (@excl::text[] IS NULL OR NOT (et.code = ANY(@excl)))
                   AND EXISTS (
                       SELECT 1 FROM event e
                       WHERE e.event_type_id = et.id
@@ -134,7 +143,7 @@ namespace Services.Repositories
                         AND e.starts_at > NOW())
                 GROUP BY et.code
                 ORDER BY MIN(et.sort_order), Code";
-            var r = await _db.Query<EventTypeOptionRow>(sql, new { codes });
+            var r = await _db.Query<EventTypeOptionRow>(sql, new { codes, excl });
             return r.ToList();
         }
     }

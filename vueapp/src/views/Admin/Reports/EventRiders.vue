@@ -98,7 +98,9 @@
                 </template>
                 <template #item.itemName="{ item }">
                     <div>{{ item.itemName }}</div>
-                    <div v-if="item.tierKind === 'spectator_pass'" class="text-caption text-medium-emphasis">spectator</div>
+                    <div v-if="item.tierKind === 'gate_fee'" class="text-caption text-medium-emphasis">
+                        {{ item.tierAudience === 'spectator' ? 'spectator gate' : 'rider gate' }}
+                    </div>
                 </template>
                 <template #item.status="{ item }">
                     <v-chip size="x-small" :color="statusColor(item.status)">{{ item.status }}</v-chip>

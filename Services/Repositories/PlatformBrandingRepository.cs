@@ -15,6 +15,7 @@ namespace Services.Repositories
     {
         private const string BrandingColumns = @"
             id,
+            logo_url AS LogoUrl,
             hero_image_url AS HeroImageUrl,
             hero_headline AS HeroHeadline,
             hero_subhead AS HeroSubhead,
@@ -42,6 +43,9 @@ namespace Services.Repositories
             nav_bar_text_color AS NavBarTextColor,
             nav_bar_home_color AS NavBarHomeColor,
             nav_bar_home_text_color AS NavBarHomeTextColor,
+            for_tracks_hero_eyebrow AS ForTracksHeroEyebrow,
+            for_tracks_hero_headline AS ForTracksHeroHeadline,
+            for_tracks_hero_subhead AS ForTracksHeroSubhead,
             updated_at_utc AS UpdatedAtUtc";
 
         private const string TestimonialColumns = @"
@@ -67,7 +71,7 @@ namespace Services.Repositories
             // delete during dev), and subsequent saves overwrite cleanly.
             const string sql = @"
                 INSERT INTO platform_branding (
-                    id, hero_image_url, hero_headline, hero_subhead,
+                    id, logo_url, hero_image_url, hero_headline, hero_subhead,
                     hero_cta_primary_label, hero_cta_primary_url,
                     hero_cta_secondary_label, hero_cta_secondary_url,
                     stats_show_tracks, stats_show_event_days, stats_price_label,
@@ -79,9 +83,10 @@ namespace Services.Repositories
                     featured_track_ids,
                     nav_bar_color, nav_bar_text_color,
                     nav_bar_home_color, nav_bar_home_text_color,
+                    for_tracks_hero_eyebrow, for_tracks_hero_headline, for_tracks_hero_subhead,
                     updated_at_utc
                 ) VALUES (
-                    1, @HeroImageUrl, @HeroHeadline, @HeroSubhead,
+                    1, @LogoUrl, @HeroImageUrl, @HeroHeadline, @HeroSubhead,
                     @HeroCtaPrimaryLabel, @HeroCtaPrimaryUrl,
                     @HeroCtaSecondaryLabel, @HeroCtaSecondaryUrl,
                     @StatsShowTracks, @StatsShowEventDays, @StatsPriceLabel,
@@ -93,9 +98,11 @@ namespace Services.Repositories
                     @FeaturedTrackIds,
                     @NavBarColor, @NavBarTextColor,
                     @NavBarHomeColor, @NavBarHomeTextColor,
+                    @ForTracksHeroEyebrow, @ForTracksHeroHeadline, @ForTracksHeroSubhead,
                     now()
                 )
                 ON CONFLICT (id) DO UPDATE SET
+                    logo_url = EXCLUDED.logo_url,
                     hero_image_url = EXCLUDED.hero_image_url,
                     hero_headline = EXCLUDED.hero_headline,
                     hero_subhead = EXCLUDED.hero_subhead,
@@ -123,7 +130,30 @@ namespace Services.Repositories
                     nav_bar_text_color = EXCLUDED.nav_bar_text_color,
                     nav_bar_home_color = EXCLUDED.nav_bar_home_color,
                     nav_bar_home_text_color = EXCLUDED.nav_bar_home_text_color,
+                    for_tracks_hero_eyebrow = EXCLUDED.for_tracks_hero_eyebrow,
+                    for_tracks_hero_headline = EXCLUDED.for_tracks_hero_headline,
+                    for_tracks_hero_subhead = EXCLUDED.for_tracks_hero_subhead,
                     updated_at_utc = now()";
+            await _db.Execute(sql, b);
+        }
+
+        /// <summary>
+        /// Updates only the For Tracks page fields (hero copy + the "Why Tracks love
+        /// RidePass" benefits title/html). Narrow on purpose so the For Tracks editor
+        /// and the apex home editor never overwrite each other's columns. The benefits
+        /// image is set via the separate "benefits" image upload endpoint.
+        /// </summary>
+        public async Task UpdateForTracks(PlatformBranding b)
+        {
+            const string sql = @"
+                UPDATE platform_branding SET
+                    for_tracks_hero_eyebrow  = @ForTracksHeroEyebrow,
+                    for_tracks_hero_headline = @ForTracksHeroHeadline,
+                    for_tracks_hero_subhead  = @ForTracksHeroSubhead,
+                    section_benefits_title   = @SectionBenefitsTitle,
+                    benefits_html            = @BenefitsHtml,
+                    updated_at_utc = now()
+                WHERE id = 1";
             await _db.Execute(sql, b);
         }
 
@@ -133,6 +163,7 @@ namespace Services.Repositories
             // column name so kind can never escape into raw SQL.
             var column = kind switch
             {
+                "logo"     => "logo_url",
                 "hero"     => "hero_image_url",
                 "benefits" => "benefits_image_url",
                 _          => throw new ArgumentException($"Unknown image kind: {kind}", nameof(kind)),

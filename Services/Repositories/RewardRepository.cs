@@ -161,14 +161,9 @@ namespace Services.Repositories
 
         public async Task<int> CountQualifyingPurchases(Guid tenantId, Guid userId, string requirementKind, DateTime sinceUtc)
         {
-            // Day passes: sum quantity. Tickets: count rows. For 'any', combine both.
+            // Tickets: count paid/redeemed rows (day passes were retired, so 'pass'/'any'
+            // requirement kinds now count event tickets only).
             // 'paid' and 'redeemed' both count; 'pending' / 'cancelled' / 'refunded' don't.
-            const string passSql = @"
-                SELECT COALESCE(SUM(quantity), 0)
-                FROM pass_purchase
-                WHERE tenant_id = @tenantId AND purchaser_user_id = @userId
-                  AND status IN ('paid','redeemed')
-                  AND created_at >= @sinceUtc";
             const string ticketSql = @"
                 SELECT COUNT(*)
                 FROM event_ticket_purchase
@@ -176,13 +171,7 @@ namespace Services.Repositories
                   AND status IN ('paid','redeemed')
                   AND created_at >= @sinceUtc";
 
-            var passCount = requirementKind is "pass" or "any"
-                ? await _db.ExecuteScalar(passSql, new { tenantId, userId, sinceUtc })
-                : 0;
-            var ticketCount = requirementKind is "event_ticket" or "any"
-                ? await _db.ExecuteScalar(ticketSql, new { tenantId, userId, sinceUtc })
-                : 0;
-            return passCount + ticketCount;
+            return await _db.ExecuteScalar(ticketSql, new { tenantId, userId, sinceUtc });
         }
     }
 }

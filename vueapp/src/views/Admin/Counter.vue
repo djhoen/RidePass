@@ -84,48 +84,6 @@
                     <v-card-title>Cart</v-card-title>
                     <v-card-text>
                         <v-expansion-panels v-model="catalogPanel" class="mb-3 catalog-panels">
-                            <!-- Passes -->
-                            <v-expansion-panel value="passes">
-                                <v-expansion-panel-title>
-                                    <div class="d-flex align-left ga-2">
-                                        <v-icon>mdi-ticket-confirmation-outline</v-icon>
-                                        <span>Passes</span>
-                                        <v-chip v-if="cartCount('pass') > 0" size="x-small" color="primary" class="ml-1">
-                                            {{ cartCount('pass') }}
-                                        </v-chip>
-                                    </div>
-                                </v-expansion-panel-title>
-                                <v-expansion-panel-text>
-                                    <div v-if="loadingProducts" class="text-center py-4">
-                                        <v-progress-circular indeterminate></v-progress-circular>
-                                    </div>
-                                    <div v-else-if="products.length === 0" class="text-medium-emphasis">
-                                        No pass products. Add some on the Passes admin page.
-                                    </div>
-                                    <div v-else>
-                                        <div v-for="p in products" :key="p.id"
-                                            class="d-flex align-left py-3 ga-3 catalog-row">
-                                            <div class="flex-grow-1" style="min-width: 0">
-                                                <div class="text-body-1"><strong>{{ p.name }}</strong></div>
-                                                <div v-if="p.description" class="text-caption text-medium-emphasis">{{ p.description }}</div>
-                                                <div class="text-caption text-medium-emphasis">${{ (p.priceCents / 100).toFixed(2) }}</div>
-                                            </div>
-                                            <div class="d-flex align-center ga-1" style="flex: 0 0 auto">
-                                                <v-btn size="small" icon variant="outlined" :disabled="qtyOf('pass', p.id) === 0"
-                                                    @click="addToCart('pass', p.id, p.name, p.priceCents, p.requiresWaiver, p.riderPaidServiceChargeBps, -1)">
-                                                    <v-icon>mdi-minus</v-icon>
-                                                </v-btn>
-                                                <div style="min-width: 32px; text-align: center"><strong>{{ qtyOf('pass', p.id) }}</strong></div>
-                                                <v-btn size="small" icon variant="outlined"
-                                                    @click="addToCart('pass', p.id, p.name, p.priceCents, p.requiresWaiver, p.riderPaidServiceChargeBps, 1)">
-                                                    <v-icon>mdi-plus</v-icon>
-                                                </v-btn>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </v-expansion-panel-text>
-                            </v-expansion-panel>
-
                             <!-- Add-ons (tenant-wide merch — no event attachment) -->
                             <v-expansion-panel v-if="branding.extrasEnabled" value="extras">
                                 <v-expansion-panel-title>
@@ -416,7 +374,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import dayjs from 'dayjs'
 import { CounterService, type CounterRider } from '@/services/CounterService'
-import { PassService, type PassProduct, type WaiverDto } from '@/services/PassService'
+import { PassService, type WaiverDto } from '@/services/PassService'
 import type { EligibleExtra, EligibleExtraVariant } from '@/services/EventService'
 import { ExtraService, type ExtraProduct } from '@/services/ExtraService'
 import { RewardService, type RiderRewardRedemption } from '@/services/RewardService'
@@ -429,7 +387,7 @@ import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue
 import PhoneField from '@/components/PhoneField.vue'
 
 type Customer = CounterRider
-type CartKind = 'pass' | 'extras' | 'membership'
+type CartKind = 'extras' | 'membership'
 
 interface CartLine {
     kind: CartKind
@@ -484,9 +442,7 @@ const canCreateCustomer = computed(() =>
     && newCustomer.value.emergencyContactPhone.replace(/\D/g, '').length >= 7)
 
 // Cart step — accordion: only one section open at a time, default to passes.
-const catalogPanel = ref<string | undefined>('passes')
-const products = ref<PassProduct[]>([])
-const loadingProducts = ref(false)
+const catalogPanel = ref<string | undefined>('extras')
 const extras = ref<ExtraProduct[]>([])
 const loadingExtras = ref(false)
 const cart = ref<CartLine[]>([])
@@ -591,17 +547,14 @@ const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
 onMounted(async () => {
-    loadingProducts.value = true
     loadingExtras.value = true
     try {
-        const [p, w, x] = await Promise.all([
-            passService.listActive(),
+        const [w, x] = await Promise.all([
             passService.getWaiver().catch(() => ({ data: { data: null } })),
             branding.extrasEnabled
                 ? extraService.listForAdmin().catch(() => ({ data: { data: [] as ExtraProduct[] } }))
                 : Promise.resolve({ data: { data: [] as ExtraProduct[] } }),
         ])
-        products.value = (p.data as any).data
         activeWaiver.value = (w.data as any).data ?? null
         extras.value = ((x.data as any).data as ExtraProduct[])
             .filter(e => e.isActive)
@@ -609,7 +562,6 @@ onMounted(async () => {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to load catalog.', 'error')
     } finally {
-        loadingProducts.value = false
         loadingExtras.value = false
     }
 })
@@ -677,18 +629,6 @@ function cartCount(kind: CartKind): number {
     return cart.value
         .filter(c => c.kind === kind)
         .reduce((sum, c) => sum + c.quantity, 0)
-}
-
-function addToCart(kind: 'pass', itemId: string, displayName: string, unitPriceCents: number, requiresWaiver: boolean, riderPaidServiceChargeBps: number, delta: number) {
-    const existing = cart.value.find(c => c.kind === kind && c.itemId === itemId)
-    if (existing) {
-        existing.quantity += delta
-        if (existing.quantity <= 0) {
-            cart.value = cart.value.filter(c => c !== existing)
-        }
-    } else if (delta > 0) {
-        cart.value.push({ kind, itemId, displayName, unitPriceCents, quantity: delta, requiresWaiver, riderPaidServiceChargeBps })
-    }
 }
 
 function addMembershipToCart(delta: number) {
@@ -856,7 +796,7 @@ function reset() {
     cashSubmitted.value = false
     selectedVoucherId.value = null
     availableVouchers.value = []
-    catalogPanel.value = 'passes'
+    catalogPanel.value = 'extras'
 }
 
 function redeemUrl(token: string): string {
@@ -865,7 +805,6 @@ function redeemUrl(token: string): string {
 
 function kindLabel(kind: string): string {
     switch (kind) {
-        case 'pass': return 'Pass'
         case 'extras': return 'Add-on'
         case 'membership': return 'Membership'
         default: return kind

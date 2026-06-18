@@ -16,7 +16,6 @@
 
             <v-tabs v-if="branding" v-model="tab" density="compact" class="mt-3">
                 <v-tab value="general">General</v-tab>
-                <v-tab value="benefits">Benefits</v-tab>
                 <v-tab value="testimonials">Testimonials</v-tab>
                 <v-tab value="navbar">Nav bar</v-tab>
             </v-tabs>
@@ -99,8 +98,6 @@
                                 placeholder="Ride the best tracks" density="compact"></v-text-field>
                             <v-text-field v-model="form.sectionEventsTitle" label="Events section" class="mt-4"
                                 placeholder="Upcoming events" density="compact"></v-text-field>
-                            <v-text-field v-model="form.sectionBenefitsTitle" label="Benefits section" class="mt-4"
-                                placeholder="Why ride with RidePass" density="compact"></v-text-field>
                             <v-text-field v-model="form.sectionTestimonialsTitle" label="Testimonials section" class="mt-4"
                                 placeholder="What riders are saying" density="compact"></v-text-field>
                             <v-text-field v-model="form.sectionTracksNearYouTitle" label="Tracks-near-you section" class="mt-4"
@@ -134,35 +131,8 @@
 
                 </v-window-item>
 
-                <!-- ── BENEFITS: HTML block + photo ─────────────────────────── -->
-                <v-window-item value="benefits">
-                    <v-card class="mb-4">
-                        <v-card-title>Benefits photo</v-card-title>
-                        <v-card-text>
-                            <div class="d-flex ga-3 align-center">
-                                <div class="benefits-preview" :style="benefitsPreviewStyle"></div>
-                                <div class="d-flex flex-column ga-2">
-                                    <v-btn variant="tonal" size="small" prepend-icon="mdi-upload"
-                                        :loading="uploadingBenefits" @click="pickBenefits">Upload</v-btn>
-                                    <v-btn v-if="branding.benefitsImageUrl" variant="text" size="small" color="error"
-                                        prepend-icon="mdi-delete" @click="removeBenefits">Remove</v-btn>
-                                    <input ref="benefitsInput" type="file" accept="image/*" class="d-none"
-                                        @change="onBenefitsPicked">
-                                </div>
-                            </div>
-                        </v-card-text>
-                    </v-card>
-
-                    <v-card>
-                        <v-card-title>Benefits list</v-card-title>
-                        <v-card-text>
-                            <p class="text-caption text-medium-emphasis mb-3">
-                                A bullet list of rider-facing reasons to ride RidePass tracks. Edited as HTML.
-                            </p>
-                            <RichTextEditor v-model="benefitsHtml"></RichTextEditor>
-                        </v-card-text>
-                    </v-card>
-                </v-window-item>
+                <!-- The Benefits ("Why Tracks love RidePass") block moved to the
+                     For Tracks editor (Super Admin -> For Tracks page). -->
 
                 <!-- ── TESTIMONIALS: list CRUD ──────────────────────────────── -->
                 <v-window-item value="testimonials">
@@ -218,6 +188,30 @@
                     <v-card>
                         <v-card-title>Nav bar</v-card-title>
                         <v-card-text>
+                            <div class="mb-4">
+                                <div class="text-subtitle-2 mb-1">Logo</div>
+                                <div class="text-caption text-medium-emphasis mb-2">
+                                    Shown in the top nav bar on ridepass.io. A PNG with a transparent
+                                    background works best; it's capped at ~40px tall. Leave empty to
+                                    show the site name as text.
+                                </div>
+                                <div class="d-flex ga-3 align-center">
+                                    <div class="logo-preview">
+                                        <img v-if="branding.logoUrl" :src="absoluteUrl(branding.logoUrl)" alt="Logo preview" />
+                                        <span v-else class="text-caption text-medium-emphasis">No logo</span>
+                                    </div>
+                                    <div class="d-flex flex-column ga-2">
+                                        <v-btn variant="tonal" size="small" prepend-icon="mdi-upload"
+                                            :loading="uploadingLogo" @click="pickLogo">Upload</v-btn>
+                                        <v-btn v-if="branding.logoUrl" variant="text" size="small" color="error"
+                                            prepend-icon="mdi-delete" @click="removeLogo">Remove</v-btn>
+                                        <input ref="logoInput" type="file" accept="image/*" class="d-none"
+                                            @change="onLogoPicked">
+                                    </div>
+                                </div>
+                            </div>
+                            <v-divider class="mb-4"></v-divider>
+
                             <p class="text-caption text-medium-emphasis mb-4">
                                 Set the background color for the top app bar. The home/landing
                                 page can use a different color from the rest of the site, e.g.
@@ -368,6 +362,7 @@ const benefitsHtml = ref('')
 
 const uploadingHero = ref(false)
 const uploadingBenefits = ref(false)
+const uploadingLogo = ref(false)
 const uploadingTestimonialPhoto = ref(false)
 
 // Available tracks for the featured-tracks picker. Loaded once; small enough
@@ -384,6 +379,7 @@ const trackOptions = computed<TrackOption[]>(() =>
     })))
 const heroInput = ref<HTMLInputElement | null>(null)
 const benefitsInput = ref<HTMLInputElement | null>(null)
+const logoInput = ref<HTMLInputElement | null>(null)
 const testimonialPhotoInput = ref<HTMLInputElement | null>(null)
 
 // Testimonial editor state
@@ -515,6 +511,42 @@ async function removeHero() {
         await service.deleteImage('hero')
         await load()
         flash('Hero image removed.')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Remove failed.', 'error')
+    }
+}
+
+function pickLogo() { logoInput.value?.click() }
+async function onLogoPicked(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    uploadingLogo.value = true
+    try {
+        await service.uploadImage('logo', file)
+        await load()
+        // Refresh the global platform-branding store so the nav bar at the top
+        // of this page picks up the new logo without a hard reload.
+        await loadPlatformBranding()
+        flash('Logo uploaded.')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Upload failed.', 'error')
+    } finally {
+        uploadingLogo.value = false
+        if (logoInput.value) logoInput.value.value = ''
+    }
+}
+async function removeLogo() {
+    const ok = await confirm({
+        title: 'Remove logo?',
+        message: 'The nav bar will show the site name as text instead.',
+        confirmText: 'Remove', confirmColor: 'error',
+    })
+    if (!ok) return
+    try {
+        await service.deleteImage('logo')
+        await load()
+        await loadPlatformBranding()
+        flash('Logo removed.')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Remove failed.', 'error')
     }
@@ -722,5 +754,22 @@ function brandingToForm(b: PlatformBranding): SavePlatformBranding {
     background-size: cover;
     background-position: center;
     border: 1px solid rgba(0, 0, 0, 0.1);
+}
+/* Dark backing mimics the nav bar so a white / transparent logo reads true. */
+.logo-preview {
+    width: 200px;
+    height: 56px;
+    border-radius: 6px;
+    background-color: #2a2f3a;
+    border: 1px dashed rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+}
+.logo-preview img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
 }
 </style>

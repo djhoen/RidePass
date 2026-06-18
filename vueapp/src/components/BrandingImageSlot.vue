@@ -14,7 +14,7 @@
 import { ref } from 'vue'
 import { TenantService } from '@/services/TenantService'
 
-type ImageKind = 'logo' | 'favicon' | 'hero' | 'secondaryHero' | 'benefits'
+type ImageKind = 'logo' | 'logoWhite' | 'favicon' | 'hero' | 'secondaryHero' | 'benefits'
 
 const props = defineProps<{
     label: string

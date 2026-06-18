@@ -25,6 +25,9 @@ export interface EventDiscoverItem {
     tenantDisplayName: string
     tenantCity: string | null
     tenantRegion: string | null
+    // Logo overlaid bottom-right on the card photo: white logo when set, else the
+    // regular logo. Null = no overlay.
+    tenantLogoUrl: string | null
     latitude: number | null
     longitude: number | null
     distanceKm: number | null
@@ -52,6 +55,8 @@ export interface DiscoverQuery {
     // System event-type codes to include (e.g. ['race','open_ride']). Omitted /
     // empty = no type filter.
     eventTypeCodes?: string[] | null
+    // System event-type codes to exclude (deny-list, e.g. ['private_booking','lesson']).
+    excludeCodes?: string[] | null
     // Restrict to these tracks. Omitted / empty = all tracks.
     tenantIds?: string[] | null
 }
@@ -96,9 +101,12 @@ export class DiscoverService {
 
     // Selectable event types. `onlyCodes` restricts the result to an allow-list
     // (the apex page passes its 3 permitted codes).
-    listEventTypes(onlyCodes?: string[]) {
+    listEventTypes(onlyCodes?: string[], excludeCodes?: string[]) {
+        const params: Record<string, string[]> = {}
+        if (onlyCodes && onlyCodes.length > 0) params.onlyCodes = onlyCodes
+        if (excludeCodes && excludeCodes.length > 0) params.excludeCodes = excludeCodes
         return axios.get<{ data: EventTypeOption[] }>(`${this.apiUrl}/Discover/EventTypes`, {
-            params: onlyCodes && onlyCodes.length > 0 ? { onlyCodes } : {},
+            params,
             paramsSerializer: { indexes: null },
         })
     }

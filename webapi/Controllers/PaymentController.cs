@@ -12,7 +12,6 @@ namespace webapi.Controllers
     public class PaymentController : ControllerBase
     {
         private readonly IPaymentProvider _payments;
-        private readonly IPassPurchaseRepository _passPurchases;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IDisputeRepository _disputes;
         private readonly ITenantLedgerRepository _ledger;
@@ -26,7 +25,6 @@ namespace webapi.Controllers
 
         public PaymentController(
             IPaymentProvider payments,
-            IPassPurchaseRepository passPurchases,
             IEventTicketPurchaseRepository ticketPurchases,
             IDisputeRepository disputes,
             ITenantLedgerRepository ledger,
@@ -38,7 +36,6 @@ namespace webapi.Controllers
             ILogger<PaymentController> logger)
         {
             _payments = payments;
-            _passPurchases = passPurchases;
             _ticketPurchases = ticketPurchases;
             _disputes = disputes;
             _ledger = ledger;
@@ -147,12 +144,10 @@ namespace webapi.Controllers
             }
 
             // A counter-cart PI may have many line items; back them all out on a lost dispute.
-            var passes = await _passPurchases.ListByStripePaymentIntentId(info.PaymentIntentId);
             var tickets = await _ticketPurchases.ListByStripePaymentIntentId(info.PaymentIntentId);
 
-            Guid? tenantId = passes.FirstOrDefault()?.TenantId ?? tickets.FirstOrDefault()?.TenantId;
-            Guid? passId = passes.FirstOrDefault()?.Id;
-            Guid? ticketId = passes.Count == 0 ? tickets.FirstOrDefault()?.Id : null;
+            Guid? tenantId = tickets.FirstOrDefault()?.TenantId;
+            Guid? ticketId = tickets.FirstOrDefault()?.Id;
 
             if (tenantId is null)
             {
@@ -171,7 +166,6 @@ namespace webapi.Controllers
             await _disputes.Upsert(new Dispute
             {
                 TenantId = tenantId.Value,
-                PassPurchaseId = passId,
                 EventTicketPurchaseId = ticketId,
                 StripeDisputeId = info.DisputeId,
                 StripePaymentIntentId = info.PaymentIntentId,
@@ -208,10 +202,6 @@ namespace webapi.Controllers
             // mirroring the original sale, so tenant balance + lifetime totals stay correct.
             if (info.Status == "lost")
             {
-                foreach (var dp in passes)
-                {
-                    await WriteDisputeLossEntry(dp.TenantId, "pass", dp.Id, info.DisputeId);
-                }
                 foreach (var t in tickets)
                 {
                     await WriteDisputeLossEntry(t.TenantId, "event_ticket", t.Id, info.DisputeId);
@@ -237,14 +227,10 @@ namespace webapi.Controllers
                 // partial unique index on (tenant_id, source_kind, source_id) where entry_kind='dispute_fee'.
                 if (_disputeFeeCents > 0)
                 {
-                    var firstDp = passes.FirstOrDefault();
                     var firstTicket = tickets.FirstOrDefault();
-                    string? srcKind = null; Guid? srcId = null; string? piId = null;
-                    if (firstDp is not null) { srcKind = "pass"; srcId = firstDp.Id; piId = firstDp.StripePaymentIntentId; }
-                    else if (firstTicket is not null) { srcKind = "event_ticket"; srcId = firstTicket.Id; piId = firstTicket.StripePaymentIntentId; }
-                    if (srcKind is not null && srcId is not null)
+                    if (firstTicket is not null)
                     {
-                        await WriteDisputeFeeEntry(tenantId.Value, srcKind, srcId.Value, piId, info.DisputeId);
+                        await WriteDisputeFeeEntry(tenantId.Value, "event_ticket", firstTicket.Id, firstTicket.StripePaymentIntentId, info.DisputeId);
                     }
                 }
             }

@@ -17,7 +17,6 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly IWaiverRepository _waivers;
         private readonly IMembershipRepository _memberships;
-        private readonly IPassPurchaseRepository _passes;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly ISeasonPassRepository _seasonPasses;
         private readonly ISmsSender _sms;
@@ -30,7 +29,6 @@ namespace webapi.Controllers
             IEventRepository events,
             IWaiverRepository waivers,
             IMembershipRepository memberships,
-            IPassPurchaseRepository passes,
             IEventTicketPurchaseRepository tickets,
             ISeasonPassRepository seasonPasses,
             ISmsSender sms,
@@ -42,7 +40,6 @@ namespace webapi.Controllers
             _events = events;
             _waivers = waivers;
             _memberships = memberships;
-            _passes = passes;
             _tickets = tickets;
             _seasonPasses = seasonPasses;
             _sms = sms;
@@ -63,34 +60,26 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             var tz = _tenantContext.Tenant.Timezone;
 
-            var pass = await _reports.GetPassTotals(tenantId, fromUtc, toUtc);
             var ticket = await _reports.GetTicketTotals(tenantId, fromUtc, toUtc);
             var riders = await _reports.GetUniqueRiders(tenantId, fromUtc, toUtc);
             var disputes = await _reports.GetDisputeCount(tenantId, fromUtc, toUtc);
             var daily = await _reports.GetDailyRevenue(tenantId, fromUtc, toUtc, tz);
-            var topProducts = await _reports.GetTopPassProducts(tenantId, fromUtc, toUtc);
             var topEvents = await _reports.GetTopEvents(tenantId, fromUtc, toUtc);
 
             var summary = new TenantReportSummary
             {
                 FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
                 ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
-                TotalRevenueCents = pass.RevenueCents + ticket.RevenueCents,
-                PassesSold = pass.SoldCount,
+                TotalRevenueCents = ticket.RevenueCents,
+                PassesSold = 0,
                 TicketsSold = ticket.SoldCount,
                 UniqueRiders = riders,
-                RefundedCount = pass.RefundedCount + ticket.RefundedCount,
-                CancelledCount = pass.CancelledCount + ticket.CancelledCount,
+                RefundedCount = ticket.RefundedCount,
+                CancelledCount = ticket.CancelledCount,
                 DisputedCount = disputes,
-                RefundedAmountCents = pass.RefundedCents + ticket.RefundedCents,
+                RefundedAmountCents = ticket.RefundedCents,
                 DailyRevenue = daily.Select(MapDaily).ToList(),
-                TopPassProducts = topProducts.Select(p => new TopProductDto
-                {
-                    ProductId = p.ProductId,
-                    ProductName = p.ProductName,
-                    SoldCount = p.SoldCount,
-                    RevenueCents = p.RevenueCents,
-                }).ToList(),
+                TopPassProducts = new List<TopProductDto>(),
                 TopEvents = topEvents.Select(e => new TopEventDto
                 {
                     EventId = e.EventId,
@@ -145,6 +134,7 @@ namespace webapi.Controllers
                         PurchaserPhone = r.PurchaserPhone,
                         ItemName = r.ItemName,
                         TierKind = r.TierKind,
+                        TierAudience = r.TierAudience,
                         RaceNumber = r.RaceNumber,
                         UserRaceNumber = r.UserRaceNumber,
                         Hometown = r.Hometown,
@@ -175,10 +165,6 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             switch (req.Source)
             {
-                case "pass":
-                    if (req.CheckedIn) await _passes.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
-                    else await _passes.UndoRedeemed(purchaseId, tenantId);
-                    break;
                 case "event_ticket":
                     if (req.CheckedIn) await _tickets.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
                     else await _tickets.UndoRedeemed(purchaseId, tenantId);

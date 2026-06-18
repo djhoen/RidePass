@@ -19,7 +19,6 @@ namespace webapi.Controllers
     {
         private readonly ISeasonPassRepository _passes;
         private readonly IEventRepository _events;
-        private readonly IPassPurchaseRepository _passPurchases;
         private readonly IUserRepository _users;
         private readonly IPaymentProvider _payments;
         private readonly ICouponRepository _coupons;
@@ -32,7 +31,6 @@ namespace webapi.Controllers
         public SeasonPassController(
             ISeasonPassRepository passes,
             IEventRepository events,
-            IPassPurchaseRepository passPurchases,
             IUserRepository users,
             IPaymentProvider payments,
             ICouponRepository coupons,
@@ -44,7 +42,6 @@ namespace webapi.Controllers
         {
             _passes = passes;
             _events = events;
-            _passPurchases = passPurchases;
             _users = users;
             _payments = payments;
             _coupons = coupons;
@@ -190,19 +187,6 @@ namespace webapi.Controllers
             if (_tenantContext.Tenant.RequireEmergencyContact && string.IsNullOrWhiteSpace(user.EmergencyContactPhone))
             {
                 return new ApiResponses().BadRequestResult("Please add an emergency contact on your profile before purchasing.");
-            }
-
-            // Membership gate. Season passes are rider-audience.
-            if (_tenantContext.Tenant.MembershipRequiredForRiders
-                && _tenantContext.Tenant.MembershipEnabled
-                && _tenantContext.Tenant.MembershipPriceCents > 0)
-            {
-                var active = await _memberships.GetActive(userId, _tenantContext.TenantId, DateTime.UtcNow);
-                if (active is null)
-                {
-                    return new ApiResponses().BadRequestResult(
-                        $"Participants are required to have an active {_tenantContext.Tenant.MembershipName}. ");
-                }
             }
 
             var product = await _passes.GetProduct(request.ProductId, _tenantContext.TenantId);
@@ -405,13 +389,12 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("This pass has no credits remaining.");
             }
 
-            // Check capacity (day-pass + season-pass reservations).
+            // Check capacity (season-pass reservations against the event capacity).
             if (ev.Capacity.HasValue)
             {
-                var passReserved = await _passPurchases.ActiveSpotsReservedForEvent(request.EventId);
                 var seasonReserved = (await _passes.ActiveReservationsForEvents(new[] { request.EventId }))
                     .GetValueOrDefault(request.EventId, 0);
-                if (passReserved + seasonReserved >= ev.Capacity.Value)
+                if (seasonReserved >= ev.Capacity.Value)
                 {
                     return new ApiResponses().BadRequestResult("This event is sold out.");
                 }

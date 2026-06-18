@@ -9,6 +9,8 @@ namespace Services.Repositories.Data.TenantData
         public string? Tagline { get; set; }
         public string ThemeMode { get; set; } = "light";
         public string? LogoUrl { get; set; }
+        // White logo variant, for overlay on photos (apex event cards).
+        public string? LogoWhiteUrl { get; set; }
         public string? FaviconUrl { get; set; }
         public string? HeroImageUrl { get; set; }
         public string? SecondaryHeroUrl { get; set; }

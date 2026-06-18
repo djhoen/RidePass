@@ -11,6 +11,12 @@ export class UserService {
         return axios.post(`${this.apiUrl}/User/Login`, req);
     }
 
+    // Inline-checkout helper: does an account already exist for this email? Drives the
+    // "want to log in?" prompt without bouncing the buyer to a login page.
+    async emailExists(email: string) {
+        return axios.get<{ data: { exists: boolean } }>(`${this.apiUrl}/User/EmailExists`, { params: { email } });
+    }
+
     async createAccount(req: any) {
         return axios.post(`${this.apiUrl}/User/CreateAccount`, req);
     }

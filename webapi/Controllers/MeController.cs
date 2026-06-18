@@ -16,8 +16,6 @@ namespace webapi.Controllers
     [Authorize]
     public class MeController : ControllerBase
     {
-        private readonly IPassPurchaseRepository _passes;
-        private readonly IPassProductRepository _passProducts;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventTicketTierRepository _ticketTiers;
         private readonly ICouponRepository _coupons;
@@ -29,12 +27,12 @@ namespace webapi.Controllers
         private readonly IAuditLogger _audit;
         private readonly Services.Waitlist.IWaitlistPromoter _waitlistPromoter;
         private readonly ISmtpEmailer _emailer;
+        private readonly IEmailSuppressionRepository _suppression;
+        private readonly IConfiguration _config;
         private readonly ILogger<MeController> _logger;
         private readonly ITenantContext _tenantContext;
 
         public MeController(
-            IPassPurchaseRepository passes,
-            IPassProductRepository passProducts,
             IEventTicketPurchaseRepository tickets,
             IEventTicketTierRepository ticketTiers,
             ICouponRepository coupons,
@@ -46,11 +44,11 @@ namespace webapi.Controllers
             IAuditLogger audit,
             Services.Waitlist.IWaitlistPromoter waitlistPromoter,
             ISmtpEmailer emailer,
+            IEmailSuppressionRepository suppression,
+            IConfiguration config,
             ILogger<MeController> logger,
             ITenantContext tenantContext)
         {
-            _passes = passes;
-            _passProducts = passProducts;
             _tickets = tickets;
             _ticketTiers = ticketTiers;
             _coupons = coupons;
@@ -62,6 +60,8 @@ namespace webapi.Controllers
             _audit = audit;
             _waitlistPromoter = waitlistPromoter;
             _emailer = emailer;
+            _suppression = suppression;
+            _config = config;
             _logger = logger;
             _tenantContext = tenantContext;
         }
@@ -91,6 +91,9 @@ namespace webapi.Controllers
                 TenantSubdomain = r.TenantSubdomain,
                 TenantDisplayName = r.TenantDisplayName,
                 ItemName = r.ItemName,
+                ImageUrl = r.ImageUrl,
+                TenantLogoUrl = r.TenantLogoUrl,
+                RegistrationComplete = r.RegistrationComplete,
                 OccursAtUtc = r.OccursAtUtc.HasValue
                     ? DateTime.SpecifyKind(r.OccursAtUtc.Value, DateTimeKind.Utc) : null,
                 ValidToUtc = r.ValidToUtc.HasValue
@@ -101,6 +104,99 @@ namespace webapi.Controllers
             }).ToList();
 
             return new ApiResponses().OkResult(items);
+        }
+
+        // Rider's order detail for one event (entries + gate fees across any order),
+        // opened from the My Upcoming card. User-scoped via the JWT, so it works at the
+        // apex without a tenant context.
+        [HttpGet("EventOrder/{eventId:guid}")]
+        public async Task<IActionResult> GetEventOrder(Guid eventId)
+        {
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+            var rows = await _tickets.ListForUserEvent(userId, eventId);
+            return new ApiResponses().OkResult(new
+            {
+                eventTitle = rows.FirstOrDefault()?.EventTitle,
+                items = rows.Select(r => new
+                {
+                    id = r.Id,
+                    tierName = r.TierName,
+                    kind = r.Kind,
+                    audience = r.Audience,
+                    status = r.Status,
+                    amountCents = r.AmountCents,
+                    basePriceCents = r.BasePriceCents,
+                    raceNumber = r.RaceNumber,
+                    riderName = r.RiderName,
+                    registrationComplete = r.RegistrationComplete,
+                    waiverSigned = r.WaiverSigned,
+                    redemptionToken = r.RedemptionToken,
+                }),
+            });
+        }
+
+        // Resend the rider their consolidated order confirmation (items + total + a single
+        // gate QR) for one event. User-scoped via the JWT so it works at the apex without a
+        // tenant context. The QR encodes any paid token in the order; the gate's scan-one-
+        // redeem-many lookup surfaces the whole order from it.
+        [HttpPost("EventOrder/{eventId:guid}/ResendConfirmation")]
+        public async Task<IActionResult> ResendEventOrderConfirmation(Guid eventId)
+        {
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+            if (!_emailer.IsConfigured)
+            {
+                return new ApiResponses().BadRequestResult("Email isn't configured for this environment.");
+            }
+
+            var rows = await _tickets.ListForOrderConfirmation(userId, eventId);
+            if (rows.Count == 0)
+            {
+                return new ApiResponses().BadRequestResult("No paid items found for this order.");
+            }
+
+            var anchor = rows[0];
+            // Hard-bounced addresses (scope='all') only inflate the account bounce rate; a
+            // transactional receipt doesn't override a dead address. Marketing opt-outs don't apply.
+            if (await _suppression.IsSuppressed(anchor.PurchaserEmail, anchor.TenantId, marketing: false))
+            {
+                return new ApiResponses().BadRequestResult("That email address can't receive mail right now.");
+            }
+
+            var apex = _config["App:RootDomain"] ?? "ridepass.io";
+            var baseUrl = $"https://{anchor.TenantSubdomain}.{apex}";
+            var qrUrl = $"{baseUrl}/api/Qr/{anchor.RedemptionToken}";
+            var profileUrl = $"{baseUrl}/User/MyPasses";
+            var totalCents = rows.Sum(r => r.AmountCents);
+
+            var itemRows = string.Join("", rows.Select(r =>
+                $"<tr><td style=\"padding:4px 12px;border-bottom:1px solid #eee\">{System.Net.WebUtility.HtmlEncode(r.TierName)}</td>" +
+                $"<td style=\"padding:4px 12px;border-bottom:1px solid #eee;text-align:right\">${(r.AmountCents / 100m):0.00}</td></tr>"));
+
+            var firstName = anchor.PurchaserName?.Split(' ').FirstOrDefault() ?? "there";
+            var subject = $"Your {anchor.TenantDisplayName} order confirmation";
+            var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(firstName)},</p>
+<p>Here's your confirmation for <strong>{System.Net.WebUtility.HtmlEncode(anchor.EventTitle)}</strong> from
+<strong>{System.Net.WebUtility.HtmlEncode(anchor.TenantDisplayName)}</strong>.</p>
+<table style=""border-collapse:collapse;min-width:280px"">{itemRows}
+<tr><td style=""padding:6px 12px;font-weight:bold"">Total</td>
+<td style=""padding:6px 12px;text-align:right;font-weight:bold"">${(totalCents / 100m):0.00}</td></tr></table>
+<p style=""margin-top:16px"">Show this QR at the gate to be checked in:</p>
+<p><img src=""{qrUrl}"" alt=""Your QR code"" width=""240"" height=""240"" style=""border:1px solid #ddd;padding:6px;background:#fff"" /></p>
+<p>If your email client doesn't show the image, open <a href=""{qrUrl}"">this link</a> on your phone — it'll display the QR.</p>
+<p>You can also find this order on your account at <a href=""{profileUrl}"">{profileUrl}</a>.</p>";
+
+            var sent = await _emailer.Send(anchor.PurchaserEmail, subject, html);
+            if (!sent)
+            {
+                return new ApiResponses().BadRequestResult("We couldn't send the email just now. Please try again.");
+            }
+            return new ApiResponses().OkResult(new { email = anchor.PurchaserEmail });
         }
 
         [HttpGet("Purchases")]
@@ -117,21 +213,9 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Invalid token.");
             }
 
-            var passes = await _passes.GetForUser(userId, _tenantContext.TenantId);
             var tickets = await _tickets.GetForUser(userId, _tenantContext.TenantId);
 
             var combined = new List<MyPurchaseResponse>();
-            combined.AddRange(passes.Select(dp => new MyPurchaseResponse
-            {
-                Kind = "pass",
-                Id = dp.Id,
-                ItemName = dp.ProductName,
-                ValidOnDate = dp.ValidOnDate,
-                AmountCents = dp.AmountCents,
-                Status = dp.Status,
-                RedemptionToken = dp.RedemptionToken,
-                CreatedAtUtc = DateTime.SpecifyKind(dp.CreatedAt, DateTimeKind.Utc),
-            }));
             combined.AddRange(tickets.Select(tk => new MyPurchaseResponse
             {
                 Kind = "event_ticket",
@@ -248,59 +332,6 @@ namespace webapi.Controllers
         //                  to tenant admins so they can process the cancel manually
         //                  via the existing admin Cancel button.
         // Both paths return the same shape so the frontend can use one handler.
-
-        [HttpPost("Purchases/Pass/{id:guid}/Cancel")]
-        public async Task<IActionResult> CancelMyPass(Guid id, [FromBody] CancelMyPurchaseRequest req, CancellationToken ct)
-        {
-            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
-                return new ApiResponses().BadRequestResult("Invalid token.");
-
-            var purchase = await _passes.GetById(id, _tenantContext.TenantId);
-            if (purchase is null || purchase.PurchaserUserId != userId)
-                return new ApiResponses().NotFoundResult("Purchase not found.");
-            if (purchase.Status != "paid")
-                return new ApiResponses().BadRequestResult($"Cannot cancel a purchase with status '{purchase.Status}'.");
-
-            var tenant = _tenantContext.Tenant;
-            var reason = string.IsNullOrWhiteSpace(req.Reason) ? null : req.Reason.Trim();
-
-            if (!tenant.AllowSelfCancel)
-            {
-                await EmitCancelRequest(tenant.Id, "pass", purchase.Id, purchase.PurchaserName,
-                    purchase.PurchaserEmail, purchase.AmountCents, reason);
-                return new ApiResponses().OkResult(new { id, status = "request_submitted" });
-            }
-
-            var product = await _passProducts.GetById(purchase.ProductId, _tenantContext.TenantId);
-            var refundCents = RefundCalculator.RefundableCents(
-                purchase.AmountCents, purchase.ServiceChargeCents, product?.RiderPaidServiceChargeBps ?? 10000);
-
-            await _passes.Cancel(id, _tenantContext.TenantId, userId, reason);
-            string? refundId = null;
-            if (refundCents > 0 && !string.IsNullOrEmpty(purchase.StripePaymentIntentId))
-            {
-                try
-                {
-                    var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents,
-                        idempotencyKey: $"refund-pass-{id}-{refundCents}", ct: ct);
-                    refundId = refund.RefundId;
-                    await _passes.MarkRefunded(id, $"stripe_refund={refundId} status={refund.Status} amount_cents={refundCents}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Stripe refund failed during self-cancel of pass {Id}", id);
-                    // Still leave the row cancelled — admins can retry the refund manually.
-                }
-            }
-            await _audit.Log("rider.self_cancel", $"Rider cancelled pass — refund ${refundCents/100m:0.00}",
-                "pass_purchase", id, _tenantContext.TenantId, new { reason, refundCents, refundId });
-            if (purchase.EventId.HasValue)
-            {
-                _ = _waitlistPromoter.PromoteNext(purchase.EventId.Value, null);
-            }
-            return new ApiResponses().OkResult(new { id, status = "cancelled", refundCents, refundId });
-        }
 
         [HttpPost("Purchases/Ticket/{id:guid}/Cancel")]
         public async Task<IActionResult> CancelMyTicket(Guid id, [FromBody] CancelMyPurchaseRequest req, CancellationToken ct)

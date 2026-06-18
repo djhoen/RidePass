@@ -31,13 +31,6 @@ namespace Services.Repositories
                        created_at AS activity_at,
                        amount_cents,
                        (status = 'paid')::int AS is_paid
-                FROM pass_purchase
-                WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
-                UNION ALL
-                SELECT purchaser_user_id AS user_id,
-                       created_at AS activity_at,
-                       amount_cents,
-                       (status = 'paid')::int AS is_paid
                 FROM event_ticket_purchase
                 WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
                 UNION ALL
@@ -109,8 +102,6 @@ namespace Services.Repositories
             // have no relationship with.
             const string gateSql = @"
                 SELECT 1 FROM (
-                    SELECT 1 FROM pass_purchase WHERE tenant_id = @tenantId AND purchaser_user_id = @userId
-                    UNION ALL
                     SELECT 1 FROM event_ticket_purchase WHERE tenant_id = @tenantId AND purchaser_user_id = @userId
                     UNION ALL
                     SELECT 1 FROM season_pass_purchase WHERE tenant_id = @tenantId AND purchaser_user_id = @userId
@@ -128,17 +119,6 @@ namespace Services.Repositories
                 FROM users WHERE id = @userId LIMIT 1";
             var user = (await _db.Query<User>(userSql, new { userId })).FirstOrDefault();
             if (user == null) return null;
-
-            const string passSql = @"
-                SELECT id, tenant_id AS TenantId, purchaser_user_id AS PurchaserUserId, product_id AS ProductId,
-                       waiver_signature_id AS WaiverSignatureId, valid_on_date AS ValidOnDate,
-                       amount_cents AS AmountCents, service_charge_cents AS ServiceChargeCents,
-                       status, purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
-                       created_at AS CreatedAt, updated_at AS UpdatedAt
-                FROM pass_purchase
-                WHERE tenant_id = @tenantId AND purchaser_user_id = @userId
-                ORDER BY created_at DESC";
-            var passes = (await _db.Query<PassPurchase>(passSql, new { tenantId, userId })).ToList();
 
             const string eventTicketSql = @"
                 SELECT id, tenant_id AS TenantId, tier_id AS TierId, purchaser_user_id AS PurchaserUserId,
@@ -177,7 +157,6 @@ namespace Services.Repositories
             return new CustomerDetail
             {
                 User = user,
-                Passes = passes,
                 EventTickets = eventTickets,
                 SeasonPasses = seasonPasses,
                 WaiverSignatures = waivers,
@@ -201,11 +180,6 @@ namespace Services.Repositories
 
             var sql = $@"
                 WITH paid_activity AS (
-                    SELECT purchaser_user_id AS user_id, amount_cents
-                    FROM pass_purchase
-                    WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
-                      AND status = 'paid' AND created_at >= @since
-                    UNION ALL
                     SELECT purchaser_user_id AS user_id, amount_cents
                     FROM event_ticket_purchase
                     WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL

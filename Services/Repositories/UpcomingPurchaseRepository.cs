@@ -34,49 +34,36 @@ namespace Services.Repositories
         public async Task<List<UpcomingPurchaseRow>> ListForUser(Guid userId)
         {
             const string sql = @"
-                -- Event tickets: future events the rider holds a paid tier
-                -- ticket for. Joins through tier → event for the start time.
+                -- Event tickets: ONE row per event the rider holds paid tickets for
+                -- (race entries + gate fees collapse into a single event card). Past +
+                -- future both come back; the UI splits them with a toggle. Cover image
+                -- is the event's, falling back to its event-type default.
                 SELECT
                     'event_ticket'::text                    AS Kind,
-                    t.id                                    AS Id,
+                    e.id                                    AS Id,
                     t.tenant_id                             AS TenantId,
                     ten.subdomain                           AS TenantSubdomain,
                     ten.display_name                        AS TenantDisplayName,
                     e.title                                 AS ItemName,
-                    e.starts_at_utc                         AS OccursAtUtc,
+                    COALESCE(e.image_url, et.image_url)     AS ImageUrl,
+                    COALESCE(tb.logo_white_url, tb.logo_url) AS TenantLogoUrl,
+                    bool_and(t.registration_complete)       AS RegistrationComplete,
+                    e.starts_at                             AS OccursAtUtc,
                     NULL::timestamptz                       AS ValidToUtc,
-                    t.amount_cents                          AS AmountCents,
-                    t.redemption_token::text                AS RedemptionToken,
-                    t.created_at                            AS CreatedAtUtc
+                    SUM(t.amount_cents)::int                AS AmountCents,
+                    MIN(t.redemption_token::text)           AS RedemptionToken,
+                    MIN(t.created_at)                       AS CreatedAtUtc
                 FROM event_ticket_purchase t
                 JOIN event_ticket_tier tt ON tt.id = t.tier_id
                 JOIN event e              ON e.id  = tt.event_id
+                JOIN tenant_event_type et ON et.id = e.event_type_id
                 JOIN tenant ten           ON ten.id = t.tenant_id
+                LEFT JOIN tenant_branding tb ON tb.tenant_id = ten.id
                 WHERE t.purchaser_user_id = @userId
                   AND t.status = 'paid'
-                  AND e.starts_at_utc > now()
-
-                UNION ALL
-
-                -- Day passes: valid for a specific calendar date.
-                SELECT
-                    'pass'::text,
-                    p.id,
-                    p.tenant_id,
-                    ten.subdomain,
-                    ten.display_name,
-                    pr.name,
-                    p.valid_on_date::timestamptz            AS OccursAtUtc,
-                    NULL::timestamptz,
-                    p.amount_cents,
-                    p.redemption_token::text,
-                    p.created_at
-                FROM pass_purchase p
-                JOIN pass_product pr ON pr.id = p.product_id
-                JOIN tenant ten      ON ten.id = p.tenant_id
-                WHERE p.purchaser_user_id = @userId
-                  AND p.status = 'paid'
-                  AND p.valid_on_date >= current_date
+                GROUP BY e.id, e.title, e.starts_at, e.image_url, et.image_url,
+                         tb.logo_white_url, tb.logo_url,
+                         t.tenant_id, ten.subdomain, ten.display_name
 
                 UNION ALL
 
@@ -89,6 +76,9 @@ namespace Services.Repositories
                     ten.subdomain,
                     ten.display_name,
                     sp.name,
+                    NULL::text,
+                    NULL::text,
+                    true,
                     NULL::timestamptz,
                     (s.valid_to_date + INTERVAL '1 day')::timestamptz AS ValidToUtc,
                     s.amount_cents,
@@ -113,6 +103,9 @@ namespace Services.Repositories
                     ten.subdomain,
                     ten.display_name,
                     m.name_at_purchase,
+                    NULL::text,
+                    NULL::text,
+                    true,
                     NULL::timestamptz,
                     m.valid_to_utc,
                     m.amount_cents,

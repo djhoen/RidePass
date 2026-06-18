@@ -21,7 +21,7 @@ namespace webapi.Controllers
     {
         private static readonly HashSet<string> AllowedImageKinds = new(StringComparer.Ordinal)
         {
-            "hero", "benefits", "testimonial"
+            "logo", "hero", "benefits", "testimonial"
         };
 
         private static readonly Dictionary<string, string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -79,6 +79,7 @@ namespace webapi.Controllers
             var merged = new PlatformBranding
             {
                 Id = 1,
+                LogoUrl = existing?.LogoUrl,
                 HeroImageUrl = existing?.HeroImageUrl,
                 BenefitsImageUrl = existing?.BenefitsImageUrl,
 
@@ -93,10 +94,16 @@ namespace webapi.Controllers
                 StatsPriceLabel = req.StatsPriceLabel,
                 SectionTracksTitle = req.SectionTracksTitle,
                 SectionEventsTitle = req.SectionEventsTitle,
-                SectionBenefitsTitle = req.SectionBenefitsTitle,
+                // Benefits title/html + For Tracks hero now belong to the For Tracks page
+                // (edited via its own endpoint); preserve them here since the home-page
+                // save form no longer posts them.
+                SectionBenefitsTitle = existing?.SectionBenefitsTitle,
                 SectionTestimonialsTitle = req.SectionTestimonialsTitle,
                 SectionTracksNearYouTitle = req.SectionTracksNearYouTitle,
-                BenefitsHtml = req.BenefitsHtml,
+                BenefitsHtml = existing?.BenefitsHtml,
+                ForTracksHeroEyebrow = existing?.ForTracksHeroEyebrow,
+                ForTracksHeroHeadline = existing?.ForTracksHeroHeadline,
+                ForTracksHeroSubhead = existing?.ForTracksHeroSubhead,
                 CtaBannerHeadline = req.CtaBannerHeadline,
                 CtaBannerSubhead = req.CtaBannerSubhead,
                 CtaBannerPriceLabel = req.CtaBannerPriceLabel,
@@ -111,6 +118,32 @@ namespace webapi.Controllers
 
             await _branding.Upsert(merged);
             await _audit.Log("platform.branding.save", "Updated landing-page settings",
+                targetKind: "platform_branding", targetId: Guid.Empty);
+
+            return await Get();
+        }
+
+        /// <summary>
+        /// Save the For Tracks (operator-acquisition) page content: hero copy plus
+        /// the "Why Tracks love RidePass" benefits title/html. Narrow on purpose so it
+        /// can't overwrite the apex home-page fields. The benefits image is uploaded
+        /// through the shared "benefits" image endpoint.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("ForTracks")]
+        public async Task<IActionResult> SaveForTracks([FromBody] SaveForTracksRequest req)
+        {
+            if (req is null) return new ApiResponses().BadRequestResult("Body required.");
+
+            var existing = await _branding.Get() ?? new PlatformBranding { Id = 1 };
+            existing.ForTracksHeroEyebrow = req.HeroEyebrow;
+            existing.ForTracksHeroHeadline = req.HeroHeadline;
+            existing.ForTracksHeroSubhead = req.HeroSubhead;
+            existing.SectionBenefitsTitle = req.BenefitsTitle;
+            existing.BenefitsHtml = req.BenefitsHtml;
+
+            await _branding.UpdateForTracks(existing);
+            await _audit.Log("platform.fortracks.save", "Updated For Tracks page content",
                 targetKind: "platform_branding", targetId: Guid.Empty);
 
             return await Get();
@@ -136,10 +169,15 @@ namespace webapi.Controllers
             await using var stream = file.OpenReadStream();
             var newUrl = await _imageStorage.SavePlatformAsync(stream, kind, ext, ct);
 
-            if (kind == "hero" || kind == "benefits")
+            if (kind == "logo" || kind == "hero" || kind == "benefits")
             {
                 var existing = await _branding.Get();
-                var oldUrl = kind == "hero" ? existing?.HeroImageUrl : existing?.BenefitsImageUrl;
+                var oldUrl = kind switch
+                {
+                    "logo"     => existing?.LogoUrl,
+                    "hero"     => existing?.HeroImageUrl,
+                    _          => existing?.BenefitsImageUrl,
+                };
                 await _branding.UpdateImageUrl(kind, newUrl);
                 if (!string.IsNullOrEmpty(oldUrl))
                 {
@@ -157,11 +195,16 @@ namespace webapi.Controllers
         [HttpDelete("Image/{kind}")]
         public async Task<IActionResult> DeleteImage(string kind, CancellationToken ct)
         {
-            if (kind != "hero" && kind != "benefits")
+            if (kind != "logo" && kind != "hero" && kind != "benefits")
                 return new ApiResponses().BadRequestResult($"Invalid image kind: {kind}.");
 
             var existing = await _branding.Get();
-            var oldUrl = kind == "hero" ? existing?.HeroImageUrl : existing?.BenefitsImageUrl;
+            var oldUrl = kind switch
+            {
+                "logo"     => existing?.LogoUrl,
+                "hero"     => existing?.HeroImageUrl,
+                _          => existing?.BenefitsImageUrl,
+            };
             await _branding.UpdateImageUrl(kind, null);
             if (!string.IsNullOrEmpty(oldUrl))
             {
@@ -288,6 +331,7 @@ namespace webapi.Controllers
             b ??= new PlatformBranding { Id = 1 };
             return new PlatformBrandingResponse
             {
+                LogoUrl = b.LogoUrl,
                 HeroImageUrl = b.HeroImageUrl,
                 HeroHeadline = b.HeroHeadline,
                 HeroSubhead = b.HeroSubhead,
@@ -315,6 +359,9 @@ namespace webapi.Controllers
                 NavBarTextColor = b.NavBarTextColor,
                 NavBarHomeColor = b.NavBarHomeColor,
                 NavBarHomeTextColor = b.NavBarHomeTextColor,
+                ForTracksHeroEyebrow = b.ForTracksHeroEyebrow,
+                ForTracksHeroHeadline = b.ForTracksHeroHeadline,
+                ForTracksHeroSubhead = b.ForTracksHeroSubhead,
                 Testimonials = testimonials.Select(ToTestimonialResponse).ToList(),
             };
         }

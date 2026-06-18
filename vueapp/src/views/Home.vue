@@ -62,7 +62,7 @@
                     <div class="d-flex align-center mb-4 ga-2">
                         <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('events', 'Upcoming events') }}</h2>
                         <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">View all events</v-btn>
+                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">View all events</v-btn>
                     </div>
                     <v-row v-if="apexEvents.length > 0" dense>
                         <v-col v-for="e in apexEvents" :key="e.eventId" cols="12" sm="6" md="3">
@@ -76,6 +76,8 @@
                                         <div class="apex-event-day">{{ formatApexEventDay(e.startsAtUtc) }}</div>
                                         <div class="apex-event-month">{{ formatApexEventMonth(e.startsAtUtc) }}</div>
                                     </div>
+                                    <img v-if="e.tenantLogoUrl" class="apex-event-logo"
+                                        :src="absoluteUrl(e.tenantLogoUrl)" :alt="e.tenantDisplayName" />
                                 </div>
                                 <v-card-text class="pa-4">
                                     <div class="text-h6 font-display-upright mb-1">{{ e.title }}</div>
@@ -103,58 +105,27 @@
                         <v-spacer></v-spacer>
                         <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">See all tracks</v-btn>
                     </div>
-                    <v-row v-if="apexFeaturedTracks.length > 0" dense>
-                        <v-col v-for="t in apexFeaturedTracks" :key="t.tenantId" cols="12" md="4">
-                            <!-- Whole card is clickable, opens the tenant subdomain. -->
-                            <v-card class="h-100 apex-track-card" :href="tenantUrl(t.subdomain)" rel="noopener">
-                                <!-- Cover image is the tenant's hero photo; falls back to a
-                                     soft dark gradient placeholder when none is set. -->
-                                <div class="apex-track-image" :style="apexTrackImageStyle(t)"></div>
-                                <v-card-text class="pa-4">
-                                    <div class="text-h5 font-display-upright mb-1">{{ t.displayName }}</div>
-                                    <div class="text-body-2 text-medium-emphasis d-flex align-center ga-1">
-                                        <v-icon icon="mdi-map-marker" size="14"></v-icon>
-                                        <span>
-                                            <template v-if="t.city || t.region">
-                                                <span v-if="t.city">{{ t.city }}</span><span v-if="t.city && t.region">, </span><span v-if="t.region">{{ t.region }}</span>
-                                            </template>
-                                            <template v-else>Location not set</template>
-                                        </span>
-                                    </div>
-                                </v-card-text>
-                            </v-card>
-                        </v-col>
-                    </v-row>
-                    <v-card v-else variant="outlined">
-                        <v-card-text class="text-center text-medium-emphasis py-8">
-                            No tracks on the platform yet.
-                        </v-card-text>
+                    <TrackCardGrid :tracks="apexFeaturedTracks" empty-text="No tracks on the platform yet." />
+                </section>
+
+                <!-- The "Why Tracks love RidePass" benefits band moved to the For
+                     Tracks page (/ForTracks), edited under Super Admin -> For Tracks. -->
+
+                <!-- ── TRACKS NEAR YOU (lower-48 map, auto-pinned from lat/lng) ── -->
+                <section class="my-12">
+                    <div class="d-flex align-center mb-4 ga-2">
+                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracksNearYou', 'Tracks near you') }}</h2>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">Browse all tracks</v-btn>
+                    </div>
+                    <!-- overflow visible so the hover preview card can extend past the
+                         map's border instead of being clipped. -->
+                    <v-card variant="outlined" class="pa-4" style="overflow: visible">
+                        <TracksMap :tracks="apexTracks" @select="openTrack" />
                     </v-card>
                 </section>
 
-                <!-- ── WHY RIDE WITH RIDEPASS (repurposed benefits band) ───────
-                     Dark navy panel pairs a left-hand photo with a bullet list
-                     of rider-facing reasons to ride RidePass tracks. Hidden
-                     entirely when the admin clears both the copy and the photo. -->
-                <section v-if="apexBenefitsHtml || apexBenefitsImageUrl" class="apex-benefits my-12">
-                    <v-row no-gutters>
-                        <!-- Image: 1/3 of the band on desktop, hidden on mobile. -->
-                        <v-col cols="12" md="4" class="d-none d-md-block">
-                            <div v-if="apexBenefitsImageUrl" class="apex-benefits-photo"
-                                :style="{ backgroundImage: `url(${apexBenefitsImageUrl})` }"></div>
-                            <div v-else class="apex-benefits-photo apex-benefits-photo--placeholder"></div>
-                        </v-col>
-                        <v-col cols="12" md="8" class="apex-benefits-content">
-                            <h2 class="text-h4 mb-4 font-display">{{ apexSectionTitle('benefits', 'Why ride with RidePass') }}</h2>
-                            <div v-if="apexBenefitsHtml" class="apex-benefits-list" v-html="apexBenefitsHtml"></div>
-                            <div class="mt-6">
-                                <v-btn color="primary" size="large" to="/ForTracks">See more</v-btn>
-                            </div>
-                        </v-col>
-                    </v-row>
-                </section>
-
-                <!-- ── TESTIMONIALS ────────────────────────────────────────── -->
+                <!-- ── TESTIMONIALS (kept last on the apex home) ───────────────── -->
                 <section v-if="apexTestimonials.length > 0" class="my-12">
                     <h2 class="text-h4 font-weight-bold text-center mb-6 font-display">
                         {{ apexSectionTitle('testimonials', 'What riders are saying') }}
@@ -180,20 +151,6 @@
                             </v-card>
                         </v-col>
                     </v-row>
-                </section>
-
-                <!-- ── TRACKS NEAR YOU (lower-48 map, auto-pinned from lat/lng) ── -->
-                <section class="my-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracksNearYou', 'Tracks near you') }}</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">Browse all tracks</v-btn>
-                    </div>
-                    <!-- overflow visible so the hover preview card can extend past the
-                         map's border instead of being clipped. -->
-                    <v-card variant="outlined" class="pa-4" style="overflow: visible">
-                        <TracksMap :tracks="apexTracks" @select="openTrack" />
-                    </v-card>
                 </section>
             </v-container>
 
@@ -273,8 +230,7 @@
                                         From <strong>${{ (e.minTicketPriceCents / 100).toFixed(2) }}</strong>
                                     </div>
                                     <div v-if="e.hasRaceEntryTiers" class="d-flex flex-wrap ga-2 mt-auto pt-3">
-                                        <v-btn size="small" color="deep-orange"
-                                            @click.stop.prevent="openBuy(e, 'race_entry')">
+                                        <v-btn size="small" color="deep-orange" :to="`/Event/${e.id}`">
                                             Race Entry
                                         </v-btn>
                                     </div>
@@ -306,39 +262,10 @@
                     </div>
                 </section>
 
-                <!-- In-page purchase modal — reuses the BuyTicket route's flow component
-                     so admins can update the route page once and both surfaces stay in sync. -->
-                <v-dialog v-model="buyDialog" :max-width="720" scrollable>
-                    <v-card>
-                        <v-card-title class="d-flex align-center">
-                            {{ buyTitle }}
-                            <span v-if="buyEvent" class="text-body-2 text-medium-emphasis ml-2">
-                                — {{ buyEvent.title }}
-                            </span>
-                            <v-spacer></v-spacer>
-                            <v-btn icon="mdi-close" variant="text" size="small" @click="buyDialog = false"></v-btn>
-                        </v-card-title>
-                        <v-card-text class="pa-4">
-                            <BuyAdmissionFlow v-if="buyEvent" :event-id="buyEvent.id"
-                                :event="buyEvent" :kind-filter="buyKindFilter" @completed="onBuyCompleted" />
-                        </v-card-text>
-                    </v-card>
-                </v-dialog>
-
                 <!-- ── 3. Pricing snapshot ─────────────────────────────────────── -->
-                <section v-if="sectionVisible('passes') && (passFromCents !== null || (seasonPassFromCents !== null))" class="my-12">
+                <section v-if="sectionVisible('passes') && seasonPassFromCents !== null" class="my-12">
                     <h2 class="text-h4 font-weight-bold font-display mb-4">Passes</h2>
                     <v-row>
-                        <v-col v-if="passFromCents !== null" cols="12" md="6">
-                            <v-card class="pa-6" variant="outlined">
-                                <h3 class="text-h5 mb-2">Pass</h3>
-                                <p class="text-body-2 text-medium-emphasis mb-4">Single-day access to ride.</p>
-                                <div class="text-h4 font-weight-bold mb-4 font-display">
-                                    From ${{ (passFromCents / 100).toFixed(2) }}
-                                </div>
-                                <v-btn color="primary" to="/Events">Pick an Event</v-btn>
-                            </v-card>
-                        </v-col>
                         <v-col v-if="seasonPassFromCents !== null && branding.seasonPassesEnabled" cols="12" md="6">
                             <v-card class="pa-6" variant="outlined">
                                 <h3 class="text-h5 mb-2">Season Pass</h3>
@@ -474,7 +401,6 @@ import dayjs from 'dayjs'
 import { branding } from '../stores/branding'
 import { EventService, type EventDto } from '../services/EventService'
 import { BlackoutService, type BlackoutDto } from '../services/BlackoutService'
-import { PassService, type PassProduct } from '../services/PassService'
 import { SeasonPassService, type SeasonPassProduct } from '../services/SeasonPassService'
 import { TenantService, type GalleryImage, type TrackGraphic } from '../services/TenantService'
 import { DiscoverService, type TrackDiscoverItem, type EventDiscoverItem } from '../services/DiscoverService'
@@ -482,8 +408,8 @@ import { BlogService, type BlogPostDetail } from '../services/BlogService'
 import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import authHelper from '../helpers/AuthHelper'
-import BuyAdmissionFlow from '@/components/BuyAdmissionFlow.vue'
 import TracksMap from '@/components/TracksMap.vue'
+import TrackCardGrid from '@/components/TrackCardGrid.vue'
 import DOMPurify from 'dompurify'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
@@ -519,7 +445,6 @@ function absoluteUrl(url: string | null | undefined): string {
 
 const eventService = new EventService()
 const blackoutService = new BlackoutService()
-const passService = new PassService()
 const seasonPassService = new SeasonPassService()
 const tenantService = new TenantService()
 const discoverService = new DiscoverService()
@@ -528,7 +453,6 @@ const blogService = new BlogService()
 const featuredPost = ref<BlogPostDetail | null>(null)
 const events = ref<EventDto[]>([])
 const blackouts = ref<BlackoutDto[]>([])
-const passProducts = ref<PassProduct[]>([])
 const seasonPassProducts = ref<SeasonPassProduct[]>([])
 const gallery = ref<GalleryImage[]>([])
 const trackGraphics = ref<TrackGraphic[]>([])
@@ -551,45 +475,21 @@ function openGallery(index: number) {
     galleryDialog.value = true
 }
 
-// In-page Buy Admission dialog state
-const buyDialog = ref(false)
-const buyEvent = ref<EventDto | null>(null)
-const buyKindFilter = ref<'spectator_pass' | 'race_entry' | null>(null)
-const buyTitle = computed(() => {
-    if (buyKindFilter.value === 'race_entry') return 'Buy Race Entry'
-    if (buyKindFilter.value === 'spectator_pass') return 'Buy Ticket'
-    return 'Buy Admission'
-})
-
-function openBuy(e: EventDto, kind: 'spectator_pass' | 'race_entry') {
-    buyEvent.value = e
-    buyKindFilter.value = kind
-    buyDialog.value = true
-}
-
-function onBuyCompleted() {
-    // Reload the event list so spots-left counters and sold-out states refresh.
-    // Leave the dialog open — the user is looking at their QR code.
-    void load()
-}
-
 async function load() {
     if (!branding.loaded || isApex.value) return
     const tz = branding.timezone || 'UTC'
     const fromUtc = dayjs().tz(tz).startOf('day').utc().toISOString()
     const toUtc = dayjs().tz(tz).startOf('day').add(60, 'day').utc().toISOString()
     try {
-        const [e, b, dp, sp, gal, tg] = await Promise.all([
+        const [e, b, sp, gal, tg] = await Promise.all([
             eventService.list(fromUtc, toUtc),
             blackoutService.list(fromUtc, toUtc),
-            passService.listActive().catch(() => ({ data: { data: [] as PassProduct[] } })),
             seasonPassService.listActive().catch(() => ({ data: { data: [] as SeasonPassProduct[] } })),
             tenantService.listGallery().catch(() => ({ data: { data: [] as GalleryImage[] } })),
             tenantService.listTrackGraphics().catch(() => ({ data: { data: [] as TrackGraphic[] } })),
         ])
         events.value = (e.data as any).data
         blackouts.value = (b.data as any).data
-        passProducts.value = (dp.data as any).data
         seasonPassProducts.value = (sp.data as any).data
         gallery.value = (gal.data as any).data
         trackGraphics.value = (tg.data as any).data
@@ -690,8 +590,6 @@ const apexFeaturedTracks = computed(() => {
 })
 
 const apexTestimonials = computed(() => platformBranding.data?.testimonials ?? [])
-const apexBenefitsHtml = computed(() => platformBranding.data?.benefitsHtml?.trim() || '')
-const apexBenefitsImageUrl = computed(() => platformImageUrl(platformBranding.data?.benefitsImageUrl))
 
 function apexSectionTitle(key: 'tracks' | 'events' | 'benefits' | 'testimonials' | 'tracksNearYou', fallback: string): string {
     const b = platformBranding.data
@@ -779,10 +677,6 @@ function apexEventImageStyle(e: EventDiscoverItem) {
 }
 
 // ── Pricing snapshots ────────────────────────────────────────────────────────
-const passFromCents = computed(() => {
-    const prices = passProducts.value.map(p => p.priceCents).filter(p => p > 0)
-    return prices.length > 0 ? Math.min(...prices) : null
-})
 const seasonPassFromCents = computed(() => {
     const prices = seasonPassProducts.value.map(p => p.priceCents).filter(p => p > 0)
     return prices.length > 0 ? Math.min(...prices) : null
@@ -1125,6 +1019,16 @@ function formatTime12(hhmm: string): string {
     height: 160px;
     background-size: cover;
     background-position: center;
+}
+/* Tenant white logo overlaid bottom-right on the event photo. */
+.apex-event-logo {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    max-height: 28px;
+    max-width: 96px;
+    object-fit: contain;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
 .apex-event-datebadge {
     position: absolute;

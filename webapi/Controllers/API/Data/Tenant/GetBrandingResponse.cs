@@ -13,6 +13,7 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? Tagline { get; set; }
         public string ThemeMode { get; set; } = null!;
         public string? LogoUrl { get; set; }
+        public string? LogoWhiteUrl { get; set; }
         public string? FaviconUrl { get; set; }
         public string? HeroImageUrl { get; set; }
         public string? SecondaryHeroUrl { get; set; }

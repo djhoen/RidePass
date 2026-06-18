@@ -22,11 +22,5 @@ namespace Services.Repositories.Interfaces
         /// at the given waiver — so we don't accidentally unhook a different waiver.
         /// </summary>
         Task SetWaiverRole(Guid eventId, Guid tenantId, Guid waiverId, bool asRider, bool asSpectator);
-
-        // ── Day-pass eligibility (which pass products can be redeemed at this event) ──
-        Task<List<Guid>> ListEligiblePassProductIds(Guid eventId);
-        Task<Dictionary<Guid, List<Guid>>> ListEligibilityForEvents(IEnumerable<Guid> eventIds);
-        Task ReplacePassEligibility(Guid eventId, IEnumerable<Guid> productIds);
-        Task<bool> IsPassProductEligible(Guid eventId, Guid productId);
     }
 }

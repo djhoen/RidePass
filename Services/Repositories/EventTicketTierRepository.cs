@@ -7,7 +7,7 @@ namespace Services.Repositories
     public class EventTicketTierRepository : IEventTicketTierRepository
     {
         private const string Columns = @"
-            id, tenant_id AS TenantId, event_id AS EventId, kind, name,
+            id, tenant_id AS TenantId, event_id AS EventId, kind, audience, required, name,
             price_cents AS PriceCents, inventory, sort_order AS SortOrder,
             is_active AS IsActive,
             rider_paid_service_charge_bps AS RiderPaidServiceChargeBps,
@@ -59,12 +59,12 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO event_ticket_tier (
-                    tenant_id, event_id, kind, name, price_cents, inventory, sort_order, is_active,
+                    tenant_id, event_id, kind, audience, required, name, price_cents, inventory, sort_order, is_active,
                     rider_paid_service_charge_bps,
                     bundled_coupon_count, bundled_coupon_discount_kind, bundled_coupon_discount_value,
                     bundled_coupon_scope, bundled_coupon_expires_in_days)
                 VALUES (
-                    @TenantId, @EventId, @Kind, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
+                    @TenantId, @EventId, @Kind, @Audience, @Required, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
                     @RiderPaidServiceChargeBps,
                     @BundledCouponCount, @BundledCouponDiscountKind, @BundledCouponDiscountValue,
                     @BundledCouponScope, @BundledCouponExpiresInDays)
@@ -77,7 +77,8 @@ namespace Services.Repositories
         {
             const string sql = @"
                 UPDATE event_ticket_tier
-                SET kind = @Kind, name = @Name, price_cents = @PriceCents, inventory = @Inventory,
+                SET kind = @Kind, audience = @Audience, required = @Required,
+                    name = @Name, price_cents = @PriceCents, inventory = @Inventory,
                     sort_order = @SortOrder, is_active = @IsActive,
                     rider_paid_service_charge_bps = @RiderPaidServiceChargeBps,
                     bundled_coupon_count = @BundledCouponCount,

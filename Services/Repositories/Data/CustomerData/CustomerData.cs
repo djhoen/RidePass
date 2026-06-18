@@ -23,7 +23,6 @@ namespace Services.Repositories.Data.CustomerData
     public class CustomerDetail
     {
         public User User { get; set; } = null!;
-        public List<PassPurchase> Passes { get; set; } = new();
         public List<EventTicketPurchase> EventTickets { get; set; } = new();
         public List<SeasonPassPurchase> SeasonPasses { get; set; } = new();
         public List<RiderWaiverSignatureWithWaiver> WaiverSignatures { get; set; } = new();

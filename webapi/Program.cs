@@ -55,11 +55,9 @@ builder.Services.AddScoped<IRiderLoampassLinkRepository, RiderLoampassLinkReposi
 builder.Services.AddScoped<ILoampassRedemptionRepository, LoampassRedemptionRepository>();
 builder.Services.AddSingleton<Services.LoamPassMx.ILoamPassMxService, Services.LoamPassMx.LoamPassMxService>();
 builder.Services.AddScoped<IBlackoutRepository, BlackoutRepository>();
-builder.Services.AddScoped<IPassProductRepository, PassProductRepository>();
 builder.Services.AddScoped<ISeasonPassRepository, SeasonPassRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IWaiverRepository, WaiverRepository>();
-builder.Services.AddScoped<IPassPurchaseRepository, PassPurchaseRepository>();
 builder.Services.AddScoped<IEventTicketTierRepository, EventTicketTierRepository>();
 builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRepository>();
 builder.Services.AddScoped<IDisputeRepository, DisputeRepository>();
@@ -185,6 +183,9 @@ builder.Services.AddScoped<IPendingPurchaseRepository, PendingPurchaseRepository
 // Catch-up sweep: finalizes paid-but-pending purchases (missed webhook) and fails
 // abandoned ones so their held inventory is released.
 builder.Services.AddHostedService<webapi.Workers.PendingPurchaseReconciler>();
+// Emails purchasers a "finish your registration" link for paid-but-incomplete event
+// tickets, once the checkout is >1h old and at most once per order.
+builder.Services.AddHostedService<webapi.Workers.RegistrationReminderWorker>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
 builder.Services.AddScoped<IImageStorage, LocalFilesystemImageStorage>();
 

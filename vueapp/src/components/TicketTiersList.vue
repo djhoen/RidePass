@@ -1,59 +1,61 @@
 <template>
     <div>
-        <div v-if="!eventId" class="text-medium-emphasis text-body-2 py-4">
-            Save the event first, then add admissions here.
+        <div v-if="!loading && visibleRows.length === 0" class="text-medium-emphasis text-body-2 py-3">
+            No {{ kindLabelText.toLowerCase() }}s yet.
         </div>
-        <template v-else>
-            <div v-if="!loading && visibleRows.length === 0" class="text-medium-emphasis text-body-2 py-3">
-                No {{ kindLabelText.toLowerCase() }} tiers yet.
-            </div>
 
-            <v-table v-if="visibleRows.length > 0" density="compact">
-                <thead>
+        <v-table v-if="visibleRows.length > 0" density="compact">
+            <thead>
+                <tr>
+                    <th style="width: 36px"></th>
+                    <th>Name</th>
+                    <th v-if="isGate" style="width: 110px">Audience</th>
+                    <th v-if="isGate" style="width: 90px">Required</th>
+                    <th style="width: 100px">Price</th>
+                    <th style="width: 100px">Inventory</th>
+                    <th style="width: 80px">Sold</th>
+                    <th style="width: 80px">Active</th>
+                    <th style="width: 120px" class="text-right"></th>
+                </tr>
+            </thead>
+            <draggable tag="tbody" :list="visibleRows" item-key="id" handle=".drag-handle"
+                :animation="180" ghost-class="drag-ghost" @end="onReorderEnd">
+                <template #item="{ element: t }">
                     <tr>
-                        <th style="width: 36px"></th>
-                        <th>Name</th>
-                        <th style="width: 100px">Price</th>
-                        <th style="width: 100px">Inventory</th>
-                        <th style="width: 90px">Sold</th>
-                        <th style="width: 90px">Active</th>
-                        <th style="width: 120px" class="text-right"></th>
+                        <td class="drag-handle-cell">
+                            <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                        </td>
+                        <td>
+                            {{ t.name }}
+                            <div v-if="t.bundledCouponCount" class="text-caption text-success">
+                                <v-icon size="x-small" class="mr-1">mdi-tag-multiple</v-icon>
+                                {{ t.bundledCouponCount }} bundled coupon{{ t.bundledCouponCount === 1 ? '' : 's' }}
+                            </div>
+                        </td>
+                        <td v-if="isGate" class="text-capitalize">{{ t.audience }}</td>
+                        <td v-if="isGate">
+                            <v-icon v-if="t.required" color="success" size="small">mdi-check</v-icon>
+                            <span v-else class="text-medium-emphasis">—</span>
+                        </td>
+                        <td>${{ (t.priceCents / 100).toFixed(2) }}</td>
+                        <td>{{ t.inventory ?? '∞' }}</td>
+                        <td>{{ t.sold ?? 0 }}</td>
+                        <td>
+                            <v-icon v-if="t.isActive" color="success">mdi-check</v-icon>
+                            <v-icon v-else color="grey">mdi-close</v-icon>
+                        </td>
+                        <td class="text-right">
+                            <v-btn variant="text" size="small" @click="openEdit(t)">Edit</v-btn>
+                            <v-btn variant="text" size="small" color="error" @click="remove(t)">Delete</v-btn>
+                        </td>
                     </tr>
-                </thead>
-                <draggable tag="tbody" :list="visibleRows" item-key="id" handle=".drag-handle"
-                    :animation="180" ghost-class="drag-ghost" @end="onReorderEnd">
-                    <template #item="{ element: t }">
-                        <tr>
-                            <td class="drag-handle-cell">
-                                <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
-                            </td>
-                            <td>
-                                {{ t.name }}
-                                <div v-if="t.bundledCouponCount" class="text-caption text-success">
-                                    <v-icon size="x-small" class="mr-1">mdi-tag-multiple</v-icon>
-                                    {{ t.bundledCouponCount }} bundled coupon{{ t.bundledCouponCount === 1 ? '' : 's' }}
-                                </div>
-                            </td>
-                            <td>${{ (t.priceCents / 100).toFixed(2) }}</td>
-                            <td>{{ t.inventory ?? '∞' }}</td>
-                            <td>{{ t.sold ?? 0 }}</td>
-                            <td>
-                                <v-icon v-if="t.isActive" color="success">mdi-check</v-icon>
-                                <v-icon v-else color="grey">mdi-close</v-icon>
-                            </td>
-                            <td class="text-right">
-                                <v-btn variant="text" size="small" @click="openEdit(t)">Edit</v-btn>
-                                <v-btn variant="text" size="small" color="error" @click="remove(t)">Delete</v-btn>
-                            </td>
-                        </tr>
-                    </template>
-                </draggable>
-            </v-table>
+                </template>
+            </draggable>
+        </v-table>
 
-            <v-btn color="primary" class="mt-3" prepend-icon="mdi-plus" @click="openCreate">
-                Add {{ kindLabelText }}
-            </v-btn>
-        </template>
+        <v-btn color="primary" class="mt-3" prepend-icon="mdi-plus" @click="openCreate">
+            Add {{ kindLabelText }}
+        </v-btn>
 
         <v-dialog v-model="tierDialog" max-width="480">
             <v-card>
@@ -63,24 +65,40 @@
                     <v-btn icon="mdi-close" variant="text" size="small" @click="tierDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
-                    <v-text-field v-model="form.name" label="Name"
-                        :placeholder="kind === 'race_entry' ? 'e.g. Pro 250 class' : 'e.g. Adult spectator'"
-                        density="compact"></v-text-field>
+                    <v-text-field v-model="form.name" label="Description"
+                        :placeholder="namePlaceholder" density="compact"></v-text-field>
+
+                    <template v-if="isGate">
+                        <v-select v-model="form.audience" :items="audienceOptions" item-title="label" item-value="value"
+                            label="Entrant Type" density="compact" class="mt-4"
+                            hint="Rider gate fees gate riders; spectator gate fees admit spectators."
+                            persistent-hint></v-select>
+                        <v-switch v-model="form.required" color="primary" density="compact" hide-details class="mt-3"
+                            :label="form.audience === 'rider'
+                                ? 'Required — riders must buy one (race class + one rider gate fee)'
+                                : 'Required — spectators must buy one to attend'"></v-switch>
+                    </template>
+
                     <v-row class="mt-2">
                         <v-col cols="12" md="6">
-                            <v-text-field v-model.number="form.priceDollars" type="number" step="0.5" min="0.5"
-                                label="Price (USD)" prefix="$" density="compact"></v-text-field>
+                            <v-text-field v-model.number="form.priceDollars" type="number" step="0.5" :min="priceMin"
+                                label="Price (USD)" prefix="$" density="compact"
+                                :hint="isGate ? '0 allowed (free kids gate)' : ''" :persistent-hint="isGate"></v-text-field>
                         </v-col>
                         <v-col cols="12" md="6">
                             <v-text-field v-model.number="form.inventory" type="number" min="1"
-                                label="Inventory (blank = unlimited)" density="compact"></v-text-field>
+                                label="Inventory (blank = unlimited)" density="compact"
+                                append-inner-icon="mdi-help-circle-outline"
+                                @click:append-inner="openHelp('inventory')"></v-text-field>
                         </v-col>
                     </v-row>
                     <v-switch v-model="form.isActive" label="Active" hide-details class="mt-2"></v-switch>
                     <v-text-field v-model.number="form.riderPaidServiceChargePct" type="number" step="1" min="0" max="100"
-                        label="Rider pays this % of the service charge" suffix="%" density="compact" class="mt-3"
+                        label="Buyer pays this % of the service charge" suffix="%" density="compact" class="mt-3"
                         hint="100% = added to rider's bill. 0% = absorbed by you."
-                        persistent-hint></v-text-field>
+                        persistent-hint
+                        append-inner-icon="mdi-help-circle-outline"
+                        @click:append-inner="openHelp('serviceCharge')"></v-text-field>
 
                     <!-- Bundled coupons — race-entry only. Codes are pinned to this event,
                          so scope and expiration aren't configurable: they apply to spectator
@@ -122,6 +140,20 @@
             </v-card>
         </v-dialog>
 
+        <!-- Field help -->
+        <v-dialog v-model="helpDialog" max-width="420">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ helpContent.title }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="helpDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p v-for="(para, i) in helpContent.body" :key="i" class="text-body-2 mb-2">{{ para }}</p>
+                </v-card-text>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000" location="top">{{ snackbarText }}</v-snackbar>
     </div>
 </template>
@@ -132,23 +164,24 @@ import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 
-type AdmissionKind = 'spectator_pass' | 'race_entry'
+type AdmissionKind = 'race_entry' | 'gate_fee'
+type Audience = 'rider' | 'spectator'
 type BundledKind = 'percent' | 'amount'
 
-// Component renders ONLY tiers of the given kind. Used twice in the events admin
-// dialog (once for spectator passes, once for race entries) so each tab has its
-// own focused view + add button.
+// Renders ONLY tiers of the given kind. Used in the events admin dialog for race
+// classes (race_entry) and gate fees (gate_fee). When eventId is null the component
+// runs in BUFFER mode: rows are held locally (no API) so they can be created before
+// the event exists; the parent reads them via getBuffered() and persists on save.
 const props = defineProps<{ eventId: string | null; kind: AdmissionKind }>()
 
 const service = new TicketService()
+const isGate = computed(() => props.kind === 'gate_fee')
+const isBuffer = computed(() => !props.eventId)
 
 const allTiers = ref<TicketTier[]>([])
-// `visibleRows` is this kind's subset — drag-drop reorders within the kind
-// and `onReorderEnd` interleaves back into `allTiers` so the other kind's
-// tiers hold their canonical slot.
 const { visibleRows, onReorderEnd } = useDragReorder<TicketTier>({
     rows: allTiers,
-    filter: t => (t.kind ?? 'spectator_pass') === props.kind,
+    filter: t => (t.kind ?? 'gate_fee') === props.kind,
     filterDeps: [() => props.kind],
     save: items => {
         if (!props.eventId) return Promise.resolve()
@@ -165,14 +198,52 @@ const tierDialog = ref(false)
 const editing = ref<TicketTier | null>(null)
 const saving = ref(false)
 
+// Field help modals (the ? icons next to Inventory + Service charge).
+const helpDialog = ref(false)
+const helpTopic = ref<'inventory' | 'serviceCharge'>('inventory')
+const HELP: Record<'inventory' | 'serviceCharge', { title: string; body: string[] }> = {
+    inventory: {
+        title: 'Inventory',
+        body: [
+            'Inventory caps how many of this item can be sold. Leave it blank for unlimited.',
+            'For race events, the inventory you set on each race class adds up to the event’s overall capacity.',
+            'Once an item sells out, buyers see it as “Sold out” and can join the waitlist for it instead.',
+        ],
+    },
+    serviceCharge: {
+        title: 'Service charge',
+        body: [
+            'A service charge (the platform + payment processing fee) applies to each sale. This setting controls how much of that fee the buyer pays versus how much you absorb.',
+            '100% — the fee is added on top of the price, so the buyer pays it and you keep the full ticket price.',
+            '0% — you absorb the fee; it comes out of your revenue and the buyer pays only the listed price.',
+        ],
+    },
+}
+const helpContent = computed(() => HELP[helpTopic.value])
+function openHelp(topic: 'inventory' | 'serviceCharge') {
+    helpTopic.value = topic
+    helpDialog.value = true
+}
+let tmpSeq = 0
+
 const bundledKindOptions: { value: BundledKind; label: string }[] = [
     { value: 'percent', label: 'Percent off' },
-    { value: 'amount',  label: 'Amount off' },
+    { value: 'amount', label: 'Amount off' },
 ]
-const kindLabelText = computed(() => props.kind === 'race_entry' ? 'Race Class' : 'Ticket')
+const audienceOptions: { value: Audience; label: string }[] = [
+    { value: 'rider', label: 'Rider' },
+    { value: 'spectator', label: 'Spectator' },
+]
+const kindLabelText = computed(() => props.kind === 'race_entry' ? 'Race Class' : 'Gate Fee')
+const namePlaceholder = computed(() =>
+    props.kind === 'race_entry' ? 'e.g. Pro 250 class'
+        : 'e.g. Rider gate / Child gate (7 and under)')
+const priceMin = computed(() => isGate.value ? 0 : 0.5)
 
 const form = ref({
     name: '',
+    audience: 'rider' as Audience,
+    required: false,
     priceDollars: 20,
     inventory: null as number | null,
     sortOrder: 100,
@@ -201,13 +272,18 @@ async function load() {
     }
 }
 
+function blankForm() {
+    return {
+        name: '', audience: (isGate.value ? 'rider' : 'rider') as Audience, required: false,
+        priceDollars: isGate.value ? 15 : 20, inventory: null as number | null, sortOrder: 100, isActive: true,
+        riderPaidServiceChargePct: 100,
+        bundledCount: null as number | null, bundledKind: 'percent' as BundledKind, bundledPercent: 20, bundledDollars: 5,
+    }
+}
+
 function openCreate() {
     editing.value = null
-    form.value = {
-        name: '', priceDollars: 20, inventory: null, sortOrder: 100, isActive: true,
-        riderPaidServiceChargePct: 100,
-        bundledCount: null, bundledKind: 'percent', bundledPercent: 20, bundledDollars: 5,
-    }
+    form.value = blankForm()
     tierDialog.value = true
 }
 
@@ -215,6 +291,8 @@ function openEdit(t: TicketTier) {
     editing.value = t
     form.value = {
         name: t.name,
+        audience: (t.audience ?? 'rider') as Audience,
+        required: !!t.required,
         priceDollars: t.priceCents / 100,
         inventory: t.inventory,
         sortOrder: t.sortOrder,
@@ -230,36 +308,55 @@ function openEdit(t: TicketTier) {
     tierDialog.value = true
 }
 
+// Build the persisted/buffered tier shape from the form. Race classes are always
+// rider-audience and never themselves "required" (the gate fee carries that rule).
+function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
+    const isRace = props.kind === 'race_entry'
+    const bundledCount = (isRace && (form.value.bundledCount ?? 0) > 0) ? form.value.bundledCount : null
+    return {
+        kind: props.kind,
+        audience: isRace ? 'rider' : form.value.audience,
+        required: isRace ? false : form.value.required,
+        name: form.value.name.trim(),
+        priceCents: Math.round(form.value.priceDollars * 100),
+        inventory: form.value.inventory || null,
+        sortOrder: form.value.sortOrder,
+        isActive: form.value.isActive,
+        riderPaidServiceChargeBps: Math.round((form.value.riderPaidServiceChargePct || 0) * 100),
+        bundledCouponCount: bundledCount,
+        bundledCouponDiscountKind: bundledCount ? form.value.bundledKind : null,
+        bundledCouponDiscountValue: bundledCount
+            ? (form.value.bundledKind === 'percent'
+                ? Math.round(form.value.bundledPercent * 100)
+                : Math.round(form.value.bundledDollars * 100))
+            : null,
+        bundledCouponScope: bundledCount ? 'event_ticket' : null,
+        bundledCouponExpiresInDays: null,
+    }
+}
+
 async function save() {
-    if (!props.eventId || !form.value.name.trim()) return
+    if (!form.value.name.trim()) return
+    const body = formToTier()
+
+    // Buffer mode: hold locally; the parent persists on event create.
+    if (isBuffer.value) {
+        if (editing.value) {
+            Object.assign(editing.value, body)
+        } else {
+            allTiers.value.push({ ...body, id: `tmp-${++tmpSeq}`, eventId: '', sold: 0 } as TicketTier)
+        }
+        tierDialog.value = false
+        flash(`${kindLabelText.value} added.`, 'success')
+        return
+    }
+
     try {
         saving.value = true
-        const bundledCount = (props.kind === 'race_entry' && (form.value.bundledCount ?? 0) > 0)
-            ? form.value.bundledCount : null
-        const body = {
-            kind: props.kind,
-            name: form.value.name.trim(),
-            priceCents: Math.round(form.value.priceDollars * 100),
-            inventory: form.value.inventory || null,
-            sortOrder: form.value.sortOrder,
-            isActive: form.value.isActive,
-            riderPaidServiceChargeBps: Math.round((form.value.riderPaidServiceChargePct || 0) * 100),
-            bundledCouponCount: bundledCount,
-            bundledCouponDiscountKind: bundledCount ? form.value.bundledKind : null,
-            bundledCouponDiscountValue: bundledCount
-                ? (form.value.bundledKind === 'percent'
-                    ? Math.round(form.value.bundledPercent * 100)
-                    : Math.round(form.value.bundledDollars * 100))
-                : null,
-            // Scope is locked to event_ticket and expiry is unlimited — codes are pinned
-            // to this race event by the backend, so neither needs to be configurable.
-            bundledCouponScope: bundledCount ? 'event_ticket' : null,
-            bundledCouponExpiresInDays: null,
-        }
         if (editing.value) {
-            await service.updateTier(props.eventId, editing.value.id, body)
+            await service.updateTier(props.eventId!, editing.value.id, body)
         } else {
-            await service.createTier(props.eventId, body)
+            await service.createTier(props.eventId!, body)
         }
         tierDialog.value = false
         await load()
@@ -272,10 +369,14 @@ async function save() {
 }
 
 async function remove(t: TicketTier) {
-    if (!props.eventId) return
     if (!confirm(`Delete "${t.name}"?`)) return
+    if (isBuffer.value) {
+        allTiers.value = allTiers.value.filter(x => x.id !== t.id)
+        flash(`${kindLabelText.value} removed.`, 'success')
+        return
+    }
     try {
-        await service.deleteTier(props.eventId, t.id)
+        await service.deleteTier(props.eventId!, t.id)
         await load()
         flash(`${kindLabelText.value} deleted.`, 'success')
     } catch (err: any) {
@@ -289,7 +390,34 @@ function flash(text: string, color: 'success' | 'error') {
     snackbar.value = true
 }
 
-defineExpose({ refresh: load })
+// Parent (EventDialog) reads buffered rows after creating the event and POSTs each.
+function getBuffered(): Array<Omit<TicketTier, 'id' | 'eventId' | 'sold'>> {
+    return visibleRows.value.map(t => ({
+        kind: t.kind,
+        audience: t.audience,
+        required: t.required,
+        name: t.name,
+        priceCents: t.priceCents,
+        inventory: t.inventory,
+        sortOrder: t.sortOrder,
+        isActive: t.isActive,
+        riderPaidServiceChargeBps: t.riderPaidServiceChargeBps,
+        bundledCouponCount: t.bundledCouponCount,
+        bundledCouponDiscountKind: t.bundledCouponDiscountKind,
+        bundledCouponDiscountValue: t.bundledCouponDiscountValue,
+        bundledCouponScope: t.bundledCouponScope,
+        bundledCouponExpiresInDays: t.bundledCouponExpiresInDays,
+    }))
+}
+
+// After the parent creates a brand-new event, persist every buffered row to it.
+async function persistTo(eventId: string) {
+    for (const body of getBuffered()) {
+        await service.createTier(eventId, body)
+    }
+}
+
+defineExpose({ refresh: load, getBuffered, persistTo })
 </script>
 
 <style scoped>

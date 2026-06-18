@@ -28,87 +28,46 @@
             </div>
         </v-card>
 
-        <v-row>
-            <v-col cols="12" md="6">
-                <h2 class="text-h6 mb-3">Tracks ({{ tracks.length }})</h2>
-                <v-card v-for="t in tracks" :key="t.tenantId" class="mb-3">
-                    <v-card-text>
-                        <div class="d-flex align-start">
-                            <div class="flex-grow-1">
-                                <div class="text-h6">{{ t.displayName }}</div>
-                                <div class="text-body-2 text-medium-emphasis">
-                                    <span v-if="t.city">{{ t.city }}</span><span v-if="t.city && t.region">, </span>
-                                    <span v-if="t.region">{{ t.region }}</span>
-                                    <span v-if="!t.city && !t.region" class="text-medium-emphasis">Location not set</span>
-                                </div>
-                                <div class="text-caption mt-1">
-                                    <v-chip v-if="t.distanceKm !== null" size="x-small" color="primary" class="mr-2">
-                                        {{ formatDistance(t.distanceKm) }}
-                                    </v-chip>
-                                    <v-chip v-if="t.upcomingEventsCount > 0" size="x-small" color="secondary">
-                                        {{ t.upcomingEventsCount }} upcoming
-                                    </v-chip>
-                                </div>
-                            </div>
-                            <v-btn variant="tonal" size="small" :href="tenantUrl(t.subdomain)" target="_blank" rel="noopener">
-                                Visit
-                            </v-btn>
-                        </div>
-                    </v-card-text>
-                </v-card>
-                <v-card v-if="!loading && tracks.length === 0" variant="outlined">
-                    <v-card-text class="text-center text-medium-emphasis py-8">
-                        No tracks match your search.
-                    </v-card-text>
-                </v-card>
-            </v-col>
+        <!-- Track cards: same look as the home page's featured tracks. Featured
+             tracks are ordered first when not searching by location. -->
+        <div class="d-flex align-center mb-3 ga-2">
+            <h2 class="text-h5 font-weight-bold">Tracks ({{ tracks.length }})</h2>
+            <v-progress-circular v-if="loading" indeterminate size="20" width="2" color="primary"></v-progress-circular>
+        </div>
+        <TrackCardGrid :tracks="orderedTracks" show-chips :featured-ids="featuredIds"
+            :highlighted-id="hoveredId" @hover="hoveredId = $event"
+            empty-text="No tracks match your search." />
 
-            <v-col cols="12" md="6">
-                <h2 class="text-h6 mb-3">Upcoming Events ({{ events.length }})</h2>
-                <v-card v-for="e in events" :key="e.eventId" class="mb-3">
-                    <v-card-text>
-                        <div class="d-flex align-start">
-                            <div class="flex-grow-1">
-                                <div class="d-flex align-center ga-2 mb-1">
-                                    <v-chip size="x-small" :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }">
-                                        {{ e.eventTypeName }}
-                                    </v-chip>
-                                    <span class="text-caption">{{ formatWhen(e.startsAtUtc) }}</span>
-                                </div>
-                                <div class="text-subtitle-1">{{ e.title }}</div>
-                                <div class="text-body-2 text-medium-emphasis">
-                                    {{ e.tenantDisplayName }}
-                                    <span v-if="e.tenantCity">— {{ e.tenantCity }}<span v-if="e.tenantRegion">, {{ e.tenantRegion }}</span></span>
-                                </div>
-                                <div v-if="e.distanceKm !== null" class="mt-1">
-                                    <v-chip size="x-small" color="primary">{{ formatDistance(e.distanceKm) }}</v-chip>
-                                </div>
-                            </div>
-                            <v-btn variant="tonal" size="small" :href="tenantUrl(e.tenantSubdomain)" target="_blank" rel="noopener">
-                                Visit Track
-                            </v-btn>
-                        </div>
-                    </v-card-text>
-                </v-card>
-                <v-card v-if="!loading && events.length === 0" variant="outlined">
-                    <v-card-text class="text-center text-medium-emphasis py-8">
-                        No events match your search.
-                    </v-card-text>
-                </v-card>
-            </v-col>
-        </v-row>
+        <!-- Map: reuses the same component as the home page. -->
+        <h2 class="text-h5 font-weight-bold mt-10 mb-3">Tracks map</h2>
+        <v-card variant="outlined" class="pa-4" style="overflow: visible">
+            <TracksMap :tracks="tracks" :highlighted-id="hoveredId" @hover="hoveredId = $event"
+                @select="openTrack" />
+        </v-card>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3500">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import dayjs from 'dayjs'
-import { DiscoverService, type TrackDiscoverItem, type EventDiscoverItem } from '@/services/DiscoverService'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { DiscoverService, type TrackDiscoverItem } from '@/services/DiscoverService'
 import { geocode, browserGeolocate } from '@/helpers/Geocode'
+import { platformBranding } from '@/stores/platformBranding'
+import tenantHelper from '@/helpers/TenantHelper'
+import TrackCardGrid from '@/components/TrackCardGrid.vue'
+import TracksMap from '@/components/TracksMap.vue'
 
 const service = new DiscoverService()
+const route = useRoute()
+const router = useRouter()
+
+// tenantId of the track currently emphasized, synced both ways between the
+// track cards and the map pins.
+const hoveredId = ref<string | null>(null)
+// Admin-curated featured tracks (same list the home page uses) — badged on the cards.
+const featuredIds = computed<string[]>(() => platformBranding.data?.featuredTrackIds ?? [])
 
 const locationInput = ref('')
 const coords = ref<{ lat: number; lng: number } | null>(null)
@@ -124,14 +83,43 @@ const radiusOptions = [
 ]
 
 const tracks = ref<TrackDiscoverItem[]>([])
-const events = ref<EventDiscoverItem[]>([])
 const loading = ref(false)
 const geolocating = ref(false)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
-onMounted(runSearch)
+// When not searching by location, surface the admin-curated featured tracks first
+// (same list the home page uses). With a location active, keep the backend's
+// distance ordering instead.
+const orderedTracks = computed(() => {
+    if (coords.value) return tracks.value
+    const featured = platformBranding.data?.featuredTrackIds ?? []
+    if (featured.length === 0) return tracks.value
+    const rank = new Map(featured.map((id, i) => [id, i]))
+    return [...tracks.value].sort(
+        (a, b) => (rank.get(a.tenantId) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.tenantId) ?? Number.MAX_SAFE_INTEGER))
+})
+
+// Restore a shared/bookmarked search from the URL (?near=...&radius=...).
+onMounted(() => {
+    // RidePass sets page titles via document.title (no vue-meta); the branding
+    // store has already run by the time this route mounts.
+    document.title = 'Find tracks — RidePass'
+    const near = typeof route.query.near === 'string' ? route.query.near : ''
+    const radiusQ = typeof route.query.radius === 'string' ? Number(route.query.radius) : NaN
+    if (near) locationInput.value = near
+    if (!Number.isNaN(radiusQ) && radiusOptions.some(o => o.value === radiusQ)) radiusKm.value = radiusQ
+    runSearch()
+})
+
+// Reflect the active search in the URL so it can be bookmarked or shared.
+function syncUrl() {
+    const query: Record<string, string> = {}
+    if (locationInput.value.trim()) query.near = locationInput.value.trim()
+    if (coords.value && radiusKm.value > 0) query.radius = String(radiusKm.value)
+    router.replace({ query }).catch(() => { /* ignore redundant navigation */ })
+}
 
 async function useMyLocation() {
     geolocating.value = true
@@ -182,12 +170,9 @@ async function runSearch() {
         const lng = coords.value?.lng
         const radius = coords.value && radiusKm.value > 0 ? radiusKm.value : undefined
 
-        const [tr, ev] = await Promise.all([
-            service.searchTracks({ lat, lng, radiusKm: radius, q }),
-            service.searchEvents({ lat, lng, radiusKm: radius, q }),
-        ])
+        const tr = await service.searchTracks({ lat, lng, radiusKm: radius, q })
         tracks.value = (tr.data as any).data
-        events.value = (ev.data as any).data
+        syncUrl()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Search failed.', 'error')
     } finally {
@@ -202,19 +187,14 @@ function clearLocation() {
 }
 
 function tenantUrl(subdomain: string): string {
-    const root = import.meta.env.VITE_ROOT_DOMAIN ?? window.location.hostname.replace(/^[^.]+\./, '')
+    const proto = window.location.protocol
     const port = window.location.port ? `:${window.location.port}` : ''
-    return `${window.location.protocol}//${subdomain}.${root}${port}/`
+    return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
 }
 
-function formatDistance(km: number): string {
-    const mi = km * 0.621371
-    if (km < 10) return `${km.toFixed(1)} km · ${mi.toFixed(1)} mi`
-    return `${Math.round(km)} km · ${Math.round(mi)} mi`
-}
-
-function formatWhen(utc: string): string {
-    return dayjs.utc(utc).local().format('ddd, MMM D · h:mm A')
+// Map pin click -> open that track's site.
+function openTrack(t: TrackDiscoverItem) {
+    window.location.href = tenantUrl(t.subdomain)
 }
 
 function flash(text: string, color: 'success' | 'error') {

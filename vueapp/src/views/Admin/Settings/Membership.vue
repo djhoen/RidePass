@@ -39,17 +39,14 @@
                     </v-col>
                 </v-row>
 
-                <div class="text-subtitle-2 mt-6 mb-1">Who needs a membership</div>
-                <p class="text-caption text-medium-emphasis mb-2">
-                    Default is racers only. Flip Spectators on to require a membership for everyone
-                    who walks through the gate.
+                <p class="text-caption text-medium-emphasis mt-6 mb-2">
+                    Memberships aren't required to buy entry. If you need riders to be "members"
+                    for liability, fold a membership into a (waiver-backed) gate fee — name a
+                    required gate fee something like "Gate Fee &amp; Membership" and require the
+                    waiver on the event.
                 </p>
-                <v-checkbox v-model="form.requiredForRiders" hide-details density="compact"
-                    label="Riders (race entries, day passes, season passes)"></v-checkbox>
-                <v-checkbox v-model="form.requiredForSpectators" hide-details density="compact"
-                    label="Spectators (Gate Fees and other add-ons)"></v-checkbox>
 
-                <v-btn color="primary" class="mt-6" :loading="saving" :disabled="!canSave" @click="save">
+                <v-btn color="primary" class="mt-2" :loading="saving" :disabled="!canSave" @click="save">
                     Save
                 </v-btn>
             </v-card-text>

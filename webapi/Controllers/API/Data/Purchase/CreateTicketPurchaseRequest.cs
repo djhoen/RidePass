@@ -41,6 +41,12 @@ namespace webapi.Controllers.API.Data.Purchase
         // a membership purchase row is created and bundled into the same PaymentIntent
         // — the alternative to redirecting them through the standalone /Membership flow.
         public bool AddMembership { get; set; }
+
+        // Unified event-checkout mode: take payment first and collect the waiver +
+        // per-rider details afterward (via /Purchase/Ticket/CompleteRegistration), instead
+        // of gating the purchase on an up-front signed waiver. Lets guests buy race entries
+        // for riders who aren't accounts; tickets are created registration_complete = false.
+        public bool DeferRegistration { get; set; }
     }
 
     public class TicketCartItem

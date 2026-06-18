@@ -103,6 +103,12 @@
                     <v-card-text>
                         <BrandingImageSlot label="Logo" kind="logo" :url="branding.logoUrl" @uploaded="onUploaded" @removed="onRemoved" />
                         <v-divider class="my-4"></v-divider>
+                        <BrandingImageSlot label="White logo" kind="logoWhite" :url="branding.logoWhiteUrl" @uploaded="onUploaded" @removed="onRemoved" />
+                        <p class="text-caption text-medium-emphasis mt-1">
+                            A white/light version of your logo. Shown over event photos on the RidePass
+                            discovery site, where a dark logo can wash out. A transparent PNG works best.
+                        </p>
+                        <v-divider class="my-4"></v-divider>
                         <BrandingImageSlot label="Favicon" kind="favicon" :url="branding.faviconUrl" @uploaded="onUploaded" @removed="onRemoved" />
                         <p class="text-caption text-medium-emphasis mt-4">
                             Home Hero and Secondary Hero are managed from

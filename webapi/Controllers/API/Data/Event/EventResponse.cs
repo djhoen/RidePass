@@ -65,6 +65,9 @@
         public int Sold { get; set; }
         public int Remaining { get; set; }   // -1 if unlimited
         public bool RequiresWaiver { get; set; }
+        // Portion of the service charge the buyer pays (bps of the tenant rate); lets the
+        // checkout show an accurate service fee. 10000 = buyer pays all, 0 = track absorbs.
+        public int RiderPaidServiceChargeBps { get; set; }
         // Empty for legacy single-SKU products. When populated, the rider picker
         // shows size/color/gender dropdowns instead of a flat qty +/-.
         public List<EligibleExtraVariant> Variants { get; set; } = new();

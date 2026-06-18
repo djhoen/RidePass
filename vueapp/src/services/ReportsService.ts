@@ -181,7 +181,8 @@ export interface EventRiderRow {
     purchaserEmail: string
     purchaserPhone: string | null
     itemName: string
-    tierKind: 'race_entry' | 'spectator_pass' | null
+    tierKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | null
+    tierAudience: 'rider' | 'spectator' | null
     raceNumber: string | null
     userRaceNumber: string | null
     hometown: string | null

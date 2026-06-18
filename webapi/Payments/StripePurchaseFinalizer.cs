@@ -18,7 +18,6 @@ namespace webapi.Payments
     public class StripePurchaseFinalizer : IStripePurchaseFinalizer
     {
         private readonly IPaymentProvider _payments;
-        private readonly IPassPurchaseRepository _passPurchases;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantLedgerRepository _ledger;
@@ -45,7 +44,6 @@ namespace webapi.Payments
 
         public StripePurchaseFinalizer(
             IPaymentProvider payments,
-            IPassPurchaseRepository passPurchases,
             IEventTicketPurchaseRepository ticketPurchases,
             IFeeCalculator feeCalculator,
             ITenantLedgerRepository ledger,
@@ -70,7 +68,6 @@ namespace webapi.Payments
             ILogger<StripePurchaseFinalizer> logger)
         {
             _payments = payments;
-            _passPurchases = passPurchases;
             _ticketPurchases = ticketPurchases;
             _feeCalculator = feeCalculator;
             _ledger = ledger;
@@ -100,7 +97,6 @@ namespace webapi.Payments
         {
             // A counter sale can attach multiple purchase rows (mixed kinds) to one PaymentIntent,
             // so iterate everything that points at this PI rather than stopping after the first match.
-            var passes = await _passPurchases.ListByStripePaymentIntentId(paymentIntentId);
             var tickets = await _ticketPurchases.ListByStripePaymentIntentId(paymentIntentId);
             var seasonPass = await _seasonPasses.GetPurchaseByStripePaymentIntentId(paymentIntentId);
             var giftCard = await _giftCards.GetByPaymentIntentId(paymentIntentId);
@@ -110,7 +106,7 @@ namespace webapi.Payments
             var membership = await _memberships.GetByPaymentIntentId(paymentIntentId);
             var concessionSale = await _concessions.GetSaleByPaymentIntentId(paymentIntentId);
 
-            if (passes.Count == 0 && tickets.Count == 0 && seasonPass is null && giftCard is null && rental is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null)
+            if (tickets.Count == 0 && seasonPass is null && giftCard is null && rental is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null)
             {
                 _logger.LogWarning("Received Stripe event {EventType} for unknown payment_intent {IntentId}",
                     eventType, paymentIntentId);
@@ -152,13 +148,13 @@ namespace webapi.Payments
                     // tickets, which absorb the Stripe fee in OnPaymentSucceeded. So the
                     // membership only carries the fee when it's standalone on its own PI;
                     // otherwise it would double-count the PI fee in the ledger.
-                    await OnMembershipPaid(membership, membershipOwnsTheFee: passes.Count == 0 && tickets.Count == 0);
+                    await OnMembershipPaid(membership, membershipOwnsTheFee: tickets.Count == 0);
                 }
                 else if (eventType == "payment_intent.payment_failed" && membership.Status == "pending")
                 {
                     await _memberships.UpdateStatus(membership.Id, "failed");
                 }
-                if (passes.Count == 0 && tickets.Count == 0 && seasonPass is null && extras.Count == 0)
+                if (tickets.Count == 0 && seasonPass is null && extras.Count == 0)
                 {
                     return;
                 }
@@ -176,7 +172,7 @@ namespace webapi.Payments
                     // Stripe fee in their own ledger rows, so extras carry zero fee then (the PI
                     // fee is counted exactly once). When extras are alone on the PI (the spectator
                     // Gate Fee flow), they get the whole fee distributed across them.
-                    var extrasOwnTheFee = passes.Count == 0 && tickets.Count == 0
+                    var extrasOwnTheFee = tickets.Count == 0
                         && membership is null && seasonPass is null;
                     await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee);
                 }
@@ -185,7 +181,7 @@ namespace webapi.Payments
                     foreach (var x in extras.Where(e => e.Status == "pending"))
                         await _extras.UpdateStatus(x.Id, "failed");
                 }
-                if (passes.Count == 0 && tickets.Count == 0 && seasonPass is null)
+                if (tickets.Count == 0 && seasonPass is null)
                 {
                     return;
                 }
@@ -223,15 +219,13 @@ namespace webapi.Payments
             switch (eventType)
             {
                 case "payment_intent.succeeded":
-                    await OnPaymentSucceeded(paymentIntentId, passes, tickets);
+                    await OnPaymentSucceeded(paymentIntentId, tickets);
                     if (seasonPass is not null && seasonPass.Status == "pending")
                     {
                         await OnSeasonPassPaid(seasonPass);
                     }
                     break;
                 case "payment_intent.payment_failed":
-                    foreach (var dp in passes.Where(p => p.Status == "pending"))
-                        await _passPurchases.UpdateStatus(dp.Id, "failed");
                     foreach (var t in tickets.Where(p => p.Status == "pending"))
                         await _ticketPurchases.UpdateStatus(t.Id, "failed");
                     if (seasonPass is not null && seasonPass.Status == "pending")
@@ -499,7 +493,6 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 
         private async Task OnPaymentSucceeded(
             string paymentIntentId,
-            List<PassPurchase> passes,
             List<EventTicketPurchase> tickets)
         {
             var totalStripeFee = await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0;
@@ -509,24 +502,15 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
             // confirmation email loop below (which filters on Status == "paid") finds
             // the rows we just flipped. Without the in-memory mutation the email loop
             // matches zero rows on the first webhook delivery — guests get no receipt.
-            var lines = passes
-                .Where(p => p.Status != "paid" && p.Status != "redeemed")
-                .Select(p => (Kind: "pass", Id: p.Id, TenantId: p.TenantId, Gross: p.AmountCents,
-                              ServiceCharge: p.ServiceChargeCents,
-                              RewardRedemptionId: p.AppliedRewardRedemptionId,
+            var lines = tickets
+                .Where(t => t.Status != "paid" && t.Status != "redeemed")
+                .Select(t => (Kind: "event_ticket", Id: t.Id, TenantId: t.TenantId, Gross: t.AmountCents,
+                              ServiceCharge: t.ServiceChargeCents,
+                              RewardRedemptionId: t.AppliedRewardRedemptionId,
                               MarkPaid: (Func<Task>)(async () => {
-                                  await _passPurchases.UpdateStatus(p.Id, "paid");
-                                  p.Status = "paid";
+                                  await _ticketPurchases.UpdateStatus(t.Id, "paid");
+                                  t.Status = "paid";
                               })))
-                .Concat(tickets
-                    .Where(t => t.Status != "paid" && t.Status != "redeemed")
-                    .Select(t => (Kind: "event_ticket", Id: t.Id, TenantId: t.TenantId, Gross: t.AmountCents,
-                                  ServiceCharge: t.ServiceChargeCents,
-                                  RewardRedemptionId: t.AppliedRewardRedemptionId,
-                                  MarkPaid: (Func<Task>)(async () => {
-                                      await _ticketPurchases.UpdateStatus(t.Id, "paid");
-                                      t.Status = "paid";
-                                  }))))
                 .ToList();
             if (lines.Count == 0) return;
 
@@ -613,11 +597,6 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 
             // Per-purchase confirmation emails with the QR code so riders have it in their
             // inbox even if they're not logged in (guest ticket purchases especially).
-            foreach (var dp in passes.Where(p => p.Status == "paid"))
-            {
-                _ = SendPurchaseEmailAsync(dp.TenantId, dp.PurchaserEmail, dp.PurchaserName, dp.RedemptionToken,
-                    "pass", dp.AmountCents, dp.ValidOnDate);
-            }
             foreach (var t in tickets.Where(p => p.Status == "paid"))
             {
                 _ = SendPurchaseEmailAsync(t.TenantId, t.PurchaserEmail, t.PurchaserName, t.RedemptionToken,
@@ -625,11 +604,9 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
             }
 
             // Run loyalty rewards once per (tenant, rider). Guest ticket purchases (no user) are skipped.
-            var rewardActors = passes
-                .Select(p => (TenantId: p.TenantId, UserId: (Guid?)p.PurchaserUserId, Email: p.PurchaserEmail, Name: p.PurchaserName))
-                .Concat(tickets
-                    .Where(t => t.PurchaserUserId.HasValue)
-                    .Select(t => (TenantId: t.TenantId, UserId: t.PurchaserUserId, Email: t.PurchaserEmail, Name: t.PurchaserName)))
+            var rewardActors = tickets
+                .Where(t => t.PurchaserUserId.HasValue)
+                .Select(t => (TenantId: t.TenantId, UserId: t.PurchaserUserId, Email: t.PurchaserEmail, Name: t.PurchaserName))
                 .Where(a => a.UserId.HasValue)
                 .GroupBy(a => (a.TenantId, a.UserId!.Value))
                 .Select(g => g.First());

@@ -26,5 +26,10 @@
         // Whether today (in tenant timezone) is within the valid redemption window.
         public bool IsRedeemableToday { get; set; }
         public string? NotRedeemableReason { get; set; }
+
+        // For deferred-checkout event tickets: false when the rider hasn't finished
+        // registration (rider details + required waiver). Surfaced as a gate warning.
+        public bool RegistrationComplete { get; set; } = true;
+        public string? RaceNumber { get; set; }
     }
 }

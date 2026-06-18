@@ -18,8 +18,6 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IEventTicketTierRepository _tiers;
-        private readonly IPassPurchaseRepository _passes;
-        private readonly IPassProductRepository _passProducts;
         private readonly IEventExtraRepository _extras;
         private readonly IWaiverRepository _waivers;
         private readonly IEventNotifier _notifier;
@@ -30,8 +28,6 @@ namespace webapi.Controllers
             IEventRepository events,
             ITenantEventTypeRepository eventTypes,
             IEventTicketTierRepository tiers,
-            IPassPurchaseRepository passes,
-            IPassProductRepository passProducts,
             IEventExtraRepository extras,
             IWaiverRepository waivers,
             IEventNotifier notifier,
@@ -41,8 +37,6 @@ namespace webapi.Controllers
             _events = events;
             _eventTypes = eventTypes;
             _tiers = tiers;
-            _passes = passes;
-            _passProducts = passProducts;
             _extras = extras;
             _waivers = waivers;
             _notifier = notifier;
@@ -67,15 +61,6 @@ namespace webapi.Controllers
             var types = (await _eventTypes.GetAllForTenant(_tenantContext.TenantId)).ToDictionary(t => t.Id);
             var tiersByEvent = await _tiers.GetForEvents(events.Select(e => e.Id), _tenantContext.TenantId, activeOnly: true);
 
-            // For events with capacity, fetch current reserved count so the UI can show spots left.
-            var reservableIds = events.Where(e => e.Capacity.HasValue).Select(e => e.Id).ToList();
-            var reservedByEvent = await _passes.ActiveSpotsReservedForEvents(reservableIds);
-
-            // Eligibility map (eventId → product ids) batched once. The product lookup
-            // is also batched so we avoid an N+1 even when many events have eligibility.
-            var eligibilityByEvent = await _events.ListEligibilityForEvents(events.Select(e => e.Id));
-            var allProducts = (await _passProducts.GetAllForTenant(_tenantContext.TenantId, activeOnly: false))
-                .ToDictionary(p => p.Id);
             // Same pattern for extras: batch the eligibility map + products map +
             // sold-counts in one go so the per-row build can stay synchronous.
             var extrasByEvent = await _extras.ListEligibilityForEvents(events.Select(e => e.Id));
@@ -94,25 +79,9 @@ namespace webapi.Controllers
                 if (tiersByEvent.TryGetValue(ev.Id, out var tiers) && tiers.Count > 0)
                 {
                     r.HasActiveTiers = true;
-                    r.HasSpectatorTiers = tiers.Any(t => t.Kind == "spectator_pass");
+                    r.HasSpectatorTiers = tiers.Any(t => t.Kind == "gate_fee" && t.Audience == "spectator");
                     r.HasRaceEntryTiers = tiers.Any(t => t.Kind == "race_entry");
                     r.MinTicketPriceCents = tiers.Min(t => t.PriceCents);
-                }
-                if (ev.Capacity.HasValue)
-                {
-                    r.SpotsReserved = reservedByEvent.TryGetValue(ev.Id, out var reserved) ? reserved : 0;
-                }
-                if (eligibilityByEvent.TryGetValue(ev.Id, out var productIds) && productIds.Count > 0)
-                {
-                    r.EligiblePasses = productIds
-                        .Where(allProducts.ContainsKey)
-                        .Select(pid => allProducts[pid])
-                        .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
-                        .Select(p => new EligiblePassProduct
-                        {
-                            Id = p.Id, Name = p.Name, Description = p.Description,
-                            PriceCents = p.PriceCents, RequiresWaiver = p.RequiresWaiver, IsActive = p.IsActive,
-                        }).ToList();
                 }
                 if (extrasByEvent.TryGetValue(ev.Id, out var extraEligibility) && extraEligibility.Count > 0)
                 {
@@ -156,6 +125,7 @@ namespace webapi.Controllers
                             Sold = sold,
                             Remaining = elig.Inventory.HasValue ? Math.Max(0, elig.Inventory.Value - sold) : -1,
                             RequiresWaiver = prod.RequiresWaiver,
+                            RiderPaidServiceChargeBps = prod.RiderPaidServiceChargeBps,
                             Variants = variantList,
                         });
                     }
@@ -194,14 +164,9 @@ namespace webapi.Controllers
             if (tiers.Count > 0)
             {
                 resp.HasActiveTiers = true;
-                resp.HasSpectatorTiers = tiers.Any(t => t.Kind == "spectator_pass");
+                resp.HasSpectatorTiers = tiers.Any(t => t.Kind == "gate_fee" && t.Audience == "spectator");
                 resp.HasRaceEntryTiers = tiers.Any(t => t.Kind == "race_entry");
                 resp.MinTicketPriceCents = tiers.Min(t => t.PriceCents);
-            }
-            if (ev.Capacity.HasValue)
-            {
-                var reservedByEvent = await _passes.ActiveSpotsReservedForEvents(new[] { ev.Id });
-                resp.SpotsReserved = reservedByEvent.TryGetValue(ev.Id, out var reserved) ? reserved : 0;
             }
             return new ApiResponses().OkResult(resp);
         }
@@ -254,10 +219,6 @@ namespace webapi.Controllers
             };
 
             ev.Id = await _events.Create(ev);
-            if (request.EligiblePassProductIds is not null)
-            {
-                await _events.ReplacePassEligibility(ev.Id, request.EligiblePassProductIds);
-            }
             if (request.EligibleExtras is not null)
             {
                 await _extras.ReplaceEligibility(ev.Id, request.EligibleExtras
@@ -332,10 +293,6 @@ namespace webapi.Controllers
             existing.ScheduleJson = SerializeSchedule(request.Schedule);
 
             await _events.Update(existing);
-            if (request.EligiblePassProductIds is not null)
-            {
-                await _events.ReplacePassEligibility(existing.Id, request.EligiblePassProductIds);
-            }
             if (request.EligibleExtras is not null)
             {
                 await _extras.ReplaceEligibility(existing.Id, request.EligibleExtras
@@ -407,13 +364,8 @@ namespace webapi.Controllers
                 ScheduleJson = source.ScheduleJson,
             };
             clone.Id = await _events.Create(clone);
-            // Carry over the source event's pass eligibility + extras eligibility
-            // so the duplicated event already has the same options without re-selecting.
-            var srcEligibility = await _events.ListEligiblePassProductIds(source.Id);
-            if (srcEligibility.Count > 0)
-            {
-                await _events.ReplacePassEligibility(clone.Id, srcEligibility);
-            }
+            // Carry over the source event's extras eligibility so the duplicated event
+            // already has the same add-ons without re-selecting.
             var srcExtras = await _extras.ListEligibilityForEvent(source.Id);
             if (srcExtras.Count > 0)
             {
@@ -527,25 +479,12 @@ namespace webapi.Controllers
             catch { return new List<ScheduleItem>(); }
         }
 
-        // Single-event variant that hydrates the pass eligibility list. Used on
-        // create/update so the admin sees the pass list reflected back; the bulk
-        // GET endpoint hydrates eligibility once for all events to avoid N+1.
+        // Single-event variant that hydrates the extras eligibility list. Used on
+        // create/update so the admin sees the add-on list reflected back.
         private async Task<EventResponse> MapResponseAsync(Event ev,
             IReadOnlyDictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> types)
         {
             var resp = MapResponse(ev, types);
-            var productIds = await _events.ListEligiblePassProductIds(ev.Id);
-            if (productIds.Count > 0)
-            {
-                var products = await _passProducts.GetAllForTenant(_tenantContext.TenantId, activeOnly: false);
-                resp.EligiblePasses = products.Where(p => productIds.Contains(p.Id))
-                    .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
-                    .Select(p => new EligiblePassProduct
-                    {
-                        Id = p.Id, Name = p.Name, Description = p.Description,
-                        PriceCents = p.PriceCents, RequiresWaiver = p.RequiresWaiver, IsActive = p.IsActive,
-                    }).ToList();
-            }
             // Extras eligibility — hydrate per-event inventory + sold + remaining + variants.
             var extraRows = await _extras.ListEligibilityForEvent(ev.Id);
             if (extraRows.Count > 0)
@@ -592,6 +531,7 @@ namespace webapi.Controllers
                         Sold = sold,
                         Remaining = elig.Inventory.HasValue ? Math.Max(0, elig.Inventory.Value - sold) : -1,
                         RequiresWaiver = prod.RequiresWaiver,
+                        RiderPaidServiceChargeBps = prod.RiderPaidServiceChargeBps,
                         Variants = variantList,
                     });
                 }

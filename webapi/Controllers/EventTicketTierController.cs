@@ -66,11 +66,15 @@ namespace webapi.Controllers
             if (!ValidateBundledCoupon(request, out var bundleErr))
                 return new ApiResponses().BadRequestResult(bundleErr);
 
+            NormalizeAudience(request);
+
             var tier = new EventTicketTier
             {
                 TenantId = _tenantContext.TenantId,
                 EventId = eventId,
                 Kind = request.Kind,
+                Audience = request.Audience,
+                Required = request.Required,
                 Name = request.Name,
                 PriceCents = request.PriceCents,
                 Inventory = request.Inventory,
@@ -100,7 +104,11 @@ namespace webapi.Controllers
             if (!ValidateBundledCoupon(request, out var bundleErr))
                 return new ApiResponses().BadRequestResult(bundleErr);
 
+            NormalizeAudience(request);
+
             existing.Kind = request.Kind;
+            existing.Audience = request.Audience;
+            existing.Required = request.Required;
             existing.Name = request.Name;
             existing.PriceCents = request.PriceCents;
             existing.Inventory = request.Inventory;
@@ -157,6 +165,8 @@ namespace webapi.Controllers
             Id = t.Id,
             EventId = t.EventId,
             Kind = t.Kind,
+            Audience = t.Audience,
+            Required = t.Required,
             Name = t.Name,
             PriceCents = t.PriceCents,
             Inventory = t.Inventory,
@@ -170,6 +180,18 @@ namespace webapi.Controllers
             BundledCouponScope = t.BundledCouponScope,
             BundledCouponExpiresInDays = t.BundledCouponExpiresInDays,
         };
+
+        // Race classes are always rider-audience and never themselves "required" (the
+        // gate fee carries the required-purchase rule, not the class). Force those so a
+        // stray client payload can't store a nonsensical combination.
+        private static void NormalizeAudience(UpsertEventTicketTierRequest r)
+        {
+            if (r.Kind == "race_entry")
+            {
+                r.Audience = "rider";
+                r.Required = false;
+            }
+        }
 
         // Bundled-coupon fields are all-or-nothing: when count is set, kind/value/scope must
         // also be set so we can mint the codes correctly. expires_in_days is optional.

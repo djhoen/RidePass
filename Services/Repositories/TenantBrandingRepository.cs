@@ -9,6 +9,7 @@ namespace Services.Repositories
         private static readonly Dictionary<string, string> ImageKindToColumn = new()
         {
             ["logo"]          = "logo_url",
+            ["logoWhite"]     = "logo_white_url",
             ["favicon"]       = "favicon_url",
             ["hero"]          = "hero_image_url",
             ["secondaryHero"] = "secondary_hero_url",
@@ -32,6 +33,7 @@ namespace Services.Repositories
                        tagline,
                        theme_mode           AS ThemeMode,
                        logo_url             AS LogoUrl,
+                       logo_white_url       AS LogoWhiteUrl,
                        favicon_url          AS FaviconUrl,
                        hero_image_url       AS HeroImageUrl,
                        secondary_hero_url   AS SecondaryHeroUrl,

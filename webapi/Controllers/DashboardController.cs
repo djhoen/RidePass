@@ -15,7 +15,6 @@ namespace webapi.Controllers
     {
         private readonly IReportsRepository _reports;
         private readonly IEventRepository _events;
-        private readonly IPassPurchaseRepository _passes;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IDisputeRepository _disputes;
         private readonly IUserRepository _users;
@@ -25,7 +24,6 @@ namespace webapi.Controllers
         public DashboardController(
             IReportsRepository reports,
             IEventRepository events,
-            IPassPurchaseRepository passes,
             IEventTicketPurchaseRepository tickets,
             IDisputeRepository disputes,
             IUserRepository users,
@@ -34,7 +32,6 @@ namespace webapi.Controllers
         {
             _reports = reports;
             _events = events;
-            _passes = passes;
             _tickets = tickets;
             _disputes = disputes;
             _users = users;
@@ -82,23 +79,21 @@ namespace webapi.Controllers
                 var nextMonthStartUtc = monthStartUtc.AddMonths(1);
                 var weekStartUtc = todayStartUtc.AddDays(-6);
 
-                var topass = await _reports.GetPassTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
                 var todayTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
-                var monthPass = await _reports.GetPassTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var monthTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var riders = await _reports.GetUniqueRiders(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var daily = await _reports.GetDailyRevenue(_tenantContext.TenantId, weekStartUtc, tomorrowStartUtc, tz);
 
                 snapshot.TodayRevenue = new RevenueBlockDto
                 {
-                    RevenueCents = topass.RevenueCents + todayTicket.RevenueCents,
-                    PassesSold = topass.SoldCount,
+                    RevenueCents = todayTicket.RevenueCents,
+                    PassesSold = 0,
                     TicketsSold = todayTicket.SoldCount,
                 };
                 snapshot.MonthRevenue = new RevenueBlockDto
                 {
-                    RevenueCents = monthPass.RevenueCents + monthTicket.RevenueCents,
-                    PassesSold = monthPass.SoldCount,
+                    RevenueCents = monthTicket.RevenueCents,
+                    PassesSold = 0,
                     TicketsSold = monthTicket.SoldCount,
                 };
                 snapshot.UniqueRidersMonth = riders;
@@ -137,11 +132,8 @@ namespace webapi.Controllers
             if (perms.Contains(TenantPermissions.SalesCancel))
             {
                 // Cancelled but not yet refunded — tenant admin action queue.
-                var dpCancelled = await _passes.ListByStatusAcrossTenants("cancelled");
                 var tkCancelled = await _tickets.ListByStatusAcrossTenants("cancelled");
-                var mine = dpCancelled.Count(p => p.TenantId == _tenantContext.TenantId)
-                         + tkCancelled.Count(p => p.TenantId == _tenantContext.TenantId);
-                snapshot.PendingRefundsCount = mine;
+                snapshot.PendingRefundsCount = tkCancelled.Count(p => p.TenantId == _tenantContext.TenantId);
             }
 
             return new ApiResponses().OkResult(snapshot);

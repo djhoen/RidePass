@@ -172,53 +172,5 @@ namespace Services.Repositories
             await _db.Execute(sql, new { eventId, tenantId, waiverId, asRider, asSpectator });
         }
 
-        public async Task<List<Guid>> ListEligiblePassProductIds(Guid eventId)
-        {
-            const string sql = @"
-                SELECT pass_product_id FROM event_pass_eligibility
-                WHERE event_id = @eventId";
-            return (await _db.Query<Guid>(sql, new { eventId })).ToList();
-        }
-
-        public async Task<Dictionary<Guid, List<Guid>>> ListEligibilityForEvents(IEnumerable<Guid> eventIds)
-        {
-            var ids = eventIds.ToArray();
-            if (ids.Length == 0) return new Dictionary<Guid, List<Guid>>();
-            const string sql = @"
-                SELECT event_id AS EventId, pass_product_id AS ProductId
-                FROM event_pass_eligibility
-                WHERE event_id = ANY(@ids)";
-            var rows = await _db.Query<EligibilityRow>(sql, new { ids });
-            return rows
-                .GroupBy(r => r.EventId)
-                .ToDictionary(g => g.Key, g => g.Select(r => r.ProductId).ToList());
-        }
-
-        private record EligibilityRow(Guid EventId, Guid ProductId);
-
-        public async Task ReplacePassEligibility(Guid eventId, IEnumerable<Guid> productIds)
-        {
-            // Wipe + insert. Done in two statements; the join table has no FKs out
-            // of these two cascades so a momentary empty state is fine for MVP.
-            await _db.Execute("DELETE FROM event_pass_eligibility WHERE event_id = @eventId",
-                new { eventId });
-            const string insert = @"
-                INSERT INTO event_pass_eligibility (event_id, pass_product_id)
-                VALUES (@eventId, @productId)
-                ON CONFLICT DO NOTHING";
-            foreach (var pid in productIds.Distinct())
-            {
-                await _db.Execute(insert, new { eventId, productId = pid });
-            }
-        }
-
-        public async Task<bool> IsPassProductEligible(Guid eventId, Guid productId)
-        {
-            const string sql = @"
-                SELECT COUNT(*) FROM event_pass_eligibility
-                WHERE event_id = @eventId AND pass_product_id = @productId";
-            var count = await _db.ExecuteScalar(sql, new { eventId, productId });
-            return count > 0;
-        }
     }
 }

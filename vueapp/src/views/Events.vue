@@ -63,6 +63,8 @@
                                             <div class="event-day">{{ formatDay(e.startsAtUtc) }}</div>
                                             <div class="event-month">{{ formatMonth(e.startsAtUtc) }}</div>
                                         </div>
+                                        <img v-if="e.tenantLogoUrl" class="event-card-logo"
+                                            :src="platformImageUrl(e.tenantLogoUrl) ?? ''" :alt="e.tenantDisplayName ?? ''" />
                                     </div>
                                     <v-card-text class="pa-3">
                                         <div class="text-subtitle-1 font-weight-bold mb-1 text-truncate">{{ e.title }}</div>
@@ -256,10 +258,10 @@ import { platformBranding, platformImageUrl } from '@/stores/platformBranding'
 import tenantHelper from '@/helpers/TenantHelper'
 import { geocode, browserGeolocate } from '@/helpers/Geocode'
 
-// Event types this apex page surfaces. Lesson / Private Booking / Other are
-// intentionally excluded everywhere on the apex Events page (carousel, calendar,
-// list, and filter modal).
-const APEX_ALLOWED_CODES = ['open_ride', 'race', 'practice']
+// The apex Events page shows every event type EXCEPT these. Private bookings and
+// lessons are hidden everywhere on the apex page (events list, calendar, and the
+// filter modal options). Every other type that has upcoming events is included.
+const APEX_EXCLUDED_CODES = ['private_booking', 'lesson']
 const MI_PER_KM = 0.621371
 const KM_PER_MI = 1.609344
 const DEFAULT_RADIUS_MILES = 75
@@ -285,6 +287,8 @@ interface CalEvent {
     tenantId: string | null
     tenantSubdomain: string | null
     tenantDisplayName: string | null
+    // Tenant logo (apex only); white logo when set, else regular. Overlaid bottom-right.
+    tenantLogoUrl: string | null
     city: string | null
     region: string | null
     locationLabel: string | null
@@ -435,6 +439,7 @@ function mapDiscover(e: EventDiscoverItem): CalEvent {
         tenantId: e.tenantId,
         tenantSubdomain: e.tenantSubdomain,
         tenantDisplayName: e.tenantDisplayName,
+        tenantLogoUrl: e.tenantLogoUrl,
         city: e.tenantCity,
         region: e.tenantRegion,
         locationLabel: e.locationLabel,
@@ -456,6 +461,8 @@ function mapTenant(e: EventDto): CalEvent {
         tenantId: null,
         tenantSubdomain: null,
         tenantDisplayName: branding.displayName ?? null,
+        // Tenant's own /Events page isn't the apex site, so no logo overlay.
+        tenantLogoUrl: null,
         city: null,
         region: null,
         locationLabel: e.locationLabel,
@@ -471,9 +478,9 @@ async function load() {
             const params: DiscoverQuery = {
                 fromUtc,
                 toUtc,
-                // Always bound to the allowed codes server-side; the per-type
-                // checkboxes narrow further client-side.
-                eventTypeCodes: APEX_ALLOWED_CODES,
+                // Hide private bookings + lessons server-side (they never reach the
+                // public client); the per-type checkboxes narrow further client-side.
+                excludeCodes: APEX_EXCLUDED_CODES,
             }
             if (center.value) {
                 params.lat = center.value.lat
@@ -509,7 +516,7 @@ async function initApex() {
     // Modal options.
     try {
         const [types, tracks] = await Promise.all([
-            discoverService.listEventTypes(APEX_ALLOWED_CODES),
+            discoverService.listEventTypes(undefined, APEX_EXCLUDED_CODES),
             discoverService.searchTracks({}),
         ])
         apexTypeOptions.value = (types.data as any).data
@@ -672,7 +679,9 @@ function linkTag(e: CalEvent): string {
 }
 function linkProps(e: CalEvent): Record<string, unknown> {
     if (isApex && e.tenantSubdomain) {
-        return { href: `${tenantUrl(e.tenantSubdomain)}Calendar?eventId=${e.id}`, rel: 'noopener' }
+        // Apex links cross to the event's own tenant site, landing on the new
+        // event checkout page (/Event/:id) — the single checkout surface.
+        return { href: `${tenantUrl(e.tenantSubdomain)}Event/${e.id}`, rel: 'noopener' }
     }
     return { to: `/Event/${e.id}` }
 }
@@ -798,6 +807,16 @@ function flash(text: string, color: 'success' | 'error') {
 @media (max-width: 600px) { .carousel-card { width: 88%; } }
 
 .event-card-link { text-decoration: none; color: inherit; display: block; height: 100%; }
+/* Tenant white logo overlaid bottom-right on the event photo (apex only). */
+.event-card-logo {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    max-height: 24px;
+    max-width: 84px;
+    object-fit: contain;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
 .event-card { overflow: visible; transition: transform 0.15s ease; }
 .event-card:hover { transform: translateY(-2px); }
 .event-image {

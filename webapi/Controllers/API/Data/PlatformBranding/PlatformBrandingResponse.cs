@@ -7,6 +7,7 @@ namespace webapi.Controllers.API.Data.PlatformBranding
     /// </summary>
     public class PlatformBrandingResponse
     {
+        public string? LogoUrl { get; set; }
         public string? HeroImageUrl { get; set; }
         public string? HeroHeadline { get; set; }
         public string? HeroSubhead { get; set; }
@@ -40,6 +41,10 @@ namespace webapi.Controllers.API.Data.PlatformBranding
         public string? NavBarTextColor { get; set; }
         public string? NavBarHomeColor { get; set; }
         public string? NavBarHomeTextColor { get; set; }
+
+        public string? ForTracksHeroEyebrow { get; set; }
+        public string? ForTracksHeroHeadline { get; set; }
+        public string? ForTracksHeroSubhead { get; set; }
 
         public List<PlatformTestimonialResponse> Testimonials { get; set; } = new();
     }

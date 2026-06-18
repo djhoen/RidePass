@@ -28,6 +28,9 @@ namespace Services.Repositories.Data.DiscoverData
         public string TenantDisplayName { get; set; } = null!;
         public string? TenantCity { get; set; }
         public string? TenantRegion { get; set; }
+        // Logo to overlay on event card photos: the tenant's white logo when set,
+        // otherwise their regular logo. Null when the tenant has neither.
+        public string? TenantLogoUrl { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public double? DistanceKm { get; set; }

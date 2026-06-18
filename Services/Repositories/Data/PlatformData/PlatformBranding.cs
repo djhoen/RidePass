@@ -10,6 +10,9 @@ namespace Services.Repositories.Data.PlatformData
     {
         public int Id { get; set; } = 1;
 
+        // Nav-bar logo for the apex domain (parallels the per-tenant logo).
+        public string? LogoUrl { get; set; }
+
         public string? HeroImageUrl { get; set; }
         public string? HeroHeadline { get; set; }
         public string? HeroSubhead { get; set; }
@@ -43,6 +46,12 @@ namespace Services.Repositories.Data.PlatformData
         public string? NavBarTextColor { get; set; }
         public string? NavBarHomeColor { get; set; }
         public string? NavBarHomeTextColor { get; set; }
+
+        // For Tracks (operator-acquisition) page hero copy. The benefits block on
+        // that page reuses BenefitsHtml / BenefitsImageUrl / SectionBenefitsTitle.
+        public string? ForTracksHeroEyebrow { get; set; }
+        public string? ForTracksHeroHeadline { get; set; }
+        public string? ForTracksHeroSubhead { get; set; }
 
         public DateTime UpdatedAtUtc { get; set; }
     }

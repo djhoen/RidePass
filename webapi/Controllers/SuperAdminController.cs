@@ -24,8 +24,6 @@ namespace webapi.Controllers
     {
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
-        private readonly IPassPurchaseRepository _passes;
-        private readonly IPassProductRepository _passProducts;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventTicketTierRepository _ticketTiers;
         private readonly IDisputeRepository _disputes;
@@ -46,8 +44,6 @@ namespace webapi.Controllers
         public SuperAdminController(
             IUserRepository users,
             ITenantRepository tenants,
-            IPassPurchaseRepository passes,
-            IPassProductRepository passProducts,
             IEventTicketPurchaseRepository tickets,
             IEventTicketTierRepository ticketTiers,
             IDisputeRepository disputes,
@@ -67,8 +63,6 @@ namespace webapi.Controllers
         {
             _users = users;
             _tenants = tenants;
-            _passes = passes;
-            _passProducts = passProducts;
             _tickets = tickets;
             _ticketTiers = ticketTiers;
             _disputes = disputes;
@@ -462,10 +456,9 @@ namespace webapi.Controllers
         [HttpGet("Refunds")]
         public async Task<IActionResult> ListRefundQueue()
         {
-            var passes = await _passes.ListByStatusAcrossTenants("cancelled");
             var tickets = await _tickets.ListByStatusAcrossTenants("cancelled");
 
-            var tenantIds = passes.Select(d => d.TenantId).Concat(tickets.Select(t => t.TenantId)).Distinct().ToList();
+            var tenantIds = tickets.Select(t => t.TenantId).Distinct().ToList();
             var subdomains = new Dictionary<Guid, string>();
             foreach (var tid in tenantIds)
             {
@@ -474,21 +467,6 @@ namespace webapi.Controllers
             }
 
             var items = new List<RefundListItem>();
-            items.AddRange(passes.Select(d => new RefundListItem
-            {
-                Kind = "pass",
-                Id = d.Id,
-                TenantId = d.TenantId,
-                TenantSubdomain = subdomains.TryGetValue(d.TenantId, out var s) ? s : "",
-                ItemName = d.ProductName + (d.Quantity > 1 ? $" × {d.Quantity}" : ""),
-                PurchaserName = d.PurchaserName,
-                PurchaserEmail = d.PurchaserEmail,
-                AmountCents = d.AmountCents,
-                CancellationReason = d.CancellationReason,
-                CancelledAtUtc = d.CancelledAt is null ? null : DateTime.SpecifyKind(d.CancelledAt.Value, DateTimeKind.Utc),
-                CreatedAtUtc = DateTime.SpecifyKind(d.CreatedAt, DateTimeKind.Utc),
-                StripePaymentIntentId = d.StripePaymentIntentId,
-            }));
             items.AddRange(tickets.Select(t => new RefundListItem
             {
                 Kind = "event_ticket",
@@ -506,55 +484,6 @@ namespace webapi.Controllers
             }));
 
             return new ApiResponses().OkResult(items.OrderByDescending(i => i.CancelledAtUtc ?? i.CreatedAtUtc));
-        }
-
-        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
-        [HttpPost("Refunds/Pass/{id:guid}/Process")]
-        public async Task<IActionResult> ProcessPassRefund(Guid id, CancellationToken ct)
-        {
-            // Load across all tenants (super admin).
-            var all = await _passes.ListByStatusAcrossTenants("cancelled");
-            var purchase = all.FirstOrDefault(p => p.Id == id);
-            if (purchase is null)
-            {
-                return new ApiResponses().NotFoundResult("Cancelled purchase not found in refund queue.");
-            }
-            if (string.IsNullOrEmpty(purchase.StripePaymentIntentId))
-            {
-                return new ApiResponses().BadRequestResult("Purchase has no Stripe payment_intent to refund.");
-            }
-
-            // Look up the product for its rider-paid-bps so the refund honors the
-            // "service charge is never refunded" rule (only the rider's portion of
-            // the fee is withheld; tenant's share already went to the platform).
-            var product = await _passProducts.GetById(purchase.ProductId, purchase.TenantId);
-            var riderBps = product?.RiderPaidServiceChargeBps ?? 10000;
-            var refundCents = Services.Helpers.RefundCalculator.RefundableCents(
-                purchase.AmountCents, purchase.ServiceChargeCents, riderBps);
-            if (refundCents <= 0)
-            {
-                return new ApiResponses().BadRequestResult("Nothing to refund (service charge already withheld).");
-            }
-
-            try
-            {
-                var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents,
-                    idempotencyKey: $"refund-pass-{id}-{refundCents}", ct: ct);
-                await _passes.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
-                await WriteRefundLedgerEntry(purchase.TenantId, "pass", id, refund.RefundId);
-                var amount = $"${(refundCents / 100m):0.00}";
-                await _audit.Log("refund.process", $"Refunded pass {amount} for {purchase.PurchaserEmail}",
-                    "pass_purchase", id, purchase.TenantId, new { refund.RefundId, refundCents, purchase.AmountCents });
-                await _notifications.EmitToTenantAdmins(purchase.TenantId, "refund_processed",
-                    $"Refund issued: {amount}",
-                    $"A {amount} refund was issued for {purchase.PurchaserName} ({purchase.PurchaserEmail}).",
-                    "/Admin/Purchases");
-            }
-            catch (Exception ex)
-            {
-                return new ApiResponses().BadRequestResult($"Stripe refund failed: {ex.Message}");
-            }
-            return new ApiResponses().OkResult(new { id, status = "refunded", refundCents });
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -637,10 +566,8 @@ namespace webapi.Controllers
                 Id = d.Id,
                 TenantId = d.TenantId,
                 TenantSubdomain = d.TenantSubdomain,
-                Kind = d.PassPurchaseId.HasValue ? "pass"
-                     : d.EventTicketPurchaseId.HasValue ? "event_ticket"
-                     : "unlinked",
-                PurchaseId = d.PassPurchaseId ?? d.EventTicketPurchaseId,
+                Kind = d.EventTicketPurchaseId.HasValue ? "event_ticket" : "unlinked",
+                PurchaseId = d.EventTicketPurchaseId,
                 ItemName = d.ItemName,
                 PurchaserName = d.PurchaserName,
                 PurchaserEmail = d.PurchaserEmail,

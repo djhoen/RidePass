@@ -1,15 +1,9 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 
-export interface PassProduct {
-    id: string
-    name: string
-    description: string | null
-    priceCents: number
-    isActive: boolean
-    sortOrder: number
-    requiresWaiver: boolean
-    riderPaidServiceChargeBps: number
-}
+// NOTE: Day Pass (pass_product) was retired, but this service also carries the rider
+// waiver-signing and tenant admin purchase/refund/dispute calls that the waiver page,
+// Counter sale, and Admin → Purchases still use. Those are kept here; only the
+// pass-product catalog + pass purchase/cancel methods were removed.
 
 export interface WaiverDto {
     id: string
@@ -31,18 +25,10 @@ export interface WaiverSignatureStatus {
     riderHasEmergencyContact: boolean
 }
 
-export interface CreatePurchaseResponse {
-    purchaseId: string
-    clientSecret: string
-    amountCents: number
-    giftCardAppliedCents: number
-}
-
 export interface PurchaseRow {
     id: string
-    // Discriminator from v_recent_sales (Script0080) — 'pass', 'event_ticket',
-    // 'event_extra', 'season_pass', 'membership', 'gift_card', 'rental'.
-    // Drives kind-specific UI (per-kind cancel endpoint, etc.).
+    // Discriminator from v_recent_sales (Script0080) — 'event_ticket', 'event_extra',
+    // 'season_pass', 'membership', 'gift_card', 'rental', 'concession'.
     kind: string
     productName: string
     purchaserName: string
@@ -59,16 +45,6 @@ export class PassService {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
     }
 
-    // Products
-    listActive() { return axios.get<{ data: PassProduct[] }>(`${this.apiUrl}/PassProduct`) }
-    listForAdmin() { return axios.get<{ data: PassProduct[] }>(`${this.apiUrl}/PassProduct/Admin`) }
-    createProduct(req: Omit<PassProduct, 'id'>) { return axios.post(`${this.apiUrl}/PassProduct`, req) }
-    updateProduct(id: string, req: Omit<PassProduct, 'id'>) { return axios.put(`${this.apiUrl}/PassProduct/${id}`, req) }
-    deleteProduct(id: string) { return axios.delete(`${this.apiUrl}/PassProduct/${id}`) }
-    reorderProducts(items: { id: string; sortOrder: number }[]) {
-        return axios.post(`${this.apiUrl}/PassProduct/Reorder`, { items })
-    }
-
     // Waiver
     getWaiver() { return axios.get<{ data: WaiverDto }>(`${this.apiUrl}/Waiver`) }
     publishWaiver(req: { title: string; body: string }) { return axios.put(`${this.apiUrl}/Waiver`, req) }
@@ -77,27 +53,9 @@ export class PassService {
         return axios.post(`${this.apiUrl}/Waiver/Sign`, body)
     }
 
-    // Purchases
-    createPurchase(req: {
-        productId: string
-        validOnDate: string | null
-        eventId?: string | null
-        quantity?: number
-        rewardRedemptionId?: string | null
-        couponCode?: string | null
-        giftCardCode?: string | null
-        extras?: Array<{ productId: string; quantity: number; variantId?: string | null }> | null
-        // Bundles a track-membership purchase into the same PI when the rider opts in
-        // from the membership-required dialog instead of being kicked to /Membership.
-        addMembership?: boolean
-    }) {
-        return axios.post<{ data: CreatePurchaseResponse }>(`${this.apiUrl}/Purchase/Pass`, req)
-    }
+    // Admin purchases / refunds / disputes
     listPurchasesForAdmin(params: { fromUtc?: string; toUtc?: string; status?: string }) {
         return axios.get<{ data: PurchaseRow[] }>(`${this.apiUrl}/Purchase/Admin`, { params })
-    }
-    cancelPass(id: string, reason: string | null) {
-        return axios.post(`${this.apiUrl}/Purchase/Pass/${id}/Cancel`, { reason })
     }
     cancelTicket(id: string, reason: string | null) {
         return axios.post(`${this.apiUrl}/Purchase/Ticket/${id}/Cancel`, { reason })
@@ -116,7 +74,7 @@ export class PassService {
 
 export interface TenantDisputeListItem {
     id: string
-    kind: 'pass' | 'event_ticket' | 'unlinked'
+    kind: 'event_ticket' | 'unlinked'
     purchaseId: string | null
     itemName: string | null
     purchaserName: string | null

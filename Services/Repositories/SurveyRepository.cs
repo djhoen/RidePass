@@ -341,14 +341,6 @@ namespace Services.Repositories
                       AND eep.event_id = @eventId
                       AND eep.status IN {PaidStatuses}
                     UNION
-                    SELECT pp.purchaser_email AS email
-                    FROM pass_purchase pp
-                    JOIN event ev ON ev.id = @eventId
-                    WHERE pp.tenant_id = @tenantId
-                      AND pp.status IN {PaidStatuses}
-                      AND pp.valid_on_date IS NOT NULL
-                      AND pp.valid_on_date BETWEEN ev.starts_at::date AND ev.ends_at::date
-                    UNION
                     SELECT spp.purchaser_email AS email
                     FROM season_pass_purchase spp
                     JOIN event ev ON ev.id = @eventId
@@ -366,10 +358,6 @@ namespace Services.Repositories
             var sql = $@"
                 SELECT DISTINCT lower(email) AS email
                 FROM (
-                    SELECT pp.purchaser_email AS email FROM pass_purchase pp
-                    WHERE pp.tenant_id = @tenantId AND pp.status IN {PaidStatuses}
-                      AND pp.created_at >= @fromUtc AND pp.created_at < @toUtc
-                    UNION
                     SELECT etp.purchaser_email AS email FROM event_ticket_purchase etp
                     WHERE etp.tenant_id = @tenantId AND etp.status IN {PaidStatuses}
                       AND etp.created_at >= @fromUtc AND etp.created_at < @toUtc
@@ -391,9 +379,6 @@ namespace Services.Repositories
             var sql = $@"
                 SELECT DISTINCT lower(email) AS email
                 FROM (
-                    SELECT pp.purchaser_email AS email FROM pass_purchase pp
-                    WHERE pp.tenant_id = @tenantId AND pp.status IN {PaidStatuses}
-                    UNION
                     SELECT etp.purchaser_email AS email FROM event_ticket_purchase etp
                     WHERE etp.tenant_id = @tenantId AND etp.status IN {PaidStatuses}
                     UNION

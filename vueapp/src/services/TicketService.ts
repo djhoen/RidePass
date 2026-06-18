@@ -3,7 +3,11 @@ import axios from 'axios'
 export interface TicketTier {
     id: string
     eventId: string
-    kind: 'spectator_pass' | 'race_entry'
+    kind: 'race_entry' | 'gate_fee'
+    // gate_fee picks an audience; race_entry is always 'rider'.
+    audience: 'rider' | 'spectator'
+    // gate_fee only: required purchase for that audience (race class + one rider gate fee).
+    required: boolean
     name: string
     priceCents: number
     inventory: number | null
@@ -46,7 +50,7 @@ export interface MyPurchase {
     status: string
     redemptionToken: string
     createdAtUtc: string
-    tierKind: 'race_entry' | 'spectator_pass' | null
+    tierKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | null
 }
 
 export interface MyCoupon {
@@ -86,6 +90,21 @@ export interface RedemptionPreview {
     createdAtUtc: string
     isRedeemableToday: boolean
     notRedeemableReason: string | null
+    registrationComplete: boolean
+    raceNumber: string | null
+}
+
+// One incomplete ticket in an order, from the resume endpoint. The frontend groups
+// these into riders (a rider gate fee + the race classes assigned to it) and spectators.
+export interface RegistrationTicket {
+    ticketId: string
+    tierName: string
+    kind: 'race_entry' | 'gate_fee'
+    audience: 'rider' | 'spectator'
+    isRace: boolean
+    isRiderGate: boolean
+    isSpectatorGate: boolean
+    needsWaiver: boolean
 }
 
 export class TicketService {
@@ -127,8 +146,38 @@ export class TicketService {
         // Bundles a track-membership purchase into the same PI when the rider opts in
         // from the membership-required dialog instead of being kicked out to /Membership.
         addMembership?: boolean
+        // Unified checkout: take payment first, collect waiver + rider details after
+        // (via completeRegistration). Lets guests buy entries for non-account riders.
+        deferRegistration?: boolean
     }) {
         return axios.post<{ data: TicketPurchaseResponse }>(`${this.apiUrl}/Purchase/EventTicket`, req)
+    }
+
+    // Resume page (from the reminder email): the still-incomplete tickets in an order,
+    // looked up by any ticket's redemption token. Returns one row per ticket with enough
+    // to group them into riders (gate fee + assigned race classes) vs spectators.
+    getRegistration(token: string) {
+        return axios.get<{ data: { eventTitle: string | null; tickets: RegistrationTicket[] } }>(
+            `${this.apiUrl}/Purchase/EventTicket/Registration/${token}`)
+    }
+
+    // Post-payment registration for the unified checkout. One entry per REGISTRANT (a
+    // person): their identity + signed waiver (when the event requires one for that
+    // audience), plus the tickets they cover — their rider gate fee + assigned race
+    // classes (one rider may hold several), or a single spectator gate fee.
+    completeRegistration(req: {
+        registrants: Array<{
+            firstName: string
+            lastName: string
+            birthdate?: string | null
+            bike?: string | null
+            parentGuardianName?: string | null
+            waiverSignatureDataUrl?: string | null
+            tickets: Array<{ ticketId: string; raceNumber?: string | null }>
+        }>
+    }) {
+        return axios.post<{ data: { completed: number } }>(
+            `${this.apiUrl}/Purchase/EventTicket/CompleteRegistration`, req)
     }
 
     // Redeem one Loam Pass credit to cover a single rider-entry (race_entry) tier instead of paying.
@@ -200,6 +249,7 @@ export interface OrderItem {
     notRedeemableReason: string | null
     redeemedAtUtc: string | null
     redeemedByName: string | null
+    registrationComplete: boolean
 }
 
 export interface BulkRedeemResponse {

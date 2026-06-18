@@ -64,14 +64,15 @@ namespace webapi.Controllers
             [FromQuery] DateTime? fromUtc,
             [FromQuery] DateTime? toUtc,
             [FromQuery] string[]? eventTypeCodes,
-            [FromQuery] Guid[]? tenantIds)
+            [FromQuery] Guid[]? tenantIds,
+            [FromQuery] string[]? excludeCodes)
         {
             if ((lat.HasValue) != (lng.HasValue))
             {
                 return new ApiResponses().BadRequestResult("Must supply both lat and lng, or neither.");
             }
 
-            var rows = await _discover.SearchEvents(lat, lng, radiusKm, q, fromUtc, toUtc, eventTypeCodes, tenantIds);
+            var rows = await _discover.SearchEvents(lat, lng, radiusKm, q, fromUtc, toUtc, eventTypeCodes, tenantIds, excludeCodes);
             var items = rows.Select(r => new EventDiscoverItem
             {
                 EventId = r.EventId,
@@ -80,6 +81,7 @@ namespace webapi.Controllers
                 TenantDisplayName = r.TenantDisplayName,
                 TenantCity = r.TenantCity,
                 TenantRegion = r.TenantRegion,
+                TenantLogoUrl = r.TenantLogoUrl,
                 Latitude = r.Latitude,
                 Longitude = r.Longitude,
                 DistanceKm = r.DistanceKm,
@@ -96,13 +98,13 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(items);
         }
 
-        // Selectable event types for the apex Events filter. `onlyCodes` lets the
-        // caller restrict to the apex allow-list (open_ride, race, practice) so the
-        // filter never offers types the page intentionally hides.
+        // Selectable event types for the apex Events filter. `onlyCodes` restricts to
+        // an allow-list; `excludeCodes` is a deny-list (the apex page hides private
+        // bookings + lessons but offers every other type that has upcoming events).
         [HttpGet("EventTypes")]
-        public async Task<IActionResult> ListEventTypes([FromQuery] string[]? onlyCodes)
+        public async Task<IActionResult> ListEventTypes([FromQuery] string[]? onlyCodes, [FromQuery] string[]? excludeCodes)
         {
-            var rows = await _discover.ListEventTypeOptions(onlyCodes);
+            var rows = await _discover.ListEventTypeOptions(onlyCodes, excludeCodes);
             var items = rows.Select(r => new EventTypeOption
             {
                 Code = r.Code,

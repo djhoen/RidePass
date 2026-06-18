@@ -185,7 +185,7 @@ const refundTarget = ref<PurchaseRow | null>(null)
 const refundReason = ref('')
 const refundDollars = ref<number>(0)
 const refunding = ref(false)
-const REFUNDABLE_KINDS = ['pass', 'event_ticket', 'season_pass', 'membership', 'event_extra']
+const REFUNDABLE_KINDS = ['event_ticket', 'season_pass', 'membership', 'event_extra']
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -269,7 +269,6 @@ function statusColor(status: string): string {
 
 // Pretty labels for the v_recent_sales discriminator.
 const KIND_LABELS: Record<string, string> = {
-    pass: 'Day Pass',
     event_ticket: 'Ticket',
     event_extra: 'Add-on',
     season_pass: 'Season Pass',
@@ -288,7 +287,7 @@ function kindLabel(kind: string): string {
 // it to a 404.
 function canCancel(p: PurchaseRow): boolean {
     if (p.status !== 'paid') return false
-    return p.kind === 'pass' || p.kind === 'event_ticket'
+    return p.kind === 'event_ticket'
 }
 
 function openCancel(p: PurchaseRow) {
@@ -303,14 +302,8 @@ async function confirmCancel() {
     try {
         const reason = cancelReason.value.trim().length > 0 ? cancelReason.value.trim() : null
         const t = cancelTarget.value
-        // Dispatch to the right cancel endpoint per kind. Other kinds are
-        // filtered out by canCancel(), so this switch only needs to cover
-        // 'pass' and 'event_ticket' today.
-        if (t.kind === 'event_ticket') {
-            await service.cancelTicket(t.id, reason)
-        } else {
-            await service.cancelPass(t.id, reason)
-        }
+        // Only event tickets are self-cancellable here (canCancel() filters the rest).
+        await service.cancelTicket(t.id, reason)
         cancelDialog.value = false
         snackbarText.value = 'Purchase cancelled. Refund queued for super-admin.'
         snackbarColor.value = 'success'

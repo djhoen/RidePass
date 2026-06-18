@@ -27,9 +27,6 @@ namespace Services.Repositories
                     SELECT stripe_payment_intent_id, created_at FROM event_ticket_purchase
                         WHERE status = 'pending' AND stripe_payment_intent_id IS NOT NULL AND created_at < @cutoff
                     UNION ALL
-                    SELECT stripe_payment_intent_id, created_at FROM pass_purchase
-                        WHERE status = 'pending' AND stripe_payment_intent_id IS NOT NULL AND created_at < @cutoff
-                    UNION ALL
                     SELECT stripe_payment_intent_id, created_at FROM event_extra_purchase
                         WHERE status = 'pending' AND stripe_payment_intent_id IS NOT NULL AND created_at < @cutoff
                     UNION ALL

@@ -381,19 +381,6 @@ namespace webapi.Controllers
             var user = await _users.GetById(userId);
             if (user is null) return new ApiResponses().BadRequestResult("User not found.");
 
-            // Membership gate (when tenant requires it for spectator-audience purchases).
-            if (_tenantContext.Tenant.MembershipRequiredForSpectators
-                && _tenantContext.Tenant.MembershipEnabled
-                && _tenantContext.Tenant.MembershipPriceCents > 0)
-            {
-                var active = await _memberships.GetActive(userId, _tenantContext.TenantId, DateTime.UtcNow);
-                if (active is null)
-                {
-                    return new ApiResponses().BadRequestResult(
-                        $"Participants are required to have an active {_tenantContext.Tenant.MembershipName}. ");
-                }
-            }
-
             var ev = await _events.GetById(req.EventId, _tenantContext.TenantId);
             if (ev is null || ev.Status != "scheduled" || ev.EndsAt < DateTime.UtcNow)
                 return new ApiResponses().BadRequestResult("Event not available.");

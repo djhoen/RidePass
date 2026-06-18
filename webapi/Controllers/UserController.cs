@@ -109,6 +109,27 @@ namespace webapi.Controllers
             });
         }
 
+        // Inline-checkout helper: does an account already exist for this email? The unified
+        // event checkout uses it to decide whether to offer a "log in" prompt (known email)
+        // vs. proceed as guest, without bouncing the buyer to a login page.
+        [AllowAnonymous]
+        [HttpGet("EmailExists")]
+        public async Task<IActionResult> EmailExists([FromQuery] string email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return new ApiResponses().OkResult(new { exists = false });
+            }
+            var trimmed = email.Trim();
+            // Global pool first (riders / super admins), then the resolved tenant's staff.
+            var exists = await _userRepository.GetGlobalByEmail(trimmed) is not null;
+            if (!exists && _tenantContext.IsResolved)
+            {
+                exists = await _userRepository.GetByEmail(_tenantContext.TenantId, trimmed) is not null;
+            }
+            return new ApiResponses().OkResult(new { exists });
+        }
+
         [HttpPost("CreateAccount")]
         public async Task<IActionResult> CreateAccount([FromBody] CreateAccountRequest request)
         {

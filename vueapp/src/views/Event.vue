@@ -27,22 +27,7 @@
                     This event has been cancelled.
                 </v-alert>
 
-                <!-- ── INLINE CHECKOUT ───────────────────────────────────────
-                     Racer / spectator checkout renders right here so the rider
-                     never leaves the event page. -->
-                <div v-if="checkoutMode" style="max-width: 760px; margin: 0 auto;">
-                    <v-btn variant="text" prepend-icon="mdi-arrow-left" class="mb-4" @click="closeCheckout">
-                        Back to event
-                    </v-btn>
-                    <h2 class="text-h5 font-weight-bold font-display mb-4">
-                        {{ checkoutMode === 'racer' ? 'Race Entry' : 'Spectator Entry' }}
-                    </h2>
-                    <BuyAdmissionFlow v-if="checkoutMode === 'racer'" :event-id="event.id" :event="event"
-                        kind-filter="race_entry" />
-                    <BuySpectatorFlow v-else :event-id="event.id" :event="event" />
-                </div>
-
-                <v-row v-else>
+                <v-row>
                     <!-- ── LEFT: event content ─────────────────────────────── -->
                     <v-col cols="12" md="6">
                         <section class="mb-8">
@@ -81,7 +66,7 @@
                             <div v-for="(group, gi) in pricingGroups" :key="group.label"
                                 :class="gi > 0 ? 'mt-4' : ''">
                                 <div class="evt-section-subtitle mb-2">{{ group.label }}</div>
-                                <div v-for="row in group.items" :key="row.key" class="evt-price-row">
+                                <div v-for="row in group.items" :key="row.key" class="evt-price-row pl-4">
                                     <span class="evt-price-name">{{ row.name }}</span>
                                     <span class="evt-price-amt">{{ row.price }}</span>
                                 </div>
@@ -93,35 +78,9 @@
                     <v-col cols="12" md="6">
                         <v-card class="evt-entry-card" variant="flat">
                             <v-card-text class="pa-5">
-                                <!-- Both audiences: show the chooser with its heading. With only one
-                                     audience we skip the "Choose Your Entry Option" framing and just
-                                     show the single action button. -->
-                                <template v-if="racerAvailable && spectatorAvailable">
-                                    <h2 class="text-h5 font-weight-bold font-display mb-1">Choose Your Entry Option</h2>
-                                    <p class="text-body-2 text-medium-emphasis mb-4">
-                                        Tell us how you're coming, and we'll take you to the right checkout.
-                                    </p>
-                                    <div class="evt-choice">
-                                        <button type="button" class="evt-choice-card" @click="goRacer">
-                                            <v-icon icon="mdi-flag-checkered" size="30"></v-icon>
-                                            <div class="font-weight-bold mt-2">I'm Racing</div>
-                                            <div class="text-caption text-medium-emphasis">Register to ride</div>
-                                            <span class="evt-choice-cta">Select</span>
-                                        </button>
-                                        <button type="button" class="evt-choice-card" @click="goSpectator">
-                                            <v-icon icon="mdi-account-group" size="30"></v-icon>
-                                            <div class="font-weight-bold mt-2">I'm Watching</div>
-                                            <div class="text-caption text-medium-emphasis">Spectator entry</div>
-                                            <span class="evt-choice-cta">Select</span>
-                                        </button>
-                                    </div>
-                                </template>
-
-                                <!-- Only one audience: send them straight to it, no chooser. -->
-                                <v-btn v-else-if="racerAvailable" block color="primary" size="large"
-                                    prepend-icon="mdi-flag-checkered" @click="goRacer">Register</v-btn>
-                                <v-btn v-else-if="spectatorAvailable" block color="primary" size="large"
-                                    prepend-icon="mdi-account-group" @click="goSpectator">Buy Spectator Entry</v-btn>
+                                <!-- Unified inline checkout: select tiers, pay, then register.
+                                     The rider never leaves the event page. -->
+                                <EventCheckout v-if="hasActiveTiers" :event="event" :tiers="tiers" />
                                 <div v-else class="text-body-2 text-medium-emphasis">
                                     No entry options are available for this event yet.
                                 </div>
@@ -155,16 +114,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
-import BuyAdmissionFlow from '@/components/BuyAdmissionFlow.vue'
-import BuySpectatorFlow from '@/components/BuySpectatorFlow.vue'
+import EventCheckout from '@/components/EventCheckout.vue'
 
 const route = useRoute()
-const router = useRouter()
 const service = new EventService()
 const ticketService = new TicketService()
 const event = ref<EventDto | null>(null)
@@ -215,23 +172,10 @@ const waiverNote = computed(() => {
     return `${who} You'll be asked to sign during checkout if it isn't already on file.`
 })
 
-const hasEligiblePasses = computed(() =>
-    !!event.value?.eligiblePasses && event.value.eligiblePasses.length > 0)
-
 const schedule = computed(() => event.value?.schedule ?? [])
 
-// The spectator checkout (BuySpectatorFlow) sells Gate Fee add-ons, so spectator
-// availability must track whether the event actually has a Gate Fee extra — NOT
-// whether it has a spectator_pass tier (which this flow doesn't sell). Mirrors the
-// server's IsGateFee check: kind 'gate_fee' or a product literally named "Gate Fee".
-const hasSpectatorGateFee = computed(() =>
-    (event.value?.eligibleExtras ?? []).some(e =>
-        e.kind === 'gate_fee' || e.name.trim().toLowerCase() === 'gate fee'))
-
-// Racer / spectator selection drives which checkout flow we send them to.
-// Racer = race tiers or riding day passes; spectator = a Gate Fee admission.
-const racerAvailable = computed(() => !!(event.value?.hasRaceEntryTiers || hasEligiblePasses.value))
-const spectatorAvailable = computed(() => hasSpectatorGateFee.value)
+// The unified checkout renders whenever the event has any active tier (rider or gate).
+const hasActiveTiers = computed(() => tiers.value.some(t => t.isActive))
 
 // ── Pricing list ─────────────────────────────────────────────────────────────
 // Everything purchasable for this event, grouped the way the checkout sells it:
@@ -239,7 +183,7 @@ const spectatorAvailable = computed(() => hasSpectatorGateFee.value)
 // Spectator_pass tiers are intentionally omitted — this page sells spectator entry
 // as a Gate Fee, so listing a tier price you can't buy here would mislead.
 function fmtPrice(cents: number): string {
-    return `$${(cents / 100).toFixed(2)}`
+    return cents === 0 ? 'Free' : `$${(cents / 100).toFixed(2)}`
 }
 const isGateFeeExtra = (e: { kind: string; name: string }) =>
     e.kind === 'gate_fee' || e.name.trim().toLowerCase() === 'gate fee'
@@ -249,31 +193,33 @@ interface PriceGroup { label: string; items: PriceRow[] }
 const pricingGroups = computed<PriceGroup[]>(() => {
     const groups: PriceGroup[] = []
     const extras = event.value?.eligibleExtras ?? []
+    const activeTiers = tiers.value.filter(t => t.isActive)
 
-    const raceTiers = tiers.value.filter(t => t.kind === 'race_entry')
+    const raceTiers = activeTiers.filter(t => t.kind === 'race_entry')
     if (raceTiers.length) {
         groups.push({
-            label: 'Race Entry',
+            label: 'Race Classes',
             items: raceTiers.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
 
-    const gateFees = extras.filter(isGateFeeExtra)
-    if (gateFees.length) {
+    const riderGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'rider')
+    if (riderGate.length) {
         groups.push({
-            label: 'Spectator Admission',
-            items: gateFees.map(e => ({ key: e.productId, name: e.name, price: fmtPrice(e.priceCents) })),
+            label: 'Rider Gate',
+            items: riderGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
 
-    const passes = event.value?.eligiblePasses ?? []
-    if (passes.length) {
+    const spectatorGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'spectator')
+    if (spectatorGate.length) {
         groups.push({
-            label: 'Day Passes',
-            items: passes.map(p => ({ key: p.id, name: p.name, price: fmtPrice(p.priceCents) })),
+            label: 'Spectator Gate',
+            items: spectatorGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
 
+    // Add-ons: real extras only (the legacy gate-fee extra is excluded — gate fees are tiers now).
     const addons = extras.filter(e => !isGateFeeExtra(e))
     if (addons.length) {
         groups.push({
@@ -284,28 +230,6 @@ const pricingGroups = computed<PriceGroup[]>(() => {
 
     return groups
 })
-
-// Inline checkout keeps the rider on this event page the whole time. Racer (race
-// entries) and spectator both render here; the day-pass-only fallback still routes
-// to the dedicated reservation flow since it's a separate purchase path.
-const checkoutMode = ref<'racer' | 'spectator' | null>(null)
-
-function goRacer() {
-    if (!event.value) return
-    if (event.value.hasRaceEntryTiers) openCheckout('racer')
-    else if (hasEligiblePasses.value) router.push({ path: '/BuyPass', query: { eventId: event.value.id } })
-}
-function goSpectator() {
-    if (event.value) openCheckout('spectator')
-}
-function openCheckout(mode: 'racer' | 'spectator') {
-    checkoutMode.value = mode
-    // Drop the rider at the top of the page so the checkout is in view.
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-}
-function closeCheckout() {
-    checkoutMode.value = null
-}
 
 const dateLine = computed(() => {
     if (!event.value) return ''

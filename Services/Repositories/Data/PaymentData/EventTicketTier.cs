@@ -5,7 +5,12 @@
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public Guid EventId { get; set; }
-        public string Kind { get; set; } = "spectator_pass"; // spectator_pass | race_entry
+        public string Kind { get; set; } = "gate_fee"; // race_entry | gate_fee (spectator_pass = legacy, converted to gate_fee)
+        // Gate fees pick an audience; race_entry is always rider. 'rider' | 'spectator'.
+        public string Audience { get; set; } = "rider";
+        // gate_fee only: when true, a buyer of that audience must purchase one. For a
+        // race, a required rider gate fee forces "race class + one rider gate fee".
+        public bool Required { get; set; }
         public string Name { get; set; } = null!;
         public int PriceCents { get; set; }
         public int? Inventory { get; set; }

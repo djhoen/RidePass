@@ -7,7 +7,6 @@ const routes = [
     { path: '/Login', name: 'Login', component: () => import('../views/Login.vue') },
     { path: '/ResetPassword', name: 'ResetPassword', component: () => import('../views/ResetPassword.vue') },
     { path: '/VerifyEmail', name: 'VerifyEmail', component: () => import('../views/VerifyEmail.vue') },
-    { path: '/Calendar', name: 'Calendar', component: () => import('../views/Calendar.vue') },
     { path: '/Events', name: 'Events', component: () => import('../views/Events.vue') },
     { path: '/Blog', name: 'Blog', component: () => import('../views/Blog.vue') },
     { path: '/Blog/:slug', name: 'BlogPost', component: () => import('../views/BlogPost.vue') },
@@ -30,25 +29,9 @@ const routes = [
         component: () => import('../views/User/Profile.vue'),
         meta: { requiresAuth: true }
     },
-    {
-        path: '/BuyPass',
-        name: 'BuyPass',
-        component: () => import('../views/BuyPass.vue'),
-        meta: { requiresAuth: true }
-    },
-    {
-        path: '/BuyTicket/:eventId',
-        name: 'BuyTicket',
-        component: () => import('../views/BuyTicket.vue'),
-        // No requiresAuth — the race flow lets riders create their account (or log
-        // in) inline as the first step instead of bouncing them to a login wall.
-    },
-    {
-        path: '/BuySpectator/:eventId',
-        name: 'BuySpectator',
-        component: () => import('../views/BuySpectator.vue'),
-        // No requiresAuth — spectator buy supports guest checkout.
-    },
+    // /BuyTicket and /BuySpectator retired — the event page (/Event/:id) is the single
+    // checkout surface now (EventCheckout). Their view files + the old flow components
+    // are dead pending cleanup (Home's quick-buy dialog still references BuyAdmissionFlow).
     {
         path: '/Feedback',
         name: 'Feedback',
@@ -160,6 +143,12 @@ const routes = [
         component: () => import('../views/SuperAdmin/HomePage.vue'),
         meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
     },
+    {
+        path: '/SuperAdmin/ForTracks',
+        name: 'SuperAdminForTracks',
+        component: () => import('../views/SuperAdmin/ForTracks.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
 
     // Admin routes (tenant_admin or super_admin)
     {
@@ -267,22 +256,10 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
-        path: '/Admin/Passes',
-        name: 'AdminPasses',
-        component: () => import('../views/Admin/Passes.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
-    },
-    {
         path: '/Admin/SeasonPasses',
         name: 'AdminSeasonPasses',
         component: () => import('../views/Admin/SeasonPasses.vue'),
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
-    },
-    {
-        path: '/Admin/PassCheckIn',
-        name: 'AdminPassCheckIn',
-        component: () => import('../views/Admin/PassCheckIn.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.redeem', hideFooter: true }
     },
     {
         path: '/Admin/Rewards',
@@ -414,6 +391,13 @@ const routes = [
         path: '/Event/:id',
         name: 'PublicEvent',
         component: () => import('../views/Event.vue'),
+    },
+    {
+        // Resume page from the "finish your registration" reminder email — guests land
+        // here to add rider details + sign the waiver for a paid-but-unregistered order.
+        path: '/FinishRegistration/:token',
+        name: 'FinishRegistration',
+        component: () => import('../views/FinishRegistration.vue'),
     },
     {
         path: '/Unsubscribe/:token',

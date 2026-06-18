@@ -56,6 +56,7 @@ export interface EligibleExtra {
     sold: number
     remaining: number   // -1 if unlimited
     requiresWaiver: boolean
+    riderPaidServiceChargeBps: number   // buyer's share of the service charge (bps of tenant rate)
     variants: EligibleExtraVariant[]
 }
 

@@ -30,6 +30,13 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task UpdateImageUrl(string kind, string? newUrl);
 
+        /// <summary>
+        /// Update only the For Tracks page fields (hero copy + benefits title/html),
+        /// leaving the apex home-page columns untouched. Backs the dedicated For
+        /// Tracks save endpoint so the two editors can't clobber each other.
+        /// </summary>
+        Task UpdateForTracks(PlatformBranding branding);
+
         // ── Testimonials ─────────────────────────────────────────────────────
         Task<List<PlatformTestimonial>> ListTestimonials(bool includeInactive = false);
         Task<PlatformTestimonial?> GetTestimonial(Guid id);
