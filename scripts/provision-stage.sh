@@ -16,6 +16,15 @@ DEPLOY_PATH=/var/www/staging
 # The matching PRIVATE key must be the STAGE_DEPLOY_SSH_KEY GitHub secret.
 DEPLOY_PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILwXvjdjVr8jfFMTO2ZgCHMBPeYgUtt2TVbQWTWe38Hh djhoen@gmail.com ridepass-deploy'
 
+echo "==> swap (build headroom; the Vite build OOMs on a 1GB droplet without it)"
+if ! swapon --show 2>/dev/null | grep -q '/swapfile'; then
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 echo "==> apt packages (nginx, certbot + DO DNS plugin, build tools)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
