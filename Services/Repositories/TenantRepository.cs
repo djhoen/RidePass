@@ -44,6 +44,7 @@ namespace Services.Repositories
             address_line AS AddressLine, city, region, postal_code AS PostalCode, country,
             latitude, longitude,
             is_published AS IsPublished,
+            first_published_at AS FirstPublishedAt,
             gift_cards_enabled AS GiftCardsEnabled,
             gift_card_min_cents AS GiftCardMinCents,
             gift_card_max_cents AS GiftCardMaxCents,

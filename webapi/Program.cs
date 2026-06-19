@@ -76,6 +76,10 @@ builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpServ
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
 builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();
+builder.Services.AddScoped<Services.TenantSync.ITenantSyncRepository, Services.TenantSync.TenantSyncRepository>();
+builder.Services.AddSingleton<webapi.Sync.TenantSyncImageStore>();
+builder.Services.AddHttpClient<webapi.Sync.TenantSyncClient>();
+builder.Services.AddScoped<webapi.Sync.TenantPromotionService>();
 builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();

@@ -37,6 +37,26 @@ namespace Services.Helpers
             }
         }
 
+        public async Task ExecuteBatch(IReadOnlyList<(string Sql, object? Param)> statements, int timeout = DEFAULT_TIMEOUT)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+            await using var tx = await conn.BeginTransactionAsync();
+            try
+            {
+                foreach (var (sql, param) in statements)
+                {
+                    await conn.ExecuteAsync(sql, param, transaction: tx, commandTimeout: timeout);
+                }
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+
         public async Task<IEnumerable<T>> Query<T>(string sql, object? param = null, int timeout = DEFAULT_TIMEOUT)
         {
             using var dbConnection = new NpgsqlConnection(ConnectionString);

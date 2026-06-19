@@ -186,6 +186,23 @@ export interface StageMirrorStatus {
     log: string | null
 }
 
+export interface StageTenant {
+    id: string
+    subdomain: string
+    displayName: string
+    everPublished: boolean
+}
+
+export interface PromotionResult {
+    status: 'preview' | 'created' | 'replaced' | 'blocked'
+    mode: 'create' | 'replace'
+    reason: string | null
+    tenantId: string
+    subdomain: string
+    displayName: string
+    counts: Record<string, number>
+}
+
 export class SuperAdminService {
     private apiUrl: string
 
@@ -203,6 +220,16 @@ export class SuperAdminService {
 
     listTenants() {
         return axios.get<{ data: TenantSummary[] }>(`${this.apiUrl}/SuperAdmin/Tenants`)
+    }
+
+    // Stage->prod tenant promotion.
+    listStageTenants() {
+        return axios.get<{ data: StageTenant[] }>(`${this.apiUrl}/TenantPromotion/StageTenants`)
+    }
+
+    promoteTenant(stageTenantId: string, confirm: boolean) {
+        return axios.post<{ data: PromotionResult }>(
+            `${this.apiUrl}/TenantPromotion/Promote/${stageTenantId}?confirm=${confirm}`)
     }
 
     getMiscSettings() {

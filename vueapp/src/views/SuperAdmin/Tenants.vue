@@ -4,6 +4,7 @@
 
         <div class="d-flex align-center mb-3">
             <v-spacer></v-spacer>
+            <v-btn variant="tonal" prepend-icon="mdi-cloud-download-outline" class="mr-2" @click="openImport">Import from stage</v-btn>
             <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateTenant">New Tenant</v-btn>
         </div>
         <v-card>
@@ -388,6 +389,78 @@
             </v-card>
         </v-dialog>
 
+        <!-- Import a tenant from staging -->
+        <v-dialog v-model="importDialog" max-width="640">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Import tenant from stage</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="importDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <div v-if="importLoading" class="text-center py-6">
+                        <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                    </div>
+                    <template v-else>
+                        <v-alert v-if="importError" type="error" variant="tonal" density="compact" class="mb-3">{{ importError }}</v-alert>
+
+                        <!-- Step 1: pick a stage tenant -->
+                        <template v-if="!preview">
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                Unpublished tenants on staging. Pick one to promote to production (config + images only , never orders).
+                            </p>
+                            <v-list v-if="stageTenants.length" density="compact" class="border rounded">
+                                <v-list-item v-for="t in stageTenants" :key="t.id" @click="doPreview(t)">
+                                    <v-list-item-title>
+                                        {{ t.displayName }} <code class="ml-1 text-medium-emphasis">{{ t.subdomain }}</code>
+                                    </v-list-item-title>
+                                    <template #append><v-icon icon="mdi-chevron-right"></v-icon></template>
+                                </v-list-item>
+                            </v-list>
+                            <p v-else-if="!importError" class="text-medium-emphasis">No unpublished tenants on staging.</p>
+                        </template>
+
+                        <!-- Step 2: preview -->
+                        <template v-else>
+                            <div class="text-h6 font-weight-bold mb-1">
+                                {{ preview.displayName }} <code class="ml-1 text-medium-emphasis">{{ preview.subdomain }}</code>
+                            </div>
+                            <v-alert v-if="preview.status === 'blocked'" type="error" variant="tonal" class="mt-2">
+                                {{ preview.reason }}
+                            </v-alert>
+                            <template v-else>
+                                <v-chip :color="preview.mode === 'replace' ? 'warning' : 'success'" variant="tonal" class="mb-3">
+                                    {{ preview.mode === 'replace' ? 'Will REPLACE the existing prod tenant' : 'Will CREATE a new prod tenant' }}
+                                </v-chip>
+                                <v-alert v-if="preview.mode === 'replace'" type="warning" variant="tonal" density="compact" class="mb-3">
+                                    This tenant already exists on prod (unpublished, no live orders). Promoting replaces its current config with the stage version.
+                                </v-alert>
+                                <div class="text-body-2">
+                                    <div>Events: <strong>{{ preview.counts.events }}</strong></div>
+                                    <div>Ticket tiers: <strong>{{ preview.counts.ticketTiers }}</strong></div>
+                                    <div>Add-ons: <strong>{{ preview.counts.addOns }}</strong></div>
+                                    <div>Season passes: <strong>{{ preview.counts.seasonPasses }}</strong></div>
+                                    <div>Images: <strong>{{ preview.counts.images }}</strong></div>
+                                </div>
+                                <p class="text-caption text-medium-emphasis mt-3">
+                                    Stripe Connect, SMS, and domain settings are not copied , reconnect those on prod, then publish when ready.
+                                </p>
+                            </template>
+                        </template>
+                    </template>
+                </v-card-text>
+                <v-card-actions v-if="preview && !importLoading">
+                    <v-btn variant="text" @click="preview = null">Back</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn v-if="preview.status !== 'blocked'"
+                        :color="preview.mode === 'replace' ? 'warning' : 'primary'"
+                        :loading="importing" @click="doImport">
+                        {{ preview.mode === 'replace' ? 'Replace on prod' : 'Create on prod' }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -395,7 +468,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import dayjs from 'dayjs'
-import { SuperAdminService, type TenantSummary, type CreateTenantResult, type UpdateTenantPayload } from '@/services/SuperAdminService'
+import { SuperAdminService, type TenantSummary, type CreateTenantResult, type UpdateTenantPayload, type StageTenant, type PromotionResult } from '@/services/SuperAdminService'
 import { EMBED_WIDGETS, getEmbedWidget, buildEmbedSnippet, buildEmbedPath } from '@/embed/widgets'
 import tenantHelper from '@/helpers/TenantHelper'
 import { geocode } from '@/helpers/Geocode'
@@ -609,6 +682,64 @@ async function loadTenants() {
         flash(err.response?.data?.error || 'Failed to load tenants.', 'error')
     } finally {
         loadingTenants.value = false
+    }
+}
+
+// ── Import a tenant from staging ─────────────────────────────────────────────
+const importDialog = ref(false)
+const importLoading = ref(false)
+const importing = ref(false)
+const importError = ref<string | null>(null)
+const stageTenants = ref<StageTenant[]>([])
+const preview = ref<PromotionResult | null>(null)
+const selectedStageId = ref<string | null>(null)
+
+async function openImport() {
+    importDialog.value = true
+    preview.value = null
+    importError.value = null
+    stageTenants.value = []
+    selectedStageId.value = null
+    importLoading.value = true
+    try {
+        const r = await service.listStageTenants()
+        stageTenants.value = (r.data as any).data
+    } catch (err: any) {
+        importError.value = err.response?.data?.error || 'Could not reach staging.'
+    } finally {
+        importLoading.value = false
+    }
+}
+
+async function doPreview(t: StageTenant) {
+    selectedStageId.value = t.id
+    importError.value = null
+    importLoading.value = true
+    try {
+        const r = await service.promoteTenant(t.id, false)
+        preview.value = (r.data as any).data
+    } catch (err: any) {
+        importError.value = err.response?.data?.error || 'Preview failed.'
+    } finally {
+        importLoading.value = false
+    }
+}
+
+async function doImport() {
+    if (!selectedStageId.value) return
+    importing.value = true
+    importError.value = null
+    try {
+        const r = await service.promoteTenant(selectedStageId.value, true)
+        const res = (r.data as any).data as PromotionResult
+        if (res.status === 'blocked') { importError.value = res.reason; return }
+        flash(`${res.status === 'replaced' ? 'Replaced' : 'Created'} ${res.subdomain} on production.`, 'success')
+        importDialog.value = false
+        await loadTenants()
+    } catch (err: any) {
+        importError.value = err.response?.data?.error || 'Import failed.'
+    } finally {
+        importing.value = false
     }
 }
 

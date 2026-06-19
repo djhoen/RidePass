@@ -6,6 +6,13 @@ namespace Services.Helpers.Interfaces
         Task<int> ExecuteScalar(string sql, object? param = null, int timeout = 30);
 
         /// <summary>
+        /// Runs a list of statements in a single transaction on one connection: all commit
+        /// together or all roll back. Used by the tenant-promotion import so a partial copy
+        /// can never land. Statements execute in order.
+        /// </summary>
+        Task ExecuteBatch(IReadOnlyList<(string Sql, object? Param)> statements, int timeout = 60);
+
+        /// <summary>
         /// Acquires a session-level Postgres advisory lock on a dedicated connection and
         /// returns a handle that releases it on disposal. Concurrent callers that pass the
         /// same key serialize, which lets a capacity check and the row insert that follows

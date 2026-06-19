@@ -66,6 +66,10 @@ namespace Services.Repositories.Data.TenantData
         // Gates appearance in public discovery (apex map / featured / Discover /
         // events). Does NOT gate subdomain resolution. New tenants start false.
         public bool IsPublished { get; set; }
+        // First time this tenant was ever published (stamped by a trigger, never reset).
+        // NULL = never published. Used by the stage->prod promotion import to refuse
+        // overwriting a tenant that may hold real data.
+        public DateTime? FirstPublishedAt { get; set; }
         public bool GiftCardsEnabled { get; set; } = false;
         public int GiftCardMinCents { get; set; } = 1000;       // $10 default
         public int GiftCardMaxCents { get; set; } = 50000;      // $500 default
