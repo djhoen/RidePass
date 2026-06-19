@@ -55,11 +55,16 @@ DO $$
 DECLARE r record;
 BEGIN
     FOR r IN
-        SELECT table_name, column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name <> 'users'
-           AND column_name IN ('email', 'purchaser_email', 'buyer_email', 'recipient_email',
+        -- Join to information_schema.tables and restrict to BASE TABLE so we never try
+        -- to UPDATE a view (e.g. v_recent_sales, a UNION view exposing purchaser_email).
+        SELECT c.table_name, c.column_name
+          FROM information_schema.columns c
+          JOIN information_schema.tables t
+            ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+         WHERE c.table_schema = 'public'
+           AND t.table_type = 'BASE TABLE'
+           AND c.table_name <> 'users'
+           AND c.column_name IN ('email', 'purchaser_email', 'buyer_email', 'recipient_email',
                                'contact_email', 'guest_email', 'customer_email')
     LOOP
         EXECUTE format(
@@ -75,12 +80,15 @@ DO $$
 DECLARE r record;
 BEGIN
     FOR r IN
-        SELECT table_name, column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name <> 'users'
-           AND is_nullable = 'YES'
-           AND column_name IN (
+        SELECT c.table_name, c.column_name
+          FROM information_schema.columns c
+          JOIN information_schema.tables t
+            ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+         WHERE c.table_schema = 'public'
+           AND t.table_type = 'BASE TABLE'
+           AND c.table_name <> 'users'
+           AND c.is_nullable = 'YES'
+           AND c.column_name IN (
                -- contact PII
                'phone', 'parent_phone', 'parent_name', 'recipient_name', 'buyer_name',
                'emergency_contact_phone', 'emergency_contact_name',
