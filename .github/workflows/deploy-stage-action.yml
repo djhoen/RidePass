@@ -74,7 +74,9 @@ jobs:
             set -e
             cd /var/www/staging/vueapp
             npm install --no-fund --no-audit --silent
-            npm run build -- --mode staging
+            # Node defaults to a ~480MB V8 heap on a 1GB box and OOMs the Vite build;
+            # raise the ceiling (swap covers the overflow).
+            NODE_OPTIONS=--max-old-space-size=2048 npm run build -- --mode staging
           '
 
       - name: Publish .NET projects
