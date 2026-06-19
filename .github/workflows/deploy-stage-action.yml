@@ -87,6 +87,18 @@ jobs:
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -r \
             vueapp/dist "$DEPLOY_USER@$STAGE_DEPLOY_HOST:/var/www/staging/vueapp/"
 
+      - name: Install SPA server runtime deps
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          # server.js needs express at runtime (the SPA itself is bundled into dist).
+          # Production-only install, not a build, so it won't OOM the 1GB box.
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            cd /var/www/staging/vueapp
+            npm install --omit=dev --no-fund --no-audit
+          '
+
       - name: Publish .NET projects
         env:
           STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
