@@ -28,6 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build the SPA here on the runner (lots of RAM) rather than on the 1-vCPU/1GB
+      # staging droplet, where the Vite build reliably OOMs. The compiled dist is shipped
+      # to the droplet below; server.js serves vueapp/dist.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build SPA on the runner (staging mode)
+        working-directory: vueapp
+        run: |
+          npm install --no-fund --no-audit
+          npm run build -- --mode staging
+
       - name: Set up SSH
         env:
           STAGE_DEPLOY_SSH_KEY: ${{ secrets.STAGE_DEPLOY_SSH_KEY }}
@@ -64,20 +78,14 @@ jobs:
             du -sh "$DEPLOY_PATH"
           '
 
-      - name: Build vueapp (staging mode)
+      - name: Upload SPA build to droplet
         env:
           STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
         run: |
-          # Keepalive: the Vite build on a 1-vCPU droplet runs silent for minutes; without
-          # ServerAliveInterval the runner's SSH connection can drop with a broken pipe.
-          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
-            set -e
-            cd /var/www/staging/vueapp
-            npm install --no-fund --no-audit --silent
-            # Node defaults to a ~480MB V8 heap on a 1GB box and OOMs the Vite build;
-            # raise the ceiling (swap covers the overflow).
-            NODE_OPTIONS=--max-old-space-size=2048 npm run build -- --mode staging
-          '
+          # The transfer step recreated vueapp/ without dist (it's excluded from the tar),
+          # so ship the runner-built dist into place. server.js serves vueapp/dist.
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -r \
+            vueapp/dist "$DEPLOY_USER@$STAGE_DEPLOY_HOST:/var/www/staging/vueapp/"
 
       - name: Publish .NET projects
         env:
