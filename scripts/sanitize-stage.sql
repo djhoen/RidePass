@@ -5,9 +5,13 @@
 -- can't be tied back to real customers or real prod integrations.
 --
 -- Design notes:
---   * Idempotent and schema-drift-proof: it scrubs by COLUMN NAME across every
---     table in the public schema, so new tables/columns are covered automatically
---     and missing ones are simply not matched (no errors).
+--   * Idempotent and self-maintaining: it scrubs by COLUMN-NAME SHAPE (patterns) across
+--     every BASE TABLE in the public schema, so new tables AND new columns that follow
+--     the usual naming (anything ending in _email, *phone*, twilio_*, stripe_*, *_token,
+--     *_secret) are covered automatically without editing this file. Restricted to text
+--     columns on base tables, so views (e.g. v_recent_sales) and non-text columns are
+--     never touched. A genuinely novel PII column name (e.g. tax_id, ssn) still needs to
+--     be added to the patterns below.
 --   * Super-admin user rows are intentionally LEFT INTACT so you can still log in
 --     to staging with your real super-admin credentials. Everyone else is scrubbed.
 --   * Passwords are not touched. Non-super-admin logins won't work (you don't know
@@ -57,6 +61,9 @@ BEGIN
     FOR r IN
         -- Join to information_schema.tables and restrict to BASE TABLE so we never try
         -- to UPDATE a view (e.g. v_recent_sales, a UNION view exposing purchaser_email).
+        -- Match by shape so new email columns are caught automatically: a text column
+        -- named exactly "email" or ending in "_email" (purchaser_email, buyer_email, ...).
+        -- Restricted to BASE TABLE + text so we never touch a view or a non-text column.
         SELECT c.table_name, c.column_name
           FROM information_schema.columns c
           JOIN information_schema.tables t
@@ -64,8 +71,8 @@ BEGIN
          WHERE c.table_schema = 'public'
            AND t.table_type = 'BASE TABLE'
            AND c.table_name <> 'users'
-           AND c.column_name IN ('email', 'purchaser_email', 'buyer_email', 'recipient_email',
-                               'contact_email', 'guest_email', 'customer_email')
+           AND c.data_type IN ('text', 'character varying')
+           AND (c.column_name = 'email' OR c.column_name LIKE '%\_email')
     LOOP
         EXECUTE format(
             'UPDATE public.%I SET %I = ''redacted-'' || substr(md5(%I), 1, 12) || ''@stage.invalid'' WHERE %I IS NOT NULL',
@@ -80,6 +87,14 @@ DO $$
 DECLARE r record;
 BEGIN
     FOR r IN
+        -- Match by shape so new phone/credential columns are caught automatically.
+        -- Only nullable text columns on base tables, so we never error on NOT NULL or
+        -- non-text columns (e.g. twilio_cost_micros bigint is skipped by the type filter).
+        --   * %phone%                 -> phone numbers
+        --   * twilio_* / stripe_*     -> cloned external account ids / credentials
+        --   * %_token / %_secret      -> any token/secret column
+        --   * the explicit *_name list -> contact-name PII (kept narrow; we do NOT match
+        --     %name% since that would hit display_name, first_name, product names, etc.)
         SELECT c.table_name, c.column_name
           FROM information_schema.columns c
           JOIN information_schema.tables t
@@ -88,13 +103,15 @@ BEGIN
            AND t.table_type = 'BASE TABLE'
            AND c.table_name <> 'users'
            AND c.is_nullable = 'YES'
-           AND c.column_name IN (
-               -- contact PII
-               'phone', 'parent_phone', 'parent_name', 'recipient_name', 'buyer_name',
-               'emergency_contact_phone', 'emergency_contact_name',
-               -- cloned external credentials / account ids (must not point at prod)
-               'twilio_subaccount_sid', 'twilio_auth_token_encrypted', 'twilio_from_number',
-               'twilio_messaging_service_sid', 'stripe_connect_account_id', 'stripe_terminal_location_id')
+           AND c.data_type IN ('text', 'character varying')
+           AND (
+                  c.column_name LIKE '%phone%'
+               OR c.column_name LIKE 'twilio\_%'
+               OR c.column_name LIKE 'stripe\_%'
+               OR c.column_name LIKE '%\_token'
+               OR c.column_name LIKE '%\_secret'
+               OR c.column_name IN ('parent_name', 'recipient_name', 'buyer_name', 'emergency_contact_name')
+               )
     LOOP
         EXECUTE format('UPDATE public.%I SET %I = NULL WHERE %I IS NOT NULL',
             r.table_name, r.column_name, r.column_name);

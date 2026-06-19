@@ -189,7 +189,18 @@ builder.Services.AddHostedService<webapi.Workers.PendingPurchaseReconciler>();
 // tickets, once the checkout is >1h old and at most once per order.
 builder.Services.AddHostedService<webapi.Workers.RegistrationReminderWorker>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
-builder.Services.AddScoped<IImageStorage, LocalFilesystemImageStorage>();
+// Image storage: DigitalOcean Spaces (S3) when a bucket is configured, else local disk
+// (dev / single-box). Spaces returns absolute bucket URLs, which is what lets a cloned
+// staging DB render production's images with no file copy. Singleton: the S3 client pools
+// HTTP connections and is thread-safe.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["Storage:Spaces:Bucket"]))
+{
+    builder.Services.AddSingleton<IImageStorage, SpacesImageStorage>();
+}
+else
+{
+    builder.Services.AddScoped<IImageStorage, LocalFilesystemImageStorage>();
+}
 
 // Password hashing
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
