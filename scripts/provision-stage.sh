@@ -30,6 +30,17 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y nginx certbot python3-certbot-dns-digitalocean curl git ufw
 
+echo "==> PostgreSQL 17 client (pg_dump must match the PG17 managed cluster for the stage mirror)"
+if ! pg_dump --version 2>/dev/null | grep -q ' 17'; then
+    install -d /usr/share/postgresql-common/pgdg
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release; echo $VERSION_CODENAME)-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list
+    apt-get update -y
+    apt-get install -y postgresql-client-17
+fi
+
 echo "==> Node 20 (NodeSource)"
 if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -

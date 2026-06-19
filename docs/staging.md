@@ -75,6 +75,32 @@ contains `stage`.
 After a refresh, stage tenants have no Stripe Connect account (nulled), so re-onboard a
 **test-mode** Connect account in stage if you need to exercise checkout end to end.
 
+### Refreshing from the super-admin UI
+
+There's also an in-app button: super-admin → **Misc settings** → **Staging data** →
+"Refresh staging from production". It runs the same `refresh-stage-db.sh` server-side as a
+background job and shows live progress. It is rendered/usable ONLY when the server is the
+staging environment (`ASPNETCORE_ENVIRONMENT=Staging`) with `StageMirror:Enabled=true`; on
+production the endpoint 403s and the control is hidden.
+
+Setup for the in-app utility (one-time):
+
+1. Add `StageMirror__*` to `/etc/ridepass/staging.env` (see `staging.env.example`): `Enabled=true`,
+   `SourceUrl` (read-only prod libpq URI), `TargetUrl` (the `ridepass_stage` libpq URI; must
+   contain "stage").
+2. The droplet needs the **PostgreSQL 17** client (`pg_dump` must match the PG17 cluster).
+   `provision-stage.sh` installs `postgresql-client-17` from PGDG; on an already-provisioned
+   box run that block manually.
+3. Grant the stage app user what the refresh needs, as `doadmin`, once (the refresh drops and
+   recreates the `public` schema and the `uuid-ossp` extension):
+   ```sql
+   GRANT CREATE ON DATABASE ridepass_stage TO ridepass_stage_app;
+   ALTER SCHEMA public OWNER TO ridepass_stage_app;
+   ```
+   If `ALTER SCHEMA ... OWNER` errors with "must be member of role" (DO's doadmin isn't a full
+   superuser), the app user can't drop the schema; switch `refresh-stage-db.sh` to a
+   `pg_restore --clean --if-exists` reset instead of `DROP SCHEMA`.
+
 ## Day-to-day flow
 
 ```

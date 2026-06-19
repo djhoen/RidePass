@@ -40,6 +40,7 @@ namespace webapi.Controllers
         private readonly ISmtpEmailer _emailer;
         private readonly ICouponRepository _couponShares;
         private readonly IPlatformSettingRepository _platformSettings;
+        private readonly webapi.Staging.IStageMirrorService _stageMirror;
         private readonly ILogger<SuperAdminController> _logger;
         private readonly IMemoryCache _cache;
 
@@ -61,6 +62,7 @@ namespace webapi.Controllers
             ISmtpEmailer emailer,
             ICouponRepository couponShares,
             IPlatformSettingRepository platformSettings,
+            webapi.Staging.IStageMirrorService stageMirror,
             ILogger<SuperAdminController> logger,
             IMemoryCache cache)
         {
@@ -81,6 +83,7 @@ namespace webapi.Controllers
             _emailer = emailer;
             _couponShares = couponShares;
             _platformSettings = platformSettings;
+            _stageMirror = stageMirror;
             _logger = logger;
             _cache = cache;
         }
@@ -144,6 +147,38 @@ namespace webapi.Controllers
             {
                 GlobalEmbedAllowedOrigins = origins.ToArray(),
             });
+        }
+
+        /// <summary>
+        /// Staging-only: status of the "copy production down to staging" job. On any other
+        /// environment this returns Available=false and the UI hides the control.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpGet("StageMirror/Status")]
+        public IActionResult StageMirrorStatus()
+        {
+            return new ApiResponses().OkResult(_stageMirror.Snapshot());
+        }
+
+        /// <summary>
+        /// Staging-only: kick off a refresh (dump prod -> restore stage -> sanitize) in the
+        /// background. 403 unless running on Staging with the feature enabled.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("StageMirror/Refresh")]
+        public IActionResult StartStageMirror()
+        {
+            if (!_stageMirror.Available)
+            {
+                return new ApiResponses().BadRequestResult("Staging mirror is not available in this environment.");
+            }
+            var startedBy = User.FindFirst("email")?.Value ?? User.Identity?.Name ?? "super-admin";
+            var (started, error) = _stageMirror.Start(startedBy);
+            if (!started)
+            {
+                return new ApiResponses().BadRequestResult(error ?? "Could not start refresh.");
+            }
+            return new ApiResponses().OkResult(_stageMirror.Snapshot());
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]

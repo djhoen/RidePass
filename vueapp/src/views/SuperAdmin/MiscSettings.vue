@@ -32,6 +32,34 @@
                         persistent-hint></v-textarea>
                 </v-card-text>
             </v-card>
+
+            <!-- Staging-only: copy production down to staging. Rendered only when the
+                 server reports it's the staging environment with the feature enabled. -->
+            <v-card v-if="stageMirror?.available" class="mb-4">
+                <v-card-title class="d-flex align-center">
+                    <span>Staging data</span>
+                    <v-chip v-if="stageMirror.state !== 'idle'" size="small" label class="ml-3"
+                        :color="mirrorColor">{{ stageMirror.state }}</v-chip>
+                </v-card-title>
+                <v-card-text>
+                    <v-alert type="warning" variant="tonal" density="comfortable" class="mb-4">
+                        Wipes this <strong>staging</strong> database and reloads it from a fresh copy of
+                        production, then scrubs PII and clears payment/SMS credentials. Production is read
+                        from a read-only connection and is never modified. This can take a few minutes.
+                    </v-alert>
+                    <v-btn color="primary" prepend-icon="mdi-database-sync"
+                        :loading="mirrorRunning" :disabled="mirrorRunning" @click="refreshStage">
+                        Refresh staging from production
+                    </v-btn>
+                    <div v-if="stageMirror.startedBy || stageMirror.startedAtUtc"
+                        class="text-caption text-medium-emphasis mt-2">
+                        <span v-if="stageMirror.startedBy">Started by {{ stageMirror.startedBy }}</span>
+                        <span v-if="stageMirror.startedAtUtc"> at {{ formatTime(stageMirror.startedAtUtc) }}</span>
+                        <span v-if="stageMirror.finishedAtUtc"> · finished {{ formatTime(stageMirror.finishedAtUtc) }}</span>
+                    </div>
+                    <pre v-if="stageMirror.log" class="mirror-log mt-3">{{ stageMirror.log }}</pre>
+                </v-card-text>
+            </v-card>
         </template>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
@@ -39,10 +67,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { SuperAdminService } from '@/services/SuperAdminService'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { SuperAdminService, type StageMirrorStatus } from '@/services/SuperAdminService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new SuperAdminService()
+const confirm = useConfirm()
 
 const loading = ref(true)
 const loaded = ref(false)
@@ -68,7 +98,68 @@ function toLines(arr: string[]): string {
 const origins = computed(() =>
     originsText.value.split(/[\s,]+/).map(s => s.trim()).filter(s => s.length > 0))
 
-onMounted(load)
+// --- Staging mirror (copy prod down to stage) ---------------------------------
+const stageMirror = ref<StageMirrorStatus | null>(null)
+const mirrorRunning = computed(() => stageMirror.value?.state === 'running')
+const mirrorColor = computed(() => {
+    switch (stageMirror.value?.state) {
+        case 'running': return 'info'
+        case 'succeeded': return 'success'
+        case 'failed': return 'error'
+        default: return 'default'
+    }
+})
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function formatTime(utc: string): string {
+    try { return new Date(utc).toLocaleString() } catch { return utc }
+}
+
+async function loadMirrorStatus() {
+    try {
+        const r = await service.getStageMirrorStatus()
+        stageMirror.value = (r.data as any).data as StageMirrorStatus
+        if (stageMirror.value.state === 'running') startPolling()
+        else stopPolling()
+    } catch {
+        // status is best-effort; ignore (e.g. not staging)
+    }
+}
+
+function startPolling() {
+    if (pollTimer) return
+    pollTimer = setInterval(loadMirrorStatus, 3000)
+}
+function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+async function refreshStage() {
+    const ok = await confirm({
+        title: 'Refresh staging from production?',
+        message: 'This wipes the staging database and reloads it from a fresh production copy '
+            + '(then scrubs PII and clears payment/SMS credentials). Production is not modified. '
+            + 'Anyone using staging will see it reset.',
+        confirmText: 'Refresh staging',
+        confirmColor: 'warning',
+    })
+    if (!ok) return
+    try {
+        const r = await service.startStageMirror()
+        stageMirror.value = (r.data as any).data as StageMirrorStatus
+        flash('Refresh started.')
+        startPolling()
+    } catch {
+        flash('Could not start the refresh.', 'error')
+    }
+}
+
+onUnmounted(stopPolling)
+
+onMounted(() => {
+    load()
+    loadMirrorStatus()
+})
 
 async function load() {
     loading.value = true
@@ -100,3 +191,17 @@ async function save() {
     }
 }
 </script>
+
+<style scoped>
+.mirror-log {
+    max-height: 320px;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+</style>

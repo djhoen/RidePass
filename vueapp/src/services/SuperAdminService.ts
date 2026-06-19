@@ -177,6 +177,15 @@ export interface MiscSettings {
     globalEmbedAllowedOrigins: string[]
 }
 
+export interface StageMirrorStatus {
+    available: boolean
+    state: 'idle' | 'running' | 'succeeded' | 'failed'
+    startedAtUtc: string | null
+    finishedAtUtc: string | null
+    startedBy: string | null
+    log: string | null
+}
+
 export class SuperAdminService {
     private apiUrl: string
 
@@ -202,6 +211,14 @@ export class SuperAdminService {
 
     updateMiscSettings(body: MiscSettings) {
         return axios.put<{ data: MiscSettings }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`, body)
+    }
+
+    getStageMirrorStatus() {
+        return axios.get<{ data: StageMirrorStatus }>(`${this.apiUrl}/SuperAdmin/StageMirror/Status`)
+    }
+
+    startStageMirror() {
+        return axios.post<{ data: StageMirrorStatus }>(`${this.apiUrl}/SuperAdmin/StageMirror/Refresh`)
     }
 
     createTenant(body: CreateTenantPayload) {
