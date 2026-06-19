@@ -18,7 +18,7 @@ DEPLOY_PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILwXvjdjVr8jfFMTO2ZgCHMBPeYgU
 
 echo "==> swap (build headroom; the Vite build OOMs on a 1GB droplet without it)"
 if ! swapon --show 2>/dev/null | grep -q '/swapfile'; then
-    fallocate -l 2G /swapfile
+    fallocate -l 4G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
