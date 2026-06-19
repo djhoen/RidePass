@@ -252,6 +252,7 @@ import {
     DiscoverService, type DiscoverQuery, type EventDiscoverItem,
     type EventTypeOption,
 } from '@/services/DiscoverService'
+import { tenantEventUrl } from '@/helpers/tenantLinks'
 import { EventService, type EventDto } from '@/services/EventService'
 import { branding } from '@/stores/branding'
 import { platformBranding, platformImageUrl } from '@/stores/platformBranding'
@@ -289,6 +290,13 @@ interface CalEvent {
     tenantDisplayName: string | null
     // Tenant logo (apex only); white logo when set, else regular. Overlaid bottom-right.
     tenantLogoUrl: string | null
+    // Front-door config (apex only) so the event link targets the right destination.
+    tenantClientType: 'hosted' | 'custom_domain' | 'embedded'
+    tenantCustomDomain: string | null
+    tenantCustomDomainVerified: boolean
+    tenantExternalHomeUrl: string | null
+    tenantExternalEventsUrl: string | null
+    tenantEmbedEventTarget: 'external' | 'ridepass'
     city: string | null
     region: string | null
     locationLabel: string | null
@@ -440,6 +448,12 @@ function mapDiscover(e: EventDiscoverItem): CalEvent {
         tenantSubdomain: e.tenantSubdomain,
         tenantDisplayName: e.tenantDisplayName,
         tenantLogoUrl: e.tenantLogoUrl,
+        tenantClientType: e.tenantClientType,
+        tenantCustomDomain: e.tenantCustomDomain,
+        tenantCustomDomainVerified: e.tenantCustomDomainVerified,
+        tenantExternalHomeUrl: e.tenantExternalHomeUrl,
+        tenantExternalEventsUrl: e.tenantExternalEventsUrl,
+        tenantEmbedEventTarget: e.tenantEmbedEventTarget,
         city: e.tenantCity,
         region: e.tenantRegion,
         locationLabel: e.locationLabel,
@@ -463,6 +477,12 @@ function mapTenant(e: EventDto): CalEvent {
         tenantDisplayName: branding.displayName ?? null,
         // Tenant's own /Events page isn't the apex site, so no logo overlay.
         tenantLogoUrl: null,
+        tenantClientType: 'hosted',
+        tenantCustomDomain: null,
+        tenantCustomDomainVerified: false,
+        tenantExternalHomeUrl: null,
+        tenantExternalEventsUrl: null,
+        tenantEmbedEventTarget: 'external',
         city: null,
         region: null,
         locationLabel: e.locationLabel,
@@ -679,9 +699,20 @@ function linkTag(e: CalEvent): string {
 }
 function linkProps(e: CalEvent): Record<string, unknown> {
     if (isApex && e.tenantSubdomain) {
-        // Apex links cross to the event's own tenant site, landing on the new
-        // event checkout page (/Event/:id) — the single checkout surface.
-        return { href: `${tenantUrl(e.tenantSubdomain)}Event/${e.id}`, rel: 'noopener' }
+        // Apex links target the event on the track's real front door (custom domain,
+        // embedded events page, or the hosted subdomain's /Event/:id).
+        return {
+            href: tenantEventUrl({
+                subdomain: e.tenantSubdomain,
+                clientType: e.tenantClientType,
+                customDomain: e.tenantCustomDomain,
+                customDomainVerified: e.tenantCustomDomainVerified,
+                externalHomeUrl: e.tenantExternalHomeUrl,
+                externalEventsUrl: e.tenantExternalEventsUrl,
+                embedEventTarget: e.tenantEmbedEventTarget,
+            }, e.id),
+            rel: 'noopener',
+        }
     }
     return { to: `/Event/${e.id}` }
 }

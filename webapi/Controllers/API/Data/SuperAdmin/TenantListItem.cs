@@ -10,7 +10,16 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public int ServiceChargeBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
         public bool IsPublished { get; set; }
+        // Tenant-level feature toggles (super-admin editable in the Feature Toggles tab).
+        public bool GiftCardsEnabled { get; set; }
+        public bool RentalsEnabled { get; set; }
+        public bool ExtrasEnabled { get; set; }
+        public bool SeasonPassesEnabled { get; set; }
         public bool ConcessionsEnabled { get; set; }
+        public bool BlogEnabled { get; set; }
+        public bool MembershipEnabled { get; set; }
+        public bool WaitlistEnabled { get; set; }
+        public bool AllowSelfCancel { get; set; }
         public string? AddressLine { get; set; }
         public string? City { get; set; }
         public string? Region { get; set; }
@@ -21,6 +30,14 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string? ContactEmail { get; set; }
         public string? Phone { get; set; }
         public string? LoampassMxDestinationId { get; set; }
+        public string ClientType { get; set; } = "hosted";
+        public string? CustomDomain { get; set; }
+        public bool CustomDomainVerified { get; set; }
+        public bool EmbedEnabled { get; set; }
+        public string[]? EmbedAllowedOrigins { get; set; }
+        public string? ExternalHomeUrl { get; set; }
+        public string? ExternalEventsUrl { get; set; }
+        public string EmbedEventTarget { get; set; } = "external";
         public DateTime CreatedAtUtc { get; set; }
     }
 }

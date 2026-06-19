@@ -14,7 +14,7 @@
                         <th>Display Name</th>
                         <th style="width: 120px">Status</th>
                         <th style="width: 130px">Service charge</th>
-                        <th style="width: 120px">Concessions</th>
+                        <th style="width: 140px">Client type</th>
                         <th style="width: 160px">Timezone</th>
                         <th style="width: 180px">Created</th>
                         <th style="width: 160px" class="text-right"></th>
@@ -35,10 +35,11 @@
                             </span>
                         </td>
                         <td>
-                            <v-switch :model-value="t.concessionsEnabled"
-                                @update:model-value="(v: boolean | null) => toggleConcessions(t, !!v)"
-                                color="primary" density="compact" hide-details inset
-                                :loading="togglingId === t.id" :disabled="togglingId !== null"></v-switch>
+                            <v-chip size="small" variant="flat" label
+                                :color="clientTypeColor(t.clientType)"
+                                :prepend-icon="clientTypeIcon(t.clientType)">
+                                {{ clientTypeShort(t.clientType) }}
+                            </v-chip>
                         </td>
                         <td>{{ t.timezone }}</td>
                         <td>{{ formatDate(t.createdAtUtc) }}</td>
@@ -58,45 +59,99 @@
         </v-card>
 
         <!-- Create tenant dialog -->
-        <v-dialog v-model="createDialog" max-width="640" persistent>
-            <v-card>
+        <v-dialog v-model="createDialog" fullscreen persistent>
+            <v-card class="d-flex flex-column" style="height: 100%">
                 <v-card-title class="d-flex align-center">
                     <span>New Tenant</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="createDialog = false"></v-btn>
                 </v-card-title>
-                <v-card-text>
-                    <v-row>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model="createForm.subdomain" label="Subdomain" density="compact"
-                                hint="lowercase, digits, hyphens" persistent-hint></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-autocomplete v-model="createForm.timezone" :items="timezoneOptions"
-                                item-title="title" item-value="value" label="Timezone" density="compact"></v-autocomplete>
-                        </v-col>
-                    </v-row>
-                    <v-text-field v-model="createForm.displayName" label="Display Name" density="compact" class="mt-4"></v-text-field>
-                    <v-select v-model="createForm.tenantType" :items="tenantTypeOptions"
-                        label="Tenant type" density="compact"
-                        hint="Drives event-type / waiver / pass-product defaults at creation. Locked after creation."
-                        persistent-hint class="mt-4"></v-select>
-                    <v-divider class="my-3"></v-divider>
-                    <div class="text-subtitle-2 mb-1">Optional: first tenant admin</div>
-                    <p class="text-caption text-medium-emphasis mb-3">
-                        Leave blank to skip. A temporary password is generated and shown once.
-                    </p>
-                    <v-row>
-                        <v-col cols="12" md="4">
-                            <v-text-field v-model="createForm.adminFirstName" label="First name" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="4">
-                            <v-text-field v-model="createForm.adminLastName" label="Last name" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="4">
-                            <v-text-field v-model="createForm.adminEmail" type="email" label="Email" density="compact"></v-text-field>
-                        </v-col>
-                    </v-row>
+                <v-tabs v-model="createTab" color="primary" style="flex: 0 0 auto">
+                    <v-tab value="general">General</v-tab>
+                    <v-tab value="features">Feature Toggles</v-tab>
+                    <v-tab value="embed">Embedded Widgets</v-tab>
+                </v-tabs>
+                <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
+                    <v-window v-model="createTab">
+                    <v-window-item value="general">
+                        <v-row>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model="createForm.subdomain" label="Subdomain" density="compact"
+                                    hint="lowercase, digits, hyphens" persistent-hint></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-autocomplete v-model="createForm.timezone" :items="timezoneOptions"
+                                    item-title="title" item-value="value" label="Timezone" density="compact"></v-autocomplete>
+                            </v-col>
+                        </v-row>
+                        <v-text-field v-model="createForm.displayName" label="Display Name" density="compact" class="mt-4"></v-text-field>
+                        <v-select v-model="createForm.tenantType" :items="tenantTypeOptions"
+                            label="Tenant type" density="compact"
+                            hint="Drives event-type / waiver / pass-product defaults at creation. Locked after creation."
+                            persistent-hint class="mt-4"></v-select>
+                        <v-select v-model="createForm.clientType" :items="clientTypeOptions"
+                            item-title="title" item-value="value" label="Client type" density="compact" class="mt-4"
+                            hint="How this track's public presence is delivered." persistent-hint></v-select>
+                        <v-text-field v-if="createForm.clientType === 'custom_domain'"
+                            v-model="createForm.customDomain" label="Custom domain"
+                            placeholder="www.xyztrack.com" density="compact" clearable class="mt-4"></v-text-field>
+                        <v-switch v-if="createForm.clientType === 'custom_domain'"
+                            v-model="createForm.customDomainVerified" color="primary" inset density="compact" hide-details class="mt-2"
+                            :label="createForm.customDomainVerified ? 'Domain verified — subdomain forwards to it' : 'Domain not verified (no forwarding yet)'"></v-switch>
+
+                        <v-divider class="my-4"></v-divider>
+                        <div class="text-subtitle-2 mb-1">Optional: first tenant admin</div>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Leave blank to skip. A temporary password is generated and shown once.
+                        </p>
+                        <v-row>
+                            <v-col cols="12" md="4">
+                                <v-text-field v-model="createForm.adminFirstName" label="First name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="4">
+                                <v-text-field v-model="createForm.adminLastName" label="Last name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="4">
+                                <v-text-field v-model="createForm.adminEmail" type="email" label="Email" density="compact"></v-text-field>
+                            </v-col>
+                        </v-row>
+                    </v-window-item>
+
+                    <v-window-item value="features">
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Platform-level on/off for tenant features. Detailed config (gift-card limits,
+                            membership price, etc.) is on the tenant's own Settings → Features page after creation.
+                        </p>
+                        <v-switch v-for="f in featureToggles" :key="'c-' + f.key"
+                            v-model="createForm[f.key]" color="primary" inset density="compact"
+                            :label="f.label" :messages="f.description"></v-switch>
+                    </v-window-item>
+
+                    <v-window-item value="embed">
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            For tracks that keep their own website and embed RidePass widgets. You can also set this later.
+                        </p>
+                        <v-switch v-model="createForm.embedEnabled" color="primary" inset density="compact" hide-details
+                            :label="createForm.embedEnabled ? 'Embed widgets enabled' : 'Embed widgets disabled'"></v-switch>
+                        <v-combobox v-model="createForm.embedAllowedOrigins" label="Allowed embed origins"
+                            placeholder="https://www.xyztrack.com" multiple chips closable-chips density="compact" class="mt-4"
+                            hint="Sites allowed to embed the widgets (CSP frame-ancestors). One origin per chip. A bare domain (xyz.com) covers both xyz.com and www.xyz.com; our own properties are always allowed via global origins."
+                            persistent-hint></v-combobox>
+                        <v-text-field v-model="createForm.externalHomeUrl" label="External home URL"
+                            placeholder="https://www.xyztrack.com" density="compact" clearable class="mt-4"
+                            hint="The track's own website home. {subdomain}.ridepass.io forwards here."
+                            persistent-hint></v-text-field>
+                        <v-text-field v-model="createForm.externalEventsUrl" label="External events page URL"
+                            placeholder="https://www.xyztrack.com/events" density="compact" clearable class="mt-4"
+                            hint="Where event links on the RidePass discovery site point (falls back to the home URL)."
+                            persistent-hint></v-text-field>
+                        <v-select v-model="createForm.embedEventTarget" label="Apex event click goes to"
+                            :items="eventTargetOptions" item-title="title" item-value="value"
+                            density="compact" class="mt-4"
+                            hint="Where an event click on the RidePass discovery site lands for this track."
+                            persistent-hint></v-select>
+                    </v-window-item>
+                    </v-window>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
@@ -139,8 +194,8 @@
         </v-dialog>
 
         <!-- Edit tenant dialog -->
-        <v-dialog v-model="editDialog" max-width="680" persistent>
-            <v-card v-if="editTenant">
+        <v-dialog v-model="editDialog" fullscreen persistent>
+            <v-card v-if="editTenant" class="d-flex flex-column" style="height: 100%">
                 <v-card-title class="d-flex align-center">
                     <span>
                         Edit {{ editTenant.displayName }}
@@ -149,7 +204,14 @@
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="editDialog = false"></v-btn>
                 </v-card-title>
-                <v-card-text>
+                <v-tabs v-model="editTab" color="primary" style="flex: 0 0 auto">
+                    <v-tab value="general">General</v-tab>
+                    <v-tab value="features">Feature Toggles</v-tab>
+                    <v-tab value="embed">Embedded Widgets</v-tab>
+                </v-tabs>
+                <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
+                    <v-window v-model="editTab">
+                    <v-window-item value="general">
                     <v-row>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.displayName" label="Display name" density="compact"></v-text-field>
@@ -169,7 +231,7 @@
                         class="mb-2"></v-switch>
 
                     <div class="text-subtitle-2 mt-2 mb-1">Billing</div>
-                    <v-row>
+                    <v-row class="mt-2">
                         <v-col cols="12" md="6">
                             <v-text-field v-model.number="editForm.serviceChargePct" type="number" step="0.01" min="0" max="100"
                                 label="Service charge" suffix="%" density="compact"
@@ -182,7 +244,7 @@
                         </v-col>
                     </v-row>
 
-                    <div class="text-subtitle-2 mt-4 mb-1">Address</div>
+                    <div class="text-subtitle-2 mt-4 mb-3">Address</div>
                     <v-text-field v-model="editForm.addressLine" label="Address line" density="compact"></v-text-field>
                     <v-row>
                         <v-col cols="12" md="6">
@@ -209,7 +271,7 @@
                         Coordinates place the track on the apex "Tracks near you" map. "Look up" geocodes the address above.
                     </div>
 
-                    <div class="text-subtitle-2 mt-4 mb-1">Contact</div>
+                    <div class="text-subtitle-2 mt-4 mb-3">Contact</div>
                     <v-row>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.contactEmail" type="email" label="Contact email" density="compact"></v-text-field>
@@ -219,11 +281,102 @@
                         </v-col>
                     </v-row>
 
+                    <div class="text-subtitle-2 mt-4 mb-3">Deployment</div>
+                    <v-select v-model="editForm.clientType" :items="clientTypeOptions"
+                        item-title="title" item-value="value" label="Client type" density="compact"
+                        hint="How this track's public presence is delivered." persistent-hint></v-select>
+                    <v-text-field v-if="editForm.clientType === 'custom_domain'"
+                        v-model="editForm.customDomain" label="Custom domain"
+                        placeholder="www.xyztrack.com" density="compact" clearable class="mt-4"
+                        hint="The track's own domain (host only). They point it at {subdomain}.ridepass.io via CNAME."
+                        persistent-hint></v-text-field>
+                    <v-switch v-if="editForm.clientType === 'custom_domain'"
+                        v-model="editForm.customDomainVerified" color="primary" inset density="compact" hide-details class="mt-2"
+                        :label="editForm.customDomainVerified ? 'Domain verified — subdomain forwards to it' : 'Domain not verified (no forwarding yet)'"></v-switch>
+                    <p v-if="editForm.clientType === 'embedded'" class="text-caption text-medium-emphasis mt-1">
+                        Configure the embed widgets and origins in the <strong>Embedded Widgets</strong> tab.
+                    </p>
+
                     <div class="text-subtitle-2 mt-4 mb-1">LoamPassMx</div>
                     <v-text-field v-model="editForm.loampassMxDestinationId" label="LoamMx destination ID"
                         density="compact" clearable
                         hint="Set this to make the track a LoamPassMx track (riders can link their Loam Pass and redeem credits). Blank = not a LoamPassMx track."
                         persistent-hint></v-text-field>
+                    </v-window-item>
+
+                    <v-window-item value="features">
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Platform-level on/off for tenant features. Detailed config (gift-card limits,
+                            membership price, etc.) lives on the tenant's own Settings → Features page.
+                        </p>
+                        <v-switch v-for="f in featureToggles" :key="'e-' + f.key"
+                            v-model="editForm[f.key]" color="primary" inset density="compact"
+                            :label="f.label" :messages="f.description"></v-switch>
+                    </v-window-item>
+
+                    <v-window-item value="embed">
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            For tracks that keep their own website and embed RidePass widgets. Enable embedding,
+                            list the site origins allowed to frame the widgets, then share the snippet below.
+                        </p>
+                        <v-switch v-model="editForm.embedEnabled" color="primary" inset density="compact" hide-details
+                            :label="editForm.embedEnabled ? 'Embed widgets enabled' : 'Embed widgets disabled'"></v-switch>
+                        <v-combobox v-model="editForm.embedAllowedOrigins" label="Allowed embed origins"
+                            placeholder="https://www.xyztrack.com" multiple chips closable-chips density="compact"
+                            class="mt-4"
+                            hint="Sites allowed to embed the widgets (CSP frame-ancestors). One origin per chip. A bare domain (xyz.com) covers both xyz.com and www.xyz.com; our own properties are always allowed via global origins."
+                            persistent-hint></v-combobox>
+                        <v-text-field v-model="editForm.externalHomeUrl" label="External home URL"
+                            placeholder="https://www.xyztrack.com" density="compact" clearable class="mt-4"
+                            hint="The track's own website home. {subdomain}.ridepass.io forwards here."
+                            persistent-hint></v-text-field>
+                        <v-text-field v-model="editForm.externalEventsUrl" label="External events page URL"
+                            placeholder="https://www.xyztrack.com/events" density="compact" clearable class="mt-4"
+                            hint="Where event links on the RidePass discovery site point (falls back to the home URL)."
+                            persistent-hint></v-text-field>
+                        <v-select v-model="editForm.embedEventTarget" label="Apex event click goes to"
+                            :items="eventTargetOptions" item-title="title" item-value="value"
+                            density="compact" class="mt-4"
+                            hint="Where an event click on the RidePass discovery site lands for this track."
+                            persistent-hint></v-select>
+
+                        <div class="text-subtitle-2 mt-6 mb-1">Embed snippet builder</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Pick a widget, fill in any options, then send the track the snippet to paste on their site.
+                            Embedding must be enabled (above) and their site listed in the allowed origins.
+                        </p>
+                        <v-select v-model="snippetWidget" :items="embedWidgetItems" item-title="title" item-value="value"
+                            label="Widget" density="compact" prepend-inner-icon="mdi-puzzle"></v-select>
+                        <p v-if="snippetWidgetDef" class="text-caption text-medium-emphasis mt-n2 mb-2">
+                            {{ snippetWidgetDef.description }}
+                        </p>
+                        <v-text-field v-for="p in snippetWidgetParams" :key="p.attr"
+                            v-model="snippetParams[p.attr]" :label="p.label" :placeholder="p.placeholder"
+                            density="compact" clearable class="mt-2" :hint="p.hint" persistent-hint></v-text-field>
+                        <v-textarea :model-value="embedSnippet" readonly variant="outlined" density="compact"
+                            rows="3" auto-grow class="mt-4" style="font-family: monospace;"></v-textarea>
+                        <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy"
+                            @click="copyEmbedSnippet">Copy snippet</v-btn>
+
+                        <v-divider class="my-4"></v-divider>
+                        <div class="d-flex align-center">
+                            <div class="text-subtitle-2">Preview</div>
+                            <v-spacer></v-spacer>
+                            <v-switch v-model="showPreview" color="primary" inset density="compact" hide-details
+                                :disabled="!widgetPreviewUrl" label="Show preview"></v-switch>
+                        </div>
+                        <p v-if="!widgetPreviewUrl" class="text-caption text-medium-emphasis">
+                            Fill in the required options above to preview this widget.
+                        </p>
+                        <p v-else class="text-caption text-medium-emphasis mb-2">
+                            Live preview of the widget on <code>{{ editTenant?.subdomain }}</code>, exactly as it renders on the track's site.
+                        </p>
+                        <div v-if="showPreview && widgetPreviewUrl" class="mt-1">
+                            <iframe ref="previewIframe" :src="widgetPreviewUrl" title="Widget preview"
+                                style="width: 100%; min-height: 320px; border: 1px solid rgba(0,0,0,0.12); border-radius: 6px; display: block;"></iframe>
+                        </div>
+                    </v-window-item>
+                    </v-window>
 
                     <div v-if="editError" class="text-error text-caption mt-2">{{ editError }}</div>
                 </v-card-text>
@@ -240,9 +393,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import dayjs from 'dayjs'
 import { SuperAdminService, type TenantSummary, type CreateTenantResult, type UpdateTenantPayload } from '@/services/SuperAdminService'
+import { EMBED_WIDGETS, getEmbedWidget, buildEmbedSnippet, buildEmbedPath } from '@/embed/widgets'
+import tenantHelper from '@/helpers/TenantHelper'
 import { geocode } from '@/helpers/Geocode'
 import authHelper from '@/helpers/AuthHelper'
 
@@ -250,19 +405,57 @@ const service = new SuperAdminService()
 
 const tenants = ref<TenantSummary[]>([])
 const loadingTenants = ref(false)
-const togglingId = ref<string | null>(null)
 
 const createDialog = ref(false)
+const createTab = ref<'general' | 'features' | 'embed'>('general')
 const creating = ref(false)
-const createForm = ref({
-    subdomain: '',
-    displayName: '',
-    tenantType: 'motocross' as 'motocross' | 'mountain_bike',
-    timezone: 'America/New_York',
-    adminFirstName: '',
-    adminLastName: '',
-    adminEmail: '',
-})
+function blankCreateForm() {
+    return {
+        subdomain: '',
+        displayName: '',
+        tenantType: 'motocross' as 'motocross' | 'mountain_bike',
+        timezone: 'America/New_York',
+        adminFirstName: '',
+        adminLastName: '',
+        adminEmail: '',
+        clientType: 'hosted' as 'hosted' | 'custom_domain' | 'embedded',
+        customDomain: '',
+        customDomainVerified: false,
+        embedEnabled: false,
+        embedAllowedOrigins: [] as string[],
+        externalHomeUrl: '',
+        externalEventsUrl: '',
+        embedEventTarget: 'external' as 'external' | 'ridepass',
+        giftCardsEnabled: false,
+        rentalsEnabled: false,
+        extrasEnabled: false,
+        seasonPassesEnabled: true,
+        concessionsEnabled: false,
+        blogEnabled: false,
+        membershipEnabled: false,
+        waitlistEnabled: true,
+        allowSelfCancel: false,
+    }
+}
+const createForm = ref(blankCreateForm())
+
+// Platform feature switches, shown identically in the create + edit dialogs. The
+// description is a one-liner so a super-admin knows what each bit turns on without
+// leaving the dialog. Keys map to the matching boolean on both form shapes.
+type FeatureKey =
+    | 'giftCardsEnabled' | 'rentalsEnabled' | 'extrasEnabled' | 'seasonPassesEnabled'
+    | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled' | 'waitlistEnabled' | 'allowSelfCancel'
+const featureToggles: { key: FeatureKey; label: string; description: string }[] = [
+    { key: 'giftCardsEnabled', label: 'Gift cards', description: 'Riders buy and redeem digital gift cards delivered by email.' },
+    { key: 'rentalsEnabled', label: 'Rentals', description: 'Rent gear (bikes, helmets, pads) per session, with deposit and insurance support.' },
+    { key: 'extrasEnabled', label: 'Add-ons', description: 'Sell camping, parking, pit-vehicle passes, and merch alongside event entries.' },
+    { key: 'seasonPassesEnabled', label: 'Season passes', description: 'Sell season-long passes that cover entry to qualifying events.' },
+    { key: 'concessionsEnabled', label: 'Concessions', description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.' },
+    { key: 'blogEnabled', label: 'Blog', description: 'Publish posts with photos and add a Blog link to the public nav.' },
+    { key: 'membershipEnabled', label: 'Membership', description: 'Sell yearly or one-time memberships and gate selected purchases behind them.' },
+    { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.' },
+    { key: 'allowSelfCancel', label: 'Rider self-cancel', description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).' },
+]
 
 const tenantTypeOptions = [
     { value: 'motocross', title: 'Motocross (MX)' },
@@ -307,7 +500,35 @@ interface TenantEditForm {
     contactEmail: string | null
     phone: string | null
     loampassMxDestinationId: string | null
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    embedEnabled: boolean
+    embedAllowedOrigins: string[]
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
+    embedEventTarget: 'external' | 'ridepass'
+    giftCardsEnabled: boolean
+    rentalsEnabled: boolean
+    extrasEnabled: boolean
+    seasonPassesEnabled: boolean
+    concessionsEnabled: boolean
+    blogEnabled: boolean
+    membershipEnabled: boolean
+    waitlistEnabled: boolean
+    allowSelfCancel: boolean
 }
+
+const clientTypeOptions = [
+    { title: 'Hosted (subdomain.ridepass.io)', value: 'hosted' },
+    { title: 'Custom domain (their own domain → RidePass)', value: 'custom_domain' },
+    { title: 'Embedded widgets (their site, our widgets)', value: 'embedded' },
+]
+
+const eventTargetOptions = [
+    { title: "The track's own site (external)", value: 'external' },
+    { title: 'The hosted RidePass event page', value: 'ridepass' },
+]
 
 const editDialog = ref(false)
 const editTenant = ref<TenantSummary | null>(null)
@@ -315,6 +536,63 @@ const savingEdit = ref(false)
 const geocoding = ref(false)
 const editError = ref<string | null>(null)
 const editForm = ref<TenantEditForm>(emptyEditForm())
+const editTab = ref<'general' | 'features' | 'embed'>('general')
+
+// Snippet builder: pick a widget + fill its options, get the paste-able tag.
+const embedWidgetItems = EMBED_WIDGETS.map(w => ({ title: w.label, value: w.key }))
+const snippetWidget = ref(EMBED_WIDGETS[0].key)
+const snippetParams = reactive<Record<string, string>>({})
+const snippetWidgetDef = computed(() => getEmbedWidget(snippetWidget.value))
+const snippetWidgetParams = computed(() => snippetWidgetDef.value?.params ?? [])
+const embedSnippet = computed(() =>
+    buildEmbedSnippet(snippetWidget.value, editTenant.value?.subdomain ?? 'yourtrack', snippetParams))
+async function copyEmbedSnippet() {
+    try {
+        await navigator.clipboard.writeText(embedSnippet.value)
+        flash('Snippet copied.', 'success')
+    } catch {
+        flash('Could not copy — select the snippet and copy manually.', 'error')
+    }
+}
+
+// Live preview: frame the selected widget's chromeless route on the tenant's own
+// subdomain with ?preview=1 (which bypasses the embed enable/origin check; the
+// server CSP still guards real external framing). Null when a required param is
+// missing (e.g. the single-event widget needs an event id).
+const showPreview = ref(false)
+const previewIframe = ref<HTMLIFrameElement | null>(null)
+const widgetPreviewUrl = computed(() => {
+    const sub = editTenant.value?.subdomain
+    if (!sub) return null
+    const path = buildEmbedPath(snippetWidget.value, snippetParams)
+    if (!path) return null
+    const proto = window.location.protocol
+    const port = window.location.port ? `:${window.location.port}` : ''
+    const sep = path.includes('?') ? '&' : '?'
+    return `${proto}//${sub}.${tenantHelper.rootDomain()}${port}${path}${sep}preview=1&rpfid=preview`
+})
+
+// Size the preview iframe from the widget's height postMessage (mirrors embed.js).
+function onPreviewMessage(ev: MessageEvent) {
+    const d = ev.data
+    if (!d || d.type !== 'ridepass:resize' || typeof d.height !== 'number') return
+    if (d.frameId && d.frameId !== 'preview') return
+    if (previewIframe.value) previewIframe.value.style.height = Math.max(200, Math.ceil(d.height)) + 'px'
+}
+onMounted(() => window.addEventListener('message', onPreviewMessage))
+onBeforeUnmount(() => window.removeEventListener('message', onPreviewMessage))
+
+function clientTypeShort(v: string): string {
+    return v === 'custom_domain' ? 'Custom domain' : v === 'embedded' ? 'Embedded' : 'Hosted'
+}
+function clientTypeColor(v: string): string {
+    // Solid, distinct colors so the type reads at a glance (the old grey tonal
+    // "Hosted" chip was nearly invisible against the row).
+    return v === 'custom_domain' ? 'indigo' : v === 'embedded' ? 'deep-purple' : 'blue-grey-darken-1'
+}
+function clientTypeIcon(v: string): string {
+    return v === 'custom_domain' ? 'mdi-web' : v === 'embedded' ? 'mdi-code-tags' : 'mdi-server'
+}
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -334,30 +612,10 @@ async function loadTenants() {
     }
 }
 
-async function toggleConcessions(t: TenantSummary, enabled: boolean) {
-    if (togglingId.value) return
-    togglingId.value = t.id
-    try {
-        await service.updateTenantConcessionsEnabled(t.id, enabled)
-        t.concessionsEnabled = enabled
-        flash(`Concessions ${enabled ? 'enabled' : 'disabled'} for ${t.subdomain}.`, 'success')
-    } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to update concessions.', 'error')
-    } finally {
-        togglingId.value = null
-    }
-}
 
 function openCreateTenant() {
-    createForm.value = {
-        subdomain: '',
-        displayName: '',
-        tenantType: 'motocross',
-        timezone: 'America/New_York',
-        adminFirstName: '',
-        adminLastName: '',
-        adminEmail: '',
-    }
+    createForm.value = blankCreateForm()
+    createTab.value = 'general'
     createDialog.value = true
 }
 
@@ -372,6 +630,24 @@ async function submitCreateTenant() {
             adminEmail: createForm.value.adminEmail.trim() || null,
             adminFirstName: createForm.value.adminFirstName.trim() || null,
             adminLastName: createForm.value.adminLastName.trim() || null,
+            clientType: createForm.value.clientType,
+            customDomain: createForm.value.clientType === 'custom_domain'
+                ? (createForm.value.customDomain.trim() || null) : null,
+            customDomainVerified: createForm.value.clientType === 'custom_domain' ? createForm.value.customDomainVerified : false,
+            embedEnabled: createForm.value.embedEnabled,
+            embedAllowedOrigins: createForm.value.embedAllowedOrigins.length > 0 ? createForm.value.embedAllowedOrigins : null,
+            externalHomeUrl: createForm.value.externalHomeUrl.trim() || null,
+            externalEventsUrl: createForm.value.externalEventsUrl.trim() || null,
+            embedEventTarget: createForm.value.embedEventTarget,
+            giftCardsEnabled: createForm.value.giftCardsEnabled,
+            rentalsEnabled: createForm.value.rentalsEnabled,
+            extrasEnabled: createForm.value.extrasEnabled,
+            seasonPassesEnabled: createForm.value.seasonPassesEnabled,
+            concessionsEnabled: createForm.value.concessionsEnabled,
+            blogEnabled: createForm.value.blogEnabled,
+            membershipEnabled: createForm.value.membershipEnabled,
+            waitlistEnabled: createForm.value.waitlistEnabled,
+            allowSelfCancel: createForm.value.allowSelfCancel,
         }
         const r = await service.createTenant(body)
         createdResult.value = (r.data as any).data
@@ -392,6 +668,11 @@ function emptyEditForm(): TenantEditForm {
         addressLine: null, city: null, region: null, postalCode: null, country: null,
         latitude: null, longitude: null, contactEmail: null, phone: null,
         loampassMxDestinationId: null,
+        clientType: 'hosted', customDomain: null, customDomainVerified: false, embedEnabled: false, embedAllowedOrigins: [],
+        externalHomeUrl: null, externalEventsUrl: null, embedEventTarget: 'external',
+        giftCardsEnabled: false, rentalsEnabled: false, extrasEnabled: false, seasonPassesEnabled: true,
+        concessionsEnabled: false, blogEnabled: false, membershipEnabled: false,
+        waitlistEnabled: true, allowSelfCancel: false,
     }
 }
 
@@ -415,7 +696,25 @@ function openEdit(t: TenantSummary) {
         contactEmail: t.contactEmail,
         phone: t.phone,
         loampassMxDestinationId: t.loampassMxDestinationId,
+        clientType: t.clientType,
+        customDomain: t.customDomain,
+        customDomainVerified: t.customDomainVerified,
+        embedEnabled: t.embedEnabled,
+        embedAllowedOrigins: t.embedAllowedOrigins ?? [],
+        externalHomeUrl: t.externalHomeUrl,
+        externalEventsUrl: t.externalEventsUrl,
+        embedEventTarget: t.embedEventTarget ?? 'external',
+        giftCardsEnabled: t.giftCardsEnabled,
+        rentalsEnabled: t.rentalsEnabled,
+        extrasEnabled: t.extrasEnabled,
+        seasonPassesEnabled: t.seasonPassesEnabled,
+        concessionsEnabled: t.concessionsEnabled,
+        blogEnabled: t.blogEnabled,
+        membershipEnabled: t.membershipEnabled,
+        waitlistEnabled: t.waitlistEnabled,
+        allowSelfCancel: t.allowSelfCancel,
     }
+    editTab.value = 'general'
     editDialog.value = true
 }
 
@@ -473,6 +772,23 @@ async function saveEdit() {
             contactEmail: norm(f.contactEmail),
             phone: norm(f.phone),
             loampassMxDestinationId: norm(f.loampassMxDestinationId),
+            clientType: f.clientType,
+            customDomain: f.clientType === 'custom_domain' ? norm(f.customDomain) : null,
+            customDomainVerified: f.clientType === 'custom_domain' ? f.customDomainVerified : false,
+            embedEnabled: f.embedEnabled,
+            embedAllowedOrigins: f.embedAllowedOrigins.length > 0 ? f.embedAllowedOrigins : null,
+            externalHomeUrl: norm(f.externalHomeUrl),
+            externalEventsUrl: norm(f.externalEventsUrl),
+            embedEventTarget: f.embedEventTarget,
+            giftCardsEnabled: f.giftCardsEnabled,
+            rentalsEnabled: f.rentalsEnabled,
+            extrasEnabled: f.extrasEnabled,
+            seasonPassesEnabled: f.seasonPassesEnabled,
+            concessionsEnabled: f.concessionsEnabled,
+            blogEnabled: f.blogEnabled,
+            membershipEnabled: f.membershipEnabled,
+            waitlistEnabled: f.waitlistEnabled,
+            allowSelfCancel: f.allowSelfCancel,
         }
         await service.updateTenant(editTenant.value.id, body)
         flash('Tenant updated.', 'success')

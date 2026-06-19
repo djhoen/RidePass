@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Services.Helpers;
 using Services.Payments;
+using Services.Repositories.Data.PlatformData;
 using Services.Repositories.Interfaces;
 using Services.Storage;
 using webapi.AuthPolicies;
@@ -39,6 +40,7 @@ namespace webapi.Controllers
         private readonly IPaymentProvider _payments;
         private readonly IHomePageRepository _homePage;
         private readonly IConfiguration _configuration;
+        private readonly IPlatformSettingRepository _platformSettings;
         private readonly IMemoryCache _cache;
 
         public TenantController(
@@ -49,6 +51,7 @@ namespace webapi.Controllers
             IPaymentProvider payments,
             IHomePageRepository homePage,
             IConfiguration configuration,
+            IPlatformSettingRepository platformSettings,
             IMemoryCache cache)
         {
             _branding = branding;
@@ -58,6 +61,7 @@ namespace webapi.Controllers
             _payments = payments;
             _homePage = homePage;
             _configuration = configuration;
+            _platformSettings = platformSettings;
             _cache = cache;
         }
 
@@ -192,6 +196,7 @@ namespace webapi.Controllers
             await _tenants.UpdateRequireReservation(_tenantContext.TenantId, request.RequireReservationForPasses);
             await _tenants.UpdateRequireEmergencyContact(_tenantContext.TenantId, request.RequireEmergencyContact);
             await _tenants.UpdateAllowEventSubscriptions(_tenantContext.TenantId, request.AllowEventSubscriptions);
+            await _tenants.UpdateRequireIdAtCheckin(_tenantContext.TenantId, request.RequireIdAtCheckin);
             return await GetBranding();
         }
 
@@ -329,6 +334,20 @@ namespace webapi.Controllers
             return await GetBranding();
         }
 
+        // Global embed allow-list, normalized + cached (shared 60s cache with the /embed
+        // CSP endpoint; busted by the super-admin Misc settings save). Exposed on branding
+        // so the client-side embed guard can allow our first-party properties.
+        private async Task<string[]> ReadGlobalEmbedOrigins()
+        {
+            var origins = await _cache.GetOrCreateAsync(EmbedController.GlobalOriginsCacheKey, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
+                var raw = await _platformSettings.Get(PlatformSettingKeys.EmbedGlobalAllowedOrigins);
+                return Services.Embed.EmbedPolicy.NormalizeList(Services.Embed.EmbedPolicy.ParseOrigins(raw));
+            });
+            return (origins ?? new List<string>()).ToArray();
+        }
+
         [HttpGet("Branding")]
         public async Task<IActionResult> GetBranding()
         {
@@ -354,6 +373,8 @@ namespace webapi.Controllers
             // Re-read the tenant so settings written within this same request (timezone,
             // reservation toggle, location) are reflected back to the caller.
             var tenant = await _tenants.GetById(_tenantContext.TenantId) ?? _tenantContext.Tenant;
+
+            var globalEmbedOrigins = await ReadGlobalEmbedOrigins();
 
             var response = new GetBrandingResponse
             {
@@ -381,6 +402,7 @@ namespace webapi.Controllers
                 RequireReservationForPasses = tenant.RequireReservationForPasses,
                 RequireEmergencyContact = tenant.RequireEmergencyContact,
                 AllowEventSubscriptions = tenant.AllowEventSubscriptions,
+                RequireIdAtCheckin = tenant.RequireIdAtCheckin,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,
                 StripeConnectStatus = tenant.StripeConnectStatus,
                 ServiceChargeBps = tenant.ServiceChargeBps,
@@ -417,6 +439,15 @@ namespace webapi.Controllers
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BlogEnabled = tenant.BlogEnabled,
                 LoampassMxEnabled = !string.IsNullOrWhiteSpace(tenant.LoampassMxDestinationId),
+                EmbedEnabled = tenant.EmbedEnabled,
+                EmbedAllowedOrigins = Services.Embed.EmbedPolicy.NormalizeList(tenant.EmbedAllowedOrigins).ToArray(),
+                GlobalEmbedAllowedOrigins = globalEmbedOrigins,
+                ClientType = tenant.ClientType,
+                CustomDomain = tenant.CustomDomain,
+                CustomDomainVerified = tenant.CustomDomainVerified,
+                ExternalHomeUrl = tenant.ExternalHomeUrl,
+                ExternalEventsUrl = tenant.ExternalEventsUrl,
+                EmbedEventTarget = tenant.EmbedEventTarget,
                 AllowSelfCancel = tenant.AllowSelfCancel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,

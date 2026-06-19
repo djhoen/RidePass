@@ -224,9 +224,11 @@ export class TicketService {
         return axios.get<{ data: OrderLookup }>(`${this.apiUrl}/Redemption/Order/${token}`)
     }
 
-    // Bulk-redeem: submit a list of {kind, purchaseId} entries from the order.
-    // The server validates each belongs to the same order before redeeming.
-    redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[] }) {
+    // Bulk-redeem: submit a list of {kind, purchaseId} entries from the order. The server
+    // validates each belongs to the scanned token's event+purchaser set before redeeming.
+    // idVerified is the gate worker's ID-check attestation (required when the tenant has
+    // require-ID-at-check-in on).
+    redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[]; idVerified?: boolean }) {
         return axios.post<{ data: BulkRedeemResponse }>(`${this.apiUrl}/Redemption/Order/Redeem`, req)
     }
 }
@@ -236,6 +238,7 @@ export interface OrderLookup {
     purchaserName: string
     purchaserEmail: string
     items: OrderItem[]
+    requireIdAtCheckin: boolean
 }
 
 export interface OrderItem {

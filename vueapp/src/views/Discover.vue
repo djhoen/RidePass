@@ -58,6 +58,7 @@ import { platformBranding } from '@/stores/platformBranding'
 import tenantHelper from '@/helpers/TenantHelper'
 import TrackCardGrid from '@/components/TrackCardGrid.vue'
 import TracksMap from '@/components/TracksMap.vue'
+import { tenantHomeUrl } from '@/helpers/tenantLinks'
 
 const service = new DiscoverService()
 const route = useRoute()
@@ -192,9 +193,9 @@ function tenantUrl(subdomain: string): string {
     return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
 }
 
-// Map pin click -> open that track's site.
+// Map pin click -> open that track's public home (client-type-aware).
 function openTrack(t: TrackDiscoverItem) {
-    window.location.href = tenantUrl(t.subdomain)
+    window.location.href = tenantHomeUrl(t)
 }
 
 function flash(text: string, color: 'success' | 'error') {

@@ -19,6 +19,9 @@ namespace Services.Repositories
                            t.address_line AS AddressLine, t.city, t.region, t.postal_code AS PostalCode, t.country,
                            t.latitude, t.longitude, t.status, t.is_published,
                            tb.hero_image_url AS HeroImageUrl,
+                           t.client_type AS ClientType, t.custom_domain AS CustomDomain,
+                           t.custom_domain_verified AS CustomDomainVerified,
+                           t.external_home_url AS ExternalHomeUrl, t.external_events_url AS ExternalEventsUrl,
                            CASE WHEN @lat::double precision IS NOT NULL
                                  AND @lng::double precision IS NOT NULL
                                  AND t.latitude IS NOT NULL AND t.longitude IS NOT NULL THEN
@@ -35,6 +38,8 @@ namespace Services.Repositories
                        ranked.AddressLine, ranked.City, ranked.Region, ranked.PostalCode, ranked.Country,
                        ranked.Latitude, ranked.Longitude, ranked.DistanceKm,
                        ranked.HeroImageUrl,
+                       ranked.ClientType, ranked.CustomDomain, ranked.CustomDomainVerified,
+                       ranked.ExternalHomeUrl, ranked.ExternalEventsUrl,
                        (SELECT COUNT(*) FROM event e
                          WHERE e.tenant_id = ranked.TenantId
                            AND e.status = 'scheduled'
@@ -75,6 +80,10 @@ namespace Services.Repositories
                            t.is_published AS tenant_is_published,
                            t.latitude, t.longitude,
                            COALESCE(tb.logo_white_url, tb.logo_url) AS TenantLogoUrl,
+                           t.client_type AS TenantClientType, t.custom_domain AS TenantCustomDomain,
+                           t.custom_domain_verified AS TenantCustomDomainVerified,
+                           t.external_home_url AS TenantExternalHomeUrl, t.external_events_url AS TenantExternalEventsUrl,
+                           t.embed_event_target AS TenantEmbedEventTarget,
                            et.code AS EventTypeCode, et.name AS EventTypeName, et.color AS EventTypeColor,
                            et.image_url AS EventTypeImageUrl,
                            CASE WHEN @lat::double precision IS NOT NULL
@@ -96,7 +105,9 @@ namespace Services.Repositories
                       AND (@tenants::uuid[] IS NULL OR e.tenant_id = ANY(@tenants))
                 )
                 SELECT EventId, TenantId, TenantSubdomain, TenantDisplayName, TenantCity, TenantRegion,
-                       TenantLogoUrl, Latitude, Longitude, DistanceKm,
+                       TenantLogoUrl, TenantClientType, TenantCustomDomain, TenantCustomDomainVerified,
+                       TenantExternalHomeUrl, TenantExternalEventsUrl, TenantEmbedEventTarget,
+                       Latitude, Longitude, DistanceKm,
                        Title, StartsAtUtc, EndsAtUtc, LocationLabel,
                        EventTypeCode, EventTypeName, EventTypeColor,
                        ImageUrl, EventTypeImageUrl

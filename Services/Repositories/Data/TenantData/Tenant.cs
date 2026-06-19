@@ -15,6 +15,9 @@ namespace Services.Repositories.Data.TenantData
         public bool RequireReservationForPasses { get; set; }
         public bool RequireEmergencyContact { get; set; }
         public bool AllowEventSubscriptions { get; set; }
+        // When true, gate staff must attest they verified the rider's photo ID against
+        // the purchaser name before redeeming. Enforced server-side in RedemptionController.
+        public bool RequireIdAtCheckin { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted
         // Lazily provisioned the first time a cashier opens the mobile app at
@@ -74,6 +77,23 @@ namespace Services.Repositories.Data.TenantData
         // When set, this tenant is a LoamPassMx track mapped to this LoamMx destination id.
         // NULL = not a LoamPassMx track. Super-admin controlled.
         public string? LoampassMxDestinationId { get; set; }
+        // Deployment model (super-admin controlled): 'hosted' (default subdomain),
+        // 'custom_domain', or 'embedded'. CustomDomain / Embed* hold the concrete config.
+        public string ClientType { get; set; } = "hosted";
+        public string? CustomDomain { get; set; }
+        // Set true once the custom domain actually serves (DNS+TLS+resolution); gates
+        // the subdomain->custom-domain redirect so we never forward to a dead domain.
+        public bool CustomDomainVerified { get; set; }
+        public bool EmbedEnabled { get; set; }
+        // Origins (scheme + host) allowed to frame the embed widgets (CSP frame-ancestors).
+        public string[]? EmbedAllowedOrigins { get; set; }
+        // An embedded client's own website pages. Drive the subdomain redirect (home)
+        // and the apex link targeting (events page, falling back to home).
+        public string? ExternalHomeUrl { get; set; }
+        public string? ExternalEventsUrl { get; set; }
+        // Where an apex event click lands for an embedded client: 'external' (their
+        // site) or 'ridepass' (the hosted {subdomain}.ridepass.io/Event/:id page).
+        public string EmbedEventTarget { get; set; } = "external";
         public bool AllowSelfCancel { get; set; } = false;
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; } = 20;

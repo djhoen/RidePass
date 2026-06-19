@@ -1,5 +1,5 @@
 <template>
-    <v-app>
+    <v-app :class="{ 'embed-mode': isEmbed }">
         <!-- Pre-branding splash. Sits above everything in a neutral white state with a
              faint logo so the user doesn't see the default Vuetify theme flash before
              the tenant colors arrive. Vue's <transition> handles the fade-out the
@@ -29,7 +29,10 @@
             <ImpersonationBanner />
             <NavBar v-if="!$route.meta.hideNav" />
             <v-main>
-                <router-view />
+                <div v-if="embedBlocked" class="embed-blocked">
+                    <p class="text-body-2 text-medium-emphasis">{{ embedBlockedMessage }}</p>
+                </div>
+                <router-view v-else />
             </v-main>
             <Footer v-if="!$route.meta.hideFooter" />
             <ConfirmDialog />
@@ -38,16 +41,112 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, watchEffect, computed } from 'vue'
+import { onMounted, watch, watchEffect, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import NavBar from './components/NavBar.vue'
 import Footer from './components/Footer.vue'
 import ImpersonationBanner from './components/ImpersonationBanner.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { branding, loadBranding } from './stores/branding'
+import tenantHelper from './helpers/TenantHelper'
 import splashLogo from './assets/helmet.png'
 
 const theme = useTheme()
+const route = useRoute()
+
+// Embed mode: chromeless widget framed on a track's own site (via embed.js).
+const isEmbed = computed(() => !!route.meta.embed)
+
+// Best-effort client-side origin guard. The authoritative protection is the
+// `frame-ancestors` CSP header served on /embed (added at deploy); this just
+// gives a clean message when embedding is off or the framing site isn't allowed.
+// Match a parent origin against a CSP-style source (supports a single "*." wildcard
+// label, e.g. https://*.loampassmx.com), mirroring the server frame-ancestors list.
+function originMatches(parent: string, pattern: string): boolean {
+    if (pattern === parent) return true
+    const m = pattern.match(/^(https?:\/\/)\*\.(.+)$/i)
+    if (!m) return false
+    const suffix = `${m[1]}${m[2]}`.toLowerCase()       // https://loampassmx.com
+    const dotted = `${m[1]}`.toLowerCase()
+    const p = parent.toLowerCase()
+    // Allow the apex itself and any single-or-multi-level subdomain of it.
+    return p === suffix || p.startsWith(dotted) && p.endsWith(`.${m[2].toLowerCase()}`)
+}
+
+function ancestorAllowed(): boolean {
+    // Effective allow-list = this tenant's own origins ∪ first-party global origins.
+    const allowed = [...branding.embedAllowedOrigins, ...branding.globalEmbedAllowedOrigins]
+    const ao = (window.location as any).ancestorOrigins as DOMStringList | undefined
+    let parentOrigin: string | null = ao && ao.length ? ao[0] : null
+    if (!parentOrigin && document.referrer) {
+        try { parentOrigin = new URL(document.referrer).origin } catch { parentOrigin = null }
+    }
+    if (!parentOrigin) return true            // not framed (direct load) — allow
+    // Fail closed: framed but on no allowed origin is blocked. (The authoritative
+    // control is the server-stamped frame-ancestors CSP; this is the friendly fallback.)
+    return allowed.some(a => originMatches(parentOrigin as string, a))
+}
+
+const embedBlocked = computed(() => {
+    if (!isEmbed.value || !branding.loaded) return false
+    // Internal dashboard preview (?preview=1): always render so an admin can see the
+    // widget before enabling embedding / whitelisting. Safe because the authoritative
+    // guard against real external framing is the server's CSP frame-ancestors header,
+    // not this client check.
+    if (route.query.preview) return false
+    if (!branding.embedEnabled) return true
+    return !ancestorAllowed()
+})
+const embedBlockedMessage = computed(() =>
+    branding.embedEnabled
+        ? 'This site is not authorized to embed this content.'
+        : 'Embedding is not enabled for this track.')
+
+// Frame id stamped by embed.js (?rpfid=) so the parent resizes the matching
+// iframe when several widgets for the same tenant share one page.
+const embedFrameId: string | null = (() => {
+    try { return new URLSearchParams(window.location.search).get('rpfid') } catch { return null }
+})()
+
+// Auto-resize: report content height up to the embedding page so embed.js can
+// size the iframe (no inner scrollbar). Height-only message; safe to broadcast.
+function postEmbedHeight() {
+    if (!isEmbed.value) return
+    window.parent?.postMessage(
+        { type: 'ridepass:resize', height: document.documentElement.scrollHeight, frameId: embedFrameId }, '*')
+}
+let resizeObserver: ResizeObserver | null = null
+
+// Front-door redirect: for custom-domain / embedded clients, the {subdomain}.ridepass.io
+// public pages forward to the track's real home. Staff/API/embed/admin paths are never
+// redirected so the subdomain stays the always-on tools surface (login, check-in, counter,
+// the embed iframe source, the API). Client-side for now; a 301 at the edge is the harden.
+const STAFF_PATH_PREFIXES = ['/Admin', '/SuperAdmin', '/Login', '/ResetPassword', '/VerifyEmail', '/redeem', '/embed', '/User']
+function frontDoorTarget(): string | null {
+    // Only ever redirect from a *.ridepass.io subdomain (never from the custom domain itself).
+    if (!tenantHelper.getSubdomain()) return null
+    if (branding.clientType === 'embedded' && branding.externalHomeUrl) {
+        const u = branding.externalHomeUrl
+        return /^https?:\/\//i.test(u) ? u : `https://${u}`
+    }
+    if (branding.clientType === 'custom_domain' && branding.customDomainVerified && branding.customDomain) {
+        return `${window.location.protocol}//${branding.customDomain}${route.fullPath}`
+    }
+    return null
+}
+function maybeRedirectFrontDoor() {
+    if (!branding.loaded) return
+    if (route.query.preview !== undefined) return   // let admins preview without bouncing
+    const p = route.path
+    if (STAFF_PATH_PREFIXES.some(pre => p === pre || p.startsWith(pre + '/'))) return
+    // An embedded client can opt to send apex event clicks to the hosted event page
+    // instead of their own site; in that case let /Event/:id render on the subdomain.
+    if (branding.clientType === 'embedded' && branding.embedEventTarget === 'ridepass'
+        && (p === '/Event' || p.startsWith('/Event/'))) return
+    const target = frontDoorTarget()
+    if (target) window.location.replace(target)
+}
 
 // Apex root URL derived from the current host (strip a leading subdomain), used
 // by the "not available" page's link out.
@@ -61,7 +160,16 @@ const apexUrl = computed(() => {
 
 onMounted(() => {
     loadBranding()
+    // Observe body size and report height to the parent frame whenever embedded.
+    resizeObserver = new ResizeObserver(() => postEmbedHeight())
+    resizeObserver.observe(document.body)
 })
+
+// Re-report height on navigation and once branding (and thus content) loads.
+watch([() => route.fullPath, () => branding.loaded], () => {
+    maybeRedirectFrontDoor()
+    if (isEmbed.value) setTimeout(postEmbedHeight, 50)
+}, { immediate: true })
 
 watchEffect(() => {
     if (!branding.loaded) return
@@ -93,6 +201,16 @@ watchEffect(() => {
     :deep(.v-main) {
         --footer-h: 620px;
     }
+}
+
+/* Embed mode: no footer, so drop the footer-based min-height and let the content
+   size naturally (the iframe auto-resizes to it). */
+.embed-mode :deep(.v-main) {
+    min-height: 0;
+}
+.embed-blocked {
+    padding: 32px 24px;
+    text-align: center;
 }
 
 .branding-splash {

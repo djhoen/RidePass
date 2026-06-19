@@ -16,6 +16,12 @@ export interface TrackDiscoverItem {
     // Tenant's hero image (`/uploads/...` relative path). Joined to the API
     // origin client-side. Null = card renders a colored placeholder.
     heroImageUrl: string | null
+    // Front-door config so apex links target the right destination per client type.
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
 }
 
 export interface EventDiscoverItem {
@@ -28,6 +34,13 @@ export interface EventDiscoverItem {
     // Logo overlaid bottom-right on the card photo: white logo when set, else the
     // regular logo. Null = no overlay.
     tenantLogoUrl: string | null
+    // Front-door config so the apex event link targets the right destination.
+    tenantClientType: 'hosted' | 'custom_domain' | 'embedded'
+    tenantCustomDomain: string | null
+    tenantCustomDomainVerified: boolean
+    tenantExternalHomeUrl: string | null
+    tenantExternalEventsUrl: string | null
+    tenantEmbedEventTarget: 'external' | 'ridepass'
     latitude: number | null
     longitude: number | null
     distanceKm: number | null

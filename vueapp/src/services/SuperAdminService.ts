@@ -9,7 +9,15 @@ export interface TenantSummary {
     serviceChargeBps: number
     monthlyServiceChargeCapCents: number | null
     isPublished: boolean
+    giftCardsEnabled: boolean
+    rentalsEnabled: boolean
+    extrasEnabled: boolean
+    seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    blogEnabled: boolean
+    membershipEnabled: boolean
+    waitlistEnabled: boolean
+    allowSelfCancel: boolean
     addressLine: string | null
     city: string | null
     region: string | null
@@ -20,6 +28,14 @@ export interface TenantSummary {
     contactEmail: string | null
     phone: string | null
     loampassMxDestinationId: string | null
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    embedEnabled: boolean
+    embedAllowedOrigins: string[] | null
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
+    embedEventTarget: 'external' | 'ridepass'
     createdAtUtc: string
 }
 
@@ -40,6 +56,23 @@ export interface UpdateTenantPayload {
     contactEmail: string | null
     phone: string | null
     loampassMxDestinationId: string | null
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    embedEnabled: boolean
+    embedAllowedOrigins: string[] | null
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
+    embedEventTarget: 'external' | 'ridepass'
+    giftCardsEnabled: boolean
+    rentalsEnabled: boolean
+    extrasEnabled: boolean
+    seasonPassesEnabled: boolean
+    concessionsEnabled: boolean
+    blogEnabled: boolean
+    membershipEnabled: boolean
+    waitlistEnabled: boolean
+    allowSelfCancel: boolean
 }
 
 export interface CreateTenantPayload {
@@ -50,6 +83,23 @@ export interface CreateTenantPayload {
     adminEmail?: string | null
     adminFirstName?: string | null
     adminLastName?: string | null
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    embedEnabled: boolean
+    embedAllowedOrigins: string[] | null
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
+    embedEventTarget: 'external' | 'ridepass'
+    giftCardsEnabled: boolean
+    rentalsEnabled: boolean
+    extrasEnabled: boolean
+    seasonPassesEnabled: boolean
+    concessionsEnabled: boolean
+    blogEnabled: boolean
+    membershipEnabled: boolean
+    waitlistEnabled: boolean
+    allowSelfCancel: boolean
 }
 
 export interface CreateTenantResult {
@@ -123,6 +173,10 @@ export interface ImpersonationResult {
     tenantSubdomain: string | null
 }
 
+export interface MiscSettings {
+    globalEmbedAllowedOrigins: string[]
+}
+
 export class SuperAdminService {
     private apiUrl: string
 
@@ -140,6 +194,14 @@ export class SuperAdminService {
 
     listTenants() {
         return axios.get<{ data: TenantSummary[] }>(`${this.apiUrl}/SuperAdmin/Tenants`)
+    }
+
+    getMiscSettings() {
+        return axios.get<{ data: MiscSettings }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`)
+    }
+
+    updateMiscSettings(body: MiscSettings) {
+        return axios.put<{ data: MiscSettings }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`, body)
     }
 
     createTenant(body: CreateTenantPayload) {

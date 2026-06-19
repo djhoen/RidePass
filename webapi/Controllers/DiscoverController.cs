@@ -51,6 +51,11 @@ namespace webapi.Controllers
                 DistanceKm = r.DistanceKm,
                 UpcomingEventsCount = r.UpcomingEventsCount,
                 HeroImageUrl = r.HeroImageUrl,
+                ClientType = r.ClientType,
+                CustomDomain = r.CustomDomain,
+                CustomDomainVerified = r.CustomDomainVerified,
+                ExternalHomeUrl = r.ExternalHomeUrl,
+                ExternalEventsUrl = r.ExternalEventsUrl,
             });
             return new ApiResponses().OkResult(items);
         }
@@ -82,6 +87,12 @@ namespace webapi.Controllers
                 TenantCity = r.TenantCity,
                 TenantRegion = r.TenantRegion,
                 TenantLogoUrl = r.TenantLogoUrl,
+                TenantClientType = r.TenantClientType,
+                TenantCustomDomain = r.TenantCustomDomain,
+                TenantCustomDomainVerified = r.TenantCustomDomainVerified,
+                TenantExternalHomeUrl = r.TenantExternalHomeUrl,
+                TenantExternalEventsUrl = r.TenantExternalEventsUrl,
+                TenantEmbedEventTarget = r.TenantEmbedEventTarget,
                 Latitude = r.Latitude,
                 Longitude = r.Longitude,
                 DistanceKm = r.DistanceKm,

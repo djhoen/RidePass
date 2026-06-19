@@ -31,6 +31,7 @@ export interface BrandingState {
     requireReservationForPasses: boolean
     requireEmergencyContact: boolean
     allowEventSubscriptions: boolean
+    requireIdAtCheckin: boolean
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
     serviceChargeBps: number
@@ -68,6 +69,15 @@ export interface BrandingState {
     concessionsEnabled: boolean
     blogEnabled: boolean
     loampassMxEnabled: boolean
+    embedEnabled: boolean
+    embedAllowedOrigins: string[]
+    globalEmbedAllowedOrigins: string[]
+    clientType: 'hosted' | 'custom_domain' | 'embedded'
+    customDomain: string | null
+    customDomainVerified: boolean
+    externalHomeUrl: string | null
+    externalEventsUrl: string | null
+    embedEventTarget: 'external' | 'ridepass'
     allowSelfCancel: boolean
     waitlistEnabled: boolean
     waitlistConfirmWindowMinutes: number
@@ -105,6 +115,7 @@ const defaults: BrandingState = {
     requireReservationForPasses: false,
     requireEmergencyContact: false,
     allowEventSubscriptions: true,
+    requireIdAtCheckin: false,
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
     serviceChargeBps: 300,
@@ -142,6 +153,15 @@ const defaults: BrandingState = {
     concessionsEnabled: false,
     blogEnabled: false,
     loampassMxEnabled: false,
+    embedEnabled: false,
+    embedAllowedOrigins: [],
+    globalEmbedAllowedOrigins: [],
+    clientType: 'hosted',
+    customDomain: null,
+    customDomainVerified: false,
+    externalHomeUrl: null,
+    externalEventsUrl: null,
+    embedEventTarget: 'external',
     allowSelfCancel: false,
     waitlistEnabled: true,
     waitlistConfirmWindowMinutes: 20,
@@ -226,6 +246,7 @@ export async function loadBranding(): Promise<void> {
         branding.requireReservationForPasses = !!data.requireReservationForPasses
         branding.requireEmergencyContact = !!data.requireEmergencyContact
         branding.allowEventSubscriptions = !!data.allowEventSubscriptions
+        branding.requireIdAtCheckin = !!data.requireIdAtCheckin
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.serviceChargeBps = data.serviceChargeBps ?? 300
@@ -263,6 +284,15 @@ export async function loadBranding(): Promise<void> {
         branding.concessionsEnabled = !!data.concessionsEnabled
         branding.blogEnabled = !!data.blogEnabled
         branding.loampassMxEnabled = !!data.loampassMxEnabled
+        branding.embedEnabled = !!data.embedEnabled
+        branding.embedAllowedOrigins = Array.isArray(data.embedAllowedOrigins) ? data.embedAllowedOrigins : []
+        branding.globalEmbedAllowedOrigins = Array.isArray(data.globalEmbedAllowedOrigins) ? data.globalEmbedAllowedOrigins : []
+        branding.clientType = data.clientType ?? 'hosted'
+        branding.customDomain = data.customDomain ?? null
+        branding.customDomainVerified = !!data.customDomainVerified
+        branding.externalHomeUrl = data.externalHomeUrl ?? null
+        branding.externalEventsUrl = data.externalEventsUrl ?? null
+        branding.embedEventTarget = data.embedEventTarget === 'ridepass' ? 'ridepass' : 'external'
         branding.allowSelfCancel = !!data.allowSelfCancel
         branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20

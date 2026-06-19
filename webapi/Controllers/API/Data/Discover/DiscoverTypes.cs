@@ -18,6 +18,12 @@ namespace webapi.Controllers.API.Data.Discover
         // Relative path from /uploads/...; the consumer joins with the API
         // origin to absolutize. Null = render a colored placeholder.
         public string? HeroImageUrl { get; set; }
+        // Front-door config so the apex track card links to the right destination.
+        public string ClientType { get; set; } = "hosted";
+        public string? CustomDomain { get; set; }
+        public bool CustomDomainVerified { get; set; }
+        public string? ExternalHomeUrl { get; set; }
+        public string? ExternalEventsUrl { get; set; }
     }
 
     public class EventDiscoverItem
@@ -31,6 +37,13 @@ namespace webapi.Controllers.API.Data.Discover
         // Logo overlaid bottom-right on the apex event card photo: the tenant's white
         // logo when set, otherwise their regular logo. Null when they have neither.
         public string? TenantLogoUrl { get; set; }
+        // Front-door config so the apex event card links to the right destination.
+        public string TenantClientType { get; set; } = "hosted";
+        public string? TenantCustomDomain { get; set; }
+        public bool TenantCustomDomainVerified { get; set; }
+        public string? TenantExternalHomeUrl { get; set; }
+        public string? TenantExternalEventsUrl { get; set; }
+        public string TenantEmbedEventTarget { get; set; } = "external";
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public double? DistanceKm { get; set; }

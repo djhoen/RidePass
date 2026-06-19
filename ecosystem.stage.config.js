@@ -1,3 +1,13 @@
+// pm2 process definitions for the STAGING droplet. Mirrors ecosystem.config.js
+// (production) but with stage-* app names and ASPNETCORE/DOTNET = Staging.
+//
+// Secrets/config are NOT here. The stage deploy does
+//   set -a; source /etc/ridepass/staging.env; set +a
+//   pm2 startOrRestart ecosystem.stage.config.js --update-env
+// so every line of staging.env becomes a process env var (same pattern as prod).
+//
+// Ports match prod (8080 / 7293) on the assumption stage runs on its own droplet.
+// If you ever colocate stage on the prod droplet, change these to avoid collisions.
 module.exports = {
     apps: [
         {
@@ -6,42 +16,32 @@ module.exports = {
             max_memory_restart: "150M",
             watch: false,
             env: {
-                NODE_ENV: "staging",
+                NODE_ENV: "production",
                 PORT: 8080
             }
         },
         {
             name: "stage-taskrunner",
             script: "dotnet",
-            args: "TaskRunner/bin/Release/net10.0/TaskRunner.dll",
+            args: "./TaskRunner.dll",
+            cwd: "./TaskRunner/publish",
             max_memory_restart: "150M",
-            watch: false
+            watch: false,
+            env: {
+                DOTNET_ENVIRONMENT: "Staging"
+            }
         },
         {
             name: "stage-webapi",
             script: "dotnet",
-            args: "webapi/bin/Release/net10.0/webapi.dll",
+            args: "./webapi.dll",
+            cwd: "./webapi/publish",
             max_memory_restart: "350M",
             watch: false,
             env: {
                 ASPNETCORE_ENVIRONMENT: "Staging",
-                ASPNETCORE_URLS: "http://0.0.0.0:7293",
-                ISSUER: "https://stage.yourdomain.com/",
-                SIGNING_KEY: "YOUR_STAGING_SIGNING_KEY",
-                STRIPE_SKEY: "sk_test_YOUR_STRIPE_TEST_KEY",
-                AWS_ACCESS_KEY_ID: "YOUR_ACCESS_KEY",
-                AWS_SECRET_ACCESS_KEY: "YOUR_SECRET_KEY"
+                ASPNETCORE_URLS: "http://127.0.0.1:7293"
             }
         }
-    ],
-    deploy: {
-        staging: {
-            user: "YOUR_USER",
-            host: "YOUR_STAGING_SERVER_IP",
-            ref: "origin/stage",
-            repo: "YOUR_REPO_URL",
-            path: "/var/www/staging",
-            "post-deploy": "cd vueapp && npm install && npm run build && cd .. && dotnet publish webapi -c Release && dotnet publish TaskRunner -c Release && pm2 startOrRestart ecosystem.stage.config.js"
-        }
-    }
+    ]
 }

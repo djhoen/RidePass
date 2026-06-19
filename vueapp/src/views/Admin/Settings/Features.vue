@@ -2,12 +2,13 @@
     <v-container>
         <h1 class="text-h4 mb-2">Features</h1>
         <p class="text-body-2 text-medium-emphasis mb-6">
-            Turn each feature on or off.
+            Plan features (marked <strong>Included</strong>) are enabled for your track by RidePass , contact us to
+            add or remove one. The remaining settings are policies you control.
         </p>
 
         <v-card>
             <v-list>
-                <template v-for="(f, idx) in features" :key="f.key">
+                <template v-for="(f, idx) in visibleFeatures" :key="f.key">
                     <v-divider v-if="idx > 0"></v-divider>
                     <v-list-item :disabled="!!savingKey">
                         <template #prepend>
@@ -23,7 +24,11 @@
                                     variant="text" size="small" :to="f.configureTo">
                                     Configure
                                 </v-btn>
-                                <v-switch
+                                <!-- Platform features are super-admin controlled: shown as a
+                                     locked "Included" badge, never a tenant-settable toggle. -->
+                                <v-chip v-if="isPlatformFeature(f.key)" size="small" color="success"
+                                    variant="tonal" prepend-icon="mdi-lock-check">Included</v-chip>
+                                <v-switch v-else
                                     :model-value="f.enabled"
                                     @update:model-value="(v: boolean | null) => toggle(f, !!v)"
                                     color="primary"
@@ -245,6 +250,7 @@ const features = computed<Feature[]>(() => [
                 requireReservationForPasses: next,
                 requireEmergencyContact: branding.requireEmergencyContact,
                 allowEventSubscriptions: branding.allowEventSubscriptions,
+                requireIdAtCheckin: branding.requireIdAtCheckin,
             })
         },
     },
@@ -260,6 +266,7 @@ const features = computed<Feature[]>(() => [
                 requireReservationForPasses: branding.requireReservationForPasses,
                 requireEmergencyContact: next,
                 allowEventSubscriptions: branding.allowEventSubscriptions,
+                requireIdAtCheckin: branding.requireIdAtCheckin,
             })
         },
     },
@@ -275,10 +282,41 @@ const features = computed<Feature[]>(() => [
                 requireReservationForPasses: branding.requireReservationForPasses,
                 requireEmergencyContact: branding.requireEmergencyContact,
                 allowEventSubscriptions: next,
+                requireIdAtCheckin: branding.requireIdAtCheckin,
+            })
+        },
+    },
+    {
+        key: 'requireIdAtCheckin',
+        title: 'Require ID at check-in',
+        description: 'Gate staff must confirm they checked the rider\'s photo ID against the purchaser name before redeeming. One QR scan still pulls up the rider\'s whole order for the event.',
+        icon: 'mdi-card-account-details-outline',
+        enabled: branding.requireIdAtCheckin,
+        apply: async (next) => {
+            await tenantService.updateSettings({
+                timezone: branding.timezone,
+                requireReservationForPasses: branding.requireReservationForPasses,
+                requireEmergencyContact: branding.requireEmergencyContact,
+                allowEventSubscriptions: branding.allowEventSubscriptions,
+                requireIdAtCheckin: next,
             })
         },
     },
 ])
+
+// Super-admin-gated platform features: the tenant can't flip these on/off (that's a
+// plan decision made in Super Admin → tenant settings). They appear here only when
+// enabled, as a read-only "Included" badge plus any inline config. The remaining
+// entries are tenant-controlled policies that keep their toggles.
+const PLATFORM_FEATURE_KEYS = new Set([
+    'extras', 'membership', 'giftCards', 'rentals', 'seasonPasses',
+    'concessions', 'blog', 'allowSelfCancel', 'waitlist',
+])
+function isPlatformFeature(key: string): boolean {
+    return PLATFORM_FEATURE_KEYS.has(key)
+}
+const visibleFeatures = computed(() =>
+    features.value.filter(f => isPlatformFeature(f.key) ? f.enabled : true))
 
 const savingKey = ref<string | null>(null)
 const snackbar = ref(false)

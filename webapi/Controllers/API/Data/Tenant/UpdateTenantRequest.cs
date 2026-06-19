@@ -14,6 +14,8 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool RequireEmergencyContact { get; set; }
 
         public bool AllowEventSubscriptions { get; set; } = true;
+
+        public bool RequireIdAtCheckin { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

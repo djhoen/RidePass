@@ -42,6 +42,40 @@ server {
         proxy_read_timeout 90s;
     }
 
+    # Embed widgets: before serving the SPA shell, ask Kestrel (auth_request) for this
+    # tenant's frame-ancestors allow-list and stamp it as a CSP header so only authorized
+    # parent sites can frame the widget. The subrequest resolves the tenant from $host.
+    # NOTE: a location with any add_header does NOT inherit the server-level add_headers,
+    # so the security headers are repeated here.
+    location ^~ /embed/ {
+        auth_request /__embed_csp;
+        auth_request_set $embed_frame_ancestors $upstream_http_x_embed_frame_ancestors;
+
+        add_header Content-Security-Policy "frame-ancestors $embed_frame_ancestors" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+    }
+
+    # Internal-only: computes the per-tenant frame-ancestors value for the block above.
+    # Returns 204 + X-Embed-Frame-Ancestors. Host is forwarded so the tenant resolves.
+    location = /__embed_csp {
+        internal;
+        proxy_pass http://127.0.0.1:7293/api/Embed/FrameAncestors;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # Vue static server (server.js on :8080)
     location / {
         proxy_pass http://127.0.0.1:8080;

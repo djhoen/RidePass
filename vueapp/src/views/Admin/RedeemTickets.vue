@@ -54,6 +54,17 @@
                     </div>
                 </div>
 
+                <!-- Photo-ID attestation: shown only when the tenant requires it. Gate
+                     staff confirm the rider's ID matches the purchaser name before redeeming. -->
+                <div v-if="order.requireIdAtCheckin" class="id-verify mt-4 pa-3">
+                    <div class="text-body-2 font-weight-medium d-flex align-center ga-2 mb-1">
+                        <v-icon icon="mdi-card-account-details-outline" size="18" color="warning"></v-icon>
+                        Photo ID required at check-in
+                    </div>
+                    <v-checkbox v-model="idVerified" hide-details density="compact" color="warning"
+                        :label="`I checked a photo ID and it matches “${order.purchaserName}”.`"></v-checkbox>
+                </div>
+
                 <div class="d-flex align-center mt-4 ga-2 flex-wrap">
                     <v-btn v-if="redeemableCount > 0" variant="text" size="small" @click="selectAllRedeemable">
                         Select all redeemable
@@ -62,7 +73,9 @@
                         Clear
                     </v-btn>
                     <v-spacer></v-spacer>
-                    <v-btn color="success" :loading="redeeming" :disabled="selectedIds.length === 0" @click="redeemSelected">
+                    <v-btn color="success" :loading="redeeming"
+                        :disabled="selectedIds.length === 0 || (order.requireIdAtCheckin && !idVerified)"
+                        @click="redeemSelected">
                         Redeem {{ selectedIds.length }} {{ selectedIds.length === 1 ? 'item' : 'items' }}
                     </v-btn>
                 </div>
@@ -86,6 +99,7 @@ const manualInput = ref('')
 const order = ref<OrderLookup | null>(null)
 const orderToken = ref<string | null>(null)        // the originally-scanned token
 const selectedIds = ref<string[]>([])
+const idVerified = ref(false)
 const loading = ref(false)
 const redeeming = ref(false)
 const scanning = ref(false)
@@ -145,6 +159,7 @@ async function loadOrder(token: string) {
         const r = await service.orderLookup(token)
         order.value = (r.data as any).data
         orderToken.value = token
+        idVerified.value = false   // re-attest per scan
         // Auto-select everything redeemable so the staff can just click Redeem.
         selectedIds.value = order.value?.items
             .filter(i => i.isRedeemableToday)
@@ -172,7 +187,7 @@ async function redeemSelected() {
         const items = order.value.items
             .filter(i => selectedIds.value.includes(i.purchaseId))
             .map(i => ({ kind: i.kind, purchaseId: i.purchaseId }))
-        const r = await service.redeemBulk({ orderToken: orderToken.value, items })
+        const r = await service.redeemBulk({ orderToken: orderToken.value, items, idVerified: idVerified.value })
         const data = (r.data as any).data
         if (data.errors?.length) flash(data.errors.join(' '), 'error')
         else flash(`Redeemed ${data.redeemedCount}.`, 'success')
@@ -231,5 +246,10 @@ onBeforeUnmount(() => { if (scanner) stopScan() })
 }
 .order-row + .order-row {
     border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+.id-verify {
+    border: 1px solid rgb(var(--v-theme-warning));
+    border-radius: 6px;
+    background: rgba(var(--v-theme-warning), 0.06);
 }
 </style>

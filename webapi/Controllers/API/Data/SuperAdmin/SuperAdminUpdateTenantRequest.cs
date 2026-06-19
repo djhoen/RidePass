@@ -43,5 +43,36 @@ namespace webapi.Controllers.API.Data.SuperAdmin
 
         // LoamMx destination id. Non-empty marks this tenant as a LoamPassMx track; blank clears it.
         [MaxLength(64)] public string? LoampassMxDestinationId { get; set; }
+
+        // Deployment model: how the track's public presence is delivered.
+        [Required, RegularExpression("^(hosted|custom_domain|embedded)$")]
+        public string ClientType { get; set; } = "hosted";
+
+        // The track's own domain (host only, e.g. "www.xyztrack.com"), for client_type = custom_domain.
+        [MaxLength(255)] public string? CustomDomain { get; set; }
+
+        // Embed widgets enabled, and the origins allowed to frame them (CSP frame-ancestors).
+        public bool EmbedEnabled { get; set; }
+        public List<string>? EmbedAllowedOrigins { get; set; }
+
+        // Custom domain is "live" — gates the subdomain->custom-domain redirect.
+        public bool CustomDomainVerified { get; set; }
+        // An embedded client's own website pages (subdomain redirect + apex link targeting).
+        [MaxLength(500)] public string? ExternalHomeUrl { get; set; }
+        [MaxLength(500)] public string? ExternalEventsUrl { get; set; }
+        // Where an apex event click lands for an embedded client.
+        [RegularExpression("^(external|ridepass)$")]
+        public string EmbedEventTarget { get; set; } = "external";
+
+        // Tenant-level feature toggles (Feature Toggles tab).
+        public bool GiftCardsEnabled { get; set; }
+        public bool RentalsEnabled { get; set; }
+        public bool ExtrasEnabled { get; set; }
+        public bool SeasonPassesEnabled { get; set; }
+        public bool ConcessionsEnabled { get; set; }
+        public bool BlogEnabled { get; set; }
+        public bool MembershipEnabled { get; set; }
+        public bool WaitlistEnabled { get; set; }
+        public bool AllowSelfCancel { get; set; }
     }
 }

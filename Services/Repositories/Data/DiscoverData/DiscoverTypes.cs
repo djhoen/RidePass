@@ -18,6 +18,12 @@ namespace Services.Repositories.Data.DiscoverData
         // upload a separate "track card" image. Falls back to a colored
         // placeholder on the client when null.
         public string? HeroImageUrl { get; set; }
+        // Front-door config so apex links target the right destination per client type.
+        public string ClientType { get; set; } = "hosted";
+        public string? CustomDomain { get; set; }
+        public bool CustomDomainVerified { get; set; }
+        public string? ExternalHomeUrl { get; set; }
+        public string? ExternalEventsUrl { get; set; }
     }
 
     public class EventDiscoverRow
@@ -31,6 +37,13 @@ namespace Services.Repositories.Data.DiscoverData
         // Logo to overlay on event card photos: the tenant's white logo when set,
         // otherwise their regular logo. Null when the tenant has neither.
         public string? TenantLogoUrl { get; set; }
+        // Front-door config so apex event links target the right destination per client type.
+        public string TenantClientType { get; set; } = "hosted";
+        public string? TenantCustomDomain { get; set; }
+        public bool TenantCustomDomainVerified { get; set; }
+        public string? TenantExternalHomeUrl { get; set; }
+        public string? TenantExternalEventsUrl { get; set; }
+        public string TenantEmbedEventTarget { get; set; } = "external";
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public double? DistanceKm { get; set; }

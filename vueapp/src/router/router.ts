@@ -149,6 +149,12 @@ const routes = [
         component: () => import('../views/SuperAdmin/ForTracks.vue'),
         meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
     },
+    {
+        path: '/SuperAdmin/MiscSettings',
+        name: 'SuperAdminMiscSettings',
+        component: () => import('../views/SuperAdmin/MiscSettings.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
 
     // Admin routes (tenant_admin or super_admin)
     {
@@ -392,6 +398,26 @@ const routes = [
         name: 'PublicEvent',
         component: () => import('../views/Event.vue'),
     },
+    // Embedded widgets: chromeless routes a track frames on their own site via embed.js.
+    // hideNav/hideFooter strip the app chrome; `embed` drives the auto-resize + origin guard.
+    {
+        path: '/embed/events',
+        name: 'EmbedEvents',
+        component: () => import('../views/Embed/EmbedEvents.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/calendar',
+        name: 'EmbedCalendar',
+        component: () => import('../views/Embed/EmbedCalendar.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/event/:id',
+        name: 'EmbedEvent',
+        component: () => import('../views/Event.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
     {
         // Resume page from the "finish your registration" reminder email — guests land
         // here to add rider details + sign the waiver for a paid-but-unregistered order.
@@ -438,7 +464,24 @@ const router = createRouter({
     }
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach((to, from, next) => {
+    // Keep the dashboard-preview flag (and resize frame id) across in-iframe navigations
+    // within an embed preview. Without this, clicking an event in the previewed
+    // calendar/list lands on /embed/event/:id with no ?preview=1 and trips the
+    // "not authorized to embed" guard. Only fires inside a preview session (the
+    // source route already carried preview), so real embeds are unaffected.
+    if (to.meta.embed && from.query.preview && !to.query.preview) {
+        next({
+            path: to.path,
+            replace: true,
+            query: {
+                ...to.query,
+                preview: String(from.query.preview),
+                ...(from.query.rpfid ? { rpfid: String(from.query.rpfid) } : {}),
+            },
+        })
+        return
+    }
     if (to.meta.requiresAuth && !authHelper.isAuthenticated()) {
         next('/Login')
         return

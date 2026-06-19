@@ -290,6 +290,26 @@ namespace Services.Repositories
             return (await _db.Query<EventExtraPurchase>(sql, new { eventId })).ToList();
         }
 
+        // Gate redemption, event+purchaser scope: a purchaser's add-ons for one event,
+        // across orders. Tenant + event scoped; purchaser matched by user id else
+        // case-insensitive email. Cancelled rows excluded.
+        public async Task<List<EventExtraPurchase>> ListByEventForPurchaser(
+            Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail)
+        {
+            var sql = $@"
+                SELECT {PurchaseColumns} FROM event_extra_purchase
+                WHERE tenant_id = @tenantId
+                  AND event_id = @eventId
+                  AND status <> 'cancelled'
+                  AND (
+                        (@purchaserUserId IS NOT NULL AND purchaser_user_id = @purchaserUserId)
+                     OR (@purchaserUserId IS NULL AND lower(purchaser_email) = lower(@purchaserEmail))
+                      )
+                ORDER BY created_at DESC";
+            return (await _db.Query<EventExtraPurchase>(sql,
+                new { eventId, tenantId, purchaserUserId, purchaserEmail })).ToList();
+        }
+
         public async Task<int> SumSold(Guid eventId, Guid productId)
         {
             const string sql = @"

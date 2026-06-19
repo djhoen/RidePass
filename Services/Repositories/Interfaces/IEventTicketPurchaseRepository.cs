@@ -9,6 +9,10 @@ namespace Services.Repositories.Interfaces
         Task<EventTicketPurchase?> GetByStripePaymentIntentId(string paymentIntentId);
         Task<List<EventTicketPurchase>> ListByStripePaymentIntentId(string paymentIntentId);
         Task<EventTicketPurchaseWithContext?> GetByRedemptionToken(Guid token, Guid tenantId);
+        // Gate redemption (event+purchaser scope): every ticket a purchaser holds for one
+        // event, across orders. Matches by user id when present, else by lower(email).
+        Task<List<EventTicketPurchaseWithContext>> ListByEventForPurchaser(
+            Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
         Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail);

@@ -8,6 +8,7 @@ using Services.Audit;
 using Services.Notifications;
 using Services.Payments;
 using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Data.PlatformData;
 using Services.Repositories.Data.TenantData;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
@@ -38,6 +39,7 @@ namespace webapi.Controllers
         private readonly IAuditLogRepository _auditRepo;
         private readonly ISmtpEmailer _emailer;
         private readonly ICouponRepository _couponShares;
+        private readonly IPlatformSettingRepository _platformSettings;
         private readonly ILogger<SuperAdminController> _logger;
         private readonly IMemoryCache _cache;
 
@@ -58,6 +60,7 @@ namespace webapi.Controllers
             IAuditLogRepository auditRepo,
             ISmtpEmailer emailer,
             ICouponRepository couponShares,
+            IPlatformSettingRepository platformSettings,
             ILogger<SuperAdminController> logger,
             IMemoryCache cache)
         {
@@ -77,6 +80,7 @@ namespace webapi.Controllers
             _auditRepo = auditRepo;
             _emailer = emailer;
             _couponShares = couponShares;
+            _platformSettings = platformSettings;
             _logger = logger;
             _cache = cache;
         }
@@ -111,6 +115,37 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { user.Id, user.Email });
         }
 
+        /// <summary>
+        /// Odds-and-ends global platform settings (Misc settings page). Currently the
+        /// global embed allow-list: origins that may frame ANY tenant's widgets.
+        /// </summary>
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpGet("Settings/Misc")]
+        public async Task<IActionResult> GetMiscSettings()
+        {
+            var raw = await _platformSettings.Get(PlatformSettingKeys.EmbedGlobalAllowedOrigins);
+            var origins = Services.Embed.EmbedPolicy.NormalizeList(Services.Embed.EmbedPolicy.ParseOrigins(raw));
+            return new ApiResponses().OkResult(new MiscSettingsResponse
+            {
+                GlobalEmbedAllowedOrigins = origins.ToArray(),
+            });
+        }
+
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPut("Settings/Misc")]
+        public async Task<IActionResult> UpdateMiscSettings([FromBody] UpdateMiscSettingsRequest request)
+        {
+            // Normalize + drop malformed entries so only safe CSP sources are ever stored.
+            var origins = Services.Embed.EmbedPolicy.NormalizeList(request.GlobalEmbedAllowedOrigins);
+            await _platformSettings.Set(PlatformSettingKeys.EmbedGlobalAllowedOrigins, string.Join('\n', origins));
+            // Bust the short-lived cache the /embed CSP endpoint reads from.
+            _cache.Remove(EmbedController.GlobalOriginsCacheKey);
+            return new ApiResponses().OkResult(new MiscSettingsResponse
+            {
+                GlobalEmbedAllowedOrigins = origins.ToArray(),
+            });
+        }
+
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Tenants")]
         public async Task<IActionResult> ListTenants()
@@ -138,6 +173,10 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult($"Subdomain '{request.Subdomain}' is already taken.");
             }
 
+            var newCustomDomain = string.IsNullOrWhiteSpace(request.CustomDomain) ? null : request.CustomDomain.Trim().ToLowerInvariant();
+            var normalizedEmbed = Services.Embed.EmbedPolicy.NormalizeList(request.EmbedAllowedOrigins).ToArray();
+            string[]? newEmbedOrigins = normalizedEmbed.Length == 0 ? null : normalizedEmbed;
+
             var tenant = new Tenant
             {
                 Subdomain = request.Subdomain,
@@ -145,6 +184,23 @@ namespace webapi.Controllers
                 Status = "active",
                 TenantType = request.TenantType,
                 Timezone = request.Timezone,
+                ClientType = request.ClientType,
+                CustomDomain = newCustomDomain,
+                CustomDomainVerified = request.CustomDomainVerified,
+                EmbedEnabled = request.EmbedEnabled,
+                EmbedAllowedOrigins = newEmbedOrigins,
+                ExternalHomeUrl = string.IsNullOrWhiteSpace(request.ExternalHomeUrl) ? null : request.ExternalHomeUrl.Trim(),
+                ExternalEventsUrl = string.IsNullOrWhiteSpace(request.ExternalEventsUrl) ? null : request.ExternalEventsUrl.Trim(),
+                EmbedEventTarget = request.EmbedEventTarget,
+                GiftCardsEnabled = request.GiftCardsEnabled,
+                RentalsEnabled = request.RentalsEnabled,
+                ExtrasEnabled = request.ExtrasEnabled,
+                SeasonPassesEnabled = request.SeasonPassesEnabled,
+                ConcessionsEnabled = request.ConcessionsEnabled,
+                BlogEnabled = request.BlogEnabled,
+                MembershipEnabled = request.MembershipEnabled,
+                WaitlistEnabled = request.WaitlistEnabled,
+                AllowSelfCancel = request.AllowSelfCancel,
             };
             tenant.Id = await _tenants.Create(tenant);
             // The DB triggers (seed_default_event_types, seed_initial_waiver,
@@ -653,13 +709,25 @@ namespace webapi.Controllers
 
             static string? Norm(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
+            // Normalize: custom domain to a bare lowercased host; embed origins trimmed,
+            // lowercased, de-duped, empties dropped. Null out empties so the column stays clean.
+            var customDomain = string.IsNullOrWhiteSpace(request.CustomDomain) ? null : request.CustomDomain.Trim().ToLowerInvariant();
+            var normalizedEmbed = Services.Embed.EmbedPolicy.NormalizeList(request.EmbedAllowedOrigins).ToArray();
+            string[]? embedOrigins = normalizedEmbed.Length == 0 ? null : normalizedEmbed;
+
             await _tenants.UpdateAdminDetails(tenantId,
                 request.DisplayName.Trim(), request.Status, request.Timezone, request.IsPublished,
                 Norm(request.AddressLine), Norm(request.City), Norm(request.Region),
                 Norm(request.PostalCode), Norm(request.Country),
                 request.Latitude, request.Longitude,
-                Norm(request.ContactEmail), Norm(request.Phone), Norm(request.LoampassMxDestinationId));
+                Norm(request.ContactEmail), Norm(request.Phone), Norm(request.LoampassMxDestinationId),
+                request.ClientType, customDomain, request.CustomDomainVerified, request.EmbedEnabled, embedOrigins,
+                Norm(request.ExternalHomeUrl), Norm(request.ExternalEventsUrl), request.EmbedEventTarget);
             await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
+            await _tenants.UpdateFeatures(tenantId,
+                request.GiftCardsEnabled, request.RentalsEnabled, request.ExtrasEnabled, request.SeasonPassesEnabled,
+                request.ConcessionsEnabled, request.BlogEnabled, request.MembershipEnabled,
+                request.WaitlistEnabled, request.AllowSelfCancel);
 
             // Evict the cached tenant so changes (especially publish status) take
             // effect immediately instead of after the 5-minute resolution cache.
@@ -988,7 +1056,15 @@ namespace webapi.Controllers
             ServiceChargeBps = t.ServiceChargeBps,
             MonthlyServiceChargeCapCents = t.MonthlyServiceChargeCapCents,
             IsPublished = t.IsPublished,
+            GiftCardsEnabled = t.GiftCardsEnabled,
+            RentalsEnabled = t.RentalsEnabled,
+            ExtrasEnabled = t.ExtrasEnabled,
+            SeasonPassesEnabled = t.SeasonPassesEnabled,
             ConcessionsEnabled = t.ConcessionsEnabled,
+            BlogEnabled = t.BlogEnabled,
+            MembershipEnabled = t.MembershipEnabled,
+            WaitlistEnabled = t.WaitlistEnabled,
+            AllowSelfCancel = t.AllowSelfCancel,
             AddressLine = t.AddressLine,
             City = t.City,
             Region = t.Region,
@@ -999,6 +1075,14 @@ namespace webapi.Controllers
             ContactEmail = t.ContactEmail,
             Phone = t.Phone,
             LoampassMxDestinationId = t.LoampassMxDestinationId,
+            ClientType = t.ClientType,
+            CustomDomain = t.CustomDomain,
+            CustomDomainVerified = t.CustomDomainVerified,
+            EmbedEnabled = t.EmbedEnabled,
+            EmbedAllowedOrigins = t.EmbedAllowedOrigins,
+            ExternalHomeUrl = t.ExternalHomeUrl,
+            ExternalEventsUrl = t.ExternalEventsUrl,
+            EmbedEventTarget = t.EmbedEventTarget,
             CreatedAtUtc = DateTime.SpecifyKind(t.CreatedAt, DateTimeKind.Utc),
         };
 

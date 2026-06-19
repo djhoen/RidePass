@@ -224,9 +224,15 @@ const superAdminLinks: SuperAdminLink[] = [
     { to: '/SuperAdmin/HomePage',  icon: 'mdi-home-edit',           title: 'Home page' },
     { to: '/SuperAdmin/ForTracks', icon: 'mdi-store-plus',          title: 'For Tracks page' },
     { to: '/SuperAdmin/Marketing', icon: 'mdi-bullhorn',            title: 'Marketing' },
+    { to: '/SuperAdmin/MiscSettings', icon: 'mdi-cog',              title: 'Misc settings' },
 ]
 
-interface AdminLink { to: string; icon: string; title: string; perm: Permission | null }
+// Platform features the super-admin gates per tenant. A link carrying one of these
+// is hidden unless the tenant has that feature enabled (so disabled features don't
+// show in the admin nav at all).
+type FeatureFlag = 'seasonPassesEnabled' | 'rentalsEnabled' | 'extrasEnabled'
+    | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
+interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag }
 interface AdminGroup { value: string; title: string; icon: string; links: AdminLink[] }
 
 // Direct links: pinned at top of admin menu, no group header.
@@ -259,10 +265,10 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Events',       icon: 'mdi-calendar-month',       title: 'Events',        perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
-            { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage },
-            { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage },
-            { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage },
-            { to: '/Admin/Concessions',  icon: 'mdi-storefront',           title: 'Concessions',   perm: Perm.CatalogManage },
+            { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
+            { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage, feature: 'rentalsEnabled' },
+            { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage, feature: 'extrasEnabled' },
+            { to: '/Admin/Concessions',  icon: 'mdi-storefront',           title: 'Concessions',   perm: Perm.CatalogManage, feature: 'concessionsEnabled' },
         ],
     },
     {
@@ -271,7 +277,7 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-cart-check',
         links: [
             { to: '/Admin/Purchases',     icon: 'mdi-cart-check',     title: 'Purchases',      perm: Perm.SalesView },
-            { to: '/Admin/RentalCounter', icon: 'mdi-store-clock',    title: 'Rental Counter', perm: Perm.SalesCounter },
+            { to: '/Admin/RentalCounter', icon: 'mdi-store-clock',    title: 'Rental Counter', perm: Perm.SalesCounter, feature: 'rentalsEnabled' },
             { to: '/Admin/Payouts',       icon: 'mdi-bank-transfer',  title: 'Payouts',        perm: Perm.ReportsView },
         ],
     },
@@ -280,7 +286,7 @@ const allGroups: AdminGroup[] = [
         title: 'Marketing',
         icon: 'mdi-bullhorn',
         links: [
-            { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage },
+            { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage, feature: 'blogEnabled' },
             { to: '/Admin/Rewards',     icon: 'mdi-trophy',            title: 'Rewards',     perm: Perm.CatalogManage },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
@@ -300,14 +306,18 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Settings/HomePage', icon: 'mdi-home-edit',     title: 'Home Page', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
-            { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage },
+            { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage, feature: 'membershipEnabled' },
             { to: '/Admin/Waiver',            icon: 'mdi-file-sign',     title: 'Waivers',    perm: Perm.CatalogManage },
         ],
     },
 ]
 
 function allowed(link: AdminLink): boolean {
-    return link.perm === null || authHelper.hasPermission(link.perm)
+    if (link.perm !== null && !authHelper.hasPermission(link.perm)) return false
+    // Feature-gated links hide entirely when the super-admin hasn't enabled that
+    // platform feature for the tenant.
+    if (link.feature && !branding[link.feature]) return false
+    return true
 }
 
 const directLinks = computed(() => allDirectLinks.filter(allowed))

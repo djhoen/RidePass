@@ -410,6 +410,7 @@ import tenantHelper from '../helpers/TenantHelper'
 import authHelper from '../helpers/AuthHelper'
 import TracksMap from '@/components/TracksMap.vue'
 import TrackCardGrid from '@/components/TrackCardGrid.vue'
+import { tenantHomeUrl, tenantEventUrl } from '@/helpers/tenantLinks'
 import DOMPurify from 'dompurify'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
@@ -624,9 +625,9 @@ function tenantUrl(subdomain: string): string {
     return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
 }
 
-// Map pin click -> open that track's site, matching the track-card behavior.
+// Map pin click -> open that track's public home (client-type-aware).
 function openTrack(t: TrackDiscoverItem) {
-    window.location.href = tenantUrl(t.subdomain)
+    window.location.href = tenantHomeUrl(t)
 }
 
 // Date-badge helpers for the upcoming-events list (day number + month abbrev,
@@ -659,7 +660,15 @@ function apexTrackImageStyle(t: TrackDiscoverItem) {
 // Deep link from an apex event card straight to that event's public page on its
 // tenant subdomain (the new standalone event page, not the old calendar modal).
 function apexEventUrl(e: EventDiscoverItem): string {
-    return `${tenantUrl(e.tenantSubdomain)}Event/${e.eventId}`
+    return tenantEventUrl({
+        subdomain: e.tenantSubdomain,
+        clientType: e.tenantClientType,
+        customDomain: e.tenantCustomDomain,
+        customDomainVerified: e.tenantCustomDomainVerified,
+        externalHomeUrl: e.tenantExternalHomeUrl,
+        externalEventsUrl: e.tenantExternalEventsUrl,
+        embedEventTarget: e.tenantEmbedEventTarget,
+    }, e.eventId)
 }
 
 // Apex event card image: per-event image wins, fall back to the event type's

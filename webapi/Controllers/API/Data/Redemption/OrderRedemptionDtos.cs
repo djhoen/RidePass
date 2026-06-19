@@ -6,6 +6,10 @@ namespace webapi.Controllers.API.Data.Redemption
         public string PurchaserName { get; set; } = null!;
         public string PurchaserEmail { get; set; } = null!;
         public List<OrderItem> Items { get; set; } = new();
+        // When true, the tenant requires gate staff to verify the rider's photo ID
+        // against PurchaserName before redeeming. Drives the attestation gate in the UI;
+        // also enforced server-side on RedeemBulk.
+        public bool RequireIdAtCheckin { get; set; }
     }
 
     public class OrderItem
@@ -29,8 +33,11 @@ namespace webapi.Controllers.API.Data.Redemption
 
     public class BulkRedeemRequest
     {
-        public Guid OrderToken { get; set; }                 // any token from the order — used to authorize all-in-order
+        public Guid OrderToken { get; set; }                 // any token from the rider's order — authorizes the event+purchaser set
         public List<BulkRedeemItem> Items { get; set; } = new();
+        // Gate-staff attestation that the rider's photo ID was checked against the
+        // purchaser name. Required only when the tenant has RequireIdAtCheckin on.
+        public bool IdVerified { get; set; }
     }
 
     public class BulkRedeemItem

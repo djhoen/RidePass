@@ -1,27 +1,131 @@
-name: Deploy to Staging
+name: Deploy to staging
+
+# Push to `stage` deploys to the staging droplet. Mirrors deploy.yml (production)
+# but targets /var/www/staging, sources /etc/ridepass/staging.env, builds the SPA
+# with the `staging` Vite mode (-> stage.ridepass.io), and uses ecosystem.stage.config.js.
+#
+# Required GitHub secrets:
+#   STAGE_DEPLOY_HOST     - staging droplet IP
+#   STAGE_DEPLOY_SSH_KEY  - private key authorized for deploy@<stage droplet>
+# (Keep these separate from the production DEPLOY_* secrets.)
 
 on:
   push:
-    branches: [ stage ]
+    branches: [stage]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  DEPLOY_USER: deploy
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.8.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Install PM2
-        run: npm install -g pm2
-
-      - name: Deploy
+      - name: Set up SSH
+        env:
+          STAGE_DEPLOY_SSH_KEY: ${{ secrets.STAGE_DEPLOY_SSH_KEY }}
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
         run: |
-          # TODO: Configure your staging deployment target
-          # pm2 deploy ecosystem.stage.config.js staging
-          echo "Staging deployment step - configure with your server details"
+          mkdir -p ~/.ssh
+          echo "$STAGE_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$STAGE_DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Transfer source to droplet
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          tar -czf - \
+            --exclude=bin --exclude=obj --exclude=publish \
+            --exclude=node_modules --exclude=dist \
+            --exclude=.git --exclude=.vs --exclude='*.user' --exclude='.vite' \
+            --exclude=Template.sln \
+            . | \
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            DEPLOY_PATH=/var/www/staging
+            if [ -d "$DEPLOY_PATH/webapi/publish/wwwroot" ]; then
+              rm -rf /tmp/ridepass-stage-wwwroot.bak
+              mv "$DEPLOY_PATH/webapi/publish/wwwroot" /tmp/ridepass-stage-wwwroot.bak
+            fi
+            find "$DEPLOY_PATH" -mindepth 1 -delete
+            tar -xzf - -C "$DEPLOY_PATH"
+            if [ -d /tmp/ridepass-stage-wwwroot.bak ]; then
+              mkdir -p "$DEPLOY_PATH/webapi/publish"
+              mv /tmp/ridepass-stage-wwwroot.bak "$DEPLOY_PATH/webapi/publish/wwwroot"
+            fi
+            du -sh "$DEPLOY_PATH"
+          '
+
+      - name: Build vueapp (staging mode)
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            cd /var/www/staging/vueapp
+            npm install --no-fund --no-audit --silent
+            npm run build -- --mode staging 2>&1 | tail -3
+          '
+
+      - name: Publish .NET projects
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            cd /var/www/staging
+            for proj in webapi/webapi.csproj TaskRunner/TaskRunner.csproj RidePass.Migrator/RidePass.Migrator.csproj; do
+              out="$(dirname $proj)/publish"
+              dotnet publish "$proj" -c Release -o "$out" --nologo -v minimal | tail -2
+            done
+          '
+
+      - name: Run database migrations
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            cd /var/www/staging
+            set -a; source /etc/ridepass/staging.env; set +a
+            dotnet RidePass.Migrator/publish/RidePass.Migrator.dll
+          '
+
+      - name: Restart pm2 with refreshed env
+        env:
+          STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
+            set -e
+            cd /var/www/staging
+            set -a; source /etc/ridepass/staging.env; set +a
+            pm2 startOrRestart ecosystem.stage.config.js --update-env
+            pm2 save --silent
+            pm2 list
+          '
+
+      - name: Health gate
+        run: |
+          healthy=0
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://stage.ridepass.io/api/health || echo 000)
+            if [ "$code" = "200" ]; then echo "API healthy after $i checks."; healthy=1; break; fi
+            echo "check $i: API HTTP $code, retrying in 3s..."
+            sleep 3
+          done
+          if [ "$healthy" != "1" ]; then
+            echo "DEPLOY FAILED: staging API did not become healthy (~90s). Recent webapi logs:"
+            ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@${{ secrets.STAGE_DEPLOY_HOST }}" 'pm2 logs stage-webapi --lines 40 --nostream || true'
+            exit 1
+          fi
+          echo "Smoke (SPA shell):"
+          curl -fsS -o /dev/null -w 'apex   HTTP %{http_code}\n' --max-time 20 https://stage.ridepass.io/
+          curl -fsS -o /dev/null -w 'tenant HTTP %{http_code}\n' --max-time 20 https://demo.stage.ridepass.io/

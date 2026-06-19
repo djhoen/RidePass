@@ -28,5 +28,29 @@ namespace webapi.Controllers.API.Data.SuperAdmin
 
         [MaxLength(120)]
         public string? AdminLastName { get; set; }
+
+        // Deployment model + embed config (set at creation; editable later).
+        [Required, RegularExpression("^(hosted|custom_domain|embedded)$")]
+        public string ClientType { get; set; } = "hosted";
+        [MaxLength(255)] public string? CustomDomain { get; set; }
+        public bool EmbedEnabled { get; set; }
+        public List<string>? EmbedAllowedOrigins { get; set; }
+
+        public bool CustomDomainVerified { get; set; }
+        [MaxLength(500)] public string? ExternalHomeUrl { get; set; }
+        [MaxLength(500)] public string? ExternalEventsUrl { get; set; }
+        [RegularExpression("^(external|ridepass)$")]
+        public string EmbedEventTarget { get; set; } = "external";
+
+        // Feature toggles. Defaults mirror the DB defaults (season passes + waitlist on).
+        public bool GiftCardsEnabled { get; set; }
+        public bool RentalsEnabled { get; set; }
+        public bool ExtrasEnabled { get; set; }
+        public bool SeasonPassesEnabled { get; set; } = true;
+        public bool ConcessionsEnabled { get; set; }
+        public bool BlogEnabled { get; set; }
+        public bool MembershipEnabled { get; set; }
+        public bool WaitlistEnabled { get; set; } = true;
+        public bool AllowSelfCancel { get; set; }
     }
 }

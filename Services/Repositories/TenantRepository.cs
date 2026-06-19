@@ -12,6 +12,7 @@ namespace Services.Repositories
             require_reservation_for_passes AS RequireReservationForPasses,
             require_emergency_contact AS RequireEmergencyContact,
             allow_event_subscriptions AS AllowEventSubscriptions,
+            require_id_at_checkin AS RequireIdAtCheckin,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_terminal_location_id AS StripeTerminalLocationId,
@@ -52,6 +53,14 @@ namespace Services.Repositories
             concessions_enabled AS ConcessionsEnabled,
             blog_enabled AS BlogEnabled,
             loampass_mx_destination_id AS LoampassMxDestinationId,
+            client_type AS ClientType,
+            custom_domain AS CustomDomain,
+            custom_domain_verified AS CustomDomainVerified,
+            embed_enabled AS EmbedEnabled,
+            embed_allowed_origins AS EmbedAllowedOrigins,
+            external_home_url AS ExternalHomeUrl,
+            external_events_url AS ExternalEventsUrl,
+            embed_event_target AS EmbedEventTarget,
             allow_self_cancel AS AllowSelfCancel,
             waitlist_enabled AS WaitlistEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
@@ -87,8 +96,16 @@ namespace Services.Repositories
         public async Task<Guid> Create(Tenant tenant)
         {
             const string sql = @"
-                INSERT INTO tenant (subdomain, display_name, status, tenant_type, timezone)
-                VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @Timezone)
+                INSERT INTO tenant (subdomain, display_name, status, tenant_type, timezone,
+                    client_type, custom_domain, custom_domain_verified, embed_enabled, embed_allowed_origins,
+                    external_home_url, external_events_url, embed_event_target,
+                    gift_cards_enabled, rentals_enabled, extras_enabled, season_passes_enabled,
+                    concessions_enabled, blog_enabled, membership_enabled, waitlist_enabled, allow_self_cancel)
+                VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @Timezone,
+                    @ClientType, @CustomDomain, @CustomDomainVerified, @EmbedEnabled, @EmbedAllowedOrigins,
+                    @ExternalHomeUrl, @ExternalEventsUrl, @EmbedEventTarget,
+                    @GiftCardsEnabled, @RentalsEnabled, @ExtrasEnabled, @SeasonPassesEnabled,
+                    @ConcessionsEnabled, @BlogEnabled, @MembershipEnabled, @WaitlistEnabled, @AllowSelfCancel)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, tenant);
             return result.First();
@@ -116,6 +133,12 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET allow_event_subscriptions = @allow WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, allow });
+        }
+
+        public async Task UpdateRequireIdAtCheckin(Guid tenantId, bool require)
+        {
+            const string sql = "UPDATE tenant SET require_id_at_checkin = @require WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, require });
         }
 
         public async Task SetStripeConnectAccount(Guid tenantId, string accountId, string status)
@@ -224,7 +247,9 @@ namespace Services.Repositories
 
         public async Task UpdateAdminDetails(Guid tenantId, string displayName, string status, string timezone, bool isPublished,
             string? addressLine, string? city, string? region, string? postalCode, string? country,
-            double? latitude, double? longitude, string? contactEmail, string? phone, string? loampassMxDestinationId)
+            double? latitude, double? longitude, string? contactEmail, string? phone, string? loampassMxDestinationId,
+            string clientType, string? customDomain, bool customDomainVerified, bool embedEnabled,
+            string[]? embedAllowedOrigins, string? externalHomeUrl, string? externalEventsUrl, string embedEventTarget)
         {
             const string sql = @"
                 UPDATE tenant
@@ -241,12 +266,48 @@ namespace Services.Repositories
                     longitude = @longitude,
                     contact_email = @contactEmail,
                     phone = @phone,
-                    loampass_mx_destination_id = @loampassMxDestinationId
+                    loampass_mx_destination_id = @loampassMxDestinationId,
+                    client_type = @clientType,
+                    custom_domain = @customDomain,
+                    custom_domain_verified = @customDomainVerified,
+                    embed_enabled = @embedEnabled,
+                    embed_allowed_origins = @embedAllowedOrigins,
+                    external_home_url = @externalHomeUrl,
+                    external_events_url = @externalEventsUrl,
+                    embed_event_target = @embedEventTarget
                 WHERE id = @tenantId";
             await _db.Execute(sql, new
             {
                 tenantId, displayName, status, timezone, isPublished, addressLine, city, region,
                 postalCode, country, latitude, longitude, contactEmail, phone, loampassMxDestinationId,
+                clientType, customDomain, customDomainVerified, embedEnabled, embedAllowedOrigins,
+                externalHomeUrl, externalEventsUrl, embedEventTarget,
+            });
+        }
+
+        // Super-admin feature toggles. Narrow to just the boolean flags so it never
+        // touches the dependent config (gift-card min/max, membership price, etc.),
+        // which the tenant manages on their own Settings -> Features page.
+        public async Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
+            bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
+            bool waitlistEnabled, bool allowSelfCancel)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET gift_cards_enabled = @giftCardsEnabled,
+                    rentals_enabled = @rentalsEnabled,
+                    extras_enabled = @extrasEnabled,
+                    season_passes_enabled = @seasonPassesEnabled,
+                    concessions_enabled = @concessionsEnabled,
+                    blog_enabled = @blogEnabled,
+                    membership_enabled = @membershipEnabled,
+                    waitlist_enabled = @waitlistEnabled,
+                    allow_self_cancel = @allowSelfCancel
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId, giftCardsEnabled, rentalsEnabled, extrasEnabled, seasonPassesEnabled,
+                concessionsEnabled, blogEnabled, membershipEnabled, waitlistEnabled, allowSelfCancel,
             });
         }
 

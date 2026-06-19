@@ -11,7 +11,7 @@ export class TenantService {
         return axios.get(`${this.apiUrl}/Tenant/Branding`)
     }
 
-    async updateSettings(req: { timezone: string; requireReservationForPasses: boolean; requireEmergencyContact: boolean; allowEventSubscriptions: boolean }) {
+    async updateSettings(req: { timezone: string; requireReservationForPasses: boolean; requireEmergencyContact: boolean; allowEventSubscriptions: boolean; requireIdAtCheckin: boolean }) {
         return axios.put(`${this.apiUrl}/Tenant`, req)
     }
 

@@ -74,122 +74,81 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(preview);
         }
 
-        // Scan-once-redeem-many: given any token from a customer's order, surface
-        // every other purchase row tied to the same Stripe PaymentIntent so the
-        // gate worker can pick which items (gate fee, t-shirt, parking, ...) to
-        // redeem now and which to leave for later.
+        // Scan-once-redeem-many: given any token the rider owns for an event, surface
+        // every ticket + add-on that SAME purchaser holds for that SAME event, across
+        // however many orders they placed, so the gate worker can check them all in from
+        // one scan. Scope is bounded to one event and one purchaser (never cross-event,
+        // never another buyer); redeeming still requires authenticated SalesRedeem staff.
         [HttpGet("Order/{token:guid}")]
         public async Task<IActionResult> Order(Guid token)
         {
             var tenantId = _tenantContext.TenantId;
-            var anchorPi = await ResolveAnchorPaymentIntentId(token, tenantId);
-            if (anchorPi.AnchorRow is null)
+            var anchor = await ResolveAnchor(token, tenantId);
+            if (anchor is null)
             {
                 return new ApiResponses().NotFoundResult("No purchase found for this token in your tenant.");
             }
 
             var resp = new webapi.Controllers.API.Data.Redemption.OrderLookupResponse
             {
-                StripePaymentIntentId = anchorPi.PaymentIntentId is null ? null : Guid.Empty, // placeholder, see below
-                PurchaserName = anchorPi.PurchaserName,
-                PurchaserEmail = anchorPi.PurchaserEmail,
+                StripePaymentIntentId = null,   // no longer meaningful: the scope is event+purchaser, not one PI
+                PurchaserName = anchor.PurchaserName,
+                PurchaserEmail = anchor.PurchaserEmail,
+                RequireIdAtCheckin = _tenantContext.Tenant.RequireIdAtCheckin,
             };
-            resp.StripePaymentIntentId = null; // we'll just leave the FE to ignore it; PI is a string and not relevant here.
 
-            // Pre-resolve the staff name lookup for redeemed_by ids surfaced below.
             var redeemerIds = new HashSet<Guid>();
-
             var tz = ResolveTenantTimeZone();
             var todayInTenant = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
 
-            // Purchases on this PI.
-            if (anchorPi.PaymentIntentId is not null)
+            if (anchor.EventId.HasValue)
             {
-                var ticketRows = await _tickets.ListByStripePaymentIntentId(anchorPi.PaymentIntentId);
-                foreach (var t in ticketRows.Where(t => t.TenantId == tenantId))
+                var ticketRows = await _tickets.ListByEventForPurchaser(
+                    anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+                foreach (var t in ticketRows)
                 {
-                    var ctx = await _tickets.GetByRedemptionToken(t.RedemptionToken, tenantId);
-                    var startUtc = ctx is null ? (DateTime?)null : DateTime.SpecifyKind(ctx.EventStartsAt, DateTimeKind.Utc);
-                    var endUtc = ctx is null ? (DateTime?)null : DateTime.SpecifyKind(ctx.EventEndsAt, DateTimeKind.Utc);
-                    bool ok = true; string? reason = null;
-                    if (startUtc.HasValue && endUtc.HasValue)
-                    {
-                        var s = TimeZoneInfo.ConvertTimeFromUtc(startUtc.Value, tz).Date;
-                        var e = TimeZoneInfo.ConvertTimeFromUtc(endUtc.Value, tz).Date;
-                        ok = todayInTenant >= s && todayInTenant <= e;
-                        if (!ok) reason = todayInTenant < s ? $"Event starts {s:yyyy-MM-dd}." : $"Event ended {e:yyyy-MM-dd}.";
-                    }
-                    var name = ctx is not null ? $"{ctx.EventTitle} — {ctx.TierName}" : "Race Entry";
-                    var item = new webapi.Controllers.API.Data.Redemption.OrderItem
+                    var s = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(t.EventStartsAt, DateTimeKind.Utc), tz).Date;
+                    var e = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(t.EventEndsAt, DateTimeKind.Utc), tz).Date;
+                    var ok = todayInTenant >= s && todayInTenant <= e;
+                    var reason = ok ? null : (todayInTenant < s ? $"Event starts {s:yyyy-MM-dd}." : $"Event ended {e:yyyy-MM-dd}.");
+                    resp.Items.Add(new webapi.Controllers.API.Data.Redemption.OrderItem
                     {
                         Kind = "event_ticket",
                         PurchaseId = t.Id,
                         RedemptionToken = t.RedemptionToken,
-                        ItemName = name,
+                        ItemName = $"{t.EventTitle} — {t.TierName}",
                         AmountCents = t.AmountCents,
                         Status = t.Status,
                         IsRedeemableToday = ok && t.Status == "paid",
                         NotRedeemableReason = !ok ? reason : (t.Status != "paid" ? $"Status is '{t.Status}'." : null),
                         RedeemedAtUtc = t.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(t.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
                         RegistrationComplete = t.RegistrationComplete,
-                    };
+                    });
                     if (t.RedeemedByUserId.HasValue) redeemerIds.Add(t.RedeemedByUserId.Value);
-                    resp.Items.Add(item);
                 }
 
-                var extraRows = await _extras.ListByPaymentIntentId(anchorPi.PaymentIntentId);
-                foreach (var x in extraRows.Where(x => x.TenantId == tenantId))
+                var extraRows = await _extras.ListByEventForPurchaser(
+                    anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+                foreach (var x in extraRows)
                 {
-                    var item = new webapi.Controllers.API.Data.Redemption.OrderItem
-                    {
-                        Kind = "extras",
-                        PurchaseId = x.Id,
-                        RedemptionToken = x.RedemptionToken,
-                        ItemName = "Add-on",
-                        AmountCents = x.AmountCents,
-                        Status = x.Status,
-                        IsRedeemableToday = x.Status == "paid",
-                        NotRedeemableReason = x.Status != "paid" ? $"Status is '{x.Status}'." : null,
-                        RedeemedAtUtc = x.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(x.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
-                    };
+                    resp.Items.Add(BuildExtraItem(x));
                     if (x.RedeemedByUserId.HasValue) redeemerIds.Add(x.RedeemedByUserId.Value);
-                    resp.Items.Add(item);
                 }
             }
-            else
+            else if (anchor.SoloExtra is not null)
             {
-                // Cash counter sale (no PI). Fall back to the single anchor row.
-                resp.Items.Add(anchorPi.AnchorItem!);
-                if (anchorPi.AnchorItem!.RedeemedAtUtc.HasValue) { /* nothing extra */ }
+                // No-event add-on (counter merch): only the scanned row is in scope.
+                resp.Items.Add(BuildExtraItem(anchor.SoloExtra));
+                if (anchor.SoloExtra.RedeemedByUserId.HasValue) redeemerIds.Add(anchor.SoloExtra.RedeemedByUserId.Value);
             }
 
-            // Resolve redeemer names in one shot.
-            foreach (var id in redeemerIds)
-            {
-                var u = await _users.GetById(id);
-                if (u is null) continue;
-                var name = $"{u.FirstName} {u.LastName}".Trim();
-                foreach (var item in resp.Items)
-                {
-                    if ((item.Kind == "event_ticket" || item.Kind == "extras")
-                        && item.RedeemedAtUtc.HasValue && item.RedeemedByName is null)
-                    {
-                        // We don't have the user-id on the response right here; fill via a second pass.
-                    }
-                }
-            }
-            // Second pass: re-query rows we already loaded to fill RedeemedByName. To keep
-            // the code simple and avoid a third query each, walk the response items + look
-            // up each redeemed-by name via the same id set built above.
+            // Resolve redeemer names, then stamp them onto already-redeemed items.
             var staffById = new Dictionary<Guid, string>();
             foreach (var id in redeemerIds)
             {
                 var u = await _users.GetById(id);
-                if (u is null) continue;
-                staffById[id] = $"{u.FirstName} {u.LastName}".Trim();
+                if (u is not null) staffById[id] = $"{u.FirstName} {u.LastName}".Trim();
             }
-            // Stamp names on items by matching back through the originating rows.
-            // (We re-fetch anchor row by id where needed — small N.)
             foreach (var item in resp.Items)
             {
                 if (!item.RedeemedAtUtc.HasValue) continue;
@@ -199,10 +158,7 @@ namespace webapi.Controllers
                     "extras" => (await _extras.GetPurchase(item.PurchaseId))?.RedeemedByUserId,
                     _ => null,
                 };
-                if (byId.HasValue && staffById.TryGetValue(byId.Value, out var nm))
-                {
-                    item.RedeemedByName = nm;
-                }
+                if (byId.HasValue && staffById.TryGetValue(byId.Value, out var nm)) item.RedeemedByName = nm;
             }
 
             return new ApiResponses().OkResult(resp);
@@ -212,14 +168,36 @@ namespace webapi.Controllers
         public async Task<IActionResult> RedeemBulk([FromBody] webapi.Controllers.API.Data.Redemption.BulkRedeemRequest req)
         {
             var tenantId = _tenantContext.TenantId;
-            // Authorization scope: every requested item must live under the SAME PI as the
-            // scanned anchor token so a leaked purchase id can't redeem someone else's pass.
-            var anchor = await ResolveAnchorPaymentIntentId(req.OrderToken, tenantId);
-            if (anchor.AnchorRow is null)
+
+            // Photo-ID gate: when the tenant requires it, the gate worker must attest they
+            // checked the rider's ID against the purchaser name before anything redeems.
+            if (_tenantContext.Tenant.RequireIdAtCheckin && !req.IdVerified)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track requires photo ID verification. Confirm the rider's ID matches the purchaser name, then check the box before redeeming.");
+            }
+
+            var anchor = await ResolveAnchor(req.OrderToken, tenantId);
+            if (anchor is null)
             {
                 return new ApiResponses().NotFoundResult("Order not found.");
             }
-            var allowedPi = anchor.PaymentIntentId;
+
+            // Authorization scope: only ids in the scanned token's event+purchaser set are
+            // redeemable, so a leaked purchase id can't redeem outside this rider's event.
+            var allowedTicketIds = new HashSet<Guid>();
+            var allowedExtraIds = new HashSet<Guid>();
+            if (anchor.EventId.HasValue)
+            {
+                foreach (var t in await _tickets.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail))
+                    allowedTicketIds.Add(t.Id);
+                foreach (var x in await _extras.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail))
+                    allowedExtraIds.Add(x.Id);
+            }
+            else if (anchor.SoloExtra is not null)
+            {
+                allowedExtraIds.Add(anchor.SoloExtra.Id);
+            }
 
             var staffId = TryGetStaffUserId();
             var nowUtc = DateTime.UtcNow;
@@ -231,12 +209,12 @@ namespace webapi.Controllers
                 {
                     if (entry.Kind == "event_ticket")
                     {
+                        if (!allowedTicketIds.Contains(entry.PurchaseId))
+                        {
+                            resp.Errors.Add("A ticket doesn't belong to this rider's order — skipped."); continue;
+                        }
                         var t = await _tickets.GetById(entry.PurchaseId, tenantId);
                         if (t is null) { resp.Errors.Add($"Ticket {entry.PurchaseId} not found."); continue; }
-                        if (allowedPi is not null && t.StripePaymentIntentId != allowedPi)
-                        {
-                            resp.Errors.Add($"Ticket {entry.PurchaseId} doesn't belong to this order."); continue;
-                        }
                         if (t.Status == "redeemed") { resp.Errors.Add("A ticket was already redeemed — skipped."); continue; }
                         if (t.Status != "paid") { resp.Errors.Add($"Ticket status is '{t.Status}' — can't redeem."); continue; }
                         if (staffId.HasValue) await _tickets.MarkRedeemed(t.Id, tenantId, staffId.Value, nowUtc);
@@ -245,12 +223,12 @@ namespace webapi.Controllers
                     }
                     else if (entry.Kind == "extras")
                     {
+                        if (!allowedExtraIds.Contains(entry.PurchaseId))
+                        {
+                            resp.Errors.Add("An add-on doesn't belong to this rider's order — skipped."); continue;
+                        }
                         var x = await _extras.GetPurchase(entry.PurchaseId);
                         if (x is null || x.TenantId != tenantId) { resp.Errors.Add($"Add-on {entry.PurchaseId} not found."); continue; }
-                        if (allowedPi is not null && x.StripePaymentIntentId != allowedPi)
-                        {
-                            resp.Errors.Add($"Add-on {entry.PurchaseId} doesn't belong to this order."); continue;
-                        }
                         if (x.Status == "redeemed") { resp.Errors.Add("An add-on was already redeemed — skipped."); continue; }
                         if (x.Status != "paid") { resp.Errors.Add($"Add-on status is '{x.Status}' — can't redeem."); continue; }
                         if (staffId.HasValue) await _extras.MarkRedeemed(x.Id, tenantId, staffId.Value, nowUtc);
@@ -271,66 +249,61 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(resp);
         }
 
-        // Resolves the scanned token to (a) the anchor row + (b) the PI id used to
-        // group all sibling rows on the order. Cash counter sales have no PI, so
-        // bulk-redeem there falls back to single-item.
-        private async Task<AnchorLookup> ResolveAnchorPaymentIntentId(Guid token, Guid tenantId)
+        private static webapi.Controllers.API.Data.Redemption.OrderItem BuildExtraItem(
+            Services.Repositories.Data.ExtrasData.EventExtraPurchase x) =>
+            new webapi.Controllers.API.Data.Redemption.OrderItem
+            {
+                Kind = "extras",
+                PurchaseId = x.Id,
+                RedemptionToken = x.RedemptionToken,
+                ItemName = "Add-on",
+                AmountCents = x.AmountCents,
+                Status = x.Status,
+                IsRedeemableToday = x.Status == "paid",
+                NotRedeemableReason = x.Status != "paid" ? $"Status is '{x.Status}'." : null,
+                RedeemedAtUtc = x.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(x.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
+            };
+
+        // Resolves a scanned token to the event + purchaser it belongs to (the gate scope).
+        // A token can be a ticket or an add-on; an add-on with no event (counter merch) has
+        // no event scope, so it's redeemed solo.
+        private async Task<AnchorInfo?> ResolveAnchor(Guid token, Guid tenantId)
         {
             var tk = await _tickets.GetByRedemptionToken(token, tenantId);
             if (tk is not null)
             {
-                return new AnchorLookup
+                return new AnchorInfo
                 {
-                    AnchorRow = tk,
-                    PaymentIntentId = tk.StripePaymentIntentId,
-                    PurchaserName = tk.PurchaserName,
+                    EventId = tk.EventId,
+                    PurchaserUserId = tk.PurchaserUserId,
                     PurchaserEmail = tk.PurchaserEmail,
-                    AnchorItem = new webapi.Controllers.API.Data.Redemption.OrderItem
-                    {
-                        Kind = "event_ticket",
-                        PurchaseId = tk.Id,
-                        RedemptionToken = tk.RedemptionToken,
-                        ItemName = $"{tk.EventTitle} — {tk.TierName}",
-                        AmountCents = tk.AmountCents,
-                        Status = tk.Status,
-                        IsRedeemableToday = tk.Status == "paid",
-                        NotRedeemableReason = tk.Status != "paid" ? $"Status is '{tk.Status}'." : null,
-                        RegistrationComplete = tk.RegistrationComplete,
-                    },
+                    PurchaserName = tk.PurchaserName,
                 };
             }
             var ex = await _extras.GetPurchaseByRedemptionToken(token);
             if (ex is not null && ex.TenantId == tenantId)
             {
-                return new AnchorLookup
+                return new AnchorInfo
                 {
-                    AnchorRow = ex,
-                    PaymentIntentId = ex.StripePaymentIntentId,
-                    PurchaserName = ex.PurchaserName,
+                    EventId = ex.EventId,
+                    PurchaserUserId = ex.PurchaserUserId,
                     PurchaserEmail = ex.PurchaserEmail,
-                    AnchorItem = new webapi.Controllers.API.Data.Redemption.OrderItem
-                    {
-                        Kind = "extras",
-                        PurchaseId = ex.Id,
-                        RedemptionToken = ex.RedemptionToken,
-                        ItemName = "Add-on",
-                        AmountCents = ex.AmountCents,
-                        Status = ex.Status,
-                        IsRedeemableToday = ex.Status == "paid",
-                        NotRedeemableReason = ex.Status != "paid" ? $"Status is '{ex.Status}'." : null,
-                    },
+                    PurchaserName = ex.PurchaserName,
+                    SoloExtra = ex.EventId.HasValue ? null : ex,
                 };
             }
-            return new AnchorLookup();
+            return null;
         }
 
-        private class AnchorLookup
+        private class AnchorInfo
         {
-            public object? AnchorRow { get; set; }
-            public string? PaymentIntentId { get; set; }
-            public string PurchaserName { get; set; } = "";
+            public Guid? EventId { get; set; }
+            public Guid? PurchaserUserId { get; set; }
             public string PurchaserEmail { get; set; } = "";
-            public webapi.Controllers.API.Data.Redemption.OrderItem? AnchorItem { get; set; }
+            public string PurchaserName { get; set; } = "";
+            // Set only when the anchor is an add-on with no event (counter merch): the
+            // event+purchaser scope doesn't apply, so just this one row is redeemable.
+            public Services.Repositories.Data.ExtrasData.EventExtraPurchase? SoloExtra { get; set; }
         }
 
         private Guid? TryGetStaffUserId()

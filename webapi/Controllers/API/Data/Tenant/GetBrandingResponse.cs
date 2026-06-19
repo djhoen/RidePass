@@ -25,6 +25,7 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool RequireReservationForPasses { get; set; }
         public bool RequireEmergencyContact { get; set; }
         public bool AllowEventSubscriptions { get; set; }
+        public bool RequireIdAtCheckin { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }
         public int ServiceChargeBps { get; set; }
@@ -64,6 +65,25 @@ namespace webapi.Controllers.API.Data.Tenant
         // True when this tenant is a LoamPassMx track (a destination id is configured).
         // The destination id itself stays server-side.
         public bool LoampassMxEnabled { get; set; }
+        // Embedded-widget config: whether embedding is on, and the origins allowed to
+        // frame the widgets. Read by the chromeless /embed routes to guard rendering.
+        public bool EmbedEnabled { get; set; }
+        public string[]? EmbedAllowedOrigins { get; set; }
+        // First-party origins allowed to embed any tenant (global allow-list). The client
+        // guard checks the parent against (tenant ∪ global); the authoritative control is
+        // the server-stamped frame-ancestors CSP.
+        public string[]? GlobalEmbedAllowedOrigins { get; set; }
+        // Front-door config so the SPA can redirect the subdomain to the tenant's
+        // real home (custom domain or an embedded client's external site).
+        public string ClientType { get; set; } = "hosted";
+        public string? CustomDomain { get; set; }
+        public bool CustomDomainVerified { get; set; }
+        public string? ExternalHomeUrl { get; set; }
+        public string? ExternalEventsUrl { get; set; }
+        // Embedded-client apex event-click target: 'external' (their site) or 'ridepass'
+        // (the hosted event page). Read by the SPA front-door redirect to NOT bounce
+        // /Event/:id when set to 'ridepass'.
+        public string EmbedEventTarget { get; set; } = "external";
         public bool AllowSelfCancel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; }

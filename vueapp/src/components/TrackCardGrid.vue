@@ -4,7 +4,7 @@
     <v-row v-if="tracks.length > 0" dense>
         <v-col v-for="t in tracks" :key="t.tenantId" cols="12" sm="6" md="4">
             <v-card class="h-100 track-card" :class="{ 'track-card--active': t.tenantId === highlightedId }"
-                :href="tenantUrl(t.subdomain)" rel="noopener"
+                :href="tenantHomeUrl(t)" rel="noopener"
                 @mouseenter="emit('hover', t.tenantId)" @mouseleave="emit('hover', null)">
                 <div class="track-card-image" :style="imageStyle(t)">
                     <v-chip v-if="featuredIds.includes(t.tenantId)" size="x-small" color="primary"
@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import { type TrackDiscoverItem } from '@/services/DiscoverService'
-import tenantHelper from '@/helpers/TenantHelper'
+import { tenantHomeUrl } from '@/helpers/tenantLinks'
 
 withDefaults(defineProps<{
     tracks: TrackDiscoverItem[]
@@ -63,11 +63,6 @@ function absoluteUrl(url: string | null | undefined): string | null {
     if (!url) return null
     if (/^https?:\/\//i.test(url)) return url
     return `${apiOrigin()}${url}`
-}
-function tenantUrl(subdomain: string): string {
-    const proto = window.location.protocol
-    const port = window.location.port ? `:${window.location.port}` : ''
-    return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/`
 }
 // Cover image is the tenant's hero photo; falls back to a flat themed background
 // so a card never renders an empty white block.

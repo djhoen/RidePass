@@ -91,6 +91,41 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        // Gate redemption, event+purchaser scope: all of a purchaser's tickets for one
+        // event regardless of how many orders they span, so a single QR scan surfaces the
+        // whole rider's set. Tenant-scoped; purchaser matched by user id (logged-in buy)
+        // else case-insensitive email (guest buy). Cancelled rows are excluded.
+        public async Task<List<EventTicketPurchaseWithContext>> ListByEventForPurchaser(
+            Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail)
+        {
+            const string sql = @"
+                SELECT p.id, p.tenant_id AS TenantId, p.tier_id AS TierId, p.purchaser_user_id AS PurchaserUserId,
+                       p.stripe_payment_intent_id AS StripePaymentIntentId, p.amount_cents AS AmountCents,
+                       p.status, p.purchaser_email AS PurchaserEmail, p.purchaser_name AS PurchaserName,
+                       p.redemption_token AS RedemptionToken,
+                       p.race_number AS RaceNumber, p.registration_complete AS RegistrationComplete,
+                       p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
+                       p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
+                       t.name AS TierName,
+                       e.id AS EventId, e.title AS EventTitle, e.description AS EventDescription,
+                       e.location_label AS EventLocationLabel,
+                       e.starts_at AS EventStartsAt, e.ends_at AS EventEndsAt, e.all_day AS EventAllDay
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                JOIN event e ON e.id = t.event_id
+                WHERE p.tenant_id = @tenantId
+                  AND t.event_id = @eventId
+                  AND p.status <> 'cancelled'
+                  AND (
+                        (@purchaserUserId IS NOT NULL AND p.purchaser_user_id = @purchaserUserId)
+                     OR (@purchaserUserId IS NULL AND lower(p.purchaser_email) = lower(@purchaserEmail))
+                      )
+                ORDER BY t.kind, t.name";
+            var result = await _db.Query<EventTicketPurchaseWithContext>(sql,
+                new { eventId, tenantId, purchaserUserId, purchaserEmail });
+            return result.ToList();
+        }
+
         public async Task SetStripePaymentIntentId(Guid id, string paymentIntentId)
         {
             const string sql = "UPDATE event_ticket_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";

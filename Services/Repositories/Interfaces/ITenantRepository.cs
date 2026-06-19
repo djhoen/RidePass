@@ -11,6 +11,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateRequireReservation(Guid tenantId, bool require);
         Task UpdateRequireEmergencyContact(Guid tenantId, bool require);
         Task UpdateAllowEventSubscriptions(Guid tenantId, bool allow);
+        Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
         Task<Tenant?> GetByStripeConnectAccountId(string accountId);
@@ -55,7 +56,13 @@ namespace Services.Repositories.Interfaces
         // Scoped to only these columns so it never clobbers shipping_name, socials, etc.
         Task UpdateAdminDetails(Guid tenantId, string displayName, string status, string timezone, bool isPublished,
             string? addressLine, string? city, string? region, string? postalCode, string? country,
-            double? latitude, double? longitude, string? contactEmail, string? phone, string? loampassMxDestinationId);
+            double? latitude, double? longitude, string? contactEmail, string? phone, string? loampassMxDestinationId,
+            string clientType, string? customDomain, bool customDomainVerified, bool embedEnabled,
+            string[]? embedAllowedOrigins, string? externalHomeUrl, string? externalEventsUrl, string embedEventTarget);
+        // Super-admin feature toggles (boolean flags only).
+        Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
+            bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
+            bool waitlistEnabled, bool allowSelfCancel);
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);
         Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,
