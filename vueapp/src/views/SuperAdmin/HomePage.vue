@@ -213,55 +213,27 @@
                             <v-divider class="mb-4"></v-divider>
 
                             <p class="text-caption text-medium-emphasis mb-4">
-                                Set the background color for the top app bar. The home/landing
-                                page can use a different color from the rest of the site, e.g.
-                                a dark accent on the apex hero and an orange brand color elsewhere.
-                                Leave a field blank to use the theme primary (rest of site) or
-                                inherit (home page).
+                                Set the background and text/icon color for the top app bar. Leave a
+                                field blank to use the theme primary (background) or white (text).
                             </p>
-                            <v-row>
-                                <v-col cols="12" md="6">
-                                    <div class="text-subtitle-2 mb-2">Rest of site</div>
-                                    <v-text-field v-model="form.navBarColor" label="Background color"
-                                        placeholder="#1A1F2B" persistent-hint
-                                        hint="Hex like #1A1F2B. Leave blank to use the theme primary."
-                                        density="compact"></v-text-field>
-                                    <v-color-picker v-model="form.navBarColor"
-                                        class="mt-2" mode="hex" hide-inputs hide-canvas-actions
-                                        show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
-                                    <v-text-field v-model="form.navBarTextColor" label="Text + icon color"
-                                        placeholder="#FFFFFF" persistent-hint
-                                        hint="Hex like #FFFFFF. Leave blank for white."
-                                        density="compact" class="mt-4"></v-text-field>
-                                    <v-color-picker v-model="form.navBarTextColor"
-                                        class="mt-2" mode="hex" hide-inputs hide-canvas-actions
-                                        show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
-                                    <NavBarPreview :color="form.navBarColor"
-                                        :text-color="form.navBarTextColor" class="mt-3" />
-                                </v-col>
-                                <v-col cols="12" md="6">
-                                    <div class="text-subtitle-2 mb-2">Home page</div>
-                                    <v-text-field v-model="form.navBarHomeColor"
-                                        label="Background color"
-                                        placeholder="#1A1F2B" persistent-hint
-                                        hint="Hex like #1A1F2B. Leave blank to inherit the rest-of-site color."
-                                        density="compact"></v-text-field>
-                                    <v-color-picker v-model="form.navBarHomeColor"
-                                        class="mt-2" mode="hex" hide-inputs hide-canvas-actions
-                                        show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
-                                    <v-text-field v-model="form.navBarHomeTextColor"
-                                        label="Text + icon color"
-                                        placeholder="#FFFFFF" persistent-hint
-                                        hint="Hex like #FFFFFF. Leave blank to inherit the rest-of-site text color."
-                                        density="compact" class="mt-4"></v-text-field>
-                                    <v-color-picker v-model="form.navBarHomeTextColor"
-                                        class="mt-2" mode="hex" hide-inputs hide-canvas-actions
-                                        show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
-                                    <NavBarPreview :color="form.navBarHomeColor || form.navBarColor"
-                                        :text-color="form.navBarHomeTextColor || form.navBarTextColor"
-                                        class="mt-3" />
-                                </v-col>
-                            </v-row>
+                            <div style="max-width: 360px">
+                                <v-text-field v-model="form.navBarColor" label="Background color"
+                                    placeholder="#1A1F2B" persistent-hint
+                                    hint="Hex like #1A1F2B. Leave blank to use the theme primary."
+                                    density="compact"></v-text-field>
+                                <v-color-picker v-model="form.navBarColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <v-text-field v-model="form.navBarTextColor" label="Text + icon color"
+                                    placeholder="#FFFFFF" persistent-hint
+                                    hint="Hex like #FFFFFF. Leave blank for white."
+                                    density="compact" class="mt-4"></v-text-field>
+                                <v-color-picker v-model="form.navBarTextColor"
+                                    class="mt-2" mode="hex" hide-inputs hide-canvas-actions
+                                    show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
+                                <NavBarPreview :color="form.navBarColor"
+                                    :text-color="form.navBarTextColor" class="mt-3" />
+                            </div>
                         </v-card-text>
                     </v-card>
                 </v-window-item>
@@ -435,8 +407,8 @@ async function loadTracks() {
     try {
         const r = await discoverService.searchTracks({})
         allTracks.value = (r.data as any).data
-    } catch {
-        // Picker stays empty on failure. Not fatal for editing the rest of the page.
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t load tracks for the featured picker. Refresh to try again.', 'error')
     } finally {
         loadingTracks.value = false
     }
@@ -462,8 +434,6 @@ async function save() {
             benefitsHtml: benefitsHtml.value || null,
             navBarColor: normalizeHex(form.value.navBarColor),
             navBarTextColor: normalizeHex(form.value.navBarTextColor),
-            navBarHomeColor: normalizeHex(form.value.navBarHomeColor),
-            navBarHomeTextColor: normalizeHex(form.value.navBarHomeTextColor),
         }
         const r = await service.save(payload)
         const data = (r.data as any).data as PlatformBranding
@@ -685,7 +655,6 @@ function emptyForm(): SavePlatformBranding {
         ctaBannerCtaLabel: null, ctaBannerCtaUrl: null,
         featuredTrackIds: null,
         navBarColor: null, navBarTextColor: null,
-        navBarHomeColor: null, navBarHomeTextColor: null,
     }
 }
 function brandingToForm(b: PlatformBranding): SavePlatformBranding {
@@ -713,8 +682,6 @@ function brandingToForm(b: PlatformBranding): SavePlatformBranding {
         featuredTrackIds: b.featuredTrackIds,
         navBarColor: b.navBarColor,
         navBarTextColor: b.navBarTextColor,
-        navBarHomeColor: b.navBarHomeColor,
-        navBarHomeTextColor: b.navBarHomeTextColor,
     }
 }
 </script>

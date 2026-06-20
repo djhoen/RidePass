@@ -25,8 +25,6 @@ export interface BrandingState {
     secondaryHeroUrl: string | null
     navBarColor: string | null
     navBarTextColor: string | null
-    navBarHomeColor: string | null
-    navBarHomeTextColor: string | null
     stripePublishableKey: string | null
     requireReservationForPasses: boolean
     requireEmergencyContact: boolean
@@ -109,8 +107,6 @@ const defaults: BrandingState = {
     secondaryHeroUrl: null,
     navBarColor: null,
     navBarTextColor: null,
-    navBarHomeColor: null,
-    navBarHomeTextColor: null,
     stripePublishableKey: null,
     requireReservationForPasses: false,
     requireEmergencyContact: false,
@@ -240,8 +236,6 @@ export async function loadBranding(): Promise<void> {
         branding.secondaryHeroUrl = toAbsoluteUrl(data.secondaryHeroUrl)
         branding.navBarColor = data.navBarColor ?? null
         branding.navBarTextColor = data.navBarTextColor ?? null
-        branding.navBarHomeColor = data.navBarHomeColor ?? null
-        branding.navBarHomeTextColor = data.navBarHomeTextColor ?? null
         branding.stripePublishableKey = data.stripePublishableKey ?? null
         branding.requireReservationForPasses = !!data.requireReservationForPasses
         branding.requireEmergencyContact = !!data.requireEmergencyContact

@@ -44,8 +44,6 @@ namespace Services.Repositories.Data.PlatformData
 
         public string? NavBarColor { get; set; }
         public string? NavBarTextColor { get; set; }
-        public string? NavBarHomeColor { get; set; }
-        public string? NavBarHomeTextColor { get; set; }
 
         // For Tracks (operator-acquisition) page hero copy. The benefits block on
         // that page reuses BenefitsHtml / BenefitsImageUrl / SectionBenefitsTitle.

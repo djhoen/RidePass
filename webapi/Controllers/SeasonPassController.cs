@@ -28,6 +28,7 @@ namespace webapi.Controllers
         private readonly IMembershipRepository _memberships;
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
+        private readonly ITenantLedgerRepository _ledger;
         private readonly ITenantContext _tenantContext;
 
         public SeasonPassController(
@@ -42,6 +43,7 @@ namespace webapi.Controllers
             IMembershipRepository memberships,
             IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
+            ITenantLedgerRepository ledger,
             ITenantContext tenantContext)
         {
             _passes = passes;
@@ -55,6 +57,7 @@ namespace webapi.Controllers
             _memberships = memberships;
             _waivers = waivers;
             _waiverGate = waiverGate;
+            _ledger = ledger;
             _tenantContext = tenantContext;
         }
 
@@ -296,10 +299,30 @@ namespace webapi.Controllers
             }
             var spStripeChargeCents = amountCents - (spGift?.AmountToApplyCents ?? 0);
 
-            // Free fast-path: gift card fully covered the pass.
+            // Free fast-path: gift card fully covered the pass. No PaymentIntent, so the webhook's
+            // OnSeasonPassPaid never runs; record the $0 sale on the ledger here (mirrors the
+            // event-ticket free-cart path) so the pass isn't missing from the ledger entirely.
             if (spStripeChargeCents == 0)
             {
                 await _passes.UpdatePurchaseStatus(purchase.Id, "paid");
+                try
+                {
+                    await _ledger.Insert(new TenantLedgerEntry
+                    {
+                        TenantId = _tenantContext.TenantId,
+                        EntryKind = "sale",
+                        SourceKind = "season_pass",
+                        SourceId = purchase.Id,
+                        OccurredAtUtc = DateTime.UtcNow,
+                        GrossCents = 0,
+                        StripeFeeCents = 0,
+                        RidepassCutCents = 0,
+                        NetToTenantCents = 0,
+                        PaymentMethod = "voucher",
+                        Memo = "Gift card covered season pass",
+                    });
+                }
+                catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
                 return new ApiResponses().OkResult(new BuySeasonPassResponse
                 {
                     PurchaseId = id,

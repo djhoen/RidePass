@@ -62,9 +62,18 @@ export class PassService {
     }
     // Tenant-admin direct refund of any single purchase (gift cards excluded). amountCents
     // null = full-minus-service-charge default; the server clamps and executes the money.
-    refund(kind: string, purchaseId: string, amountCents: number | null, reason: string | null) {
+    // forceCheckedIn refunds even an already-checked-in entry (needs sales.refund.override).
+    refund(kind: string, purchaseId: string, amountCents: number | null, reason: string | null,
+           forceCheckedIn = false) {
         return axios.post<{ data: { refunded: boolean; amountCents: number; refundId: string | null } }>(
-            `${this.apiUrl}/Purchase/Refund`, { kind, purchaseId, amountCents, reason })
+            `${this.apiUrl}/Purchase/Refund`, { kind, purchaseId, amountCents, reason, forceCheckedIn })
+    }
+
+    // Refund every line on the same order (all items sharing the anchor's PaymentIntent), each in
+    // full including the service charge. forceCheckedIn needs sales.refund.override.
+    refundOrder(kind: string, purchaseId: string, reason: string | null, forceCheckedIn = false) {
+        return axios.post<{ data: { refundedCount: number; totalCents: number; errors: string[] } }>(
+            `${this.apiUrl}/Purchase/RefundOrder`, { kind, purchaseId, reason, forceCheckedIn })
     }
 
     listDisputes() {

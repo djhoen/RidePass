@@ -248,6 +248,9 @@ import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue
 import type { EventDto, EligibleExtra } from '@/services/EventService'
 
 const props = defineProps<{ event: EventDto; tiers: TicketTier[] }>()
+// Asks the parent to re-fetch tiers (e.g. after a 409 price_changed) so the buyer
+// sees the new active-step price without a manual page refresh.
+const emit = defineEmits<{ (e: 'price-changed'): void }>()
 
 const ticketService = new TicketService()
 const userService = new UserService()
@@ -539,7 +542,8 @@ async function createIntent() {
     } catch (err: any) {
         if (err.response?.status === 409 && err.response?.data?.code === 'price_changed') {
             errorMessage.value = err.response.data.message
-                || 'The price for this event just changed. Please refresh and review before continuing.'
+                || 'The price for this event just changed. Please review the updated price before continuing.'
+            emit('price-changed')   // parent re-fetches tiers so the new price shows immediately
         } else {
             errorMessage.value = err.response?.data?.error || 'Could not start checkout.'
         }

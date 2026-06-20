@@ -5,6 +5,7 @@
         <div v-if="loading" class="text-center py-8">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </div>
+        <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
         <v-card v-else-if="products.length === 0" class="pa-6 text-center text-medium-emphasis">
             No season passes available right now.
         </v-card>
@@ -119,6 +120,7 @@ const waiverService = new WaiverService()
 
 const products = ref<SeasonPassProduct[]>([])
 const loading = ref(false)
+const loadError = ref('')
 const busyId = ref<string | null>(null)
 const photoStepOpen = ref(false)
 const photoDataUrl = ref<string | null>(null)
@@ -188,9 +190,13 @@ onMounted(async () => {
         return
     }
     loading.value = true
+    loadError.value = ''
     try {
         const r = await service.listActive()
         products.value = (r.data as any).data
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load season passes. Refresh to try again, or check your connection.'
     } finally { loading.value = false }
 })
 

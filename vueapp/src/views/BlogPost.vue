@@ -10,6 +10,8 @@
             This post isn't available.
         </v-alert>
 
+        <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
+
         <article v-else-if="post">
             <h1 class="text-h3 font-display mb-2">{{ post.title }}</h1>
             <p v-if="post.publishedAtUtc" class="text-body-2 text-medium-emphasis mb-6">
@@ -72,6 +74,7 @@ const blogService = new BlogService()
 const post = ref<BlogPostDetail | null>(null)
 const loading = ref(true)
 const notFound = ref(false)
+const loadError = ref('')
 const viewerOpen = ref(false)
 const viewerIndex = ref(0)
 
@@ -97,13 +100,15 @@ function openViewer(index: number) {
 async function load(slug: string) {
     loading.value = true
     notFound.value = false
+    loadError.value = ''
     post.value = null
     try {
         const resp = await blogService.getBySlug(slug)
         post.value = resp.data.data
     } catch (err: any) {
         if (err.response?.status === 404) notFound.value = true
-        else console.error('Failed to load post', err)
+        else loadError.value = err.response?.data?.error
+            || 'Could not load this post. Refresh to try again, or check your connection.'
     } finally {
         loading.value = false
     }

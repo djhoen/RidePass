@@ -30,6 +30,10 @@ namespace Services.GiftCards
             if (card.Status == "refunded") return (null, "That gift card has been refunded.");
             if (card.Status == "depleted" || card.BalanceCents <= 0)
                 return (null, "That gift card has no balance remaining.");
+            // 'pending' (purchase not yet paid) and 'void' (purchase failed/abandoned) are never
+            // spendable. Only a paid, active card can be applied.
+            if (card.Status != "active")
+                return (null, "That gift card isn't active.");
 
             // Don't let a delivery-pending or future-scheduled card be redeemed before the
             // recipient has received it. Buyer can't apply a card they bought for someone else.

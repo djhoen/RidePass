@@ -58,7 +58,7 @@
                             <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>
                         </td>
                     </tr>
-                    <tr v-if="!loading && rows.length === 0">
+                    <tr v-if="!loading && !loadError && rows.length === 0">
                         <td colspan="8" class="text-center text-medium-emphasis py-8">No events in this range.</td>
                     </tr>
                 </tbody>
@@ -123,6 +123,7 @@ const rangeTo = ref(today.startOf('month').add(6, 'month').format('YYYY-MM-DD'))
 
 const rows = ref<EventDto[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<EventDto | null>(null)
 
@@ -181,12 +182,16 @@ async function loadCalendar() {
     const gridEnd = gridStart.add(42, 'day')
     const fromUtc = dayjs.tz(gridStart.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
     const toUtc = dayjs.tz(gridEnd.format('YYYY-MM-DD') + 'T00:00', tz()).utc().toISOString()
-    const [r, b] = await Promise.all([
-        eventService.list(fromUtc, toUtc),
-        blackoutService.list(fromUtc, toUtc),
-    ])
-    calendarEvents.value = (r.data as any).data
-    calendarBlackouts.value = (b.data as any).data
+    try {
+        const [r, b] = await Promise.all([
+            eventService.list(fromUtc, toUtc),
+            blackoutService.list(fromUtc, toUtc),
+        ])
+        calendarEvents.value = (r.data as any).data
+        calendarBlackouts.value = (b.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error ?? 'Couldn’t load the calendar. Refresh to try again.', 'error')
+    }
 }
 
 function formatInTenant(utc: string): string {
@@ -195,6 +200,7 @@ function formatInTenant(utc: string): string {
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
         const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
@@ -219,6 +225,10 @@ async function load() {
             const { edit, ...rest } = route.query
             router.replace({ path: route.path, query: rest })
         }
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load events. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
     } finally {
         loading.value = false
     }

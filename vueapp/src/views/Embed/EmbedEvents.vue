@@ -8,7 +8,9 @@
         </div>
 
         <template v-else>
-            <v-row v-if="events.length > 0" dense>
+            <div v-if="loadError" class="text-center text-error py-8">{{ loadError }}</div>
+
+            <v-row v-else-if="events.length > 0" dense>
                 <v-col v-for="e in events" :key="e.id" cols="12" sm="6">
                     <router-link :to="`/embed/event/${e.id}`" class="embed-event-link">
                         <v-card class="h-100 embed-event-card">
@@ -55,6 +57,7 @@ const route = useRoute()
 const eventService = new EventService()
 const events = ref<EventDto[]>([])
 const loading = ref(true)
+const loadError = ref('')
 
 // Optional widget config passed by embed.js as query params:
 //   data-limit="6"        -> cap the number of events shown
@@ -93,8 +96,9 @@ onMounted(async () => {
         if (typeCode) list = list.filter(e => (e.eventTypeCode || '').toLowerCase() === typeCode)
         if (limit) list = list.slice(0, limit)
         events.value = list
-    } catch (err) {
-        console.error('Failed to load embed events', err)
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load events. Refresh the page to try again.'
     } finally {
         loading.value = false
     }

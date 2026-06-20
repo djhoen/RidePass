@@ -116,13 +116,25 @@ namespace webapi.Payments
                 return;
             }
 
-            // Gift-card purchase: when the PI succeeds, immediate-delivery cards get
-            // emailed inline; future-scheduled cards stay 'pending' for the worker.
-            if (giftCard is not null && eventType == "payment_intent.succeeded")
+            // Gift-card purchase: the card is minted 'pending' (not spendable/deliverable). On
+            // success we activate it, then immediate-delivery cards get emailed inline while
+            // future-scheduled cards stay 'pending' delivery for the worker (which gates on
+            // status='active'). On failure we void it so a declined/abandoned purchase can never
+            // produce a live card.
+            if (giftCard is not null)
             {
-                if (!giftCard.ScheduledDeliveryAtUtc.HasValue || giftCard.ScheduledDeliveryAtUtc.Value <= DateTime.UtcNow)
+                if (eventType == "payment_intent.succeeded")
                 {
-                    _ = _giftCardDelivery.SendDeliveryEmail(giftCard);
+                    await _giftCards.Activate(giftCard.Id);
+                    giftCard.Status = "active";
+                    if (!giftCard.ScheduledDeliveryAtUtc.HasValue || giftCard.ScheduledDeliveryAtUtc.Value <= DateTime.UtcNow)
+                    {
+                        _ = _giftCardDelivery.SendDeliveryEmail(giftCard);
+                    }
+                }
+                else if (eventType == "payment_intent.payment_failed")
+                {
+                    await _giftCards.Void(giftCard.Id);
                 }
                 return;
             }

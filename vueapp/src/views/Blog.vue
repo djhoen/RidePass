@@ -10,6 +10,8 @@
             There's no blog here yet. Check back soon.
         </v-alert>
 
+        <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
+
         <p v-else-if="posts.length === 0" class="text-body-1 text-medium-emphasis">
             No posts yet. Check back soon.
         </p>
@@ -44,6 +46,7 @@ const blogService = new BlogService()
 const posts = ref<PublicBlogListItem[]>([])
 const loading = ref(true)
 const unavailable = ref(false)
+const loadError = ref('')
 
 const apiUrl: string = import.meta.env.VITE_API_ENDPOINT ?? ''
 function apiOrigin(): string {
@@ -66,7 +69,8 @@ onMounted(async () => {
     } catch (err: any) {
         // 404 = the tenant has the blog turned off; show a soft "nothing here" state.
         if (err.response?.status === 404) unavailable.value = true
-        else console.error('Failed to load blog', err)
+        else loadError.value = err.response?.data?.error
+            || 'Could not load the blog. Refresh to try again, or check your connection.'
     } finally {
         loading.value = false
     }

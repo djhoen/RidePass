@@ -1090,14 +1090,38 @@ namespace webapi.Controllers
             {
                 await using var capacityLock = await _db.AcquireAdvisoryLock($"event-capacity:{ev.Id}");
 
-                if (tier.Inventory.HasValue)
+                // Capacity: a price-ladder class carries no per-step inventory and sells against
+                // event.capacity (count sales across the whole ladder group); a standalone tier uses
+                // its own inventory. Mirrors the card-buy and POS paths so the credit redeem can't
+                // oversell a class an at-capacity event already filled.
+                if (tier.LadderGroup is not null)
+                {
+                    if (ev.Capacity.HasValue)
+                    {
+                        var groupSold = await _tiers.GroupSoldCount(ev.Id, tier.LadderGroup, _tenantContext.TenantId);
+                        if (groupSold + 1 > ev.Capacity.Value)
+                            return new ApiResponses().BadRequestResult($"'{ev.Title}' is sold out.");
+                    }
+                }
+                else if (tier.Inventory.HasValue)
                 {
                     var sold = await _tiers.SoldCount(tier.Id);
                     if (sold + 1 > tier.Inventory.Value)
                         return new ApiResponses().BadRequestResult($"'{tier.Name}' is sold out.");
                 }
-                if (await _ticketPurchases.HasActiveRaceEntry(_tenantContext.TenantId, tier.Id, userId, null))
-                    return new ApiResponses().BadRequestResult("You're already entered in this class.");
+
+                // One entry per rider per CLASS, spanning every step of a ladder group (not just the
+                // scanned step), so a rider can't redeem two steps of the same class and double-spend
+                // a credit. Standalone tiers check just themselves.
+                var classStepIds = tier.LadderGroup is null
+                    ? new List<Guid> { tier.Id }
+                    : (await _tiers.GetForEvent(ev.Id, _tenantContext.TenantId, activeOnly: false))
+                        .Where(t => t.LadderGroup == tier.LadderGroup).Select(t => t.Id).ToList();
+                foreach (var stepId in classStepIds)
+                {
+                    if (await _ticketPurchases.HasActiveRaceEntry(_tenantContext.TenantId, stepId, userId, null))
+                        return new ApiResponses().BadRequestResult("You're already entered in this class.");
+                }
 
                 var purchase = new EventTicketPurchase
                 {
@@ -1177,31 +1201,128 @@ namespace webapi.Controllers
             });
         }
 
-        // Tenant-admin refund of any single purchase (gift cards excluded; rentals/concessions
-        // out of scope). Discretionary: staff choose full or partial via AmountCents (default is
-        // amount minus the service charge). Executes the money directly — Stripe refund for card,
-        // return-the-credit for Loam Pass (un-redeem), no money for cash/voucher — then cancels the
-        // purchase, tears down the entitlement (season-pass reservations), and writes a refund ledger row.
+        // Tenant-admin refund of a single purchase (gift cards excluded; rentals/concessions out of
+        // scope). AmountCents null = full-minus-service-charge default. ForceCheckedIn (requires
+        // sales.refund.override) refunds even an already-checked-in entry. The money + state changes
+        // live in RefundOne so the whole-order endpoint shares the exact same behavior.
         [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
         [HttpPost("Refund")]
         public async Task<IActionResult> Refund([FromBody] RefundRequest request, CancellationToken ct)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (!TryGetUserId(out var staffId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            if (request.ForceCheckedIn && !HasRefundOverride())
+                return new ApiResponses().BadRequestResult("You don't have permission to refund a checked-in purchase.");
+
+            var result = await RefundOne(_tenantContext.TenantId, request.Kind, request.PurchaseId,
+                request.AmountCents, request.Reason, staffId,
+                allowCheckedIn: request.ForceCheckedIn, fullAmount: false, ct);
+            if (!result.ok) return new ApiResponses().BadRequestResult(result.error ?? "Refund failed.");
+            return new ApiResponses().OkResult(new { refunded = true, kind = request.Kind, amountCents = result.refundCents, refundId = result.refundId });
+        }
+
+        // Refund every line on the same order: all purchases sharing the anchor's Stripe
+        // PaymentIntent (race entry + gate fee + add-ons + bundled membership/season pass). Each line
+        // is refunded IN FULL (including the service charge). Cash/free orders have no shared
+        // PaymentIntent, so only the anchor item is refunded there.
+        [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
+        [HttpPost("RefundOrder")]
+        public async Task<IActionResult> RefundOrder([FromBody] RefundOrderRequest request, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var staffId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            if (request.ForceCheckedIn && !HasRefundOverride())
+                return new ApiResponses().BadRequestResult("You don't have permission to refund a checked-in purchase.");
             var tenantId = _tenantContext.TenantId;
 
+            var pi = await ResolvePaymentIntentForPurchase(request.Kind, request.PurchaseId, tenantId);
+
+            var lines = new List<(string Kind, Guid Id)>();
+            if (string.IsNullOrEmpty(pi))
+            {
+                // No shared PaymentIntent (cash / fully-gift-card-covered order): refund the one item.
+                lines.Add((request.Kind, request.PurchaseId));
+            }
+            else
+            {
+                foreach (var t in await _ticketPurchases.ListByStripePaymentIntentId(pi))
+                    lines.Add(("event_ticket", t.Id));
+                foreach (var x in await _extras.ListByPaymentIntentId(pi))
+                    lines.Add(("event_extra", x.Id));
+                var m = await _memberships.GetByPaymentIntentId(pi);
+                if (m is not null) lines.Add(("membership", m.Id));
+                var sp = await _seasonPasses.GetPurchaseByStripePaymentIntentId(pi);
+                if (sp is not null) lines.Add(("season_pass", sp.Id));
+            }
+
+            int refundedCount = 0, totalCents = 0;
+            var errors = new List<string>();
+            foreach (var (kind, id) in lines)
+            {
+                var r = await RefundOne(tenantId, kind, id, amountCents: null, request.Reason, staffId,
+                    allowCheckedIn: request.ForceCheckedIn, fullAmount: true, ct);
+                if (r.ok) { refundedCount++; totalCents += r.refundCents; }
+                else if (!r.alreadyDone && r.error is not null) errors.Add(r.error);   // skip already-refunded lines silently
+            }
+
+            if (refundedCount == 0 && errors.Count > 0)
+                return new ApiResponses().BadRequestResult(string.Join(" ", errors));
+            return new ApiResponses().OkResult(new { refundedCount, totalCents, errors });
+        }
+
+        // True when the caller may refund a checked-in / used purchase. super_admin always may;
+        // otherwise the role must carry sales.refund.override (tenant_admin + tenant_manager).
+        private bool HasRefundOverride()
+        {
+            var role = User.FindFirst("role")?.Value ?? "";
+            if (role == "super_admin") return true;
+            return TenantPermissions.ForRole(role).Contains(TenantPermissions.SalesRefundOverride);
+        }
+
+        // Resolve any purchase to the Stripe PaymentIntent that charged its order (null for
+        // cash / fully-gift-card-covered orders). Tenant-scoped.
+        private async Task<string?> ResolvePaymentIntentForPurchase(string kind, Guid id, Guid tenantId)
+        {
+            switch (kind)
+            {
+                case "event_ticket":
+                    return (await _ticketPurchases.GetById(id, tenantId))?.StripePaymentIntentId;
+                case "event_extra":
+                    var x = await _extras.GetPurchase(id);
+                    return x?.TenantId == tenantId ? x.StripePaymentIntentId : null;
+                case "membership":
+                    var m = await _memberships.GetById(id);
+                    return m?.TenantId == tenantId ? m.StripePaymentIntentId : null;
+                case "season_pass":
+                    var sp = await _seasonPasses.GetPurchase(id);
+                    return sp?.TenantId == tenantId ? sp.StripePaymentIntentId : null;
+                default:
+                    return null;
+            }
+        }
+
+        // Shared single-purchase refund: resolve the row, move the money (Stripe refund / Loam Pass
+        // un-redeem), cancel + mark refunded, tear down entitlements, promote a waitlist alternate, and
+        // write the refund ledger row. fullAmount=true refunds the whole charge (incl. service charge);
+        // otherwise AmountCents (or amount-minus-service-charge) applies. allowCheckedIn lets a
+        // 'redeemed' (checked-in) row be refunded. Returns alreadyDone=true for an already
+        // refunded/cancelled row so a whole-order refund can skip it silently.
+        private async Task<(bool ok, bool alreadyDone, string? error, int refundCents, string? refundId)> RefundOne(
+            Guid tenantId, string kind, Guid purchaseId, int? amountCents, string? reason,
+            Guid staffId, bool allowCheckedIn, bool fullAmount, CancellationToken ct)
+        {
             int amount = 0, serviceCharge = 0;
             string paymentMethod = "stripe", status = "";
             string? stripePi = null;
             string ledgerSourceKind;
             Guid eventTicketTierId = Guid.Empty;
 
-            switch (request.Kind)
+            switch (kind)
             {
                 case "event_ticket":
                 {
-                    var p = await _ticketPurchases.GetById(request.PurchaseId, tenantId);
-                    if (p is null) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    var p = await _ticketPurchases.GetById(purchaseId, tenantId);
+                    if (p is null) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     eventTicketTierId = p.TierId;
                     ledgerSourceKind = "event_ticket";
@@ -1209,54 +1330,54 @@ namespace webapi.Controllers
                 }
                 case "season_pass":
                 {
-                    var p = await _seasonPasses.GetPurchase(request.PurchaseId);
-                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    var p = await _seasonPasses.GetPurchase(purchaseId);
+                    if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     ledgerSourceKind = "season_pass";
                     break;
                 }
                 case "membership":
                 {
-                    var p = await _memberships.GetById(request.PurchaseId);
-                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    var p = await _memberships.GetById(purchaseId);
+                    if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     ledgerSourceKind = "membership";
                     break;
                 }
                 case "event_extra":
                 {
-                    var p = await _extras.GetPurchase(request.PurchaseId);
-                    if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Purchase not found.");
+                    var p = await _extras.GetPurchase(purchaseId);
+                    if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     ledgerSourceKind = "extras";   // ledger uses 'extras'; v_recent_sales kind is 'event_extra'
                     break;
                 }
                 default:
-                    return new ApiResponses().BadRequestResult("This purchase type can't be refunded here.");
+                    return (false, false, "This purchase type can't be refunded here.", 0, null);
             }
 
-            if (status != "paid")
-                return new ApiResponses().BadRequestResult("Only a paid purchase can be refunded.");
+            if (status is "refunded" or "cancelled")
+                return (false, true, "This purchase has already been refunded or cancelled.", 0, null);
+            if (status != "paid" && !(allowCheckedIn && status == "redeemed"))
+                return (false, false, status == "redeemed"
+                    ? "This purchase is checked in; refunding it requires elevated permission."
+                    : "Only a paid purchase can be refunded.", 0, null);
 
-            // Default withholds the service charge; admin discretion can set any amount in [0, amount].
-            var refundCents = request.AmountCents ?? Math.Max(0, amount - serviceCharge);
+            // fullAmount (whole-order) refunds everything including the service charge; otherwise the
+            // explicit amount, else the single-refund default (amount minus the service charge).
+            var refundCents = amountCents ?? (fullAmount ? amount : Math.Max(0, amount - serviceCharge));
             if (refundCents < 0) refundCents = 0;
             if (refundCents > amount) refundCents = amount;
 
             string? refundId = null;
             if (paymentMethod == "loampass_credits")
             {
-                // Return the Loam Pass credit on the LoamMx side (keyed by the redemption we recorded).
-                var redemption = await _loampassRedemptions.GetByPurchaseId(request.PurchaseId, tenantId);
+                var redemption = await _loampassRedemptions.GetByPurchaseId(purchaseId, tenantId);
                 if (redemption is not null && redemption.Status != "refunded")
                 {
-                    // Only mark the redemption refunded if LoamMx actually returned the credit;
-                    // otherwise the two systems silently drift (RidePass thinks it gave the credit
-                    // back, LoamMx never got it). Bail out and let the admin retry.
                     var returned = await _loampass.RefundAsync(redemption.IdempotencyKey, ct);
                     if (!returned)
-                        return new ApiResponses().BadRequestResult(
-                            "Couldn't return the Loam Pass credit on the LoamMx side. The purchase was left unchanged; please retry.");
+                        return (false, false, "Couldn't return the Loam Pass credit on the LoamMx side. The purchase was left unchanged; please retry.", 0, null);
                     await _loampassRedemptions.MarkRefunded(redemption.Id);
                 }
                 refundCents = 0;   // no money moved; the credit is given back
@@ -1267,45 +1388,47 @@ namespace webapi.Controllers
                 try
                 {
                     var r = await _payments.RefundAsync(stripePi!, refundCents,
-                        idempotencyKey: $"refund-{request.Kind}-{request.PurchaseId}-{refundCents}", ct: ct);
+                        idempotencyKey: $"refund-{kind}-{purchaseId}-{refundCents}", ct: ct);
                     refundId = r.RefundId;
                 }
                 catch (Exception ex)
                 {
-                    return new ApiResponses().BadRequestResult($"Refund failed at the payment processor: {ex.Message}");
+                    return (false, false, $"Refund failed at the payment processor: {ex.Message}", 0, null);
                 }
             }
             // cash / voucher: nothing to move.
 
             var note = $"Tenant refund {refundCents}c{(refundId is null ? "" : $" stripe={refundId}")}";
-            switch (request.Kind)
+            switch (kind)
             {
                 case "event_ticket":
-                    await _ticketPurchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
-                    await _ticketPurchases.MarkRefunded(request.PurchaseId, note);
-                    // A refund frees a spot, so promote the next waitlist alternate (the admin Cancel
-                    // endpoint already does this; Refund must too or ladder/standalone waitlists stall).
+                    // A checked-in (redeemed) ticket must be flipped back to 'paid' first so Cancel
+                    // records the cancellation audit; MarkRefunded then finalizes it as 'refunded'.
+                    if (status == "redeemed") await _ticketPurchases.UndoRedeemed(purchaseId, tenantId);
+                    await _ticketPurchases.Cancel(purchaseId, tenantId, staffId, reason);
+                    await _ticketPurchases.MarkRefunded(purchaseId, note);
+                    // A refund frees a spot, so promote the next waitlist alternate.
                     var refundedTier = await _tiers.GetById(eventTicketTierId, tenantId);
                     if (refundedTier is not null)
                         _ = _waitlistPromoter.PromoteNext(refundedTier.EventId, eventTicketTierId, refundedTier.LadderGroup);
                     break;
                 case "season_pass":
-                    await _seasonPasses.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
+                    await _seasonPasses.Cancel(purchaseId, tenantId, staffId, reason);
                     // Release the pass's reservations so it no longer holds event spots.
-                    foreach (var rsv in (await _seasonPasses.ListReservationsForPurchase(request.PurchaseId))
+                    foreach (var rsv in (await _seasonPasses.ListReservationsForPurchase(purchaseId))
                                  .Where(x => x.Status != "cancelled"))
                     {
                         await _seasonPasses.UpdateReservationStatus(rsv.Id, tenantId, "cancelled");
                     }
-                    await _seasonPasses.MarkRefunded(request.PurchaseId, note);
+                    await _seasonPasses.MarkRefunded(purchaseId, note);
                     break;
                 case "membership":
-                    await _memberships.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
-                    await _memberships.MarkRefunded(request.PurchaseId);
+                    await _memberships.Cancel(purchaseId, tenantId, staffId, reason);
+                    await _memberships.MarkRefunded(purchaseId);
                     break;
                 case "event_extra":
-                    await _extras.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
-                    await _extras.MarkRefunded(request.PurchaseId, note);
+                    await _extras.Cancel(purchaseId, tenantId, staffId, reason);
+                    await _extras.MarkRefunded(purchaseId, note);
                     break;
             }
 
@@ -1318,7 +1441,7 @@ namespace webapi.Controllers
                     TenantId = tenantId,
                     EntryKind = "refund",
                     SourceKind = ledgerSourceKind,
-                    SourceId = request.PurchaseId,
+                    SourceId = purchaseId,
                     OccurredAtUtc = DateTime.UtcNow,
                     GrossCents = -refundCents,
                     StripeFeeCents = 0,
@@ -1333,7 +1456,7 @@ namespace webapi.Controllers
                 // Idempotent — duplicate refund row for this source.
             }
 
-            return new ApiResponses().OkResult(new { refunded = true, kind = request.Kind, amountCents = refundCents, refundId });
+            return (true, false, null, refundCents, refundId);
         }
 
         private async Task InsertZeroLedger(Guid tenantId, string sourceKind, Guid sourceId)
@@ -1451,9 +1574,10 @@ namespace webapi.Controllers
 
         // ── Gift cards ──────────────────────────────────────────────────────────
         // Buyer chooses denomination + recipient + optional schedule + note. We mint
-        // the gift_card row up front (status='active', delivery='pending') so the
-        // payment intent can reference it; the webhook handler flips paid + sends
-        // the email (or schedules it via the delivery worker) when Stripe confirms.
+        // the gift_card row up front as status='pending' (NOT spendable or deliverable)
+        // so the payment intent can reference it; the webhook activates it + sends the
+        // email (or schedules it via the delivery worker) on payment_intent.succeeded,
+        // and voids it on failure, so a declined/abandoned purchase never yields a live card.
 
         [Authorize]
         [HttpPost("GiftCard")]
@@ -1505,7 +1629,7 @@ namespace webapi.Controllers
                 PersonalNote = string.IsNullOrWhiteSpace(request.PersonalNote) ? null : request.PersonalNote.Trim(),
                 DeliveryStatus = "pending",
                 ScheduledDeliveryAtUtc = request.ScheduledDeliveryAtUtc,
-                Status = "active",
+                Status = "pending",   // activated by the webhook on payment success; voided on failure
             };
             card.Id = await _giftCards.Create(card);
 

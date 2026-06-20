@@ -198,10 +198,23 @@ namespace webapi.Controllers
             // redeemable, so a leaked purchase id can't redeem outside this rider's event.
             var allowedTicketIds = new HashSet<Guid>();
             var allowedExtraIds = new HashSet<Guid>();
+            // Whether today (tenant tz) is within the event's date window. The single-redeem path
+            // enforces this; the bulk path must too, or a crafted request could redeem out-of-window
+            // tickets. Computed from the event-scoped ticket rows (all share one event window).
+            var eventInWindow = true;
             if (anchor.EventId.HasValue)
             {
-                foreach (var t in await _tickets.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail))
-                    allowedTicketIds.Add(t.Id);
+                var tz = ResolveTenantTimeZone();
+                var todayInTenant = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
+                var ticketRows = await _tickets.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+                foreach (var t in ticketRows) allowedTicketIds.Add(t.Id);
+                var firstRow = ticketRows.FirstOrDefault();
+                if (firstRow is not null)
+                {
+                    var s = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(firstRow.EventStartsAt, DateTimeKind.Utc), tz).Date;
+                    var e = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(firstRow.EventEndsAt, DateTimeKind.Utc), tz).Date;
+                    eventInWindow = todayInTenant >= s && todayInTenant <= e;
+                }
                 foreach (var x in await _extras.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail))
                     allowedExtraIds.Add(x.Id);
             }
@@ -223,6 +236,10 @@ namespace webapi.Controllers
                         if (!allowedTicketIds.Contains(entry.PurchaseId))
                         {
                             resp.Errors.Add("A ticket doesn't belong to this rider's order — skipped."); continue;
+                        }
+                        if (!eventInWindow)
+                        {
+                            resp.Errors.Add("This event isn't open for check-in today — skipped."); continue;
                         }
                         var t = await _tickets.GetById(entry.PurchaseId, tenantId);
                         if (t is null) { resp.Errors.Add($"Ticket {entry.PurchaseId} not found."); continue; }

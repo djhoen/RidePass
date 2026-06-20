@@ -106,8 +106,10 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { NewsletterService, type SubscriberListItem } from '@/services/NewsletterService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new NewsletterService()
+const confirm = useConfirm()
 
 const tab = ref<'active' | 'all'>('active')
 const search = ref('')
@@ -190,7 +192,7 @@ async function submitImport() {
 }
 
 async function deleteSubscriber(s: SubscriberListItem) {
-    if (!confirm(`Delete ${s.email}? This removes them from the list entirely — for CAN-SPAM compliance consider unsubscribing instead.`)) return
+    if (!await confirm({ message: `Delete ${s.email}? This removes them from the list entirely — for CAN-SPAM compliance consider unsubscribing instead.`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteSubscriber(s.id)
         flash('Subscriber deleted.', 'success')

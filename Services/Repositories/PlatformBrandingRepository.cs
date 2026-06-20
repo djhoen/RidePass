@@ -41,8 +41,6 @@ namespace Services.Repositories
             featured_track_ids AS FeaturedTrackIds,
             nav_bar_color AS NavBarColor,
             nav_bar_text_color AS NavBarTextColor,
-            nav_bar_home_color AS NavBarHomeColor,
-            nav_bar_home_text_color AS NavBarHomeTextColor,
             for_tracks_hero_eyebrow AS ForTracksHeroEyebrow,
             for_tracks_hero_headline AS ForTracksHeroHeadline,
             for_tracks_hero_subhead AS ForTracksHeroSubhead,
@@ -82,7 +80,6 @@ namespace Services.Repositories
                     cta_banner_cta_label, cta_banner_cta_url,
                     featured_track_ids,
                     nav_bar_color, nav_bar_text_color,
-                    nav_bar_home_color, nav_bar_home_text_color,
                     for_tracks_hero_eyebrow, for_tracks_hero_headline, for_tracks_hero_subhead,
                     updated_at_utc
                 ) VALUES (
@@ -97,7 +94,6 @@ namespace Services.Repositories
                     @CtaBannerCtaLabel, @CtaBannerCtaUrl,
                     @FeaturedTrackIds,
                     @NavBarColor, @NavBarTextColor,
-                    @NavBarHomeColor, @NavBarHomeTextColor,
                     @ForTracksHeroEyebrow, @ForTracksHeroHeadline, @ForTracksHeroSubhead,
                     now()
                 )
@@ -128,8 +124,6 @@ namespace Services.Repositories
                     featured_track_ids = EXCLUDED.featured_track_ids,
                     nav_bar_color = EXCLUDED.nav_bar_color,
                     nav_bar_text_color = EXCLUDED.nav_bar_text_color,
-                    nav_bar_home_color = EXCLUDED.nav_bar_home_color,
-                    nav_bar_home_text_color = EXCLUDED.nav_bar_home_text_color,
                     for_tracks_hero_eyebrow = EXCLUDED.for_tracks_hero_eyebrow,
                     for_tracks_hero_headline = EXCLUDED.for_tracks_hero_headline,
                     for_tracks_hero_subhead = EXCLUDED.for_tracks_hero_subhead,

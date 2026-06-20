@@ -39,8 +39,6 @@ namespace webapi.Controllers.API.Data.PlatformBranding
 
         public string? NavBarColor { get; set; }
         public string? NavBarTextColor { get; set; }
-        public string? NavBarHomeColor { get; set; }
-        public string? NavBarHomeTextColor { get; set; }
 
         public string? ForTracksHeroEyebrow { get; set; }
         public string? ForTracksHeroHeadline { get; set; }

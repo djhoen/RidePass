@@ -102,6 +102,11 @@
             </template>
         </template>
 
+        <v-card v-else-if="loadError" class="pa-4 text-center">
+            <v-icon size="48" color="error" class="mb-2">mdi-alert-circle-outline</v-icon>
+            <p class="text-body-2">{{ loadError }}</p>
+        </v-card>
+
         <v-card v-else class="pa-4 text-center">
             <v-icon size="48" color="grey" class="mb-2">mdi-link-off</v-icon>
             <p class="text-body-2 text-medium-emphasis">This confirm link isn't valid (or has already been used).</p>
@@ -126,6 +131,7 @@ const service = new WaitlistService()
 const token = route.params.token as string
 const details = ref<ConfirmDetails | null>(null)
 const loading = ref(true)
+const loadError = ref('')
 
 const selectedProductId = ref<string | null>(null)
 const creating = ref(false)
@@ -187,6 +193,14 @@ onMounted(async () => {
             return
         }
         details.value = null
+        // 400 / 404 are a genuinely invalid or already-used link: show the friendly
+        // "isn't valid" card. A 500 / network failure is a real error and must not be
+        // masked as an invalid link, or the rider may lose their promoted spot.
+        const st = err.response?.status
+        if (st !== 400 && st !== 404) {
+            loadError.value = err.response?.data?.error
+                || 'Could not load your waitlist confirmation. Refresh to try again, or use the link from your email.'
+        }
     } finally {
         loading.value = false
     }

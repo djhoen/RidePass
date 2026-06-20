@@ -176,7 +176,10 @@ function slugify(input: string): string {
 const { visibleRows, onReorderEnd } = useDragReorder<BlogPostImageDto>({
     rows: images,
     save: (items) => blogService.reorderImages(postId.value!, items),
-    onError: async () => { await reloadImages() },
+    onError: async () => {
+        flash('Couldn’t reorder photos. Refresh and try again.', 'error')
+        await reloadImages()
+    },
 })
 
 async function loadForEdit() {

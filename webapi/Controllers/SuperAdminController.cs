@@ -830,8 +830,9 @@ namespace webapi.Controllers
         /// <summary>
         /// Sends an existing pending payout to the tenant via Stripe Transfer (platform balance →
         /// tenant's connected Express account → tenant bank). Requires the tenant to have an
-        /// active Connect account on file. Marks the payout 'processing' with the Stripe transfer
-        /// id as external_reference; the transfer.paid webhook flips it to 'paid'.
+        /// active Connect account on file. Marks the payout 'paid' immediately with the Stripe
+        /// transfer id as external_reference (the transfer settles to the Connect balance at once);
+        /// the transfer.* webhook is just a backstop in case Stripe later reverses it.
         /// </summary>
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpPost("Tenants/{tenantId:guid}/Payouts/{payoutId:guid}/SendViaStripe")]

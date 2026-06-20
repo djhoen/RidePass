@@ -9,6 +9,8 @@
             <v-btn variant="text" @click="load">Refresh</v-btn>
         </div>
 
+        <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
         <v-card>
             <v-table>
                 <thead>
@@ -34,7 +36,7 @@
                         </td>
                         <td>{{ c.lastActivityAt ? formatWhen(c.lastActivityAt) : '—' }}</td>
                     </tr>
-                    <tr v-if="!loading && customers.length === 0">
+                    <tr v-if="!loading && !loadError && customers.length === 0">
                         <td colspan="6" class="text-center text-medium-emphasis py-8">
                             No customers match.
                         </td>
@@ -71,6 +73,7 @@ const total = ref(0)
 const limit = ref(50)
 const offset = ref(0)
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 
 // Debounce the typed search so we don't hammer the API on every keystroke.
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -86,11 +89,14 @@ onMounted(load)
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const r = await service.list(search.value || undefined, limit.value, offset.value)
         const data = (r.data as any).data
         customers.value = data.items
         total.value = data.total
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error ?? 'Couldn’t load customers. Refresh to try again.'
     } finally {
         loading.value = false
     }

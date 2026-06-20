@@ -14,6 +14,10 @@
             </div>
         </div>
 
+        <div v-else-if="loadError" class="text-center py-8">
+            <v-alert type="error" variant="tonal">{{ loadError }}</v-alert>
+        </div>
+
         <div v-else-if="riders.length === 0 && spectators.length === 0" class="text-center py-8">
             <v-icon color="success" size="48">mdi-check</v-icon>
             <h1 class="text-h6 font-weight-bold mt-2 mb-1">Nothing left to finish</h1>
@@ -119,6 +123,7 @@ const loading = ref(true)
 const saving = ref(false)
 const done = ref(false)
 const error = ref('')
+const loadError = ref('')
 const eventTitle = ref<string | null>(null)
 const riders = ref<RiderCard[]>([])
 const classAssigns = ref<ClassAssign[]>([])
@@ -144,9 +149,16 @@ onMounted(async () => {
         const d = (r.data as any).data
         eventTitle.value = d.eventTitle
         build((d.tickets ?? []) as RegistrationTicket[])
-    } catch {
+    } catch (err: any) {
         riders.value = []
         spectators.value = []
+        // A 404 means the link is genuinely expired / already used: show the soft
+        // "nothing left to finish" state. Any other failure (500 / network) is a
+        // real error the rider needs to know about before they reach the gate.
+        if (err.response?.status !== 404) {
+            loadError.value = err.response?.data?.error
+                || 'Could not load your registration. Refresh to try again, or use the link from your confirmation email.'
+        }
     } finally {
         loading.value = false
     }

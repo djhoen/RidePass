@@ -43,8 +43,6 @@ export interface PlatformBranding {
 
     navBarColor: string | null
     navBarTextColor: string | null
-    navBarHomeColor: string | null
-    navBarHomeTextColor: string | null
 
     forTracksHeroEyebrow: string | null
     forTracksHeroHeadline: string | null
@@ -91,8 +89,6 @@ export interface SavePlatformBranding {
 
     navBarColor: string | null
     navBarTextColor: string | null
-    navBarHomeColor: string | null
-    navBarHomeTextColor: string | null
 }
 
 export interface UpsertTestimonial {

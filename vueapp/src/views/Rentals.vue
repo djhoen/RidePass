@@ -5,6 +5,7 @@
         <div v-if="loading" class="text-center py-8">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </div>
+        <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
         <v-card v-else-if="!branding.rentalsEnabled || products.length === 0" class="pa-6 text-center text-medium-emphasis">
             No rentals available right now.
         </v-card>
@@ -116,6 +117,7 @@ const router = useRouter()
 
 const products = ref<RentalProduct[]>([])
 const loading = ref(false)
+const loadError = ref('')
 
 const todayIso = dayjs().format('YYYY-MM-DD')
 
@@ -173,9 +175,13 @@ const canBook = computed(() => {
 
 onMounted(async () => {
     loading.value = true
+    loadError.value = ''
     try {
         const r = await service.listActive()
         products.value = (r.data as any).data
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load rentals. Refresh to try again, or check your connection.'
     } finally { loading.value = false }
 })
 

@@ -107,6 +107,9 @@
             </v-table>
         </v-card>
     </v-container>
+    <v-container v-else-if="loadError">
+        <v-alert type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+    </v-container>
 </template>
 
 <script setup lang="ts">
@@ -122,16 +125,22 @@ const id = computed(() => route.params.id as string)
 
 const results = ref<SurveyResultsResponse | null>(null)
 const invites = ref<SurveyInviteDto[]>([])
+const loadError = ref<string | null>(null)
 
 onMounted(load)
 
 async function load() {
-    const [r1, r2] = await Promise.all([
-        service.results(id.value),
-        service.listInvites(id.value),
-    ])
-    results.value = (r1.data as any).data
-    invites.value = (r2.data as any).data
+    loadError.value = null
+    try {
+        const [r1, r2] = await Promise.all([
+            service.results(id.value),
+            service.listInvites(id.value),
+        ])
+        results.value = (r1.data as any).data
+        invites.value = (r2.data as any).data
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error ?? 'Couldn’t load survey results. Refresh to try again.'
+    }
 }
 
 function kindLabel(kind: QuestionKind) {

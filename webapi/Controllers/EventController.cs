@@ -175,6 +175,7 @@ namespace webapi.Controllers
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] UpsertEventRequest request)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var typeCheck = await _eventTypes.GetById(request.EventTypeId, _tenantContext.TenantId);
             if (typeCheck is null)
             {
@@ -247,6 +248,7 @@ namespace webapi.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpsertEventRequest request)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var existing = await _events.GetById(id, _tenantContext.TenantId);
             if (existing is null)
             {

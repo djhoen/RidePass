@@ -168,7 +168,6 @@ const isAuthenticated = computed(() => authHelper.isAuthenticated())
 // of-site color only on the home route. NULL falls back to the theme
 // primary for background and white for text/icons.
 const isApex = computed(() => !tenantHelper.getSubdomain())
-const isHomeRoute = computed(() => route.path === '/' || route.path === '/Home')
 
 // Nav-bar branding: the apex domain pulls its logo from the platform branding
 // singleton (super-admin editable); tenant subdomains use the per-tenant logo.
@@ -185,18 +184,13 @@ const navBarVars = computed(() => {
     const a = isApex.value ? platformBranding.data : null
     const t = !isApex.value ? branding : null
 
-    const restBg = a?.navBarColor         ?? t?.navBarColor         ?? null
-    const restFg = a?.navBarTextColor     ?? t?.navBarTextColor     ?? null
-    const homeBg = a?.navBarHomeColor     ?? t?.navBarHomeColor     ?? null
-    const homeFg = a?.navBarHomeTextColor ?? t?.navBarHomeTextColor ?? null
+    const bg = a?.navBarColor     ?? t?.navBarColor     ?? null
+    const fg = a?.navBarTextColor ?? t?.navBarTextColor ?? null
 
-    const bg = isHomeRoute.value ? (homeBg ?? restBg) : restBg
-    const fg = isHomeRoute.value ? (homeFg ?? restFg) : restFg
-
-    // Hex literals as fallbacks (not CSS variable references) so the values
-    // are always concrete strings — avoids any ambiguity in how the inline
-    // style gets resolved further down the cascade.
-    const bgValue = bg ?? '#FF6B1A'
+    // Fallbacks when the tenant left the nav color blank: the theme primary for the
+    // background (so a tenant that customized only their primary still gets their color,
+    // not a hardcoded brand orange) and white for text/icons.
+    const bgValue = bg ?? 'rgb(var(--v-theme-primary))'
     const fgValue = fg ?? '#FFFFFF'
     return {
         // Exposed as CSS custom properties so the scoped `<style>` block can

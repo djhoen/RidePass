@@ -4,6 +4,8 @@
 
         <v-progress-circular v-if="loading" indeterminate color="primary"></v-progress-circular>
 
+        <v-alert v-else-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
         <div v-else-if="purchases.length === 0" class="text-medium-emphasis">
             You haven't bought anything yet.
             <router-link to="/Events">Pick an event</router-link> to reserve a spot.
@@ -267,8 +269,10 @@ import { WaitlistService, type MyWaitlistEntry } from '@/services/WaitlistServic
 import { ExtraService, kindIcon, kindLabel, type MyExtra } from '@/services/ExtraService'
 import { branding } from '@/stores/branding'
 import QrCode from '@/components/QrCode.vue'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new TicketService()
+const confirm = useConfirm()
 const rentalService = new RentalService()
 const waitlistService = new WaitlistService()
 const extraService = new ExtraService()
@@ -280,6 +284,7 @@ const extraExpanded = reactive<Record<string, boolean>>({})
 const waitlists = ref<MyWaitlistEntry[]>([])
 const waitlistCancelling = ref<string | null>(null)
 const loading = ref(true)
+const loadError = ref('')
 const expanded = reactive<Record<string, boolean>>({})
 const rentalExpanded = reactive<Record<string, boolean>>({})
 // Coupons grouped by their issuing purchase id so the per-card render stays simple.
@@ -289,6 +294,7 @@ onMounted(load)
 
 async function load() {
     loading.value = true
+    loadError.value = ''
     try {
         const r = await service.getMyPurchases()
         purchases.value = (r.data as any).data
@@ -323,6 +329,9 @@ async function load() {
             waitlists.value = ((wr.data as any).data as MyWaitlistEntry[])
                 .filter(w => w.status === 'waiting' || w.status === 'promoted' || w.status === 'confirmed')
         } catch { waitlists.value = [] }
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load your passes. Refresh to try again, or check your connection.'
     } finally {
         loading.value = false
     }
@@ -337,7 +346,7 @@ function waitlistStatusColor(s: string): string {
 }
 
 async function cancelWaitlist(w: MyWaitlistEntry) {
-    if (!confirm('Withdraw from this waitlist?')) return
+    if (!await confirm({ message: `Withdraw from this waitlist?`, confirmText: 'Withdraw', confirmColor: 'error' })) return
     waitlistCancelling.value = w.id
     try {
         await waitlistService.cancel(w.id)

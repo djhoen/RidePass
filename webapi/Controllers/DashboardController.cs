@@ -136,9 +136,9 @@ namespace webapi.Controllers
 
             if (perms.Contains(TenantPermissions.SalesCancel))
             {
-                // Cancelled but not yet refunded — tenant admin action queue.
-                var tkCancelled = await _tickets.ListByStatusAcrossTenants("cancelled");
-                snapshot.PendingRefundsCount = tkCancelled.Count(p => p.TenantId == _tenantContext.TenantId);
+                // Cancelled but not yet refunded — tenant admin action queue. Tenant-scoped count
+                // (don't pull every tenant's cancelled rows just to filter in memory).
+                snapshot.PendingRefundsCount = await _tickets.CountByStatusForTenant(_tenantContext.TenantId, "cancelled");
             }
 
             return new ApiResponses().OkResult(snapshot);

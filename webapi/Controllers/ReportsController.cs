@@ -55,6 +55,7 @@ namespace webapi.Controllers
         [HttpGet("Admin/Summary")]
         public async Task<IActionResult> GetTenantSummary([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (toUtc <= fromUtc)
             {
                 return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");

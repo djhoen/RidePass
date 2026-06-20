@@ -550,9 +550,15 @@ onMounted(async () => {
     loadingExtras.value = true
     try {
         const [w, x] = await Promise.all([
-            passService.getWaiver().catch(() => ({ data: { data: null } })),
+            passService.getWaiver().catch((e: any) => {
+                flash(e.response?.data?.error ?? 'Couldn’t load the waiver. Riders may not be able to sign until you refresh.', 'error')
+                return { data: { data: null } }
+            }),
             branding.extrasEnabled
-                ? extraService.listForAdmin().catch(() => ({ data: { data: [] as ExtraProduct[] } }))
+                ? extraService.listForAdmin().catch((e: any) => {
+                    flash(e.response?.data?.error ?? 'Couldn’t load add-ons. Some items may be missing until you refresh.', 'error')
+                    return { data: { data: [] as ExtraProduct[] } }
+                })
                 : Promise.resolve({ data: { data: [] as ExtraProduct[] } }),
         ])
         activeWaiver.value = (w.data as any).data ?? null

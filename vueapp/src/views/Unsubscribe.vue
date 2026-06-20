@@ -16,6 +16,10 @@
                     <strong>{{ status.email }}</strong>
                 </p>
 
+                <v-alert v-if="actionError" type="error" variant="tonal" density="compact" class="mb-3">
+                    {{ actionError }}
+                </v-alert>
+
                 <div v-if="!localUnsubscribed">
                     <p class="mb-4">Are you sure you want to stop receiving newsletter emails from this track?</p>
                     <v-btn color="error" :loading="acting" @click="unsubscribe">Unsubscribe</v-btn>
@@ -42,6 +46,7 @@ const service = new NewsletterService()
 const loading = ref(true)
 const acting = ref(false)
 const errorText = ref('')
+const actionError = ref('')
 const status = ref<UnsubscribeStatus | null>(null)
 const localUnsubscribed = ref(false)
 
@@ -61,9 +66,13 @@ onMounted(async () => {
 
 async function unsubscribe() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.unsubscribe(token)
         localUnsubscribed.value = true
+    } catch (err: any) {
+        actionError.value = err.response?.data?.error
+            || 'Could not unsubscribe you. Please try again, or contact the track if it keeps happening.'
     } finally {
         acting.value = false
     }
@@ -71,9 +80,13 @@ async function unsubscribe() {
 
 async function resubscribe() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.resubscribe(token)
         localUnsubscribed.value = false
+    } catch (err: any) {
+        actionError.value = err.response?.data?.error
+            || 'Could not resubscribe you. Please try again, or contact the track if it keeps happening.'
     } finally {
         acting.value = false
     }

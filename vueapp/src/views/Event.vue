@@ -80,7 +80,10 @@
                             <v-card-text class="pa-5">
                                 <!-- Unified inline checkout: select tiers, pay, then register.
                                      The rider never leaves the event page. -->
-                                <EventCheckout v-if="hasActiveTiers" :event="event" :tiers="tiers" />
+                                <v-alert v-if="tiersError" type="error" variant="tonal" density="compact">
+                                    {{ tiersError }}
+                                </v-alert>
+                                <EventCheckout v-else-if="hasActiveTiers" :event="event" :tiers="tiers" @price-changed="reloadTiers" />
                                 <div v-else class="text-body-2 text-medium-emphasis">
                                     No entry options are available for this event yet.
                                 </div>
@@ -120,6 +123,7 @@ import { EventService, type EventDto } from '@/services/EventService'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
 import EventCheckout from '@/components/EventCheckout.vue'
+import DOMPurify from 'dompurify'
 
 const route = useRoute()
 const service = new EventService()
@@ -127,6 +131,7 @@ const ticketService = new TicketService()
 const event = ref<EventDto | null>(null)
 const tiers = ref<TicketTier[]>([])
 const loadError = ref('')
+const tiersError = ref('')
 
 const apiUrl: string = (import.meta as any).env?.VITE_API_ENDPOINT ?? ''
 function imgUrl(url: string | null | undefined): string | null {
@@ -150,8 +155,9 @@ const locationText = computed(() => {
     return event.value?.locationLabel || branding.displayName || ''
 })
 
-// About-the-track content is the tenant's branding (shared across events).
-const aboutHtml = computed(() => branding.aboutHtml || '')
+// About-the-track content is admin-authored HTML rendered via v-html, so sanitize it
+// before it hits the DOM (same as Home.vue). Without this it's a stored-XSS sink.
+const aboutHtml = computed(() => DOMPurify.sanitize(branding.aboutHtml || ''))
 const aboutPhoto = computed(() => branding.secondaryHeroUrl || branding.heroImageUrl || null)
 
 // The event description doubles as the "Event Details" checklist — one bullet
@@ -270,14 +276,24 @@ onMounted(async () => {
     // Race-class prices aren't in the public event payload, so pull the active
     // tiers for the Pricing section. Only needed when the event has race entries.
     if (event.value?.hasRaceEntryTiers) {
-        try {
-            const tr = await ticketService.listActiveTiers(eventId)
-            tiers.value = (tr.data as any).data ?? []
-        } catch {
-            tiers.value = []
-        }
+        await reloadTiers()
     }
 })
+
+// Re-fetch the active tiers (their collapsed price-ladder step + price). Called on mount
+// and whenever checkout reports a price_changed, so the buyer always sees the live price.
+async function reloadTiers() {
+    const eventId = route.params.id as string
+    try {
+        const tr = await ticketService.listActiveTiers(eventId)
+        tiers.value = (tr.data as any).data ?? []
+        tiersError.value = ''
+    } catch (err: any) {
+        tiers.value = []
+        tiersError.value = err.response?.data?.error
+            || 'Could not load ticket prices for this event. Refresh to try again.'
+    }
+}
 </script>
 
 <style scoped>

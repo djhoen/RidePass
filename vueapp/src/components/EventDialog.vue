@@ -396,15 +396,22 @@ function localToUtc(localValue: string): string { return dayjs.tz(localValue, tz
 function utcToLocalInput(utc: string): string { return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DDTHH:mm') }
 
 onMounted(async () => {
-    const types = await eventTypeService.list()
-    typeOptions.value = (types.data as any).data
-    if (typeOptions.value.length > 0 && !form.value.eventTypeId) {
-        form.value.eventTypeId = typeOptions.value[0].id
+    try {
+        const types = await eventTypeService.list()
+        typeOptions.value = (types.data as any).data
+        if (typeOptions.value.length > 0 && !form.value.eventTypeId) {
+            form.value.eventTypeId = typeOptions.value[0].id
+        }
+    } catch (err: any) {
+        emit('flash', err.response?.data?.error || 'Couldn’t load event types. Reopen the dialog to try again.', 'error')
     }
     try {
         const r = await waiverService.listAdmin()
         waivers.value = (r.data as any).data
-    } catch { waivers.value = [] }
+    } catch (err: any) {
+        waivers.value = []
+        emit('flash', err.response?.data?.error || 'Couldn’t load waivers. Reopen the dialog to try again.', 'error')
+    }
     if (branding.extrasEnabled) {
         try {
             const r = await extraService.listForAdmin()
@@ -412,7 +419,10 @@ onMounted(async () => {
             // gate_fee extra kind is hidden from the add-ons list.
             extraProducts.value = ((r.data as any).data as ExtraProduct[])
                 .filter(p => p.isActive && (p as any).kind !== 'gate_fee')
-        } catch { extraProducts.value = [] }
+        } catch (err: any) {
+            extraProducts.value = []
+            emit('flash', err.response?.data?.error || 'Couldn’t load add-on products. Reopen the dialog to try again.', 'error')
+        }
     }
 })
 

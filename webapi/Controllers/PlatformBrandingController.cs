@@ -112,8 +112,6 @@ namespace webapi.Controllers
                 FeaturedTrackIds = req.FeaturedTrackIds,
                 NavBarColor = req.NavBarColor,
                 NavBarTextColor = req.NavBarTextColor,
-                NavBarHomeColor = req.NavBarHomeColor,
-                NavBarHomeTextColor = req.NavBarHomeTextColor,
             };
 
             await _branding.Upsert(merged);
@@ -357,8 +355,6 @@ namespace webapi.Controllers
                 FeaturedTrackIds = b.FeaturedTrackIds,
                 NavBarColor = b.NavBarColor,
                 NavBarTextColor = b.NavBarTextColor,
-                NavBarHomeColor = b.NavBarHomeColor,
-                NavBarHomeTextColor = b.NavBarHomeTextColor,
                 ForTracksHeroEyebrow = b.ForTracksHeroEyebrow,
                 ForTracksHeroHeadline = b.ForTracksHeroHeadline,
                 ForTracksHeroSubhead = b.ForTracksHeroSubhead,

@@ -161,8 +161,12 @@ namespace Services.Repositories
 
         public async Task<int> CountQualifyingPurchases(Guid tenantId, Guid userId, string requirementKind, DateTime sinceUtc)
         {
-            // Tickets: count paid/redeemed rows (day passes were retired, so 'pass'/'any'
-            // requirement kinds now count event tickets only).
+            // Day passes were retired, so a 'pass'-kind program can never be satisfied by a real
+            // purchase. Count nothing for it, otherwise it would advance on event-ticket buys and
+            // mint a reward that can only be applied to a pass that no longer exists (unredeemable).
+            // 'event_ticket' and 'any' count event tickets (the only remaining ticket kind).
+            if (requirementKind == "pass") return 0;
+
             // 'paid' and 'redeemed' both count; 'pending' / 'cancelled' / 'refunded' don't.
             const string ticketSql = @"
                 SELECT COUNT(*)

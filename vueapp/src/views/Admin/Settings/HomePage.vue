@@ -229,9 +229,11 @@ import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding, loadBranding } from '@/stores/branding'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import BrandingImageSlot from '@/components/BrandingImageSlot.vue'
+import { useConfirm } from '@/composables/useConfirm'
 
 const tenantService = new TenantService()
 const eventTypeService = new EventTypeService()
+const confirm = useConfirm()
 const apiUrl: string = (import.meta as any).env?.VITE_API_ENDPOINT ?? ''
 
 function apiOrigin(): string {
@@ -390,7 +392,7 @@ async function updateGalleryCaption(img: GalleryImage, newCaption: string) {
 }
 
 async function removeGalleryImage(img: GalleryImage) {
-    if (!confirm('Remove this photo?')) return
+    if (!await confirm({ message: `Remove this photo?`, confirmText: 'Remove', confirmColor: 'error' })) return
     try {
         await tenantService.deleteGalleryImage(img.id)
         await loadGallery()
@@ -434,7 +436,7 @@ async function saveTrackGraphic(g: TrackGraphic) {
 }
 
 async function removeTrackGraphic(g: TrackGraphic) {
-    if (!confirm('Remove this track graphic?')) return
+    if (!await confirm({ message: `Remove this track graphic?`, confirmText: 'Remove', confirmColor: 'error' })) return
     try {
         await tenantService.deleteTrackGraphic(g.id)
         await loadTrackGraphics()
@@ -505,8 +507,9 @@ async function loadEventTypes() {
     try {
         const r = await eventTypeService.list()
         eventTypeOptions.value = (r.data as any).data
-    } catch {
+    } catch (err: any) {
         eventTypeOptions.value = []
+        flash(err.response?.data?.error || 'Couldn’t load event types for the picker. Refresh to try again.', 'error')
     }
 }
 

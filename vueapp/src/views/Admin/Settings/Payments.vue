@@ -76,8 +76,10 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { TenantService } from '@/services/TenantService'
 import { branding, loadBranding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const tenantService = new TenantService()
+const confirm = useConfirm()
 const route = useRoute()
 const router = useRouter()
 
@@ -204,7 +206,7 @@ function formatMoney(cents: number, currency: string): string {
 }
 
 async function disconnectStripe() {
-    if (!confirm('Disconnect Stripe? Future payouts will be handled manually outside of Stripe.')) return
+    if (!await confirm({ message: `Disconnect Stripe? Future payouts will be handled manually outside of Stripe.`, confirmText: 'Disconnect', confirmColor: 'error' })) return
     try {
         disconnectLoading.value = true
         await tenantService.disconnectStripeConnect()

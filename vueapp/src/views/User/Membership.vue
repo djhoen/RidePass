@@ -5,8 +5,10 @@
         <v-progress-circular v-if="loading" indeterminate color="primary"></v-progress-circular>
 
         <template v-else>
+            <v-alert v-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
+
             <!-- Sales-disabled fallback. -->
-            <v-card v-if="!status?.enabled" class="pa-6 text-center" variant="outlined">
+            <v-card v-else-if="!status?.enabled" class="pa-6 text-center" variant="outlined">
                 <v-icon size="48" color="grey" class="mb-2">mdi-card-account-details-outline</v-icon>
                 <p class="text-body-2">This track doesn't sell memberships.</p>
             </v-card>
@@ -127,6 +129,7 @@ const service = new MembershipService()
 
 const status = ref<MembershipStatus | null>(null)
 const loading = ref(true)
+const loadError = ref('')
 
 const creating = ref(false)
 const clientSecret = ref<string | null>(null)
@@ -174,9 +177,13 @@ function statusColor(s: string): string {
 
 async function load() {
     loading.value = true
+    loadError.value = ''
     try {
         const r = await service.getStatus()
         status.value = (r.data as any).data
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load membership details. Refresh to try again, or check your connection.'
     } finally {
         loading.value = false
     }

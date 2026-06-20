@@ -93,8 +93,11 @@ namespace Services.Scheduling.Handlers
                 if (s.Status != "pending") continue;   // retry-safe: never re-send a done row
                 if (blocklist.Contains(s.Email))
                 {
-                    await _campaigns.UpdateSendStatus(s.Id, "suppressed", null);
-                    s.Status = "suppressed";
+                    // Opt-out/bounce landed between enqueue and send. Use 'skipped' (a valid status);
+                    // 'suppressed' is not in the email_campaign_send CHECK and would throw 23514 and
+                    // abort the whole run. Record the reason so reporting still shows why.
+                    await _campaigns.UpdateSendStatus(s.Id, "skipped", "Recipient suppressed (opt-out or bounce)");
+                    s.Status = "skipped";
                     skipped++;
                     continue;
                 }

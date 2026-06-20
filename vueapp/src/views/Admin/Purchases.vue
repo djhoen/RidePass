@@ -85,7 +85,7 @@
                                 @click="openCancel(p)">Cancel</v-btn>
                         </td>
                     </tr>
-                    <tr v-if="!loading && purchases.length === 0">
+                    <tr v-if="!loading && !loadError && purchases.length === 0">
                         <td colspan="7" class="text-center text-medium-emphasis py-8">No purchases in this range.</td>
                     </tr>
                 </tbody>
@@ -135,10 +135,21 @@
                         <div class="text-caption text-medium-emphasis mt-2">Item</div>
                         <div>{{ refundTarget.productName }} ({{ kindLabel(refundTarget.kind) }})</div>
                     </div>
-                    <v-text-field v-model.number="refundDollars" type="number" min="0" step="0.01" prefix="$"
-                        label="Refund amount" density="compact"
+                    <v-switch v-model="refundEntireOrder" color="error" density="compact" hide-details
+                        label="Refund the entire order (every item on this charge)"></v-switch>
+                    <div v-if="refundEntireOrder" class="text-caption text-medium-emphasis mb-2">
+                        Refunds every line that shares this charge, each in full including the service fee.
+                    </div>
+                    <v-text-field v-if="!refundEntireOrder" v-model.number="refundDollars" type="number" min="0"
+                        step="0.01" prefix="$" label="Refund amount" density="compact" class="mt-4"
                         hint="Defaults to the full amount; set per your refund policy. Loam Pass credit entries show $0 and return the credit instead."
                         persistent-hint></v-text-field>
+                    <v-switch v-if="canOverride" v-model="refundForceCheckedIn" color="warning" density="compact"
+                        hide-details class="mt-2"
+                        label="Force refund even if checked in / already used"></v-switch>
+                    <div v-if="canOverride && refundForceCheckedIn" class="text-caption text-warning mb-2">
+                        This entry has been used or checked in. Refunding will reverse it anyway.
+                    </div>
                     <v-textarea v-model="refundReason" label="Reason (optional)" rows="2" density="compact"
                         class="mt-4" hide-details></v-textarea>
                 </v-card-text>
@@ -155,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { PassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/PassService'
 import { branding } from '@/stores/branding'
@@ -172,6 +183,7 @@ const statusOptions = ['pending', 'paid', 'failed', 'cancelled', 'refunded', 're
 
 const purchases = ref<PurchaseRow[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 
 const disputes = ref<TenantDisputeListItem[]>([])
 
@@ -185,11 +197,16 @@ const refundTarget = ref<PurchaseRow | null>(null)
 const refundReason = ref('')
 const refundDollars = ref<number>(0)
 const refunding = ref(false)
+const refundEntireOrder = ref(false)
+const refundForceCheckedIn = ref(false)
 const REFUNDABLE_KINDS = ['event_ticket', 'season_pass', 'membership', 'event_extra']
+
+// Elevated: refund a checked-in/used purchase and refund whole orders (tenant_admin + manager).
+const canOverride = computed(() => authHelper.hasPermission(Perm.SalesRefundOverride))
 
 const snackbar = ref(false)
 const snackbarText = ref('')
-const snackbarColor = ref<'success' | 'error'>('success')
+const snackbarColor = ref<'success' | 'error' | 'warning'>('success')
 
 onMounted(async () => {
     await load()
@@ -230,6 +247,7 @@ function tz() { return branding.timezone || 'UTC' }
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
         const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
@@ -239,6 +257,12 @@ async function load() {
             status: statusFilter.value || undefined,
         })
         purchases.value = (r.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load purchases. Refresh to try again.'
+        loadError.value = msg
+        snackbarText.value = msg
+        snackbarColor.value = 'error'
+        snackbar.value = true
     } finally {
         loading.value = false
     }
@@ -321,7 +345,9 @@ async function confirmCancel() {
 // Direct tenant refund (needs sales.refund). Covers the kinds with refund wiring; gift cards
 // excluded. Riders without the permission fall back to the legacy Cancel-and-queue button.
 function canRefund(p: PurchaseRow): boolean {
-    return p.status === 'paid'
+    // A checked-in (redeemed) purchase is only refundable by an override-holder.
+    const refundableStatus = p.status === 'paid' || (p.status === 'redeemed' && canOverride.value)
+    return refundableStatus
         && REFUNDABLE_KINDS.includes(p.kind)
         && authHelper.hasPermission(Perm.SalesRefund)
 }
@@ -330,6 +356,9 @@ function openRefund(p: PurchaseRow) {
     refundTarget.value = p
     refundReason.value = ''
     refundDollars.value = Math.round(p.amountCents) / 100
+    refundEntireOrder.value = false
+    // A checked-in item can only be refunded with the override on, so default it on.
+    refundForceCheckedIn.value = p.status === 'redeemed'
     refundDialog.value = true
 }
 
@@ -339,13 +368,27 @@ async function confirmRefund() {
     try {
         const t = refundTarget.value
         const reason = refundReason.value.trim().length > 0 ? refundReason.value.trim() : null
-        const amountCents = Number.isFinite(refundDollars.value)
-            ? Math.max(0, Math.round(refundDollars.value * 100))
-            : null
-        await service.refund(t.kind, t.id, amountCents, reason)
+        if (refundEntireOrder.value) {
+            const res = await service.refundOrder(t.kind, t.id, reason, refundForceCheckedIn.value)
+            const { refundedCount, totalCents, errors } = res.data.data
+            const dollars = (totalCents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+            const itemWord = refundedCount === 1 ? 'item' : 'items'
+            if (errors && errors.length > 0) {
+                snackbarText.value = `Refunded ${refundedCount} ${itemWord} (${dollars}); ${errors.length} could not be refunded.`
+                snackbarColor.value = 'warning'
+            } else {
+                snackbarText.value = `Order refunded — ${refundedCount} ${itemWord} (${dollars}).`
+                snackbarColor.value = 'success'
+            }
+        } else {
+            const amountCents = Number.isFinite(refundDollars.value)
+                ? Math.max(0, Math.round(refundDollars.value * 100))
+                : null
+            await service.refund(t.kind, t.id, amountCents, reason, refundForceCheckedIn.value)
+            snackbarText.value = 'Refund processed.'
+            snackbarColor.value = 'success'
+        }
         refundDialog.value = false
-        snackbarText.value = 'Refund processed.'
-        snackbarColor.value = 'success'
         snackbar.value = true
         await load()
     } catch (err: any) {

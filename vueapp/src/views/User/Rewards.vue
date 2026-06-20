@@ -106,8 +106,10 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { RewardService, type RiderRewardProgram, type RiderRewardRedemption } from '@/services/RewardService'
 import { branding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new RewardService()
+const confirm = useConfirm()
 const programs = ref<RiderRewardProgram[]>([])
 const redemptions = ref<RiderRewardRedemption[]>([])
 const loading = ref(false)
@@ -157,7 +159,7 @@ async function enroll(programId: string) {
 }
 
 async function unenroll(programId: string) {
-    if (!confirm('Leave this program? Your progress and unredeemed vouchers will be removed.')) return
+    if (!await confirm({ message: `Leave this program? Your progress and unredeemed vouchers will be removed.`, confirmText: 'Leave', confirmColor: 'error' })) return
     busyId.value = programId
     try {
         await service.unenroll(programId)

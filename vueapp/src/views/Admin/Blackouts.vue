@@ -38,7 +38,7 @@
                             <v-btn variant="text" size="small" color="error" @click="remove(row)">Delete</v-btn>
                         </td>
                     </tr>
-                    <tr v-if="!loading && rows.length === 0">
+                    <tr v-if="!loading && !loadError && rows.length === 0">
                         <td colspan="5" class="text-center text-medium-emphasis py-8">No blackouts in this range.</td>
                     </tr>
                 </tbody>
@@ -88,8 +88,10 @@ import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { BlackoutService, type BlackoutDto } from '@/services/BlackoutService'
 import { branding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new BlackoutService()
+const confirm = useConfirm()
 
 const today = dayjs()
 const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
@@ -97,6 +99,7 @@ const rangeTo = ref(today.endOf('month').add(1, 'day').format('YYYY-MM-DD'))
 
 const rows = ref<BlackoutDto[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<BlackoutDto | null>(null)
 const saving = ref(false)
@@ -132,11 +135,16 @@ function utcToLocalInput(utc: string): string {
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
         const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
         const r = await service.list(fromUtc, toUtc)
         rows.value = (r.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load blackouts. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
     } finally {
         loading.value = false
     }
@@ -222,7 +230,7 @@ async function save() {
 }
 
 async function remove(row: BlackoutDto) {
-    if (!confirm('Delete this blackout?')) return
+    if (!await confirm({ message: `Delete this blackout?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.delete(row.id)
         await load()

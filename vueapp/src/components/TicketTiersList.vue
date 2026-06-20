@@ -188,6 +188,7 @@ import { ref, watch, computed } from 'vue'
 import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { TicketService, type TicketTier } from '@/services/TicketService'
+import { useConfirm } from '@/composables/useConfirm'
 
 type AdmissionKind = 'race_entry' | 'gate_fee'
 type Audience = 'rider' | 'spectator'
@@ -202,6 +203,7 @@ type TriggerType = 'none' | 'sold' | 'days' | 'date'
 const props = defineProps<{ eventId: string | null; kind: AdmissionKind }>()
 
 const service = new TicketService()
+const confirm = useConfirm()
 const isGate = computed(() => props.kind === 'gate_fee')
 const isBuffer = computed(() => !props.eventId)
 
@@ -306,6 +308,8 @@ async function load() {
     try {
         const r = await service.listTiersForAdmin(props.eventId)
         allTiers.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || `Couldn’t load ${kindLabelText.value.toLowerCase()}s. Reopen this section to try again.`, 'error')
     } finally {
         loading.value = false
     }
@@ -423,7 +427,12 @@ async function save() {
 }
 
 async function remove(t: TicketTier) {
-    if (!confirm(`Delete "${t.name}"?`)) return
+    if (!await confirm({
+        title: 'Delete option?',
+        message: `Delete "${t.name}"? If it has sales on file, set it inactive instead.`,
+        confirmText: 'Delete',
+        confirmColor: 'error',
+    })) return
     if (isBuffer.value) {
         allTiers.value = allTiers.value.filter(x => x.id !== t.id)
         flash(`${kindLabelText.value} removed.`, 'success')

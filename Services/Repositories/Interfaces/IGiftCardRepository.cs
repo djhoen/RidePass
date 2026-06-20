@@ -24,6 +24,14 @@ namespace Services.Repositories.Interfaces
         /// the delete gets the rows back, so a concurrent retry restores nothing.</summary>
         Task<List<GiftCardRedemption>> DeleteRedemptionsBySource(string sourceKind, IReadOnlyList<Guid> sourceIds);
 
+        /// <summary>Flip a freshly-minted 'pending' card to 'active' once its purchase is paid.
+        /// Guarded on status='pending' so a duplicate webhook is a no-op.</summary>
+        Task Activate(Guid id);
+
+        /// <summary>Void a 'pending' card whose purchase failed/was abandoned, so it can never be
+        /// spent or delivered. Guarded on status='pending'.</summary>
+        Task Void(Guid id);
+
         /// <summary>Mark a pending card delivered (called after a successful email send).</summary>
         Task MarkDelivered(Guid id);
 

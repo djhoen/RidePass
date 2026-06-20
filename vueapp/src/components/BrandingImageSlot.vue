@@ -7,6 +7,7 @@
         <v-img v-if="url" :src="url" max-height="120" contain class="mb-2 border"></v-img>
         <v-file-input :label="`Upload ${label}`" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon"
             density="compact" prepend-icon="mdi-upload" hide-details :loading="uploading" @update:model-value="onFile"></v-file-input>
+        <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mt-2">{{ error }}</v-alert>
     </div>
 </template>
 
@@ -30,16 +31,18 @@ const emit = defineEmits<{
 const tenantService = new TenantService()
 const uploading = ref(false)
 const removing = ref(false)
+const error = ref<string | null>(null)
 
 async function onFile(file: File | File[] | null) {
     const single = Array.isArray(file) ? file[0] : file
     if (!single) return
     try {
         uploading.value = true
+        error.value = null
         await tenantService.uploadBrandingImage(props.kind, single)
         emit('uploaded')
-    } catch (err) {
-        console.error('Upload failed', err)
+    } catch (err: any) {
+        error.value = err.response?.data?.error || `Couldn’t upload the ${props.label.toLowerCase()}. Check the file and try again.`
     } finally {
         uploading.value = false
     }
@@ -48,10 +51,11 @@ async function onFile(file: File | File[] | null) {
 async function remove() {
     try {
         removing.value = true
+        error.value = null
         await tenantService.deleteBrandingImage(props.kind)
         emit('removed')
-    } catch (err) {
-        console.error('Delete failed', err)
+    } catch (err: any) {
+        error.value = err.response?.data?.error || `Couldn’t remove the ${props.label.toLowerCase()}. Try again.`
     } finally {
         removing.value = false
     }

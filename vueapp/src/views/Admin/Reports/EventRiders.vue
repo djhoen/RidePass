@@ -375,9 +375,9 @@ async function loadScheduledMessages() {
     try {
         const r = await reportsService.listScheduledRiderMessages(selectedEventId.value)
         scheduledMessages.value = (r.data as any).data
-    } catch {
-        // Non-critical — the panel just won't render. Don't pop a toast.
+    } catch (err: any) {
         scheduledMessages.value = []
+        flash(err.response?.data?.error || 'Couldn’t load scheduled messages for this event. Refresh to try again.', 'error')
     }
 }
 

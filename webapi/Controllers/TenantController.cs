@@ -396,8 +396,6 @@ namespace webapi.Controllers
                 HomeBenefitsImageUrl = row.HomeBenefitsImageUrl,
                 NavBarColor = row.NavBarColor,
                 NavBarTextColor = row.NavBarTextColor,
-                NavBarHomeColor = row.NavBarHomeColor,
-                NavBarHomeTextColor = row.NavBarHomeTextColor,
                 StripePublishableKey = _configuration["Stripe:PublishableKey"],
                 RequireReservationForPasses = tenant.RequireReservationForPasses,
                 RequireEmergencyContact = tenant.RequireEmergencyContact,
@@ -474,9 +472,7 @@ namespace webapi.Controllers
                 request.Tagline,
                 request.ThemeMode,
                 request.NavBarColor,
-                request.NavBarTextColor,
-                request.NavBarHomeColor,
-                request.NavBarHomeTextColor);
+                request.NavBarTextColor);
 
             return await GetBranding();
         }

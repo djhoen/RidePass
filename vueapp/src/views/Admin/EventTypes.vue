@@ -52,7 +52,7 @@
                         </tr>
                     </template>
                 </draggable>
-                <tbody v-if="!loading && rows.length === 0">
+                <tbody v-if="!loading && !loadError && rows.length === 0">
                     <tr>
                         <td :colspan="branding.loampassMxEnabled ? 7 : 6" class="text-center text-medium-emphasis py-8">No event types.</td>
                     </tr>
@@ -111,8 +111,10 @@ import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding, loadBranding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new EventTypeService()
+const confirm = useConfirm()
 
 const rows = ref<EventType[]>([])
 const { visibleRows, onReorderEnd } = useDragReorder<EventType>({
@@ -125,6 +127,7 @@ const { visibleRows, onReorderEnd } = useDragReorder<EventType>({
     },
 })
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const togglingId = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<EventType | null>(null)
@@ -180,9 +183,14 @@ onMounted(async () => {
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const r = await service.list()
         rows.value = (r.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load event types. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
     } finally {
         loading.value = false
     }
@@ -243,7 +251,7 @@ async function save() {
 }
 
 async function remove(row: EventType) {
-    if (!confirm(`Delete "${row.name}"?`)) return
+    if (!await confirm({ message: `Delete "${row.name}"?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.delete(row.id)
         await load()

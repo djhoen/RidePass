@@ -15,6 +15,7 @@ export const Perm = {
     CustomersView: 'customers.view',
     BlogManage: 'blog.manage',
     SalesRefund: 'sales.refund',
+    SalesRefundOverride: 'sales.refund.override',
 } as const
 
 export type Permission = typeof Perm[keyof typeof Perm]
@@ -24,7 +25,7 @@ const ADMIN: Permission[] = Object.values(Perm)
 const MANAGER: Permission[] = [
     Perm.CatalogManage, Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView,
     Perm.SalesCancel, Perm.ReportsView, Perm.DisputesView, Perm.CampaignsManage,
-    Perm.CustomersView, Perm.BlogManage, Perm.SalesRefund,
+    Perm.CustomersView, Perm.BlogManage, Perm.SalesRefund, Perm.SalesRefundOverride,
 ]
 
 const CASHIER: Permission[] = [Perm.SalesCounter, Perm.SalesRedeem, Perm.SalesView]

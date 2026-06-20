@@ -738,8 +738,8 @@ namespace webapi.Controllers
                     if (li.Kind == "event_ticket") await _ticketPurchases.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "extras") await _extras.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "membership") await _memberships.UpdateStatus(li.PurchaseId, "paid");
-                    // Extras still has no source_kind in the ledger CHECK, so skip them here too.
-                    if (li.Kind == "extras") continue;
+                    // 'extras' is a valid ledger source_kind (Script0099), so the free path records a
+                    // $0 sale row for every line, just like the cash and Stripe paths.
                     try
                     {
                         await _ledger.Insert(new TenantLedgerEntry

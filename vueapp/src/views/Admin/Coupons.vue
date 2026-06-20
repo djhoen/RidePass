@@ -117,8 +117,10 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { CouponService, type Coupon, type UpsertCoupon } from '@/services/CouponService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new CouponService()
+const confirm = useConfirm()
 
 const rows = ref<Coupon[]>([])
 const loading = ref(false)
@@ -251,7 +253,7 @@ async function save() {
 }
 
 async function remove(c: Coupon) {
-    if (!confirm(`Delete coupon "${c.code}"? This also removes its redemption history.`)) return
+    if (!await confirm({ message: `Delete coupon "${c.code}"? This also removes its redemption history.`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.delete(c.id)
         await load()

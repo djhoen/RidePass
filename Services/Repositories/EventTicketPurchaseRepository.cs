@@ -118,7 +118,7 @@ namespace Services.Repositories
                   AND p.status <> 'cancelled'
                   AND (
                         (@purchaserUserId IS NOT NULL AND p.purchaser_user_id = @purchaserUserId)
-                     OR (@purchaserUserId IS NULL AND lower(p.purchaser_email) = lower(@purchaserEmail))
+                     OR (@purchaserUserId IS NULL AND lower(trim(p.purchaser_email)) = lower(trim(@purchaserEmail)))
                       )
                 ORDER BY t.kind, t.name";
             var result = await _db.Query<EventTicketPurchaseWithContext>(sql,
@@ -412,6 +412,12 @@ namespace Services.Repositories
                 if (num.FirstOrDefault()) return "number";
             }
             return null;
+        }
+
+        public async Task<int> CountByStatusForTenant(Guid tenantId, string status)
+        {
+            const string sql = "SELECT COUNT(*) FROM event_ticket_purchase WHERE tenant_id = @tenantId AND status = @status";
+            return await _db.ExecuteScalar(sql, new { tenantId, status });
         }
 
         public async Task<List<EventTicketPurchaseWithContext>> ListByStatusAcrossTenants(string status)

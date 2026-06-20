@@ -157,8 +157,10 @@ import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { UserService, type TenantUserListItem } from '@/services/UserService'
 import { ASSIGNABLE_ROLES } from '@/helpers/TenantPermissions'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new UserService()
+const confirm = useConfirm()
 
 const users = ref<TenantUserListItem[]>([])
 const loading = ref(false)
@@ -270,7 +272,7 @@ async function setStatus(u: TenantUserListItem, status: 'active' | 'disabled') {
 }
 
 async function resetPassword(u: TenantUserListItem) {
-    if (!confirm(`Reset password for ${u.email}? They will need the new temporary password to log in.`)) return
+    if (!await confirm({ message: `Reset password for ${u.email}? They will need the new temporary password to log in.`, confirmText: 'Reset', confirmColor: 'error' })) return
     try {
         const r = await service.resetTenantUserPassword(u.id)
         const data: any = (r.data as any).data

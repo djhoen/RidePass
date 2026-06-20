@@ -276,6 +276,10 @@ async function geocodeAddress() {
             const tz = tzlookup(result.lat, result.lng)
             if (tz) form.value.timezone = tz
         } catch { /* tz-lookup throws on out-of-range coords; leave timezone untouched */ }
+    } catch {
+        snackbarText.value = 'Couldn’t look up that address. Enter coordinates manually or try again.'
+        snackbarColor.value = 'error'
+        snackbar.value = true
     } finally {
         geocoding.value = false
     }
@@ -294,6 +298,7 @@ async function save() {
                 requireReservationForPasses: branding.requireReservationForPasses,
                 requireEmergencyContact: branding.requireEmergencyContact,
                 allowEventSubscriptions: branding.allowEventSubscriptions,
+                requireIdAtCheckin: branding.requireIdAtCheckin,
             })
         }
         await tenantService.updateLocation({

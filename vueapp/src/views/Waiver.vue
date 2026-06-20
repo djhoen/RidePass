@@ -7,7 +7,9 @@
         </div>
 
         <template v-else>
-            <v-alert v-if="alreadySigned" type="success" variant="tonal" class="mb-4">
+            <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
+            <v-alert v-else-if="alreadySigned" type="success" variant="tonal" class="mb-4">
                 Your waiver is on file. You can close this page or
                 <a href="javascript:void(0)" @click="goBack">return to where you were</a>.
             </v-alert>
@@ -78,6 +80,7 @@ const router = useRouter()
 const passService = new PassService()
 
 const loading = ref(true)
+const loadError = ref('')
 const waiver = ref<WaiverDto | null>(null)
 const sigStatus = ref<WaiverSignatureStatus | null>(null)
 
@@ -113,13 +116,25 @@ async function load() {
         return
     }
     loading.value = true
+    loadError.value = ''
     try {
         const [w, s] = await Promise.all([
-            passService.getWaiver().catch(() => ({ data: { data: null } })),
-            passService.getMySignatureStatus().catch(() => ({ data: { data: null } })),
+            passService.getWaiver(),
+            passService.getMySignatureStatus(),
         ])
         waiver.value = (w.data as any).data
         sigStatus.value = (s.data as any).data
+    } catch (err: any) {
+        // A 404 means this track has no active waiver configured: fall through to the
+        // "No active waiver to sign" state. Any other failure is a real error we must
+        // surface rather than silently showing "no waiver".
+        if (err.response?.status === 404) {
+            waiver.value = null
+            sigStatus.value = null
+        } else {
+            loadError.value = err.response?.data?.error
+                || 'Could not load the waiver. Refresh to try again, or check your connection.'
+        }
     } finally {
         loading.value = false
     }

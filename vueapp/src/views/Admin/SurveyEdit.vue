@@ -296,10 +296,12 @@ import { useDragReorder } from '@/composables/useDragReorder'
 import { CustomerService, type CustomerSummaryDto } from '@/services/CustomerService'
 import { EventService } from '@/services/EventService'
 import SurveyForm from '@/components/SurveyForm.vue'
+import { useConfirm } from '@/composables/useConfirm'
 
 const route = useRoute()
 const router = useRouter()
 const service = new SurveyService()
+const confirm = useConfirm()
 const surveyId = computed(() => route.params.id as string)
 
 const survey = ref<SurveyAdminResponse | null>(null)
@@ -498,7 +500,7 @@ async function saveQuestion(q: SurveyAdminResponse['questions'][number]) {
 }
 
 async function deleteQuestion(id: string) {
-    if (!confirm('Delete this question and any responses to it?')) return
+    if (!await confirm({ message: `Delete this question and any responses to it?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteQuestion(id)
         await load()
@@ -591,6 +593,8 @@ async function loadEvents() {
                 value: e.id,
                 title: `${e.title} (${e.startsAtUtc ? dayjs.utc(e.startsAtUtc).format('MMM D, YYYY') : 'no date'})`,
             }))
+    } catch (err: any) {
+        flash(err.response?.data?.error ?? 'Couldn’t load events for the audience. Try again.', 'error')
     } finally {
         eventsLoading.value = false
     }
@@ -601,10 +605,14 @@ function searchCustomers() {
     const q = customerSearch.value.trim()
     if (q.length < 2) { customerResults.value = []; return }
     customerSearchTimer = setTimeout(async () => {
-        const r = await customerService.list(q, 25, 0)
-        const all = (r.data as any).data?.items ?? []
-        const selectedIds = new Set(selectedCustomers.value.map(c => c.userId))
-        customerResults.value = all.filter((c: CustomerSummaryDto) => !selectedIds.has(c.userId))
+        try {
+            const r = await customerService.list(q, 25, 0)
+            const all = (r.data as any).data?.items ?? []
+            const selectedIds = new Set(selectedCustomers.value.map(c => c.userId))
+            customerResults.value = all.filter((c: CustomerSummaryDto) => !selectedIds.has(c.userId))
+        } catch (err: any) {
+            flash(err.response?.data?.error ?? 'Couldn’t search customers. Try again.', 'error')
+        }
     }, 250)
 }
 function addCustomer(c: CustomerSummaryDto) {

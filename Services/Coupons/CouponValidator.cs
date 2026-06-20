@@ -50,8 +50,12 @@ namespace Services.Coupons
                     return (null, "That coupon has been fully redeemed.");
             }
 
-            if (coupon.MaxUsesPerUser.HasValue && userId.HasValue)
+            if (coupon.MaxUsesPerUser.HasValue)
             {
+                // A per-user cap is unenforceable for an anonymous guest (no identity to count
+                // against), so a guest could otherwise reuse the coupon indefinitely. Require sign-in.
+                if (!userId.HasValue)
+                    return (null, "Please sign in to use this coupon.");
                 var perUser = await _coupons.CountUserRedemptions(coupon.Id, userId.Value);
                 if (perUser >= coupon.MaxUsesPerUser.Value)
                     return (null, "You've already used this coupon the maximum number of times.");

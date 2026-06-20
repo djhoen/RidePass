@@ -100,6 +100,18 @@ namespace Services.Repositories
             return (await _db.Query<GiftCardRedemption>(sql, new { sourceKind, sourceIds = sourceIds.ToArray() })).ToList();
         }
 
+        public async Task Activate(Guid id)
+        {
+            const string sql = "UPDATE gift_card SET status = 'active' WHERE id = @id AND status = 'pending'";
+            await _db.Execute(sql, new { id });
+        }
+
+        public async Task Void(Guid id)
+        {
+            const string sql = "UPDATE gift_card SET status = 'void' WHERE id = @id AND status = 'pending'";
+            await _db.Execute(sql, new { id });
+        }
+
         public async Task MarkDelivered(Guid id)
         {
             const string sql = @"

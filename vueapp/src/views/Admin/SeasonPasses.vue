@@ -48,7 +48,7 @@
                         </tr>
                     </template>
                 </draggable>
-                <tbody v-if="!loading && products.length === 0">
+                <tbody v-if="!loading && !loadError && products.length === 0">
                     <tr>
                         <td colspan="7" class="text-center text-medium-emphasis py-8">No season passes yet.</td>
                     </tr>
@@ -140,9 +140,11 @@ import dayjs from 'dayjs'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { SeasonPassService, type SeasonPassProduct, type UpsertSeasonPassProduct, type SeasonPassPerk } from '@/services/SeasonPassService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new SeasonPassService()
 const eventTypeService = new EventTypeService()
+const confirm = useConfirm()
 
 const products = ref<SeasonPassProduct[]>([])
 const { visibleRows, onReorderEnd } = useDragReorder<SeasonPassProduct>({
@@ -156,6 +158,7 @@ const { visibleRows, onReorderEnd } = useDragReorder<SeasonPassProduct>({
 })
 const eventTypes = ref<EventType[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<SeasonPassProduct | null>(null)
 const saving = ref(false)
@@ -207,16 +210,28 @@ function setPerkDiscount(eventTypeId: string, value: number) {
 }
 
 onMounted(async () => {
-    const [t, p] = await Promise.all([eventTypeService.list(), service.listForAdmin()])
-    eventTypes.value = (t.data as any).data
-    products.value = (p.data as any).data
+    loadError.value = null
+    try {
+        const [t, p] = await Promise.all([eventTypeService.list(), service.listForAdmin()])
+        eventTypes.value = (t.data as any).data
+        products.value = (p.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load season passes. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
+    }
 })
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const r = await service.listForAdmin()
         products.value = (r.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load season passes. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
     } finally { loading.value = false }
 }
 
@@ -286,7 +301,7 @@ async function save() {
 }
 
 async function remove(p: SeasonPassProduct) {
-    if (!confirm(`Delete "${p.name}"?`)) return
+    if (!await confirm({ message: `Delete "${p.name}"?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteProduct(p.id)
         await load()

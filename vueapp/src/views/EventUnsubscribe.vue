@@ -14,6 +14,10 @@
                 <h1 class="text-h5 mb-2">{{ status.tenantDisplayName }} event updates</h1>
                 <p class="text-body-2 mb-4"><strong>{{ status.email }}</strong></p>
 
+                <v-alert v-if="actionError" type="error" variant="tonal" density="compact" class="mb-3">
+                    {{ actionError }}
+                </v-alert>
+
                 <div v-if="status.subscribed">
                     <p class="mb-4">Stop receiving event notifications from this track?</p>
                     <v-btn color="error" :loading="acting" @click="unsubscribe">Unsubscribe</v-btn>
@@ -40,6 +44,7 @@ const service = new EventSubscriptionService()
 const loading = ref(true)
 const acting = ref(false)
 const errorText = ref('')
+const actionError = ref('')
 const status = ref<EventSubscriptionStatus | null>(null)
 const token = route.params.token as string
 
@@ -56,17 +61,25 @@ onMounted(async () => {
 
 async function unsubscribe() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.unsubscribe(token)
         if (status.value) status.value.subscribed = false
+    } catch (err: any) {
+        actionError.value = err.response?.data?.error
+            || 'Could not unsubscribe you. Please try again, or contact the track if it keeps happening.'
     } finally { acting.value = false }
 }
 
 async function resubscribe() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.resubscribe(token)
         if (status.value) status.value.subscribed = true
+    } catch (err: any) {
+        actionError.value = err.response?.data?.error
+            || 'Could not resubscribe you. Please try again, or contact the track if it keeps happening.'
     } finally { acting.value = false }
 }
 </script>

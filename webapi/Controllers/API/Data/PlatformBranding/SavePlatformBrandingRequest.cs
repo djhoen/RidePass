@@ -46,11 +46,5 @@ namespace webapi.Controllers.API.Data.PlatformBranding
 
         [RegularExpression("^#[0-9A-Fa-f]{6}$")]
         public string? NavBarTextColor { get; set; }
-
-        [RegularExpression("^#[0-9A-Fa-f]{6}$")]
-        public string? NavBarHomeColor { get; set; }
-
-        [RegularExpression("^#[0-9A-Fa-f]{6}$")]
-        public string? NavBarHomeTextColor { get; set; }
     }
 }

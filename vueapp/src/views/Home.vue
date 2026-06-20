@@ -392,6 +392,9 @@
                      the same address / contact / social / newsletter block shows on every page. -->
             </v-container>
         </template>
+
+        <v-snackbar :model-value="!!loadError" @update:model-value="loadError = ''"
+            color="error" location="top" :timeout="6000">{{ loadError }}</v-snackbar>
     </div>
 </template>
 
@@ -468,6 +471,10 @@ const apexEvents = ref<EventDiscoverItem[]>([])
 const APEX_TRACK_LIMIT = 3
 const APEX_EVENT_LIMIT = 4
 
+// Surfaced to the rider via a top snackbar when a page load fails, so a network
+// error shows a real message instead of a blank home / apex page.
+const loadError = ref('')
+
 // Photo-gallery slideshow modal state. Set when a thumbnail is clicked.
 const galleryDialog = ref(false)
 const galleryIndex = ref(0)
@@ -503,8 +510,9 @@ async function load() {
         } else {
             featuredPost.value = null
         }
-    } catch (err) {
-        console.error('Failed to load home page data', err)
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load this page. Refresh to try again, or check your connection.'
     }
 }
 
@@ -522,8 +530,9 @@ async function loadApex() {
         ])
         apexTracks.value = (trackResp.data as any).data
         apexEvents.value = (eventResp.data as any).data.slice(0, APEX_EVENT_LIMIT)
-    } catch (err) {
-        console.error('Failed to load apex discover data', err)
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load tracks and events. Refresh to try again, or check your connection.'
     }
 }
 onMounted(loadApex)

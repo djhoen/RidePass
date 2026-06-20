@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Services.Helpers;
+using Services.Helpers.Interfaces;
 using Services.Repositories.Data.RewardData;
 using Services.Repositories.Interfaces;
 
@@ -11,6 +12,7 @@ namespace Services.Rewards
         private readonly ITenantRepository _tenants;
         private readonly ISmtpEmailer _emailer;
         private readonly IEmailSuppressionRepository _suppression;
+        private readonly IDbHelper _db;
         private readonly ILogger<RewardEngine> _logger;
 
         public RewardEngine(
@@ -18,12 +20,14 @@ namespace Services.Rewards
             ITenantRepository tenants,
             ISmtpEmailer emailer,
             IEmailSuppressionRepository suppression,
+            IDbHelper db,
             ILogger<RewardEngine> logger)
         {
             _rewards = rewards;
             _tenants = tenants;
             _emailer = emailer;
             _suppression = suppression;
+            _db = db;
             _logger = logger;
         }
 
@@ -45,8 +49,20 @@ namespace Services.Rewards
             {
                 if (!enrollmentByProgram.TryGetValue(program.Id, out var enrollment)) continue;
 
+                // Serialize the count + mint per (program, rider) so two purchases finalizing at the
+                // same moment can't both cross the threshold and mint two vouchers for one cycle. The
+                // second waiter re-reads the now-incremented earned count and sees progress reset.
+                await using var mintLock = await _db.AcquireAdvisoryLock($"reward-mint:{program.Id}:{userId}");
+
+                // Auto programs enroll the rider on their very first qualifying purchase, so that
+                // triggering purchase must count. Its created_at (checkout start) precedes the
+                // enrollment's enrolled_at (stamped at finalize), so counting from enrolled_at would
+                // drop it (off-by-one). Count auto programs from when the program began instead, which
+                // still excludes pre-program purchases; opt-in programs count only purchases the rider
+                // made after choosing to enroll.
+                var countFromUtc = program.EnrollmentMode == "auto" ? program.CreatedAt : enrollment.EnrolledAt;
                 var qualifyingCount = await _rewards.CountQualifyingPurchases(
-                    tenantId, userId, program.RequirementKind, enrollment.EnrolledAt);
+                    tenantId, userId, program.RequirementKind, countFromUtc);
 
                 // Subtract previously-earned redemptions so progress resets after each reward.
                 var earned = (await _rewards.ListRedemptionsForProgram(program.Id))

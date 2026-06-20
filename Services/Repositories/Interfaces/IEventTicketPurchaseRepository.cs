@@ -46,5 +46,9 @@ namespace Services.Repositories.Interfaces
         Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
         Task MarkRefunded(Guid id, string? refundNote);
         Task<List<EventTicketPurchaseWithContext>> ListByStatusAcrossTenants(string status);
+
+        /// <summary>Tenant-scoped count of purchases in a given status (e.g. cancelled-awaiting-refund
+        /// for the dashboard), so callers don't pull every tenant's rows and filter in memory.</summary>
+        Task<int> CountByStatusForTenant(Guid tenantId, string status);
     }
 }

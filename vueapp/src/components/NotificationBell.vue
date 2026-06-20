@@ -22,6 +22,9 @@
                 <v-list-item v-if="loading" class="text-center text-medium-emphasis py-4">
                     Loading…
                 </v-list-item>
+                <v-list-item v-else-if="listError" class="py-2">
+                    <v-alert type="error" variant="tonal" density="compact">{{ listError }}</v-alert>
+                </v-list-item>
                 <v-list-item v-else-if="items.length === 0" class="text-center text-medium-emphasis py-6">
                     No notifications.
                 </v-list-item>
@@ -52,7 +55,8 @@
                 <v-btn icon="mdi-close" variant="text" size="small" @click="settingsOpen = false"></v-btn>
             </v-card-title>
             <v-card-text>
-                <p v-if="catalog.length === 0" class="text-medium-emphasis">
+                <v-alert v-if="settingsError" type="error" variant="tonal" density="compact" class="mb-3">{{ settingsError }}</v-alert>
+                <p v-if="catalog.length === 0 && !settingsError" class="text-medium-emphasis">
                     No configurable notifications for your role.
                 </p>
                 <div v-else>
@@ -94,9 +98,12 @@ const unread = ref(0)
 const loading = ref(false)
 const menuOpen = ref(false)
 
+const listError = ref<string | null>(null)
+
 const settingsOpen = ref(false)
 const catalog = ref<NotificationKindDescriptor[]>([])
 const prefs = ref<Record<string, boolean>>({})
+const settingsError = ref<string | null>(null)
 
 let pollHandle: number | null = null
 
@@ -111,9 +118,12 @@ async function poll() {
 
 async function loadList() {
     loading.value = true
+    listError.value = null
     try {
         const r = await service.list(50)
         items.value = (r.data as any).data
+    } catch (err: any) {
+        listError.value = err.response?.data?.error || 'Couldn’t load your notifications. Reopen the menu to try again.'
     } finally {
         loading.value = false
     }
@@ -140,6 +150,7 @@ async function onClick(n: AppNotification) {
 async function openSettings() {
     menuOpen.value = false
     settingsOpen.value = true
+    settingsError.value = null
     try {
         const [c, p] = await Promise.all([service.getCatalog(), service.getPreferences()])
         catalog.value = (c.data as any).data
@@ -149,24 +160,32 @@ async function openSettings() {
         const merged: Record<string, boolean> = {}
         for (const d of catalog.value) merged[d.kind] = d.kind in stored ? stored[d.kind] : true
         prefs.value = merged
-    } catch { /* ignore — empty catalog for non-super-admins */ }
+    } catch (err: any) {
+        catalog.value = []
+        settingsError.value = err.response?.data?.error || 'Couldn’t load your notification settings. Reopen settings to try again.'
+    }
 }
 
 async function savePref(kind: string, value: boolean) {
+    settingsError.value = null
     try {
         await service.setPreference(kind, value)
-    } catch {
-        // Roll back the toggle on failure
+    } catch (err: any) {
+        // Roll back the toggle on failure and tell the user it didn't save.
         prefs.value[kind] = !value
+        settingsError.value = err.response?.data?.error || 'Couldn’t save that notification preference. Try again.'
     }
 }
 
 async function markAll() {
+    listError.value = null
     try {
         await service.markAllRead()
         items.value.forEach(n => n.isRead = true)
         unread.value = 0
-    } catch { /* ignore */ }
+    } catch (err: any) {
+        listError.value = err.response?.data?.error || 'Couldn’t mark all as read. Try again.'
+    }
 }
 
 function iconFor(kind: string): string {

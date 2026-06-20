@@ -40,8 +40,6 @@ namespace Services.Repositories
                        home_benefits_image_url AS HomeBenefitsImageUrl,
                        nav_bar_color           AS NavBarColor,
                        nav_bar_text_color      AS NavBarTextColor,
-                       nav_bar_home_color      AS NavBarHomeColor,
-                       nav_bar_home_text_color AS NavBarHomeTextColor,
                        updated_at              AS UpdatedAt
                 FROM tenant_branding
                 WHERE tenant_id = @tenantId
@@ -53,8 +51,7 @@ namespace Services.Repositories
 
         public async Task UpdateMetadata(Guid tenantId, string primaryColor, string secondaryColor, string accentColor,
                                          string? tagline, string themeMode,
-                                         string? navBarColor, string? navBarTextColor,
-                                         string? navBarHomeColor, string? navBarHomeTextColor)
+                                         string? navBarColor, string? navBarTextColor)
         {
             const string sql = @"
                 UPDATE tenant_branding
@@ -64,15 +61,13 @@ namespace Services.Repositories
                        tagline                 = @tagline,
                        theme_mode              = @themeMode,
                        nav_bar_color           = @navBarColor,
-                       nav_bar_text_color      = @navBarTextColor,
-                       nav_bar_home_color      = @navBarHomeColor,
-                       nav_bar_home_text_color = @navBarHomeTextColor
+                       nav_bar_text_color      = @navBarTextColor
                  WHERE tenant_id = @tenantId";
 
             await _db.Execute(sql, new
             {
                 tenantId, primaryColor, secondaryColor, accentColor, tagline, themeMode,
-                navBarColor, navBarTextColor, navBarHomeColor, navBarHomeTextColor,
+                navBarColor, navBarTextColor,
             });
         }
 

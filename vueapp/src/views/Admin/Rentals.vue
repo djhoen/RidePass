@@ -293,8 +293,10 @@ import dayjs from 'dayjs'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { RentalService, type RentalProduct, type RentalItem, type MaintenanceWindow } from '@/services/RentalService'
 import { branding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new RentalService()
+const confirm = useConfirm()
 
 const rows = ref<RentalProduct[]>([])
 const loading = ref(false)
@@ -467,7 +469,7 @@ async function save() {
 
 async function remove() {
     if (!editing.value) return
-    if (!confirm(`Delete "${editing.value.name}"? This permanently removes the rental.`)) return
+    if (!await confirm({ message: `Delete "${editing.value.name}"? This permanently removes the rental.`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteProduct(editing.value.id)
         dialog.value = false
@@ -482,7 +484,10 @@ async function loadUnits(productId: string) {
     try {
         const r = await service.listItems(productId)
         units.value = (r.data as any).data
-    } catch { units.value = [] }
+    } catch (err: any) {
+        units.value = []
+        flash(err.response?.data?.error ?? 'Couldn’t load rental units. Try reopening this rental.', 'error')
+    }
 }
 
 function openCreateUnit() {
@@ -521,7 +526,10 @@ async function loadMaintenance(itemId: string) {
     try {
         const r = await service.listMaintenance(itemId)
         maintenanceWindows.value = (r.data as any).data
-    } catch { maintenanceWindows.value = [] }
+    } catch (err: any) {
+        maintenanceWindows.value = []
+        flash(err.response?.data?.error ?? 'Couldn’t load maintenance windows. Try reopening this unit.', 'error')
+    }
 }
 
 function openMaintenanceDialog(m: MaintenanceWindow | null) {
@@ -572,7 +580,7 @@ async function saveMaintenance() {
 
 async function deleteMaintenanceWindow() {
     if (!editingMaintenance.value || !editingUnit.value) return
-    if (!confirm('Delete this maintenance window?')) return
+    if (!await confirm({ message: `Delete this maintenance window?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteMaintenance(editingMaintenance.value.id)
         await loadMaintenance(editingUnit.value.id)
@@ -611,7 +619,7 @@ async function saveUnit() {
 
 async function removeUnit() {
     if (!editingUnit.value || !editing.value) return
-    if (!confirm(`Delete "${editingUnit.value.label}"?`)) return
+    if (!await confirm({ message: `Delete "${editingUnit.value.label}"?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteItem(editingUnit.value.id)
         await loadUnits(editing.value.id)

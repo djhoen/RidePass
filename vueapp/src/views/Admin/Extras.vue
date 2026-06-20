@@ -317,8 +317,10 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ExtraService, type ExtraProduct, type ExtraVariant, DEFAULT_EXTRA_KINDS, kindIcon, kindLabel } from '@/services/ExtraService'
 import { branding } from '@/stores/branding'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new ExtraService()
+const confirm = useConfirm()
 
 // Uploads return paths relative to the API host (e.g. /uploads/<tenant>/extra-<id>.png).
 // On the Vite dev server the relative path points at the wrong host — same fix every
@@ -532,7 +534,7 @@ async function save() {
 
 async function remove() {
     if (!editing.value) return
-    if (!confirm(`Delete "${editing.value.name}"?`)) return
+    if (!await confirm({ message: `Delete "${editing.value.name}"?`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.remove(editing.value.id)
         await load()

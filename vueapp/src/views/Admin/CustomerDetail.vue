@@ -9,6 +9,8 @@
             <v-progress-circular indeterminate></v-progress-circular>
         </div>
 
+        <v-alert v-else-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
         <div v-else-if="!detail" class="text-center text-medium-emphasis py-8">
             Customer not found at this tenant.
         </div>
@@ -203,6 +205,7 @@ const service = new CustomerService()
 
 const detail = ref<CustomerDetailDto | null>(null)
 const loading = ref(true)
+const loadError = ref<string | null>(null)
 const historyTab = ref<'day' | 'event' | 'season'>('day')
 
 const signatureDialog = ref(false)
@@ -226,8 +229,13 @@ onMounted(async () => {
     try {
         const r = await service.getDetail(userId)
         detail.value = (r.data as any).data
-    } catch {
+    } catch (err: any) {
         detail.value = null
+        // A genuine 404 means the customer isn't at this tenant — show the "not found"
+        // state. Anything else (network, 403, 500) is a real failure the user must see.
+        if (err.response?.status !== 404) {
+            loadError.value = err.response?.data?.error ?? 'Couldn’t load this customer. Refresh to try again.'
+        }
     } finally {
         loading.value = false
     }

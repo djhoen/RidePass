@@ -43,7 +43,7 @@
                             <v-btn variant="text" size="small" color="error" @click="remove(p)">Delete</v-btn>
                         </td>
                     </tr>
-                    <tr v-if="!loading && programs.length === 0">
+                    <tr v-if="!loading && !loadError && programs.length === 0">
                         <td colspan="7" class="text-center text-medium-emphasis py-8">No reward programs yet.</td>
                     </tr>
                 </tbody>
@@ -102,11 +102,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { RewardService, type RewardProgram, type UpsertRewardProgram } from '@/services/RewardService'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new RewardService()
+const confirm = useConfirm()
 
 const programs = ref<RewardProgram[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const dialog = ref(false)
 const editing = ref<RewardProgram | null>(null)
 const saving = ref(false)
@@ -136,9 +139,14 @@ onMounted(load)
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const r = await service.listProgramsAdmin()
         programs.value = (r.data as any).data
+    } catch (err: any) {
+        const msg = err.response?.data?.error ?? 'Couldn’t load reward programs. Refresh to try again.'
+        loadError.value = msg
+        flash(msg, 'error')
     } finally {
         loading.value = false
     }
@@ -190,7 +198,7 @@ async function save() {
 }
 
 async function remove(p: RewardProgram) {
-    if (!confirm(`Delete "${p.name}"? This removes all enrollments and unredeemed vouchers.`)) return
+    if (!await confirm({ message: `Delete "${p.name}"? This removes all enrollments and unredeemed vouchers.`, confirmText: 'Delete', confirmColor: 'error' })) return
     try {
         await service.deleteProgram(p.id)
         await load()

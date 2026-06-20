@@ -8,6 +8,9 @@
         </div>
 
         <template v-else>
+            <div v-if="loadError" class="text-center text-error py-8">{{ loadError }}</div>
+
+            <template v-else>
             <!-- Upcoming carousel -->
             <div v-if="upcoming.length" class="mb-5">
                 <div class="text-subtitle-1 font-weight-bold mb-2">Upcoming events</div>
@@ -43,6 +46,7 @@
             <div v-if="events.length === 0" class="text-center text-medium-emphasis py-4">
                 No upcoming events.
             </div>
+            </template>
         </template>
     </div>
 </template>
@@ -61,6 +65,7 @@ const eventService = new EventService()
 
 const events = ref<EventDto[]>([])
 const loading = ref(true)
+const loadError = ref('')
 const monthStart = ref(dayjs().startOf('month').format('YYYY-MM-DD'))
 
 // Optional widget config (mirrors the events widget):
@@ -113,8 +118,9 @@ onMounted(async () => {
         let list = ((r.data as any).data as EventDto[]).filter(e => e.status === 'scheduled')
         if (typeCode) list = list.filter(e => (e.eventTypeCode || '').toLowerCase() === typeCode)
         events.value = list
-    } catch (err) {
-        console.error('Failed to load embed calendar', err)
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error
+            || 'Could not load events. Refresh the page to try again.'
     } finally {
         loading.value = false
     }

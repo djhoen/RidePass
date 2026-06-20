@@ -20,6 +20,9 @@ namespace webapi.AuthPolicies
         public const string CustomersView  = "customers.view";
         public const string BlogManage     = "blog.manage";
         public const string SalesRefund    = "sales.refund";
+        // Elevated: refund a purchase even after it's been checked in / used, and refund a whole
+        // order at once. Held by tenant_admin + tenant_manager only.
+        public const string SalesRefundOverride = "sales.refund.override";
 
         // Compile-time policy names for [Authorize(Policy = ...)] attributes.
         // Must match TenantPermissionRequirement.PolicyName(perm) format.
@@ -38,6 +41,7 @@ namespace webapi.AuthPolicies
             public const string CustomersView  = "TenantPerm:customers.view";
             public const string BlogManage     = "TenantPerm:blog.manage";
             public const string SalesRefund    = "TenantPerm:sales.refund";
+            public const string SalesRefundOverride = "TenantPerm:sales.refund.override";
         }
 
         public static readonly string[] All =
@@ -45,7 +49,7 @@ namespace webapi.AuthPolicies
             UsersManage, SettingsManage, CatalogManage,
             SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
-            BlogManage, SalesRefund,
+            BlogManage, SalesRefund, SalesRefundOverride,
         };
 
         public static IReadOnlySet<string> ForRole(string role) =>
@@ -101,7 +105,7 @@ namespace webapi.AuthPolicies
         {
             CatalogManage, SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
-            BlogManage, SalesRefund,
+            BlogManage, SalesRefund, SalesRefundOverride,
         };
 
         private static readonly HashSet<string> CashierSet = new()

@@ -17,6 +17,7 @@
             <div v-if="loading" class="text-center py-6">
                 <v-progress-circular indeterminate size="24"></v-progress-circular>
             </div>
+            <v-alert v-else-if="loadError" type="error" variant="tonal" density="compact" class="ma-3">{{ loadError }}</v-alert>
             <v-list v-else density="compact">
                 <v-list-item v-for="(r, idx) in riders" :key="r.userId" link
                     @click="openCustomer(r.userId)">
@@ -55,6 +56,7 @@ const metric = ref<'days' | 'spent'>('days')
 const period = ref<'month' | 'year'>('month')
 const riders = ref<TopRiderDto[]>([])
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 
 onMounted(load)
 // Reload when either toggle changes — small enough payload that this is fine,
@@ -63,9 +65,12 @@ watch([metric, period], load)
 
 async function load() {
     loading.value = true
+    loadError.value = null
     try {
         const r = await service.topRiders(metric.value, period.value, 10)
         riders.value = (r.data as any).data
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error || 'Couldn’t load top riders. Refresh to try again.'
     } finally {
         loading.value = false
     }
