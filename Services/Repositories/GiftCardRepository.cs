@@ -77,6 +77,29 @@ namespace Services.Repositories
             await _db.Execute(sql, new { id, amountCents });
         }
 
+        public async Task RestoreBalance(Guid id, int amountCents)
+        {
+            // Atomic increment + un-deplete. Mirror of ApplyToBalance for the reverse direction.
+            const string sql = @"
+                UPDATE gift_card
+                SET balance_cents = balance_cents + @amountCents,
+                    status = CASE WHEN status = 'depleted' AND balance_cents + @amountCents > 0 THEN 'active' ELSE status END
+                WHERE id = @id";
+            await _db.Execute(sql, new { id, amountCents });
+        }
+
+        public async Task<List<GiftCardRedemption>> DeleteRedemptionsBySource(string sourceKind, IReadOnlyList<Guid> sourceIds)
+        {
+            if (sourceIds.Count == 0) return new List<GiftCardRedemption>();
+            const string sql = @"
+                DELETE FROM gift_card_redemption
+                WHERE source_kind = @sourceKind AND source_id = ANY(@sourceIds)
+                RETURNING id, gift_card_id AS GiftCardId, tenant_id AS TenantId, user_id AS UserId,
+                          source_kind AS SourceKind, source_id AS SourceId, amount_cents AS AmountCents,
+                          redeemed_at AS RedeemedAt";
+            return (await _db.Query<GiftCardRedemption>(sql, new { sourceKind, sourceIds = sourceIds.ToArray() })).ToList();
+        }
+
         public async Task MarkDelivered(Guid id)
         {
             const string sql = @"

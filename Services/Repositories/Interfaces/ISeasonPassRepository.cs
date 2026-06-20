@@ -31,6 +31,10 @@ namespace Services.Repositories.Interfaces
         // Reservations
         Task<Guid> CreateReservation(SeasonPassReservation r);
         Task<SeasonPassReservation?> GetReservation(Guid purchaseId, Guid eventId);
+
+        /// <summary>Resolve a reservation id to its event + the season-pass holder, for check-in
+        /// waiver gating. Tenant-scoped through the purchase join. Null if not found in this tenant.</summary>
+        Task<SeasonPassCheckInContext?> GetReservationForCheckIn(Guid reservationId, Guid tenantId);
         Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchase(Guid purchaseId);
         Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(Guid purchaseId, DateTime atUtc, DateTime untilUtc);
         /// <summary>

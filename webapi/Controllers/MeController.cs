@@ -28,6 +28,8 @@ namespace webapi.Controllers
         private readonly Services.Waitlist.IWaitlistPromoter _waitlistPromoter;
         private readonly ISmtpEmailer _emailer;
         private readonly IEmailSuppressionRepository _suppression;
+        private readonly Services.LoamPassMx.ILoamPassMxService _loampass;
+        private readonly ILoampassRedemptionRepository _loampassRedemptions;
         private readonly IConfiguration _config;
         private readonly ILogger<MeController> _logger;
         private readonly ITenantContext _tenantContext;
@@ -45,6 +47,8 @@ namespace webapi.Controllers
             Services.Waitlist.IWaitlistPromoter waitlistPromoter,
             ISmtpEmailer emailer,
             IEmailSuppressionRepository suppression,
+            Services.LoamPassMx.ILoamPassMxService loampass,
+            ILoampassRedemptionRepository loampassRedemptions,
             IConfiguration config,
             ILogger<MeController> logger,
             ITenantContext tenantContext)
@@ -61,6 +65,8 @@ namespace webapi.Controllers
             _waitlistPromoter = waitlistPromoter;
             _emailer = emailer;
             _suppression = suppression;
+            _loampass = loampass;
+            _loampassRedemptions = loampassRedemptions;
             _config = config;
             _logger = logger;
             _tenantContext = tenantContext;
@@ -360,27 +366,55 @@ namespace webapi.Controllers
             var refundCents = RefundCalculator.RefundableCents(
                 purchase.AmountCents, purchase.ServiceChargeCents, tier?.RiderPaidServiceChargeBps ?? 10000);
 
-            await _tickets.Cancel(id, _tenantContext.TenantId, userId, reason);
+            // Return the rider's money (or Loam Pass credit) BEFORE cancelling. If the reversal
+            // fails we keep the ticket and tell them, so a self-cancel can never leave them with no
+            // ticket AND no refund. A successful (or not-applicable) reversal then proceeds to cancel.
             string? refundId = null;
-            if (refundCents > 0 && !string.IsNullOrEmpty(purchase.StripePaymentIntentId))
+            if (purchase.PaymentMethod == "loampass_credits")
+            {
+                // $0 entry paid with a Loam Pass credit: give the credit back on the LoamMx side.
+                var redemption = await _loampassRedemptions.GetByPurchaseId(id, _tenantContext.TenantId);
+                if (redemption is not null && redemption.Status != "refunded")
+                {
+                    bool returned;
+                    try { returned = await _loampass.RefundAsync(redemption.IdempotencyKey, ct); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Loam Pass un-redeem failed during self-cancel of ticket {Id}", id);
+                        returned = false;
+                    }
+                    if (!returned)
+                        return new ApiResponses().BadRequestResult(
+                            "We couldn't return your Loam Pass credit right now, so your entry was not cancelled. Please try again shortly or contact the track.");
+                    await _loampassRedemptions.MarkRefunded(redemption.Id);
+                }
+                refundCents = 0;
+            }
+            else if (refundCents > 0 && !string.IsNullOrEmpty(purchase.StripePaymentIntentId))
             {
                 try
                 {
                     var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents,
                         idempotencyKey: $"refund-ticket-{id}-{refundCents}", ct: ct);
                     refundId = refund.RefundId;
-                    await _tickets.MarkRefunded(id, $"stripe_refund={refundId} status={refund.Status} amount_cents={refundCents}");
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Stripe refund failed during self-cancel of ticket {Id}", id);
+                    return new ApiResponses().BadRequestResult(
+                        "We couldn't process your refund right now, so your ticket was not cancelled. Please try again shortly or contact the track.");
                 }
             }
-            await _audit.Log("rider.self_cancel", $"Rider cancelled ticket — refund ${refundCents/100m:0.00}",
+
+            await _tickets.Cancel(id, _tenantContext.TenantId, userId, reason);
+            if (refundId is not null)
+                await _tickets.MarkRefunded(id, $"stripe_refund={refundId} amount_cents={refundCents}");
+
+            await _audit.Log("rider.self_cancel", $"Rider cancelled ticket, refund ${refundCents/100m:0.00}",
                 "event_ticket_purchase", id, _tenantContext.TenantId, new { reason, refundCents, refundId });
             if (tier is not null)
             {
-                _ = _waitlistPromoter.PromoteNext(tier.EventId, purchase.TierId);
+                _ = _waitlistPromoter.PromoteNext(tier.EventId, purchase.TierId, tier.LadderGroup);
             }
             return new ApiResponses().OkResult(new { id, status = "cancelled", refundCents, refundId });
         }

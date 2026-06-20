@@ -280,6 +280,20 @@ namespace Services.Repositories
             return (await _db.Query<SeasonPassReservation>(sql, new { purchaseId, eventId })).FirstOrDefault();
         }
 
+        public async Task<SeasonPassCheckInContext?> GetReservationForCheckIn(Guid reservationId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT r.id AS ReservationId, r.event_id AS EventId,
+                       p.purchaser_user_id AS HolderUserId,
+                       p.purchaser_email AS HolderEmail,
+                       p.purchaser_name AS HolderName
+                FROM season_pass_reservation r
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                WHERE r.id = @reservationId AND p.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<SeasonPassCheckInContext>(sql, new { reservationId, tenantId })).FirstOrDefault();
+        }
+
         public async Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchase(Guid purchaseId)
         {
             const string sql = @"

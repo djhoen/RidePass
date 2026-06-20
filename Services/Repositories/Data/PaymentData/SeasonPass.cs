@@ -80,4 +80,14 @@ namespace Services.Repositories.Data.PaymentData
         public DateTime EventStartsAt { get; set; }
         public DateTime EventEndsAt { get; set; }
     }
+
+    /// <summary>A reservation resolved to its event + the season-pass holder, for check-in gating.</summary>
+    public class SeasonPassCheckInContext
+    {
+        public Guid ReservationId { get; set; }
+        public Guid EventId { get; set; }
+        public Guid? HolderUserId { get; set; }
+        public string? HolderEmail { get; set; }
+        public string? HolderName { get; set; }
+    }
 }

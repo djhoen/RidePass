@@ -16,17 +16,20 @@ namespace webapi.Controllers
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventExtraRepository _extras;
         private readonly IUserRepository _users;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
 
         public RedemptionController(
             IEventTicketPurchaseRepository tickets,
             IEventExtraRepository extras,
             IUserRepository users,
+            Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext)
         {
             _tickets = tickets;
             _extras = extras;
             _users = users;
+            _waiverGate = waiverGate;
             _tenantContext = tenantContext;
         }
 
@@ -62,6 +65,14 @@ namespace webapi.Controllers
             if (!preview.IsRedeemableToday)
             {
                 return new ApiResponses().BadRequestResult(preview.NotRedeemableReason ?? "This purchase is not redeemable today.");
+            }
+
+            // Waiver gate: a required event waiver can't be skipped at check-in.
+            var ticketRow = await _tickets.GetById(preview.PurchaseId, _tenantContext.TenantId);
+            if (ticketRow is not null)
+            {
+                var waiverBlock = await _waiverGate.BlockReasonForTicket(_tenantContext.TenantId, ticketRow);
+                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 
             var staffId = TryGetStaffUserId();
@@ -217,6 +228,8 @@ namespace webapi.Controllers
                         if (t is null) { resp.Errors.Add($"Ticket {entry.PurchaseId} not found."); continue; }
                         if (t.Status == "redeemed") { resp.Errors.Add("A ticket was already redeemed — skipped."); continue; }
                         if (t.Status != "paid") { resp.Errors.Add($"Ticket status is '{t.Status}' — can't redeem."); continue; }
+                        var waiverBlock = await _waiverGate.BlockReasonForTicket(tenantId, t);
+                        if (waiverBlock is not null) { resp.Errors.Add(waiverBlock); continue; }
                         if (staffId.HasValue) await _tickets.MarkRedeemed(t.Id, tenantId, staffId.Value, nowUtc);
                         else                   await _tickets.UpdateStatus(t.Id, "redeemed");
                         resp.RedeemedCount++;

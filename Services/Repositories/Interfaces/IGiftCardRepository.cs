@@ -15,6 +15,15 @@ namespace Services.Repositories.Interfaces
         /// <summary>Lower the card's balance by amount; flip status to 'depleted' when it hits zero.</summary>
         Task ApplyToBalance(Guid id, int amountCents);
 
+        /// <summary>Add amount back to the card's balance; un-deplete it if it was depleted. Used to
+        /// reverse a hold when the checkout that applied the card failed or was abandoned.</summary>
+        Task RestoreBalance(Guid id, int amountCents);
+
+        /// <summary>Delete the redemption rows for the given sources and RETURN the deleted rows
+        /// (so the caller can restore exactly what it removed). Race-safe: only the call that wins
+        /// the delete gets the rows back, so a concurrent retry restores nothing.</summary>
+        Task<List<GiftCardRedemption>> DeleteRedemptionsBySource(string sourceKind, IReadOnlyList<Guid> sourceIds);
+
         /// <summary>Mark a pending card delivered (called after a successful email send).</summary>
         Task MarkDelivered(Guid id);
 

@@ -22,6 +22,12 @@ export interface TopEvent {
     revenueCents: number
 }
 
+export interface RevenueByKind {
+    kind: string
+    revenueCents: number
+    saleCount: number
+}
+
 export interface TenantReportSummary {
     fromUtc: string
     toUtc: string
@@ -33,6 +39,7 @@ export interface TenantReportSummary {
     cancelledCount: number
     disputedCount: number
     refundedAmountCents: number
+    revenueByType: RevenueByKind[]
     dailyRevenue: DailyRevenuePoint[]
     topPassProducts: TopProduct[]
     topEvents: TopEvent[]

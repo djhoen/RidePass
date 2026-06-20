@@ -38,6 +38,9 @@ namespace Services.Repositories
                     UNION ALL
                     SELECT rental_pi_id, created_at FROM rental_purchase
                         WHERE status = 'pending' AND rental_pi_id IS NOT NULL AND created_at < @cutoff
+                    UNION ALL
+                    SELECT stripe_payment_intent_id, created_at FROM concession_sale
+                        WHERE status = 'pending' AND stripe_payment_intent_id IS NOT NULL AND created_at < @cutoff
                 ) q
                 GROUP BY stripe_payment_intent_id
                 ORDER BY MIN(created_at)

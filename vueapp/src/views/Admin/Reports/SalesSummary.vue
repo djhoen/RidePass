@@ -51,6 +51,36 @@
             </v-card-text>
         </v-card>
 
+        <v-card class="mb-4" v-if="summary && summary.revenueByType.length">
+            <v-card-title>Revenue by Type</v-card-title>
+            <v-table density="compact">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th style="width: 120px">Sales</th>
+                        <th style="width: 140px">Revenue</th>
+                        <th style="width: 110px">% of total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="r in summary.revenueByType" :key="r.kind">
+                        <td>{{ kindLabel(r.kind) }}</td>
+                        <td>{{ r.saleCount }}</td>
+                        <td>${{ (r.revenueCents / 100).toFixed(2) }}</td>
+                        <td>{{ pctOfTotal(r.revenueCents) }}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr class="font-weight-bold">
+                        <td>Total</td>
+                        <td></td>
+                        <td>${{ (summary.totalRevenueCents / 100).toFixed(2) }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </v-table>
+        </v-card>
+
         <v-row v-if="summary">
             <v-col cols="12">
                 <v-card>
@@ -171,6 +201,25 @@ async function load() {
 
 function formatDate(utc: string): string {
     return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
+}
+
+const KIND_LABELS: Record<string, string> = {
+    event_ticket: 'Event tickets',
+    season_pass: 'Season passes',
+    membership: 'Memberships',
+    extras: 'Add-ons',
+    rental: 'Rentals',
+    concession: 'Concessions',
+    pass: 'Day passes',
+    day_pass: 'Day passes',
+}
+function kindLabel(kind: string): string {
+    return KIND_LABELS[kind] || kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+function pctOfTotal(cents: number): string {
+    const total = summary.value?.totalRevenueCents || 0
+    if (total <= 0) return '0%'
+    return Math.round((cents / total) * 100) + '%'
 }
 
 const revenueChartData = computed(() => {

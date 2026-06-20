@@ -26,6 +26,8 @@ namespace webapi.Controllers
         private readonly IGiftCardRepository _giftCards;
         private readonly Services.GiftCards.IGiftCardValidator _giftCardValidator;
         private readonly IMembershipRepository _memberships;
+        private readonly IWaiverRepository _waivers;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
 
         public SeasonPassController(
@@ -38,6 +40,8 @@ namespace webapi.Controllers
             IGiftCardRepository giftCards,
             Services.GiftCards.IGiftCardValidator giftCardValidator,
             IMembershipRepository memberships,
+            IWaiverRepository waivers,
+            Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext)
         {
             _passes = passes;
@@ -49,6 +53,8 @@ namespace webapi.Controllers
             _giftCards = giftCards;
             _giftCardValidator = giftCardValidator;
             _memberships = memberships;
+            _waivers = waivers;
+            _waiverGate = waiverGate;
             _tenantContext = tenantContext;
         }
 
@@ -197,6 +203,26 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("A photo of the pass holder is required for ID verification at the gate.");
             }
 
+            // Waiver gate at purchase: when the pass requires a waiver, the holder signs the
+            // current waiver now so they don't have to at the gate. We record the signature on
+            // the purchase. If the tenant later publishes a new version, the check-in gate
+            // re-prompts and the holder re-signs through the normal waiver flow.
+            Guid? waiverSignatureId = null;
+            if (product.RequiresWaiver)
+            {
+                var activeWaiver = await _waivers.GetActive(_tenantContext.TenantId);
+                if (activeWaiver is not null)
+                {
+                    var sig = await _waivers.GetSignature(userId, activeWaiver.Id);
+                    if (sig is null)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            "This season pass requires a signed waiver. Please sign the current waiver before purchasing.");
+                    }
+                    waiverSignatureId = sig.Id;
+                }
+            }
+
             var tenant = _tenantContext.Tenant;
             var basePrice = product.PriceCents;
 
@@ -230,6 +256,7 @@ namespace webapi.Controllers
                 ValidToDate = product.ValidToDate,
                 CreditsRemaining = product.Kind == "credits" ? product.TotalCredits : null,
                 PhotoDataUrl = request.PhotoDataUrl,
+                WaiverSignatureId = waiverSignatureId,
             };
             var (id, token) = await _passes.CreatePurchase(purchase);
             purchase.Id = id;
@@ -481,6 +508,17 @@ namespace webapi.Controllers
             // tenant_id, so a staff JWT scoped to tenant A can't flip a
             // reservation that belongs to tenant B.
             Guid? staffId = TryGetUserId(out var sid) ? sid : (Guid?)null;
+
+            // A required event waiver can't be skipped at the season-pass gate either. The holder
+            // is a rider, so enforce the event's rider waiver.
+            var ctx = await _passes.GetReservationForCheckIn(id, _tenantContext.TenantId);
+            if (ctx is not null)
+            {
+                var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, ctx.EventId,
+                    riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
+                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+            }
+
             await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
             return new ApiResponses().OkResult();
         }

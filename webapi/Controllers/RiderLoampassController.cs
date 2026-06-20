@@ -24,17 +24,20 @@ namespace webapi.Controllers
         private readonly ILoamPassMxService _loampass;
         private readonly ITenantContext _tenantContext;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
 
         public RiderLoampassController(
             IRiderLoampassLinkRepository links,
             ILoamPassMxService loampass,
             ITenantContext tenantContext,
-            IEventTicketPurchaseRepository ticketPurchases)
+            IEventTicketPurchaseRepository ticketPurchases,
+            Services.Waivers.IWaiverCheckInGate waiverGate)
         {
             _links = links;
             _loampass = loampass;
             _tenantContext = tenantContext;
             _ticketPurchases = ticketPurchases;
+            _waiverGate = waiverGate;
         }
 
         [HttpGet("Status")]
@@ -141,6 +144,14 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(
                     already ? "This rider is already checked in for this event."
                             : "No reservation found for this rider at this event.");
+            }
+
+            // A required event waiver can't be skipped at the Loam Pass gate either.
+            var ticketRow = await _ticketPurchases.GetById(entry.Id, _tenantContext.TenantId);
+            if (ticketRow is not null)
+            {
+                var waiverBlock = await _waiverGate.BlockReasonForTicket(_tenantContext.TenantId, ticketRow);
+                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 
             await _ticketPurchases.MarkRedeemed(entry.Id, _tenantContext.TenantId, staffId, DateTime.UtcNow);

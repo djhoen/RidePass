@@ -7,7 +7,8 @@ namespace Services.Repositories
     public class EventWaitlistRepository : IEventWaitlistRepository
     {
         private const string Columns = @"
-            id, tenant_id AS TenantId, event_id AS EventId, tier_id AS TierId, user_id AS UserId,
+            id, tenant_id AS TenantId, event_id AS EventId, tier_id AS TierId,
+            ladder_group AS LadderGroup, user_id AS UserId,
             position, quantity, notes,
             is_prepaid AS IsPrepaid,
             prepay_pi_id AS PrepayPiId,
@@ -33,21 +34,25 @@ namespace Services.Repositories
             // compute the same position, the insert just shifts to position+1
             // on retry — for MVP we accept the rare duplicate-position outcome
             // since the queue still orders by position+created_at.
+            // Position counts within the CLASS bucket: the ladder group when set, else the
+            // exact tier (matching the per-event/standalone behavior). Keeps a ladder's steps
+            // in one queue instead of separate per-step counters.
             const string nextPosSql = @"
                 SELECT COALESCE(MAX(position), 0) + 1 FROM event_waitlist
                 WHERE event_id = @EventId
-                  AND tier_id IS NOT DISTINCT FROM @TierId
+                  AND ((@LadderGroup IS NOT NULL AND ladder_group = @LadderGroup)
+                       OR (@LadderGroup IS NULL AND ladder_group IS NULL AND tier_id IS NOT DISTINCT FROM @TierId))
                   AND status IN ('waiting','promoted')";
             var pos = (await _db.Query<int>(nextPosSql, e)).First();
             e.Position = pos;
 
             const string insert = @"
                 INSERT INTO event_waitlist
-                    (tenant_id, event_id, tier_id, user_id, position, quantity, notes,
+                    (tenant_id, event_id, tier_id, ladder_group, user_id, position, quantity, notes,
                      is_prepaid, prepay_pi_id, prepay_amount_cents,
                      status)
                 VALUES
-                    (@TenantId, @EventId, @TierId, @UserId, @Position, @Quantity, @Notes,
+                    (@TenantId, @EventId, @TierId, @LadderGroup, @UserId, @Position, @Quantity, @Notes,
                      @IsPrepaid, @PrepayPiId, @PrepayAmountCents,
                      @Status)
                 RETURNING id";
@@ -73,16 +78,17 @@ namespace Services.Repositories
             return (await _db.Query<EventWaitlistEntry>(sql, new { paymentIntentId })).FirstOrDefault();
         }
 
-        public async Task<EventWaitlistEntry?> GetActiveForUser(Guid eventId, Guid? tierId, Guid userId)
+        public async Task<EventWaitlistEntry?> GetActiveForUser(Guid eventId, Guid? tierId, string? ladderGroup, Guid userId)
         {
             var sql = $@"
                 SELECT {Columns} FROM event_waitlist
                 WHERE event_id = @eventId
-                  AND tier_id IS NOT DISTINCT FROM @tierId
+                  AND ((@ladderGroup IS NOT NULL AND ladder_group = @ladderGroup)
+                       OR (@ladderGroup IS NULL AND ladder_group IS NULL AND tier_id IS NOT DISTINCT FROM @tierId))
                   AND user_id = @userId
                   AND status IN ('waiting','promoted')
                 LIMIT 1";
-            return (await _db.Query<EventWaitlistEntry>(sql, new { eventId, tierId, userId })).FirstOrDefault();
+            return (await _db.Query<EventWaitlistEntry>(sql, new { eventId, tierId, ladderGroup, userId })).FirstOrDefault();
         }
 
         public async Task<List<EventWaitlistEntry>> ListForEvent(Guid eventId)
@@ -103,16 +109,17 @@ namespace Services.Repositories
             return (await _db.Query<EventWaitlistEntry>(sql, new { tenantId, userId })).ToList();
         }
 
-        public async Task<EventWaitlistEntry?> PeekFront(Guid eventId, Guid? tierId)
+        public async Task<EventWaitlistEntry?> PeekFront(Guid eventId, Guid? tierId, string? ladderGroup)
         {
             var sql = $@"
                 SELECT {Columns} FROM event_waitlist
                 WHERE event_id = @eventId
-                  AND tier_id IS NOT DISTINCT FROM @tierId
+                  AND ((@ladderGroup IS NOT NULL AND ladder_group = @ladderGroup)
+                       OR (@ladderGroup IS NULL AND ladder_group IS NULL AND tier_id IS NOT DISTINCT FROM @tierId))
                   AND status = 'waiting'
                 ORDER BY position
                 LIMIT 1";
-            return (await _db.Query<EventWaitlistEntry>(sql, new { eventId, tierId })).FirstOrDefault();
+            return (await _db.Query<EventWaitlistEntry>(sql, new { eventId, tierId, ladderGroup })).FirstOrDefault();
         }
 
         public async Task SetPrepayPaymentIntentId(Guid id, string paymentIntentId)
@@ -191,15 +198,16 @@ namespace Services.Repositories
             return (await _db.Query<EventWaitlistEntry>(sql, new { nowUtc, take })).ToList();
         }
 
-        public async Task<int> CountAhead(Guid eventId, Guid? tierId, int myPosition)
+        public async Task<int> CountAhead(Guid eventId, Guid? tierId, string? ladderGroup, int myPosition)
         {
             const string sql = @"
                 SELECT COUNT(*) FROM event_waitlist
                 WHERE event_id = @eventId
-                  AND tier_id IS NOT DISTINCT FROM @tierId
+                  AND ((@ladderGroup IS NOT NULL AND ladder_group = @ladderGroup)
+                       OR (@ladderGroup IS NULL AND ladder_group IS NULL AND tier_id IS NOT DISTINCT FROM @tierId))
                   AND status = 'waiting'
                   AND position < @myPosition";
-            return await _db.ExecuteScalar(sql, new { eventId, tierId, myPosition });
+            return await _db.ExecuteScalar(sql, new { eventId, tierId, ladderGroup, myPosition });
         }
     }
 }

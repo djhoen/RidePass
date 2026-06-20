@@ -81,18 +81,23 @@ namespace webapi.Controllers
 
                 var todayTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
                 var monthTicket = await _reports.GetTicketTotals(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
+                // All-kinds gross revenue (tickets + passes + memberships + extras + rentals +
+                // concessions) so the headline matches the real money taken; the ticket count stays
+                // event-ticket-specific.
+                var todayByKind = await _reports.GetRevenueByKind(_tenantContext.TenantId, todayStartUtc, tomorrowStartUtc);
+                var monthByKind = await _reports.GetRevenueByKind(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var riders = await _reports.GetUniqueRiders(_tenantContext.TenantId, monthStartUtc, nextMonthStartUtc);
                 var daily = await _reports.GetDailyRevenue(_tenantContext.TenantId, weekStartUtc, tomorrowStartUtc, tz);
 
                 snapshot.TodayRevenue = new RevenueBlockDto
                 {
-                    RevenueCents = todayTicket.RevenueCents,
+                    RevenueCents = todayByKind.Sum(r => r.RevenueCents),
                     PassesSold = 0,
                     TicketsSold = todayTicket.SoldCount,
                 };
                 snapshot.MonthRevenue = new RevenueBlockDto
                 {
-                    RevenueCents = monthTicket.RevenueCents,
+                    RevenueCents = monthByKind.Sum(r => r.RevenueCents),
                     PassesSold = 0,
                     TicketsSold = monthTicket.SoldCount,
                 };

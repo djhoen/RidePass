@@ -1194,6 +1194,7 @@ namespace webapi.Controllers
             string paymentMethod = "stripe", status = "";
             string? stripePi = null;
             string ledgerSourceKind;
+            Guid eventTicketTierId = Guid.Empty;
 
             switch (request.Kind)
             {
@@ -1202,6 +1203,7 @@ namespace webapi.Controllers
                     var p = await _ticketPurchases.GetById(request.PurchaseId, tenantId);
                     if (p is null) return new ApiResponses().NotFoundResult("Purchase not found.");
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    eventTicketTierId = p.TierId;
                     ledgerSourceKind = "event_ticket";
                     break;
                 }
@@ -1248,7 +1250,13 @@ namespace webapi.Controllers
                 var redemption = await _loampassRedemptions.GetByPurchaseId(request.PurchaseId, tenantId);
                 if (redemption is not null && redemption.Status != "refunded")
                 {
-                    await _loampass.RefundAsync(redemption.IdempotencyKey, ct);
+                    // Only mark the redemption refunded if LoamMx actually returned the credit;
+                    // otherwise the two systems silently drift (RidePass thinks it gave the credit
+                    // back, LoamMx never got it). Bail out and let the admin retry.
+                    var returned = await _loampass.RefundAsync(redemption.IdempotencyKey, ct);
+                    if (!returned)
+                        return new ApiResponses().BadRequestResult(
+                            "Couldn't return the Loam Pass credit on the LoamMx side. The purchase was left unchanged; please retry.");
                     await _loampassRedemptions.MarkRefunded(redemption.Id);
                 }
                 refundCents = 0;   // no money moved; the credit is given back
@@ -1275,6 +1283,11 @@ namespace webapi.Controllers
                 case "event_ticket":
                     await _ticketPurchases.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
                     await _ticketPurchases.MarkRefunded(request.PurchaseId, note);
+                    // A refund frees a spot, so promote the next waitlist alternate (the admin Cancel
+                    // endpoint already does this; Refund must too or ladder/standalone waitlists stall).
+                    var refundedTier = await _tiers.GetById(eventTicketTierId, tenantId);
+                    if (refundedTier is not null)
+                        _ = _waitlistPromoter.PromoteNext(refundedTier.EventId, eventTicketTierId, refundedTier.LadderGroup);
                     break;
                 case "season_pass":
                     await _seasonPasses.Cancel(request.PurchaseId, tenantId, staffId, request.Reason);
@@ -1394,12 +1407,13 @@ namespace webapi.Controllers
             }
 
             await _ticketPurchases.Cancel(id, _tenantContext.TenantId, adminId, request.Reason);
-            // Tier-specific promote: if there's an alternate waiting on this exact tier
-            // (Pro division etc.), they get the spot first. Need the event id to scope.
+            // Promote the next alternate waiting on this class. For a price ladder the bucket
+            // is the ladder group (so any step's refund frees the class); otherwise it's the
+            // exact tier (Pro division etc.). Need the event id to scope.
             var tier = await _tiers.GetById(existing.TierId, _tenantContext.TenantId);
             if (tier is not null)
             {
-                _ = _waitlistPromoter.PromoteNext(tier.EventId, existing.TierId);
+                _ = _waitlistPromoter.PromoteNext(tier.EventId, existing.TierId, tier.LadderGroup);
             }
             return new ApiResponses().OkResult(new { id, status = "cancelled" });
         }

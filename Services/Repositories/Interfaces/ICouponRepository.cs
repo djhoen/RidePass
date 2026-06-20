@@ -22,6 +22,10 @@ namespace Services.Repositories.Interfaces
         Task<int> CountUserRedemptions(Guid couponId, Guid userId);
         Task<Guid> RecordRedemption(CouponRedemption redemption);
 
+        /// <summary>Remove redemption rows for the given sources (so a failed/abandoned checkout
+        /// stops counting against the coupon's usage limit). Idempotent: re-deleting is a no-op.</summary>
+        Task DeleteRedemptionsBySource(string sourceKind, IReadOnlyList<Guid> sourceIds);
+
         // Rider-issued coupon batches (Phase 2)
         Task<List<Coupon>> ListIssuedToUser(Guid userId, Guid tenantId);
         Task<List<Coupon>> ListIssuedFromPurchase(Guid purchaseId);

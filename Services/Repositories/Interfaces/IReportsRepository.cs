@@ -5,6 +5,11 @@ namespace Services.Repositories.Interfaces
     public interface IReportsRepository
     {
         Task<SalesTotals> GetTicketTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>Gross sales per revenue type for the period, from the unified ledger
+        /// (entry_kind='sale'). Sum across the rows for the all-kinds total.</summary>
+        Task<List<RevenueByKindRow>> GetRevenueByKind(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
         Task<int> GetUniqueRiders(Guid tenantId, DateTime fromUtc, DateTime toUtc);
         Task<int> GetDisputeCount(Guid tenantId, DateTime fromUtc, DateTime toUtc);
         Task<List<DailyRevenuePoint>> GetDailyRevenue(Guid tenantId, DateTime fromUtc, DateTime toUtc, string timezone);

@@ -22,6 +22,7 @@ namespace webapi.Controllers
         private readonly ISmsSender _sms;
         private readonly ISmtpEmailer _emailer;
         private readonly IScheduledTaskRepository _scheduledTasks;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
 
         public ReportsController(
@@ -34,6 +35,7 @@ namespace webapi.Controllers
             ISmsSender sms,
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
+            Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext)
         {
             _reports = reports;
@@ -45,6 +47,7 @@ namespace webapi.Controllers
             _sms = sms;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
+            _waiverGate = waiverGate;
             _tenantContext = tenantContext;
         }
 
@@ -61,6 +64,7 @@ namespace webapi.Controllers
             var tz = _tenantContext.Tenant.Timezone;
 
             var ticket = await _reports.GetTicketTotals(tenantId, fromUtc, toUtc);
+            var revenueByKind = await _reports.GetRevenueByKind(tenantId, fromUtc, toUtc);
             var riders = await _reports.GetUniqueRiders(tenantId, fromUtc, toUtc);
             var disputes = await _reports.GetDisputeCount(tenantId, fromUtc, toUtc);
             var daily = await _reports.GetDailyRevenue(tenantId, fromUtc, toUtc, tz);
@@ -70,7 +74,9 @@ namespace webapi.Controllers
             {
                 FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
                 ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
-                TotalRevenueCents = ticket.RevenueCents,
+                // All-kinds gross revenue from the ledger (tickets + passes + memberships + extras +
+                // rentals + concessions), broken out by type. TicketsSold stays the event-ticket count.
+                TotalRevenueCents = revenueByKind.Sum(r => r.RevenueCents),
                 PassesSold = 0,
                 TicketsSold = ticket.SoldCount,
                 UniqueRiders = riders,
@@ -78,6 +84,12 @@ namespace webapi.Controllers
                 CancelledCount = ticket.CancelledCount,
                 DisputedCount = disputes,
                 RefundedAmountCents = ticket.RefundedCents,
+                RevenueByType = revenueByKind.Select(r => new RevenueByKindDto
+                {
+                    Kind = r.SourceKind,
+                    RevenueCents = r.RevenueCents,
+                    SaleCount = r.SaleCount,
+                }).ToList(),
                 DailyRevenue = daily.Select(MapDaily).ToList(),
                 TopPassProducts = new List<TopProductDto>(),
                 TopEvents = topEvents.Select(e => new TopEventDto
@@ -166,10 +178,31 @@ namespace webapi.Controllers
             switch (req.Source)
             {
                 case "event_ticket":
-                    if (req.CheckedIn) await _tickets.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
+                    if (req.CheckedIn)
+                    {
+                        // A required event waiver can't be skipped, even on the admin check-in toggle.
+                        var t = await _tickets.GetById(purchaseId, tenantId);
+                        if (t is not null)
+                        {
+                            var waiverBlock = await _waiverGate.BlockReasonForTicket(tenantId, t);
+                            if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                        }
+                        await _tickets.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
+                    }
                     else await _tickets.UndoRedeemed(purchaseId, tenantId);
                     break;
                 case "season_pass":
+                    if (req.CheckedIn)
+                    {
+                        // A season-pass holder is a rider; enforce the event's rider waiver at check-in.
+                        var ctx = await _seasonPasses.GetReservationForCheckIn(purchaseId, tenantId);
+                        if (ctx is not null)
+                        {
+                            var waiverBlock = await _waiverGate.BlockReason(tenantId, ctx.EventId,
+                                riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
+                            if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                        }
+                    }
                     await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,
                         req.CheckedIn ? "checked_in" : "reserved",
                         req.CheckedIn ? staffId : null);

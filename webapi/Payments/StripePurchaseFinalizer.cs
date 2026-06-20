@@ -30,6 +30,7 @@ namespace webapi.Payments
         private readonly IEventTicketTierRepository _tiers;
         private readonly Services.Coupons.IBundledCouponMinter _bundledCouponMinter;
         private readonly IGiftCardRepository _giftCards;
+        private readonly ICouponRepository _coupons;
         private readonly Services.GiftCards.IGiftCardDeliveryService _giftCardDelivery;
         private readonly IRentalRepository _rentals;
         private readonly IEventWaitlistRepository _waitlist;
@@ -56,6 +57,7 @@ namespace webapi.Payments
             IEventTicketTierRepository tiers,
             Services.Coupons.IBundledCouponMinter bundledCouponMinter,
             IGiftCardRepository giftCards,
+            ICouponRepository coupons,
             Services.GiftCards.IGiftCardDeliveryService giftCardDelivery,
             IRentalRepository rentals,
             IEventWaitlistRepository waitlist,
@@ -80,6 +82,7 @@ namespace webapi.Payments
             _tiers = tiers;
             _bundledCouponMinter = bundledCouponMinter;
             _giftCards = giftCards;
+            _coupons = coupons;
             _giftCardDelivery = giftCardDelivery;
             _rentals = rentals;
             _waitlist = waitlist;
@@ -197,6 +200,7 @@ namespace webapi.Payments
                 else if (eventType == "payment_intent.payment_failed" && rental.Status == "pending")
                 {
                     await _rentals.UpdateStatus(rental.Id, "failed");
+                    await RestoreDiscountsFor("rental", new[] { rental.Id });
                 }
                 return;
             }
@@ -226,12 +230,36 @@ namespace webapi.Payments
                     }
                     break;
                 case "payment_intent.payment_failed":
-                    foreach (var t in tickets.Where(p => p.Status == "pending"))
+                    var failedTickets = tickets.Where(p => p.Status == "pending").ToList();
+                    foreach (var t in failedTickets)
                         await _ticketPurchases.UpdateStatus(t.Id, "failed");
+                    if (failedTickets.Count > 0)
+                        await RestoreDiscountsFor("event_ticket", failedTickets.Select(t => t.Id).ToList());
                     if (seasonPass is not null && seasonPass.Status == "pending")
                         await _seasonPasses.UpdatePurchaseStatus(seasonPass.Id, "failed");
                     break;
             }
+        }
+
+        // Checkout debits gift-card balance and writes gift-card + coupon redemption rows at
+        // PaymentIntent-creation time (BuyEventTicket for tickets, RentalController.Buy for rentals).
+        // When that cart fails or is abandoned we must hand the gift-card balance back and free the
+        // coupon usage, otherwise a declined card permanently consumes the rider's gift card and
+        // burns a limited-use coupon. Keyed on the just-failed source rows. The gift-card delete uses
+        // RETURNING so only the call that actually removes the rows restores their amount, making this
+        // safe under a duplicate/racing finalizer pass; the coupon delete is naturally idempotent.
+        private async Task RestoreDiscountsFor(string sourceKind, IReadOnlyList<Guid> sourceIds)
+        {
+            if (sourceIds.Count == 0) return;
+
+            var removedGiftCard = await _giftCards.DeleteRedemptionsBySource(sourceKind, sourceIds);
+            foreach (var byCard in removedGiftCard.GroupBy(r => r.GiftCardId))
+            {
+                var restore = byCard.Sum(r => r.AmountCents);
+                if (restore > 0) await _giftCards.RestoreBalance(byCard.Key, restore);
+            }
+
+            await _coupons.DeleteRedemptionsBySource(sourceKind, sourceIds);
         }
 
         private async Task OnMembershipPaid(Services.Repositories.Data.MembershipData.MembershipPurchase m, bool membershipOwnsTheFee)

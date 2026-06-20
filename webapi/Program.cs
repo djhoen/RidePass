@@ -62,6 +62,7 @@ builder.Services.AddScoped<IEventTicketTierRepository, EventTicketTierRepository
 builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRepository>();
 builder.Services.AddScoped<IDisputeRepository, DisputeRepository>();
 builder.Services.AddScoped<IReportsRepository, ReportsRepository>();
+builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
 builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
 // Scheduled-task handlers — add one line per kind. The dispatcher resolves

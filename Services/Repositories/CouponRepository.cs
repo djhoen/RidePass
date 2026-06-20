@@ -134,6 +134,15 @@ namespace Services.Repositories
             return (await _db.Query<Guid>(sql, r)).First();
         }
 
+        public async Task DeleteRedemptionsBySource(string sourceKind, IReadOnlyList<Guid> sourceIds)
+        {
+            if (sourceIds.Count == 0) return;
+            const string sql = @"
+                DELETE FROM coupon_redemption
+                WHERE source_kind = @sourceKind AND source_id = ANY(@sourceIds)";
+            await _db.Execute(sql, new { sourceKind, sourceIds = sourceIds.ToArray() });
+        }
+
         public async Task<Guid> RecordShare(CouponShare s)
         {
             const string sql = @"

@@ -25,6 +25,25 @@ namespace Services.Repositories
             return r.FirstOrDefault() ?? new SalesTotals();
         }
 
+        public async Task<List<RevenueByKindRow>> GetRevenueByKind(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            // Unified revenue from the ledger: every finalized sale (stripe, cash, voucher) writes
+            // an entry_kind='sale' row, so this captures tickets, season passes, memberships, extras,
+            // rentals, concessions, etc. in one place. Refunds are a separate entry_kind and excluded,
+            // so this is GROSS revenue; the report surfaces refunds separately.
+            const string sql = @"
+                SELECT source_kind AS SourceKind,
+                       COALESCE(SUM(gross_cents), 0)::bigint AS RevenueCents,
+                       COUNT(*)::int AS SaleCount
+                FROM tenant_ledger_entry
+                WHERE tenant_id = @tenantId
+                  AND entry_kind = 'sale'
+                  AND occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
+                GROUP BY source_kind
+                ORDER BY RevenueCents DESC";
+            return (await _db.Query<RevenueByKindRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
+        }
+
         public async Task<int> GetUniqueRiders(Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
             // Union distinct purchaser emails across passes and tickets within the range.
@@ -50,22 +69,20 @@ namespace Services.Repositories
 
         public async Task<List<DailyRevenuePoint>> GetDailyRevenue(Guid tenantId, DateTime fromUtc, DateTime toUtc, string timezone)
         {
+            // All-kinds gross revenue per local day, from the unified ledger so the chart sums to
+            // the headline total. TicketsSold stays event-ticket-only (the count riders care about);
+            // PassesSold is retired. Bucket on the tenant's local day, matching the report window.
             const string sql = @"
-                SELECT date AS Date,
-                       SUM(revenue)::bigint AS RevenueCents,
-                       SUM(passes)::int AS PassesSold,
-                       SUM(tickets)::int AS TicketsSold
-                FROM (
-                    SELECT to_char((created_at AT TIME ZONE @timezone)::date, 'YYYY-MM-DD') AS date,
-                           amount_cents AS revenue,
-                           0 AS passes,
-                           1 AS tickets
-                    FROM event_ticket_purchase
-                    WHERE tenant_id = @tenantId AND status IN ('paid','redeemed')
-                      AND created_at >= @fromUtc AND created_at < @toUtc
-                ) s
-                GROUP BY date
-                ORDER BY date";
+                SELECT to_char((occurred_at_utc AT TIME ZONE @timezone)::date, 'YYYY-MM-DD') AS Date,
+                       COALESCE(SUM(gross_cents), 0)::bigint AS RevenueCents,
+                       0 AS PassesSold,
+                       COALESCE(SUM(CASE WHEN source_kind = 'event_ticket' THEN 1 ELSE 0 END), 0)::int AS TicketsSold
+                FROM tenant_ledger_entry
+                WHERE tenant_id = @tenantId
+                  AND entry_kind = 'sale'
+                  AND occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
+                GROUP BY (occurred_at_utc AT TIME ZONE @timezone)::date
+                ORDER BY (occurred_at_utc AT TIME ZONE @timezone)::date";
             var r = await _db.Query<DailyRevenuePoint>(sql, new { tenantId, fromUtc, toUtc, timezone });
             return r.ToList();
         }

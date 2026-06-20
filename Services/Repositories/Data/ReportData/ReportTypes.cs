@@ -17,6 +17,20 @@
         public int TicketsSold { get; set; }
     }
 
+    /// <summary>
+    /// Gross sales for one revenue type within a period, from the unified tenant ledger
+    /// (entry_kind='sale'). SourceKind is the ledger source: event_ticket, season_pass,
+    /// membership, extras, rental, concession, etc. Gift-card purchases are intentionally
+    /// absent (deferred revenue, recognized when the card is spent, so counting both the
+    /// card purchase and the ticket it buys would double-count).
+    /// </summary>
+    public class RevenueByKindRow
+    {
+        public string SourceKind { get; set; } = null!;
+        public long RevenueCents { get; set; }
+        public int SaleCount { get; set; }
+    }
+
     public class TopPassProductRow
     {
         public Guid ProductId { get; set; }

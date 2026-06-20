@@ -10,12 +10,12 @@ namespace Services.Waitlist
     public interface IWaitlistPromoter
     {
         /// <summary>
-        /// Promote the next waiting alternate in the (event, tier) bucket. Pre-paid
-        /// alternates auto-confirm (creates the purchase row + notifies); everyone
-        /// else is set to 'promoted' with a confirm token + tenant-configured deadline
-        /// and texted the link. No-op if the bucket is empty.
+        /// Promote the next waiting alternate in the class bucket (the ladder_group when
+        /// set, otherwise the exact tier). Pre-paid alternates auto-confirm (create the
+        /// purchase row + notify); everyone else is set to 'promoted' with a confirm token
+        /// + tenant-configured deadline and texted the link. No-op if the bucket is empty.
         /// </summary>
-        Task PromoteNext(Guid eventId, Guid? tierId);
+        Task PromoteNext(Guid eventId, Guid? tierId, string? ladderGroup);
     }
 
     public class WaitlistPromoter : IWaitlistPromoter
@@ -52,9 +52,9 @@ namespace Services.Waitlist
             _logger = logger;
         }
 
-        public async Task PromoteNext(Guid eventId, Guid? tierId)
+        public async Task PromoteNext(Guid eventId, Guid? tierId, string? ladderGroup)
         {
-            var next = await _waitlist.PeekFront(eventId, tierId);
+            var next = await _waitlist.PeekFront(eventId, tierId, ladderGroup);
             if (next is null) return;
 
             var tenant = await _tenants.GetById(next.TenantId);
@@ -69,12 +69,18 @@ namespace Services.Waitlist
             var apex = _config["App:RootDomain"] ?? "ridepass.io";
             var origin = $"https://{tenant.Subdomain}.{apex}";
 
+            // Charge against the step recorded on the entry itself. For a price ladder this
+            // is the active step captured at join time, which can differ from the step whose
+            // refund freed the spot (the bucket key). Falls back to the bucket tier for older
+            // rows that predate the ladder_group column.
+            var chargeTierId = next.TierId ?? tierId;
+
             // Pre-paid: skip the timer, create the purchase row, notify confirmation.
             // Pre-pay only happens for tier-based waitlists (UI gates pass alternates
-            // off pre-pay), so tierId is guaranteed non-null on this branch.
-            if (next.IsPrepaid && tierId.HasValue && !string.IsNullOrEmpty(next.PrepayPiId))
+            // off pre-pay), so the charge tier is non-null on this branch.
+            if (next.IsPrepaid && chargeTierId.HasValue && !string.IsNullOrEmpty(next.PrepayPiId))
             {
-                var tier = await _tiers.GetById(tierId.Value, next.TenantId);
+                var tier = await _tiers.GetById(chargeTierId.Value, next.TenantId);
                 if (tier is null) return;
 
                 var serviceCharge = (int)((long)tier.PriceCents * tenant.ServiceChargeBps / 10_000L);

@@ -6,24 +6,25 @@ namespace Services.Repositories.Interfaces
     {
         // ── Joining the queue ────────────────────────────────────────────────
         /// <summary>
-        /// Inserts a new waiting row at the back of the (event_id, tier_id) bucket.
-        /// Returns the new id and final position. Throws on the unique-constraint
-        /// violation when the rider already has a waiting/promoted row in this bucket.
+        /// Inserts a new waiting row at the back of the class bucket (the ladder_group
+        /// when set, otherwise the exact tier_id). Returns the new id and final position.
+        /// Throws on the unique-constraint violation when the rider already has a
+        /// waiting/promoted row in this bucket.
         /// </summary>
         Task<(Guid Id, int Position)> Enqueue(EventWaitlistEntry entry);
 
         Task<EventWaitlistEntry?> GetById(Guid id);
         Task<EventWaitlistEntry?> GetByConfirmToken(Guid token);
         Task<EventWaitlistEntry?> GetByPrepayPaymentIntentId(string paymentIntentId);
-        Task<EventWaitlistEntry?> GetActiveForUser(Guid eventId, Guid? tierId, Guid userId);
+        Task<EventWaitlistEntry?> GetActiveForUser(Guid eventId, Guid? tierId, string? ladderGroup, Guid userId);
         Task<List<EventWaitlistEntry>> ListForEvent(Guid eventId);
         Task<List<EventWaitlistEntry>> ListMine(Guid userId, Guid tenantId);
 
         /// <summary>
-        /// Picks the front-of-line waiting entry for a bucket (lowest position, status='waiting').
-        /// Returns null if the bucket is empty.
+        /// Picks the front-of-line waiting entry for a class bucket (ladder_group when set,
+        /// else the exact tier_id; lowest position, status='waiting'). Returns null if empty.
         /// </summary>
-        Task<EventWaitlistEntry?> PeekFront(Guid eventId, Guid? tierId);
+        Task<EventWaitlistEntry?> PeekFront(Guid eventId, Guid? tierId, string? ladderGroup);
 
         // ── State transitions ────────────────────────────────────────────────
         Task SetPrepayPaymentIntentId(Guid id, string paymentIntentId);
@@ -41,7 +42,7 @@ namespace Services.Repositories.Interfaces
         /// <summary>Promoted rows whose confirm_deadline has passed.</summary>
         Task<List<EventWaitlistEntry>> ListExpired(DateTime nowUtc, int take);
 
-        /// <summary>How many waiting riders are ahead of me in this bucket?</summary>
-        Task<int> CountAhead(Guid eventId, Guid? tierId, int myPosition);
+        /// <summary>How many waiting riders are ahead of me in this class bucket?</summary>
+        Task<int> CountAhead(Guid eventId, Guid? tierId, string? ladderGroup, int myPosition);
     }
 }

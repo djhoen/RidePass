@@ -55,7 +55,7 @@ namespace webapi.Workers
                 await repo.MarkExpired(entry.Id);
                 // Roll to next person in the same bucket. PromoteNext handles the
                 // empty-bucket case as a no-op.
-                await promoter.PromoteNext(entry.EventId, entry.TierId);
+                await promoter.PromoteNext(entry.EventId, entry.TierId, entry.LadderGroup);
             }
         }
     }

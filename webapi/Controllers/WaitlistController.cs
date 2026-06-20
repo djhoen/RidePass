@@ -64,42 +64,63 @@ namespace webapi.Controllers
             if (ev.EndsAt < DateTime.UtcNow)
                 return new ApiResponses().BadRequestResult("Event has already ended.");
 
-            // Make sure the rider isn't already in this bucket.
-            var existing = await _waitlist.GetActiveForUser(req.EventId, req.TierId, userId);
-            if (existing is not null)
-            {
-                return new ApiResponses().BadRequestResult("You're already on this waitlist.");
-            }
-
-            // Waitlists are per-tier (race class or gate fee) — the rider waitlists for the
-            // exact admission that was full, and a promotion later charges that same tier.
-            int prepayAmountCents = 0;
             if (!req.TierId.HasValue)
                 return new ApiResponses().BadRequestResult("Pick an admission to join its waitlist.");
             var tier = await _tiers.GetById(req.TierId.Value, _tenantContext.TenantId);
             if (tier is null || tier.EventId != req.EventId || !tier.IsActive)
                 return new ApiResponses().BadRequestResult("Selected admission isn't available.");
-            if (!tier.Inventory.HasValue)
-                return new ApiResponses().BadRequestResult("This admission has unlimited capacity — no waitlist needed.");
-            var sold = await _tiers.SoldCount(tier.Id);
-            if (sold < tier.Inventory.Value)
-                return new ApiResponses().BadRequestResult("Spots are still available — buy directly instead.");
 
+            // Work out remaining capacity and the tier a future promotion would charge.
+            // A price-ladder step carries no per-step inventory: the whole class (every step
+            // sharing the ladder group) sells against event.capacity, so we count group sales
+            // and resolve the active step (today's price) to charge on promotion. A standalone
+            // tier just uses its own inventory.
+            var chargeTier = tier;
+            int sold;
+            if (tier.LadderGroup is not null)
+            {
+                if (!ev.Capacity.HasValue)
+                    return new ApiResponses().BadRequestResult("This event has unlimited capacity, so no waitlist is needed.");
+                var steps = (await _tiers.GetForEvent(req.EventId, _tenantContext.TenantId, activeOnly: true))
+                    .Where(t => t.LadderGroup == tier.LadderGroup).ToList();
+                sold = await _tiers.GroupSoldCount(req.EventId, tier.LadderGroup, _tenantContext.TenantId);
+                var state = Services.Pricing.PriceStepResolver.Resolve(steps, sold, ev.StartsAt, DateTime.UtcNow);
+                chargeTier = state?.Active ?? tier;
+                if (sold < ev.Capacity.Value)
+                    return new ApiResponses().BadRequestResult("Spots are still available, so buy directly instead.");
+            }
+            else
+            {
+                if (!tier.Inventory.HasValue)
+                    return new ApiResponses().BadRequestResult("This admission has unlimited capacity, so no waitlist is needed.");
+                sold = await _tiers.SoldCount(tier.Id);
+                if (sold < tier.Inventory.Value)
+                    return new ApiResponses().BadRequestResult("Spots are still available, so buy directly instead.");
+            }
+
+            // Make sure the rider isn't already queued for this class. For a ladder the
+            // bucket is the ladder group (spanning every step); otherwise it's the tier.
+            var existing = await _waitlist.GetActiveForUser(req.EventId, chargeTier.Id, tier.LadderGroup, userId);
+            if (existing is not null)
+                return new ApiResponses().BadRequestResult("You're already on this waitlist.");
+
+            int prepayAmountCents = 0;
             if (req.Prepay)
             {
                 // Compute pre-pay amount the same way regular checkout does so the rider
                 // ends up with no surprise charge when promoted. ServiceCharge is the
                 // tenant fee; rider pays their share per tier.RiderPaidServiceChargeBps.
-                var serviceChargePerUnit = (int)((long)tier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
-                var riderPortion = (int)((long)serviceChargePerUnit * tier.RiderPaidServiceChargeBps / 10_000L);
-                prepayAmountCents = tier.PriceCents + riderPortion;
+                var serviceChargePerUnit = (int)((long)chargeTier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
+                var riderPortion = (int)((long)serviceChargePerUnit * chargeTier.RiderPaidServiceChargeBps / 10_000L);
+                prepayAmountCents = chargeTier.PriceCents + riderPortion;
             }
 
             var entry = new EventWaitlistEntry
             {
                 TenantId = _tenantContext.TenantId,
                 EventId = req.EventId,
-                TierId = req.TierId,
+                TierId = chargeTier.Id,
+                LadderGroup = tier.LadderGroup,
                 UserId = userId,
                 Quantity = 1,
                 Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
@@ -128,7 +149,7 @@ namespace webapi.Controllers
                     ["event_id"] = req.EventId.ToString(),
                     ["user_id"] = userId.ToString(),
                 };
-                if (req.TierId.HasValue) metadata["tier_id"] = req.TierId.Value.ToString();
+                metadata["tier_id"] = chargeTier.Id.ToString();
                 try
                 {
                     var pi = await _payments.CreatePaymentIntentAsync(
@@ -173,7 +194,7 @@ namespace webapi.Controllers
                 var ev = await _events.GetById(w.EventId, _tenantContext.TenantId);
                 if (ev is null) continue;
                 var tier = w.TierId.HasValue ? await _tiers.GetById(w.TierId.Value, _tenantContext.TenantId) : null;
-                var ahead = w.Status == "waiting" ? await _waitlist.CountAhead(w.EventId, w.TierId, w.Position) : 0;
+                var ahead = w.Status == "waiting" ? await _waitlist.CountAhead(w.EventId, w.TierId, w.LadderGroup, w.Position) : 0;
                 responses.Add(new MyWaitlistEntryResponse
                 {
                     Id = w.Id,

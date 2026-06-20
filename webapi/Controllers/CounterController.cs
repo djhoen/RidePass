@@ -243,7 +243,37 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' is for an event that has already ended.");
                     }
-                    if (tier.Inventory.HasValue)
+                    // Price ladder: a step carries no per-step inventory. The live price is the
+                    // active (highest-priced fired) step and the whole class sells against
+                    // event.capacity. Resolve so the counter charges the same price an online
+                    // buyer would and can't oversell the class; standalone tiers use their own
+                    // inventory as before.
+                    List<EventTicketTier>? ladderSteps = null;
+                    if (tier.LadderGroup is not null)
+                    {
+                        ladderSteps = (await _tiers.GetForEvent(tier.EventId, _tenantContext.TenantId, activeOnly: true))
+                            .Where(t => t.LadderGroup == tier.LadderGroup).ToList();
+                        var groupSold = await _tiers.GroupSoldCount(tier.EventId, tier.LadderGroup, _tenantContext.TenantId);
+                        var state = Services.Pricing.PriceStepResolver.Resolve(
+                            ladderSteps, groupSold, ev.StartsAt, DateTime.UtcNow);
+                        if (state is null)
+                        {
+                            return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' isn't available right now.");
+                        }
+                        tier = state.Active;
+                        if (ev.Capacity.HasValue)
+                        {
+                            var cartGroupUnits = ticketItems
+                                .Where(t => t.Tier.EventId == tier.EventId && t.Tier.LadderGroup == tier.LadderGroup)
+                                .Sum(t => t.Item.Quantity) + item.Quantity;
+                            if (groupSold + cartGroupUnits > ev.Capacity.Value)
+                            {
+                                return new ApiResponses().BadRequestResult(
+                                    $"Only {Math.Max(0, ev.Capacity.Value - groupSold)} spot(s) left for \"{ev.Title}\".");
+                            }
+                        }
+                    }
+                    else if (tier.Inventory.HasValue)
                     {
                         var sold = await _tiers.SoldCount(tier.Id);
                         if (sold + item.Quantity > tier.Inventory.Value)
@@ -251,8 +281,10 @@ namespace webapi.Controllers
                             return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' has only {tier.Inventory.Value - sold} left.");
                         }
                     }
-                    // Race classes are one-per-rider — block duplicates within the cart
-                    // and any earlier active entry for the same rider in this tier.
+                    // Race classes are one-per-rider: block duplicates within the cart and any
+                    // earlier active entry for the same rider in this class. For a ladder the
+                    // class spans every step, so check them all (in-cart lines collapse because
+                    // each one normalized to the active step above).
                     if (tier.Kind == "race_entry")
                     {
                         if (item.Quantity > 1)
@@ -265,12 +297,16 @@ namespace webapi.Controllers
                             return new ApiResponses().BadRequestResult(
                                 $"Riders can only enter '{tier.Name}' once.");
                         }
-                        var already = await _ticketPurchases.HasActiveRaceEntry(
-                            _tenantContext.TenantId, tier.Id, rider.Id, rider.Email);
-                        if (already)
+                        var classStepIds = ladderSteps?.Select(s => s.Id).ToList() ?? new List<Guid> { tier.Id };
+                        foreach (var stepId in classStepIds)
                         {
-                            return new ApiResponses().BadRequestResult(
-                                $"{rider.FirstName} is already entered in '{tier.Name}'.");
+                            var already = await _ticketPurchases.HasActiveRaceEntry(
+                                _tenantContext.TenantId, stepId, rider.Id, rider.Email);
+                            if (already)
+                            {
+                                return new ApiResponses().BadRequestResult(
+                                    $"{rider.FirstName} is already entered in '{tier.Name}'.");
+                            }
                         }
                     }
                     var (unitAmount, unitServiceCharge) = ComputeWithServiceCharge(
@@ -483,9 +519,30 @@ namespace webapi.Controllers
                     capacityLocks.Add(await _db.AcquireAdvisoryLock($"event-capacity:{evId}"));
 
                 // Authoritative re-check under the locks (the cart-build loop was a fast-fail).
+                // Ladder classes sell against event.capacity, so check total group sales plus
+                // this cart's units per (event, ladder group). Standalone tiers use their own
+                // inventory. Cache event capacity/title to avoid reloading per ticket row.
+                var rcEventCache = new Dictionary<Guid, (int? Capacity, string Title)>();
+                foreach (var grp in ticketItems
+                             .Where(t => t.Tier.LadderGroup is not null)
+                             .GroupBy(t => (t.Tier.EventId, Group: t.Tier.LadderGroup!)))
+                {
+                    if (!rcEventCache.TryGetValue(grp.Key.EventId, out var rcEv))
+                    {
+                        var loaded = await _events.GetById(grp.Key.EventId, _tenantContext.TenantId);
+                        rcEv = (loaded?.Capacity, loaded?.Title ?? string.Empty);
+                        rcEventCache[grp.Key.EventId] = rcEv;
+                    }
+                    if (!rcEv.Capacity.HasValue) continue;
+                    var groupSoldNow = await _tiers.GroupSoldCount(grp.Key.EventId, grp.Key.Group, _tenantContext.TenantId);
+                    var cartUnits = grp.Sum(t => t.Item.Quantity);
+                    if (groupSoldNow + cartUnits > rcEv.Capacity.Value)
+                        return new ApiResponses().BadRequestResult(
+                            $"Only {Math.Max(0, rcEv.Capacity.Value - groupSoldNow)} spot(s) left for \"{rcEv.Title}\".");
+                }
                 foreach (var (rcItem, rcTier, _, _) in ticketItems)
                 {
-                    if (rcTier.Inventory.HasValue)
+                    if (rcTier.LadderGroup is null && rcTier.Inventory.HasValue)
                     {
                         var soldNow = await _tiers.SoldCount(rcTier.Id);
                         if (soldNow + rcItem.Quantity > rcTier.Inventory.Value)
@@ -544,10 +601,10 @@ namespace webapi.Controllers
                 // Pending rows now hold the capacity; release before the (network) Stripe call.
                 foreach (var capacityLock in capacityLocks) await capacityLock.DisposeAsync();
             }
-            // Extras: one event_extra_purchase row per unit so each gets its own QR.
-            // Variant attrs frozen on the row. Source kind 'extras' isn't in the
-            // tenant_ledger CHECK constraint yet, so we skip ledger inserts for now —
-            // matching how the existing extras flow handles ledger writes.
+            // Extras: one event_extra_purchase row per unit so each gets its own QR. Variant
+            // attrs frozen on the row. 'extras' is a valid ledger source_kind (Script0099), so
+            // cash extras flow through ledgerLines below and get a sale ledger row like everything
+            // else; the Stripe path's ledger rows are written by the webhook finalizer instead.
             foreach (var (item, product, variant, unitAmount, unitServiceCharge, unitPriceFrozen) in extrasItems)
             {
                 for (int i = 0; i < item.Quantity; i++)
@@ -592,6 +649,7 @@ namespace webapi.Controllers
                         UnitPriceCents = unitPriceFrozen,
                         LineAmountCents = unitAmount,
                     });
+                    ledgerLines.Add(("extras", created.Id, unitAmount, unitServiceCharge));
                 }
             }
             // Membership: one row per sale, frozen pricing + duration.
@@ -639,6 +697,7 @@ namespace webapi.Controllers
                 {
                     if (kind == "event_ticket") await _ticketPurchases.UpdateStatus(purchaseId, "paid");
                     else if (kind == "membership") await _memberships.UpdateStatus(purchaseId, "paid");
+                    else if (kind == "extras") await _extras.UpdateStatus(purchaseId, "paid");
                     try
                     {
                         await _ledger.Insert(new TenantLedgerEntry
@@ -653,16 +712,10 @@ namespace webapi.Controllers
                             RidepassCutCents = serviceCharge,
                             NetToTenantCents = -serviceCharge,
                             PaymentMethod = "cash",
-                            Memo = "Cash sale — tenant owes service charge",
+                            Memo = "Cash sale, tenant owes service charge",
                         });
                     }
                     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
-                }
-                // Extras don't go through ledgerLines (no source_kind='extras' in the
-                // tenant_ledger CHECK constraint), so flip their status here.
-                foreach (var li in lineItems.Where(l => l.Kind == "extras"))
-                {
-                    await _extras.UpdateStatus(li.PurchaseId, "paid");
                 }
                 if (request.RewardRedemptionId.HasValue)
                 {

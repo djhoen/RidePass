@@ -478,6 +478,11 @@ namespace webapi.Controllers
             }
             catch (InvalidOperationException ex)
             {
+                // The PaymentIntent never got created, so this rental can never reach the
+                // reconciler (it keys on rental_pi_id). Undo the gift-card/coupon holds taken
+                // above and fail the pending row so it doesn't sit forever holding inventory.
+                await RollbackRentalHolds(purchase.Id);
+                await _rentals.UpdateStatus(purchase.Id, "failed");
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
 
@@ -636,8 +641,9 @@ namespace webapi.Controllers
                 }
                 catch
                 {
-                    // Surface the refund failure but still flip status — admin can retry the
-                    // refund manually from the Stripe dashboard if the API errored.
+                    // Refund failed: do NOT flip status, so the booking stays 'out' and staff can
+                    // retry the whole return. The deposit-refund idempotency key makes a retry with
+                    // the same captured amount safe (Stripe won't double-refund).
                     return new ApiResponses().BadRequestResult(
                         "Could not issue deposit refund via Stripe. Mark the rental returned again after fixing.");
                 }
@@ -735,6 +741,21 @@ namespace webapi.Controllers
             EndsAtDate = m.EndsAtDate,
             Reason = m.Reason,
         };
+
+        // Reverse the gift-card balance + coupon/gift-card redemption rows recorded during Buy
+        // when the booking fails before payment. Mirrors the finalizer's failed-path restore so a
+        // rental that never gets charged doesn't permanently consume a gift card or burn a coupon.
+        private async Task RollbackRentalHolds(Guid rentalId)
+        {
+            var ids = new[] { rentalId };
+            var removed = await _giftCards.DeleteRedemptionsBySource("rental", ids);
+            foreach (var byCard in removed.GroupBy(r => r.GiftCardId))
+            {
+                var restore = byCard.Sum(r => r.AmountCents);
+                if (restore > 0) await _giftCards.RestoreBalance(byCard.Key, restore);
+            }
+            await _coupons.DeleteRedemptionsBySource("rental", ids);
+        }
 
         private bool TryGetUserId(out Guid userId)
         {

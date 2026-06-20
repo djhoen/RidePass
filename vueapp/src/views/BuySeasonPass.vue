@@ -41,6 +41,21 @@
                         Use a recent, well-lit selfie of just your face.
                     </p>
                     <PhotoCapture v-model="photoDataUrl" />
+
+                    <div v-if="needsWaiverSigning && waiver" class="mt-4">
+                        <div class="text-subtitle-2 mb-1">{{ waiver.title }}</div>
+                        <div class="text-caption text-medium-emphasis mb-2" style="max-height: 160px; overflow-y: auto; white-space: pre-wrap; border: 1px solid rgba(0,0,0,0.12); border-radius: 4px; padding: 8px;">{{ waiver.body }}</div>
+                        <v-text-field v-if="waiverIsMinor" v-model="parentName" label="Parent/guardian name"
+                            density="compact" hide-details class="mb-2"></v-text-field>
+                        <v-text-field v-if="waiverIsMinor" v-model="parentPhone" label="Parent/guardian phone"
+                            density="compact" hide-details class="mb-2"></v-text-field>
+                        <div class="text-caption mb-1">Sign below to agree to the waiver:</div>
+                        <SignaturePad v-model="signatureDataUrl" />
+                    </div>
+                    <div v-else-if="selectedProduct.requiresWaiver && waiver" class="mt-4 text-caption text-success">
+                        Waiver already signed.
+                    </div>
+
                     <v-text-field v-model="couponCode" label="Promo code (optional)"
                         placeholder="SUMMER25" density="compact" class="mt-3"
                         :hide-details="false" :error-messages="couponError ? [couponError] : []"></v-text-field>
@@ -51,7 +66,8 @@
                 <v-card-actions>
                     <v-spacer></v-spacer>
                     <v-btn @click="photoStepOpen = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="busyId === selectedProduct.id" :disabled="!photoDataUrl"
+                    <v-btn color="primary" :loading="busyId === selectedProduct.id"
+                        :disabled="!photoDataUrl || (needsWaiverSigning && !signatureDataUrl)"
                         @click="buy(selectedProduct)">Continue to payment</v-btn>
                 </v-card-actions>
             </v-card>
@@ -91,12 +107,15 @@ import { ref, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { SeasonPassService, type SeasonPassProduct } from '@/services/SeasonPassService'
+import { WaiverService, type WaiverDto } from '@/services/WaiverService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 import PhotoCapture from '@/components/PhotoCapture.vue'
+import SignaturePad from '@/components/SignaturePad.vue'
 
 const router = useRouter()
 const service = new SeasonPassService()
+const waiverService = new WaiverService()
 
 const products = ref<SeasonPassProduct[]>([])
 const loading = ref(false)
@@ -112,10 +131,35 @@ const giftCardCode = ref('')
 const giftCardError = ref('')
 watch(giftCardCode, () => { giftCardError.value = '' })
 
-function openPhotoStep(p: SeasonPassProduct) {
+// Waiver step (only when the pass requires one and the rider hasn't signed the current version).
+const waiver = ref<WaiverDto | null>(null)
+const needsWaiverSigning = ref(false)
+const waiverIsMinor = ref(false)
+const signatureDataUrl = ref<string | null>(null)
+const parentName = ref('')
+const parentPhone = ref('')
+
+async function openPhotoStep(p: SeasonPassProduct) {
     selectedProduct.value = p
     photoDataUrl.value = null
+    signatureDataUrl.value = null
+    parentName.value = ''
+    parentPhone.value = ''
+    waiver.value = null
+    needsWaiverSigning.value = false
+    waiverIsMinor.value = false
     photoStepOpen.value = true
+    if (p.requiresWaiver) {
+        try {
+            waiver.value = ((await waiverService.getActive()).data as any).data
+            const status = ((await waiverService.getMySignatureFor(waiver.value!.id)).data as any).data
+            needsWaiverSigning.value = !status.hasSignedCurrent
+            waiverIsMinor.value = status.riderIsMinor
+        } catch {
+            // No active waiver configured or fetch failed: leave signing off. The server still
+            // gates the purchase if a waiver is genuinely required.
+        }
+    }
 }
 
 const payOpen = ref(false)
@@ -155,8 +199,23 @@ async function buy(p: SeasonPassProduct) {
         flash('Please take your photo first.', 'error')
         return
     }
+    if (needsWaiverSigning.value) {
+        if (!signatureDataUrl.value) { flash('Please sign the waiver to continue.', 'error'); return }
+        if (waiverIsMinor.value && (!parentName.value.trim() || parentPhone.value.trim().length < 7)) {
+            flash('Riders under 18 need a parent or guardian name and phone number.', 'error'); return
+        }
+    }
     busyId.value = p.id
     try {
+        // Sign the waiver first so it's on file before the purchase (which the server requires).
+        if (needsWaiverSigning.value && waiver.value) {
+            await waiverService.sign(waiver.value.id, {
+                signatureDataUrl: signatureDataUrl.value!,
+                parentName: waiverIsMinor.value ? parentName.value.trim() : null,
+                parentPhone: waiverIsMinor.value ? parentPhone.value.trim() : null,
+            })
+            needsWaiverSigning.value = false
+        }
         const r = await service.buy(p.id, photoDataUrl.value,
             couponCode.value.trim().length > 0 ? couponCode.value.trim() : null,
             giftCardCode.value.trim().length > 0 ? giftCardCode.value.trim() : null)

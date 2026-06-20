@@ -6,6 +6,10 @@ namespace Services.Repositories.Data.WaitlistData
         public Guid TenantId { get; set; }
         public Guid EventId { get; set; }
         public Guid? TierId { get; set; }
+        // For a price-ladder waitlist this is the class (ladder_group) the entry queues
+        // against; TierId holds the active step a promotion charges. NULL for a standalone
+        // tier or a per-event (tier-less) waitlist, where TierId alone is the bucket.
+        public string? LadderGroup { get; set; }
         public Guid UserId { get; set; }
         public int Position { get; set; }
         public int Quantity { get; set; } = 1;
