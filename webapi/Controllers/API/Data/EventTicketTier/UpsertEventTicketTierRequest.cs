@@ -34,6 +34,14 @@ namespace webapi.Controllers.API.Data.EventTicketTier
         [Range(0, 10000)]
         public int RiderPaidServiceChargeBps { get; set; } = 10000;
 
+        // Dynamic pricing (price steps). Steps sharing a LadderGroup on one event escalate
+        // the price; the live price is the highest-priced step whose trigger has fired.
+        // All triggers null = the base (starting) step. LadderGroup null = standalone tier.
+        [MaxLength(64)] public string? LadderGroup { get; set; }
+        [Range(0, int.MaxValue)] public int? MinSold { get; set; }            // quantity trigger
+        [Range(0, 3650)]         public int? EffectiveDaysBefore { get; set; } // date trigger (relative)
+        public DateTime? EffectiveAtUtc { get; set; }                          // date trigger (absolute)
+
         // Bundled-coupon config. Only meaningful when Kind = 'race_entry'. When
         // BundledCouponCount > 0 every paid purchase mints N coupon codes for the buyer.
         [Range(1, 100)] public int? BundledCouponCount { get; set; }

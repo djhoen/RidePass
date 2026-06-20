@@ -375,6 +375,37 @@ namespace webapi.Controllers
                         EventId = clone.Id, ProductId = e.ProductId, Inventory = e.Inventory,
                     }));
             }
+
+            // Carry over the ticket tiers (incl. price-ladder steps) so the duplicate is
+            // sellable as-is. Relative date triggers (days-before) stay correct against the
+            // shifted start; an absolute date trigger is shifted by the same offset.
+            var srcTiers = await _tiers.GetForEvent(source.Id, _tenantContext.TenantId, activeOnly: false);
+            foreach (var t in srcTiers)
+            {
+                await _tiers.Create(new Services.Repositories.Data.PaymentData.EventTicketTier
+                {
+                    TenantId = clone.TenantId,
+                    EventId = clone.Id,
+                    Kind = t.Kind,
+                    Audience = t.Audience,
+                    Required = t.Required,
+                    Name = t.Name,
+                    PriceCents = t.PriceCents,
+                    Inventory = t.Inventory,
+                    SortOrder = t.SortOrder,
+                    IsActive = t.IsActive,
+                    RiderPaidServiceChargeBps = t.RiderPaidServiceChargeBps,
+                    LadderGroup = t.LadderGroup,
+                    MinSold = t.MinSold,
+                    EffectiveDaysBefore = t.EffectiveDaysBefore,
+                    EffectiveAtUtc = t.EffectiveAtUtc.HasValue ? t.EffectiveAtUtc.Value.Add(shift) : (DateTime?)null,
+                    BundledCouponCount = t.BundledCouponCount,
+                    BundledCouponDiscountKind = t.BundledCouponDiscountKind,
+                    BundledCouponDiscountValue = t.BundledCouponDiscountValue,
+                    BundledCouponScope = t.BundledCouponScope,
+                    BundledCouponExpiresInDays = t.BundledCouponExpiresInDays,
+                });
+            }
             FireAndForgetNotify(clone);
 
             var type = await _eventTypes.GetById(source.EventTypeId, _tenantContext.TenantId);

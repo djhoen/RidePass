@@ -79,6 +79,7 @@ export interface CreateTenantPayload {
     subdomain: string
     displayName: string
     tenantType: 'motocross' | 'mountain_bike'
+    venueCategory: 'bike_park' | 'shuttle' | 'resort' | null
     timezone: string
     adminEmail?: string | null
     adminFirstName?: string | null

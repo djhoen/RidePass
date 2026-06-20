@@ -16,6 +16,16 @@ namespace Services.Repositories.Interfaces
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
         Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail);
+
+        /// <summary>
+        /// Per-rider uniqueness within a race class (the set of tiers in classTierIds, i.e. all
+        /// price-ladder steps of one class). Returns "person" if the same rider (name + birthdate)
+        /// is already entered, "number" if the race number is taken, else null. excludeTicketIds
+        /// skip the rows being registered in the same request.
+        /// </summary>
+        Task<string?> FindRaceClassConflict(Guid tenantId, IReadOnlyList<Guid> classTierIds,
+            string firstName, string lastName, DateTime? birthdate, string? raceNumber,
+            IReadOnlyList<Guid> excludeTicketIds);
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
         Task UndoRedeemed(Guid id, Guid tenantId);
         Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);

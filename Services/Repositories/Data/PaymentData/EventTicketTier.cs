@@ -17,6 +17,13 @@
         public int SortOrder { get; set; }
         public bool IsActive { get; set; }
         public int RiderPaidServiceChargeBps { get; set; }
+        // Dynamic pricing: steps sharing a LadderGroup on one event escalate the price.
+        // LadderGroup NULL = standalone tier (default). A step "fires" when its trigger is
+        // met; the live price is the highest-priced fired step. All triggers NULL = base step.
+        public string? LadderGroup { get; set; }
+        public int? MinSold { get; set; }              // quantity trigger: group cumulative sold >= this
+        public int? EffectiveDaysBefore { get; set; }  // date trigger: fires at event start minus N days
+        public DateTime? EffectiveAtUtc { get; set; }   // date trigger: fires at/after this instant (absolute)
         // Bundled coupons (race-entry tiers): when BundledCouponCount > 0, every paid
         // purchase of this tier auto-mints N coupons tied to the purchaser.
         public int? BundledCouponCount { get; set; }

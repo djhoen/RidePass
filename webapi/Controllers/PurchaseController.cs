@@ -231,7 +231,9 @@ namespace webapi.Controllers
                 {
                     return new ApiResponses().BadRequestResult("All admissions in a single purchase must be for the same event.");
                 }
-                if (tier.Inventory.HasValue)
+                // Per-tier inventory only applies to standalone tiers. Ladder steps are
+                // capped by event.capacity at the group level (handled after the event loads).
+                if (tier.Inventory.HasValue && tier.LadderGroup is null)
                 {
                     var sold = await _tiers.SoldCount(tier.Id);
                     if (sold + item.Quantity > tier.Inventory.Value)
@@ -279,6 +281,52 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("That event has already ended or is no longer available.");
             }
 
+            // Active tiers for this event, loaded once (used by the price-ladder + gate-fee checks).
+            var eventTiers = await _tiers.GetForEvent(parentEvent.Id, _tenantContext.TenantId, activeOnly: true);
+
+            // Dynamic price-ladder enforcement. A ladder step in the cart must be the *active*
+            // (cheapest fired) step; if sales or a date moved the price since the page loaded,
+            // return 409 price_changed so the client re-confirms. The whole order is honored at
+            // the active price implicitly (every ticket references the active step's tier and
+            // freezes its price), and a ladder sells against event.capacity, not a per-step cap.
+            // NOTE: like the rest of the ticket path this is read-then-insert (no advisory lock),
+            // so under heavy concurrency a few extra sales could land at the lower step. Matches
+            // the existing inventory check's posture; tighten with an advisory lock if needed.
+            foreach (var groupId in items
+                         .Select(i => tierLookup[i.TierId].LadderGroup)
+                         .Where(g => g is not null)
+                         .Distinct())
+            {
+                var steps = eventTiers.Where(t => t.LadderGroup == groupId).ToList();
+                var groupSold = await _tiers.GroupSoldCount(parentEvent.Id, groupId!, _tenantContext.TenantId);
+                var state = Services.Pricing.PriceStepResolver.Resolve(
+                    steps, groupSold, parentEvent.StartsAt, DateTime.UtcNow);
+                if (state is null)
+                {
+                    return new ApiResponses().BadRequestResult("This ticket isn't available right now.");
+                }
+                var groupItems = items.Where(i => tierLookup[i.TierId].LadderGroup == groupId).ToList();
+                if (groupItems.Any(i => i.TierId != state.Active.Id))
+                {
+                    return StatusCode(409, new
+                    {
+                        code = "price_changed",
+                        activeTierId = state.Active.Id,
+                        priceCents = state.Active.PriceCents,
+                        message = $"The price for \"{state.Active.Name}\" is now ${state.Active.PriceCents / 100m:0.00}. Please review and confirm.",
+                    });
+                }
+                if (parentEvent.Capacity.HasValue)
+                {
+                    var groupQty = groupItems.Sum(i => i.Quantity);
+                    if (groupSold + groupQty > parentEvent.Capacity.Value)
+                    {
+                        var remaining = Math.Max(0, parentEvent.Capacity.Value - groupSold);
+                        return new ApiResponses().BadRequestResult($"Only {remaining} spot(s) left for this event.");
+                    }
+                }
+            }
+
             // Gate-fee enforcement: when this event has a REQUIRED rider gate fee and the
             // cart includes race-class entries, the buyer must also include a rider gate
             // fee — one per rider. Riders aren't identified until the post-payment step, so
@@ -288,7 +336,6 @@ namespace webapi.Controllers
             var raceEntryUnits = items.Where(i => tierLookup[i.TierId].Kind == "race_entry").Sum(i => i.Quantity);
             if (raceEntryUnits > 0)
             {
-                var eventTiers = await _tiers.GetForEvent(parentEvent.Id, _tenantContext.TenantId, activeOnly: true);
                 var hasRequiredRiderGate = eventTiers.Any(t => t.Kind == "gate_fee" && t.Audience == "rider" && t.Required);
                 if (hasRequiredRiderGate)
                 {
@@ -803,6 +850,14 @@ namespace webapi.Controllers
             Guid? activeWaiverId = null;
             var activeFetched = false;
             var completed = 0;
+            // All ticket ids in this submission, excluded from the cross-order uniqueness
+            // check so a rider doesn't conflict with their own (or a re-submitted) entry.
+            var requestTicketIds = request.Registrants
+                .SelectMany(r => r.Tickets ?? new List<RegistrantTicketItem>())
+                .Select(t => t.TicketId).ToList();
+            // Cache of an event's tiers, to resolve which tiers form a race "class" (a price
+            // ladder shares one class across all its steps).
+            var eventTierCache = new Dictionary<Guid, List<Services.Repositories.Data.PaymentData.EventTicketTier>>();
 
             foreach (var reg in request.Registrants)
             {
@@ -818,8 +873,8 @@ namespace webapi.Controllers
                 // Load + validate every ticket this registrant covers, and decide whether
                 // any of them needs a waiver (rider waiver for race entries / rider gate
                 // fees; spectator waiver for spectator gate fees).
-                var loaded = new List<(EventTicketPurchase ticket, bool isRace, bool needsWaiver, Guid? waiverId, string? raceNumber)>();
-                var seenRaceTiers = new HashSet<Guid>();
+                var loaded = new List<(EventTicketPurchase ticket, Services.Repositories.Data.PaymentData.EventTicketTier tier, bool isRace, bool needsWaiver, Guid? waiverId, string? raceNumber)>();
+                var seenRaceClasses = new HashSet<string>();
                 foreach (var ti in reg.Tickets)
                 {
                     var ticket = await _ticketPurchases.GetById(ti.TicketId, tenantId);
@@ -838,10 +893,39 @@ namespace webapi.Controllers
                     if (tier is null || ev is null) return new ApiResponses().BadRequestResult("Ticket is missing its event.");
 
                     var isRace = tier.Kind == "race_entry";
-                    // A rider can't be entered in the same class twice.
-                    if (isRace && !seenRaceTiers.Add(tier.Id))
+                    // A class spans all steps of a price ladder, so key uniqueness on the
+                    // ladder group (falling back to the tier id for a standalone class).
+                    var classKey = tier.LadderGroup ?? tier.Id.ToString();
+                    if (isRace && !seenRaceClasses.Add(classKey))
                     {
                         return new ApiResponses().BadRequestResult($"A rider can only enter '{tier.Name}' once.");
+                    }
+
+                    // Cross-order per-rider uniqueness: the same rider (name + birthdate) and
+                    // their race number must each be unique within the class.
+                    if (isRace)
+                    {
+                        if (!eventTierCache.TryGetValue(tier.EventId, out var evTiers))
+                        {
+                            evTiers = await _tiers.GetForEvent(tier.EventId, tenantId, activeOnly: false);
+                            eventTierCache[tier.EventId] = evTiers;
+                        }
+                        var classTierIds = tier.LadderGroup is null
+                            ? new List<Guid> { tier.Id }
+                            : evTiers.Where(t => t.LadderGroup == tier.LadderGroup).Select(t => t.Id).ToList();
+                        var conflict = await _ticketPurchases.FindRaceClassConflict(
+                            tenantId, classTierIds, reg.FirstName!.Trim(), reg.LastName!.Trim(),
+                            reg.Birthdate, ti.RaceNumber?.Trim(), requestTicketIds);
+                        if (conflict == "person")
+                        {
+                            return new ApiResponses().BadRequestResult(
+                                $"{reg.FirstName} {reg.LastName} is already entered in '{tier.Name}' — a rider can only enter a class once.");
+                        }
+                        if (conflict == "number")
+                        {
+                            return new ApiResponses().BadRequestResult(
+                                $"Race number {ti.RaceNumber} is already taken in '{tier.Name}'.");
+                        }
                     }
 
                     // Rider audiences (race entry + rider gate fee) use the rider waiver;
@@ -849,7 +933,7 @@ namespace webapi.Controllers
                     var isRiderAudience = isRace || (tier.Kind == "gate_fee" && tier.Audience == "rider");
                     var needsWaiver = isRiderAudience ? ev.RequiresRiderWaiver : ev.RequiresSpectatorWaiver;
                     var waiverId = isRiderAudience ? ev.RacerWaiverId : ev.SpectatorWaiverId;
-                    loaded.Add((ticket, isRace, needsWaiver, waiverId, ti.RaceNumber));
+                    loaded.Add((ticket, tier, isRace, needsWaiver, waiverId, ti.RaceNumber));
                 }
 
                 if (loaded.Any(x => x.needsWaiver) && string.IsNullOrWhiteSpace(reg.WaiverSignatureDataUrl))

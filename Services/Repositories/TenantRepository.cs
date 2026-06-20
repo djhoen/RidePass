@@ -8,7 +8,7 @@ namespace Services.Repositories
     {
         private const string SelectColumns = @"
             id, subdomain, display_name AS DisplayName, status,
-            tenant_type AS TenantType, timezone,
+            tenant_type AS TenantType, venue_category AS VenueCategory, timezone,
             require_reservation_for_passes AS RequireReservationForPasses,
             require_emergency_contact AS RequireEmergencyContact,
             allow_event_subscriptions AS AllowEventSubscriptions,
@@ -97,12 +97,12 @@ namespace Services.Repositories
         public async Task<Guid> Create(Tenant tenant)
         {
             const string sql = @"
-                INSERT INTO tenant (subdomain, display_name, status, tenant_type, timezone,
+                INSERT INTO tenant (subdomain, display_name, status, tenant_type, venue_category, timezone,
                     client_type, custom_domain, custom_domain_verified, embed_enabled, embed_allowed_origins,
                     external_home_url, external_events_url, embed_event_target,
                     gift_cards_enabled, rentals_enabled, extras_enabled, season_passes_enabled,
                     concessions_enabled, blog_enabled, membership_enabled, waitlist_enabled, allow_self_cancel)
-                VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @Timezone,
+                VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @VenueCategory, @Timezone,
                     @ClientType, @CustomDomain, @CustomDomainVerified, @EmbedEnabled, @EmbedAllowedOrigins,
                     @ExternalHomeUrl, @ExternalEventsUrl, @EmbedEventTarget,
                     @GiftCardsEnabled, @RentalsEnabled, @ExtrasEnabled, @SeasonPassesEnabled,

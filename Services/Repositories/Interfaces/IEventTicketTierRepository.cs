@@ -12,6 +12,9 @@ namespace Services.Repositories.Interfaces
         Task Delete(Guid id, Guid tenantId);
         Task<int> SoldCount(Guid tierId);
 
+        /// <summary>Cumulative active sales across every step of one event's price ladder.</summary>
+        Task<int> GroupSoldCount(Guid eventId, string ladderGroup, Guid tenantId);
+
         /// <summary>Atomic bulk update of sort_order for many tiers within one event.</summary>
         Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
     }

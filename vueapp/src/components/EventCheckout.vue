@@ -9,7 +9,7 @@
                 <div v-for="t in raceTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>
@@ -42,7 +42,7 @@
                 <div v-for="t in riderGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>
@@ -58,7 +58,7 @@
                 <div v-for="t in spectatorGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>
@@ -428,10 +428,23 @@ function priceLabel(cents: number): string {
     return cents === 0 ? 'Free' : `$${(cents / 100).toFixed(2)}`
 }
 function soldOut(t: TicketTier): boolean {
-    return t.inventory != null && (t.sold ?? 0) >= t.inventory
+    const rem = remaining(t)
+    return rem != null && rem <= 0
 }
 function remaining(t: TicketTier): number | null {
+    // Price-ladder steps cap at the event capacity (remainingToCapacity); standalone tiers
+    // cap at their own inventory; null means unlimited.
+    if (t.remainingToCapacity != null) return t.remainingToCapacity
     return t.inventory == null ? null : Math.max(0, t.inventory - (t.sold ?? 0))
+}
+// Buy-page hint for a price-ladder step: where the price goes next.
+function stepHint(t: TicketTier): string {
+    if (t.nextPriceCents == null) return ''
+    const next = priceLabel(t.nextPriceCents)
+    if (t.nextChangeKind === 'date' && t.nextChangeAtUtc) {
+        return `rises to ${next} on ${new Date(t.nextChangeAtUtc).toLocaleDateString()}`
+    }
+    return `then ${next}`
 }
 function canAdd(t: TicketTier): boolean {
     const rem = remaining(t)
@@ -524,7 +537,12 @@ async function createIntent() {
             await mountPaymentElement()
         }
     } catch (err: any) {
-        errorMessage.value = err.response?.data?.error || 'Could not start checkout.'
+        if (err.response?.status === 409 && err.response?.data?.code === 'price_changed') {
+            errorMessage.value = err.response.data.message
+                || 'The price for this event just changed. Please refresh and review before continuing.'
+        } else {
+            errorMessage.value = err.response?.data?.error || 'Could not start checkout.'
+        }
     } finally {
         creating.value = false
     }

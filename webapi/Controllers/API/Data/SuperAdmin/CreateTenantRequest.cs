@@ -16,6 +16,10 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         [Required, RegularExpression("^(motocross|mountain_bike)$")]
         public string TenantType { get; set; } = "motocross";
 
+        // MTB sub-classification driving seed defaults. Ignored for motocross.
+        [RegularExpression("^(bike_park|shuttle|resort)$")]
+        public string? VenueCategory { get; set; }
+
         [Required, MaxLength(80)]
         public string Timezone { get; set; } = "UTC";
 

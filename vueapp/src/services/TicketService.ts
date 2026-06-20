@@ -20,6 +20,17 @@ export interface TicketTier {
     bundledCouponDiscountValue: number | null
     bundledCouponScope: 'all' | 'pass' | 'event_ticket' | 'season_pass' | null
     bundledCouponExpiresInDays: number | null
+    // Dynamic pricing (price steps). Admin step config:
+    ladderGroup: string | null
+    minSold: number | null
+    effectiveDaysBefore: number | null
+    effectiveAtUtc: string | null
+    // Public buy-page messaging for a ladder's active step (null for standalone tiers):
+    remainingToCapacity?: number | null
+    nextPriceCents?: number | null
+    nextChangeKind?: 'sold' | 'date' | null
+    nextChangeSoldThreshold?: number | null
+    nextChangeAtUtc?: string | null
 }
 
 export interface TicketPurchaseResponse {

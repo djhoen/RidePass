@@ -90,6 +90,11 @@
                             label="Tenant type" density="compact"
                             hint="Drives event-type / waiver / pass-product defaults at creation. Locked after creation."
                             persistent-hint class="mt-4"></v-select>
+                        <v-select v-if="createForm.tenantType === 'mountain_bike'"
+                            v-model="createForm.venueCategory" :items="venueCategoryOptions"
+                            item-title="title" item-value="value" label="Venue category" density="compact"
+                            hint="Sets the access product + day naming: Bike park → Day Pass / Trail Day, Shuttle → Shuttle Pass / Shuttle Day, Resort → Lift Ticket / Lift Day."
+                            persistent-hint class="mt-4"></v-select>
                         <v-select v-model="createForm.clientType" :items="clientTypeOptions"
                             item-title="title" item-value="value" label="Client type" density="compact" class="mt-4"
                             hint="How this track's public presence is delivered." persistent-hint></v-select>
@@ -466,7 +471,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import dayjs from 'dayjs'
 import { SuperAdminService, type TenantSummary, type CreateTenantResult, type UpdateTenantPayload, type StageTenant, type PromotionResult } from '@/services/SuperAdminService'
 import { EMBED_WIDGETS, getEmbedWidget, buildEmbedSnippet, buildEmbedPath } from '@/embed/widgets'
@@ -487,6 +492,7 @@ function blankCreateForm() {
         subdomain: '',
         displayName: '',
         tenantType: 'motocross' as 'motocross' | 'mountain_bike',
+        venueCategory: null as 'bike_park' | 'shuttle' | 'resort' | null,
         timezone: 'America/New_York',
         adminFirstName: '',
         adminLastName: '',
@@ -499,18 +505,43 @@ function blankCreateForm() {
         externalHomeUrl: '',
         externalEventsUrl: '',
         embedEventTarget: 'external' as 'external' | 'ridepass',
+        // Feature defaults below are the MX baseline; switching to MTB re-applies the
+        // MTB defaults via the tenantType watcher.
         giftCardsEnabled: false,
         rentalsEnabled: false,
-        extrasEnabled: false,
+        extrasEnabled: true,
         seasonPassesEnabled: true,
         concessionsEnabled: false,
         blogEnabled: false,
-        membershipEnabled: false,
+        membershipEnabled: true,
         waitlistEnabled: true,
         allowSelfCancel: false,
     }
 }
 const createForm = ref(blankCreateForm())
+
+// Re-apply sensible feature defaults + venue category whenever the tenant type changes
+// in the create dialog. MTB turns Rentals on (bike/gear rental is core to parks); both
+// types get Add-ons / Memberships / Season passes / Waitlist on, the rest off. Manual
+// toggles after a type pick stick until the type is changed again.
+function applyTypeFeatureDefaults(type: 'motocross' | 'mountain_bike') {
+    const f = createForm.value
+    f.extrasEnabled = true
+    f.membershipEnabled = true
+    f.seasonPassesEnabled = true
+    f.waitlistEnabled = true
+    f.giftCardsEnabled = false
+    f.concessionsEnabled = false
+    f.blogEnabled = false
+    f.allowSelfCancel = false
+    f.rentalsEnabled = type === 'mountain_bike'
+}
+watch(() => createForm.value.tenantType, (type) => {
+    createForm.value.venueCategory = type === 'mountain_bike'
+        ? (createForm.value.venueCategory ?? 'bike_park')
+        : null
+    applyTypeFeatureDefaults(type)
+})
 
 // Platform feature switches, shown identically in the create + edit dialogs. The
 // description is a one-liner so a super-admin knows what each bit turns on without
@@ -528,6 +559,12 @@ const featureToggles: { key: FeatureKey; label: string; description: string }[] 
     { key: 'membershipEnabled', label: 'Membership', description: 'Sell yearly or one-time memberships and gate selected purchases behind them.' },
     { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.' },
     { key: 'allowSelfCancel', label: 'Rider self-cancel', description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).' },
+]
+
+const venueCategoryOptions = [
+    { value: 'bike_park', title: 'Bike park' },
+    { value: 'shuttle', title: 'Shuttle' },
+    { value: 'resort', title: 'Resort' },
 ]
 
 const tenantTypeOptions = [
@@ -757,6 +794,7 @@ async function submitCreateTenant() {
             subdomain: createForm.value.subdomain.trim().toLowerCase(),
             displayName: createForm.value.displayName.trim(),
             tenantType: createForm.value.tenantType,
+            venueCategory: createForm.value.tenantType === 'mountain_bike' ? createForm.value.venueCategory : null,
             timezone: createForm.value.timezone,
             adminEmail: createForm.value.adminEmail.trim() || null,
             adminFirstName: createForm.value.adminFirstName.trim() || null,

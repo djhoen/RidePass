@@ -369,6 +369,51 @@ namespace Services.Repositories
             return rows.FirstOrDefault();
         }
 
+        // Per-RIDER uniqueness within a race class, enforced at registration. The class is
+        // the set of tiers in classTierIds (all price-ladder steps of one class, or a single
+        // standalone tier). Returns "person" if the same rider (name + birthdate) is already
+        // entered, "number" if the race number is taken, else null. excludeTicketIds are the
+        // rows being registered in this same request (so a rider doesn't conflict with self).
+        // Name/number comparisons are case-insensitive; pending/paid/redeemed count as active.
+        public async Task<string?> FindRaceClassConflict(Guid tenantId, IReadOnlyList<Guid> classTierIds,
+            string firstName, string lastName, DateTime? birthdate, string? raceNumber,
+            IReadOnlyList<Guid> excludeTicketIds)
+        {
+            if (classTierIds.Count == 0) return null;
+            var tierIds = classTierIds.ToArray();
+            var excludeIds = excludeTicketIds.ToArray();
+
+            const string personSql = @"
+                SELECT EXISTS(
+                    SELECT 1 FROM event_ticket_purchase
+                    WHERE tenant_id = @tenantId
+                      AND tier_id = ANY(@tierIds)
+                      AND status IN ('pending', 'paid', 'redeemed')
+                      AND NOT (id = ANY(@excludeIds))
+                      AND rider_first_name IS NOT NULL
+                      AND lower(rider_first_name) = lower(@firstName)
+                      AND lower(rider_last_name) = lower(@lastName)
+                      AND rider_birthdate IS NOT DISTINCT FROM @birthdate)";
+            var person = await _db.Query<bool>(personSql, new { tenantId, tierIds, excludeIds, firstName, lastName, birthdate });
+            if (person.FirstOrDefault()) return "person";
+
+            if (!string.IsNullOrWhiteSpace(raceNumber))
+            {
+                const string numberSql = @"
+                    SELECT EXISTS(
+                        SELECT 1 FROM event_ticket_purchase
+                        WHERE tenant_id = @tenantId
+                          AND tier_id = ANY(@tierIds)
+                          AND status IN ('pending', 'paid', 'redeemed')
+                          AND NOT (id = ANY(@excludeIds))
+                          AND race_number IS NOT NULL
+                          AND lower(race_number) = lower(@raceNumber))";
+                var num = await _db.Query<bool>(numberSql, new { tenantId, tierIds, excludeIds, raceNumber });
+                if (num.FirstOrDefault()) return "number";
+            }
+            return null;
+        }
+
         public async Task<List<EventTicketPurchaseWithContext>> ListByStatusAcrossTenants(string status)
         {
             const string sql = @"

@@ -31,6 +31,10 @@
                                 <v-icon size="x-small" class="mr-1">mdi-tag-multiple</v-icon>
                                 {{ t.bundledCouponCount }} bundled coupon{{ t.bundledCouponCount === 1 ? '' : 's' }}
                             </div>
+                            <div v-if="t.ladderGroup" class="text-caption text-info">
+                                <v-icon size="x-small" class="mr-1">mdi-stairs-up</v-icon>
+                                {{ t.ladderGroup }} · {{ stepTriggerLabel(t) }}
+                            </div>
                         </td>
                         <td v-if="isGate" class="text-capitalize">{{ t.audience }}</td>
                         <td v-if="isGate">
@@ -100,6 +104,27 @@
                         append-inner-icon="mdi-help-circle-outline"
                         @click:append-inner="openHelp('serviceCharge')"></v-text-field>
 
+                    <!-- Dynamic pricing: group tiers into a price ladder. Steps sharing a group
+                         escalate the price; the buyer sees the cheapest step whose trigger fired. -->
+                    <v-divider class="my-4"></v-divider>
+                    <div class="text-subtitle-2 mb-1">Dynamic pricing (optional)</div>
+                    <p class="text-caption text-medium-emphasis mb-2">
+                        Give two or more tiers the same price group to make a ladder: the buyer always
+                        sees the cheapest step whose trigger has been reached. Leave blank for a fixed price.
+                    </p>
+                    <v-text-field v-model="form.ladderGroup" label="Price group (blank = fixed price)"
+                        placeholder="e.g. early-bird" density="compact"></v-text-field>
+                    <template v-if="form.ladderGroup.trim()">
+                        <v-select v-model="form.triggerType" :items="triggerOptions" item-title="label" item-value="value"
+                            label="This step's price applies…" density="compact" class="mt-3"></v-select>
+                        <v-text-field v-if="form.triggerType === 'sold'" v-model.number="form.minSold" type="number" min="0"
+                            label="After this many sold (across the group)" density="compact" class="mt-2"></v-text-field>
+                        <v-text-field v-if="form.triggerType === 'days'" v-model.number="form.daysBefore" type="number" min="0"
+                            label="Days before the event it kicks in" density="compact" class="mt-2"></v-text-field>
+                        <v-text-field v-if="form.triggerType === 'date'" v-model="form.effectiveDate" type="datetime-local"
+                            label="Date/time it kicks in" density="compact" class="mt-2"></v-text-field>
+                    </template>
+
                     <!-- Bundled coupons — race-entry only. Codes are pinned to this event,
                          so scope and expiration aren't configurable: they apply to spectator
                          tickets for the same race and stay valid until the race happens. -->
@@ -167,6 +192,8 @@ import { TicketService, type TicketTier } from '@/services/TicketService'
 type AdmissionKind = 'race_entry' | 'gate_fee'
 type Audience = 'rider' | 'spectator'
 type BundledKind = 'percent' | 'amount'
+// Dynamic-pricing step trigger: when this step's price takes effect.
+type TriggerType = 'none' | 'sold' | 'days' | 'date'
 
 // Renders ONLY tiers of the given kind. Used in the events admin dialog for race
 // classes (race_entry) and gate fees (gate_fee). When eventId is null the component
@@ -253,7 +280,19 @@ const form = ref({
     bundledKind: 'percent' as BundledKind,
     bundledPercent: 20,
     bundledDollars: 5,
+    ladderGroup: '',
+    triggerType: 'none' as TriggerType,
+    minSold: 0,
+    daysBefore: 30,
+    effectiveDate: '',
 })
+
+const triggerOptions: { value: TriggerType; label: string }[] = [
+    { value: 'none', label: 'From the start (base price)' },
+    { value: 'sold', label: 'After this many are sold' },
+    { value: 'days', label: 'Starting N days before the event' },
+    { value: 'date', label: 'Starting on a specific date' },
+]
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -278,6 +317,7 @@ function blankForm() {
         priceDollars: isGate.value ? 15 : 20, inventory: null as number | null, sortOrder: 100, isActive: true,
         riderPaidServiceChargePct: 100,
         bundledCount: null as number | null, bundledKind: 'percent' as BundledKind, bundledPercent: 20, bundledDollars: 5,
+        ladderGroup: '', triggerType: 'none' as TriggerType, minSold: 0, daysBefore: 30, effectiveDate: '',
     }
 }
 
@@ -304,6 +344,13 @@ function openEdit(t: TicketTier) {
             ? Math.round(t.bundledCouponDiscountValue / 100) : 20,
         bundledDollars: t.bundledCouponDiscountKind === 'amount' && t.bundledCouponDiscountValue
             ? t.bundledCouponDiscountValue / 100 : 5,
+        ladderGroup: t.ladderGroup ?? '',
+        triggerType: (t.minSold != null ? 'sold'
+            : t.effectiveDaysBefore != null ? 'days'
+            : t.effectiveAtUtc != null ? 'date' : 'none') as TriggerType,
+        minSold: t.minSold ?? 0,
+        daysBefore: t.effectiveDaysBefore ?? 30,
+        effectiveDate: t.effectiveAtUtc ? toLocalInput(t.effectiveAtUtc) : '',
     }
     tierDialog.value = true
 }
@@ -313,6 +360,8 @@ function openEdit(t: TicketTier) {
 function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
     const isRace = props.kind === 'race_entry'
     const bundledCount = (isRace && (form.value.bundledCount ?? 0) > 0) ? form.value.bundledCount : null
+    const group = form.value.ladderGroup.trim() || null
+    const tt = form.value.triggerType
     return {
         kind: props.kind,
         audience: isRace ? 'rider' : form.value.audience,
@@ -332,6 +381,11 @@ function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
             : null,
         bundledCouponScope: bundledCount ? 'event_ticket' : null,
         bundledCouponExpiresInDays: null,
+        ladderGroup: group,
+        minSold: group && tt === 'sold' ? (form.value.minSold ?? 0) : null,
+        effectiveDaysBefore: group && tt === 'days' ? (form.value.daysBefore ?? 0) : null,
+        effectiveAtUtc: group && tt === 'date' && form.value.effectiveDate
+            ? new Date(form.value.effectiveDate).toISOString() : null,
     }
 }
 
@@ -390,6 +444,20 @@ function flash(text: string, color: 'success' | 'error') {
     snackbar.value = true
 }
 
+// UTC ISO -> a value for <input type="datetime-local"> in the admin's local time.
+function toLocalInput(iso: string): string {
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+// One-line description of a ladder step's trigger, for the tier list.
+function stepTriggerLabel(t: TicketTier): string {
+    if (t.minSold != null) return `after ${t.minSold} sold`
+    if (t.effectiveDaysBefore != null) return `${t.effectiveDaysBefore}d before event`
+    if (t.effectiveAtUtc != null) return `from ${new Date(t.effectiveAtUtc).toLocaleDateString()}`
+    return 'base price'
+}
+
 // Parent (EventDialog) reads buffered rows after creating the event and POSTs each.
 function getBuffered(): Array<Omit<TicketTier, 'id' | 'eventId' | 'sold'>> {
     return visibleRows.value.map(t => ({
@@ -407,6 +475,10 @@ function getBuffered(): Array<Omit<TicketTier, 'id' | 'eventId' | 'sold'>> {
         bundledCouponDiscountValue: t.bundledCouponDiscountValue,
         bundledCouponScope: t.bundledCouponScope,
         bundledCouponExpiresInDays: t.bundledCouponExpiresInDays,
+        ladderGroup: t.ladderGroup,
+        minSold: t.minSold,
+        effectiveDaysBefore: t.effectiveDaysBefore,
+        effectiveAtUtc: t.effectiveAtUtc,
     }))
 }
 

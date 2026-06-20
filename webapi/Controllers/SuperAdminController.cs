@@ -218,6 +218,8 @@ namespace webapi.Controllers
                 DisplayName = request.DisplayName,
                 Status = "active",
                 TenantType = request.TenantType,
+                // Venue category is MTB-only; ignore it for MX so a stray value can't stick.
+                VenueCategory = request.TenantType == "mountain_bike" ? request.VenueCategory : null,
                 Timezone = request.Timezone,
                 ClientType = request.ClientType,
                 CustomDomain = newCustomDomain,

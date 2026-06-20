@@ -11,6 +11,9 @@ namespace Services.Repositories.Data.TenantData
         // migration only — there's no admin UI to flip an existing tenant's type
         // because doing so wouldn't retroactively rewrite their event types.
         public string TenantType { get; set; } = "motocross";
+        // MTB sub-classification driving provisioning defaults + discovery display:
+        // 'bike_park' | 'shuttle' | 'resort'. NULL for MX and legacy tenants.
+        public string? VenueCategory { get; set; }
         public string Timezone { get; set; } = "UTC";
         public bool RequireReservationForPasses { get; set; }
         public bool RequireEmergencyContact { get; set; }

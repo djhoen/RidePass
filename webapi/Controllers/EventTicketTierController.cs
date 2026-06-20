@@ -36,7 +36,68 @@ namespace webapi.Controllers
             }
 
             var rows = await _tiers.GetForEvent(eventId, _tenantContext.TenantId, activeOnly: true);
-            return new ApiResponses().OkResult(rows.Select(r => ToResponse(r, sold: null)));
+
+            // Standalone tiers pass through unchanged. Each price ladder collapses to its
+            // ACTIVE step, augmented with capacity-remaining + next-change for buy-page copy,
+            // so the buyer only ever sees (and can only add) the current price.
+            var result = new List<EventTicketTierResponse>();
+            foreach (var r in rows.Where(t => t.LadderGroup is null))
+            {
+                result.Add(ToResponse(r, sold: null));
+            }
+
+            var ladderGroups = rows.Where(t => t.LadderGroup is not null)
+                                   .GroupBy(t => t.LadderGroup!)
+                                   .ToList();
+            if (ladderGroups.Count > 0)
+            {
+                var ev = await _events.GetById(eventId, _tenantContext.TenantId);
+                var now = DateTime.UtcNow;
+                foreach (var grp in ladderGroups)
+                {
+                    var steps = grp.ToList();
+                    var groupSold = await _tiers.GroupSoldCount(eventId, grp.Key, _tenantContext.TenantId);
+                    var state = ev is null
+                        ? null
+                        : Services.Pricing.PriceStepResolver.Resolve(steps, groupSold, ev.StartsAt, now);
+                    if (state is null)
+                    {
+                        // Misconfigured (no fired step) or event missing: surface the cheapest
+                        // step so the ladder isn't invisible.
+                        var fallback = ToResponse(steps.OrderBy(s => s.PriceCents).First(), sold: null);
+                        result.Add(fallback);
+                        continue;
+                    }
+
+                    var resp = ToResponse(state.Active, sold: null);
+                    resp.RemainingToCapacity = ev!.Capacity.HasValue
+                        ? Math.Max(0, ev.Capacity.Value - groupSold)
+                        : null;
+                    if (state.Next is not null)
+                    {
+                        resp.NextPriceCents = state.Next.PriceCents;
+                        if (state.Next.MinSold.HasValue)
+                        {
+                            resp.NextChangeKind = "sold";
+                            resp.NextChangeSoldThreshold = state.Next.MinSold;
+                        }
+                        else if (state.Next.EffectiveDaysBefore.HasValue)
+                        {
+                            resp.NextChangeKind = "date";
+                            resp.NextChangeAtUtc = DateTime.SpecifyKind(
+                                ev.StartsAt.AddDays(-state.Next.EffectiveDaysBefore.Value), DateTimeKind.Utc);
+                        }
+                        else if (state.Next.EffectiveAtUtc.HasValue)
+                        {
+                            resp.NextChangeKind = "date";
+                            resp.NextChangeAtUtc = DateTime.SpecifyKind(state.Next.EffectiveAtUtc.Value, DateTimeKind.Utc);
+                        }
+                    }
+                    result.Add(resp);
+                }
+            }
+
+            return new ApiResponses().OkResult(result.OrderBy(r => r.SortOrder).ThenBy(r => r.Name));
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -81,6 +142,10 @@ namespace webapi.Controllers
                 SortOrder = request.SortOrder,
                 IsActive = request.IsActive,
                 RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps,
+                LadderGroup = string.IsNullOrWhiteSpace(request.LadderGroup) ? null : request.LadderGroup.Trim(),
+                MinSold = request.MinSold,
+                EffectiveDaysBefore = request.EffectiveDaysBefore,
+                EffectiveAtUtc = request.EffectiveAtUtc,
                 BundledCouponCount = request.BundledCouponCount,
                 BundledCouponDiscountKind = request.BundledCouponDiscountKind,
                 BundledCouponDiscountValue = request.BundledCouponDiscountValue,
@@ -115,6 +180,10 @@ namespace webapi.Controllers
             existing.SortOrder = request.SortOrder;
             existing.IsActive = request.IsActive;
             existing.RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps;
+            existing.LadderGroup = string.IsNullOrWhiteSpace(request.LadderGroup) ? null : request.LadderGroup.Trim();
+            existing.MinSold = request.MinSold;
+            existing.EffectiveDaysBefore = request.EffectiveDaysBefore;
+            existing.EffectiveAtUtc = request.EffectiveAtUtc;
             existing.BundledCouponCount = request.BundledCouponCount;
             existing.BundledCouponDiscountKind = request.BundledCouponDiscountKind;
             existing.BundledCouponDiscountValue = request.BundledCouponDiscountValue;
@@ -174,6 +243,10 @@ namespace webapi.Controllers
             SortOrder = t.SortOrder,
             IsActive = t.IsActive,
             RiderPaidServiceChargeBps = t.RiderPaidServiceChargeBps,
+            LadderGroup = t.LadderGroup,
+            MinSold = t.MinSold,
+            EffectiveDaysBefore = t.EffectiveDaysBefore,
+            EffectiveAtUtc = t.EffectiveAtUtc,
             BundledCouponCount = t.BundledCouponCount,
             BundledCouponDiscountKind = t.BundledCouponDiscountKind,
             BundledCouponDiscountValue = t.BundledCouponDiscountValue,

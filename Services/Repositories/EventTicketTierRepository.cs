@@ -10,6 +10,8 @@ namespace Services.Repositories
             id, tenant_id AS TenantId, event_id AS EventId, kind, audience, required, name,
             price_cents AS PriceCents, inventory, sort_order AS SortOrder,
             is_active AS IsActive,
+            ladder_group AS LadderGroup, min_sold AS MinSold,
+            effective_days_before AS EffectiveDaysBefore, effective_at_utc AS EffectiveAtUtc,
             rider_paid_service_charge_bps AS RiderPaidServiceChargeBps,
             bundled_coupon_count AS BundledCouponCount,
             bundled_coupon_discount_kind AS BundledCouponDiscountKind,
@@ -60,11 +62,13 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO event_ticket_tier (
                     tenant_id, event_id, kind, audience, required, name, price_cents, inventory, sort_order, is_active,
+                    ladder_group, min_sold, effective_days_before, effective_at_utc,
                     rider_paid_service_charge_bps,
                     bundled_coupon_count, bundled_coupon_discount_kind, bundled_coupon_discount_value,
                     bundled_coupon_scope, bundled_coupon_expires_in_days)
                 VALUES (
                     @TenantId, @EventId, @Kind, @Audience, @Required, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
+                    @LadderGroup, @MinSold, @EffectiveDaysBefore, @EffectiveAtUtc,
                     @RiderPaidServiceChargeBps,
                     @BundledCouponCount, @BundledCouponDiscountKind, @BundledCouponDiscountValue,
                     @BundledCouponScope, @BundledCouponExpiresInDays)
@@ -80,6 +84,8 @@ namespace Services.Repositories
                 SET kind = @Kind, audience = @Audience, required = @Required,
                     name = @Name, price_cents = @PriceCents, inventory = @Inventory,
                     sort_order = @SortOrder, is_active = @IsActive,
+                    ladder_group = @LadderGroup, min_sold = @MinSold,
+                    effective_days_before = @EffectiveDaysBefore, effective_at_utc = @EffectiveAtUtc,
                     rider_paid_service_charge_bps = @RiderPaidServiceChargeBps,
                     bundled_coupon_count = @BundledCouponCount,
                     bundled_coupon_discount_kind = @BundledCouponDiscountKind,
@@ -102,6 +108,22 @@ namespace Services.Repositories
                 SELECT COUNT(*) FROM event_ticket_purchase
                 WHERE tier_id = @tierId AND status IN ('pending', 'paid', 'redeemed')";
             return await _db.ExecuteScalar(sql, new { tierId });
+        }
+
+        // Cumulative active sales across every step in one event's price ladder. Drives the
+        // quantity trigger (a step fires when group sold reaches its min_sold). Joins through
+        // event_ticket_tier so it's scoped by event + group; tenant-scoped via the purchase row.
+        public async Task<int> GroupSoldCount(Guid eventId, string ladderGroup, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT COUNT(*)
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                WHERE p.tenant_id = @tenantId
+                  AND t.event_id = @eventId
+                  AND t.ladder_group = @ladderGroup
+                  AND p.status IN ('pending', 'paid', 'redeemed')";
+            return await _db.ExecuteScalar(sql, new { eventId, ladderGroup, tenantId });
         }
 
         public async Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)
