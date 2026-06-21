@@ -13,29 +13,36 @@
             </div>
         </transition>
 
-        <!-- Tenant not available to this visitor (unknown / inactive / unpublished). -->
-        <div v-if="branding.unavailable" class="tenant-unavailable">
-            <div class="tenant-unavailable-content">
-                <img :src="splashLogo" alt="" class="tenant-unavailable-img" />
-                <h1 class="text-h5 font-weight-bold mt-3 mb-2">This track isn't available yet</h1>
-                <p class="text-body-2 text-medium-emphasis mb-5">
-                    This page hasn't been published. Check back soon, or explore other tracks on RidePass.
-                </p>
-                <v-btn color="primary" :href="apexUrl">Explore RidePass</v-btn>
-            </div>
-        </div>
-
-        <template v-else>
-            <ImpersonationBanner />
-            <NavBar v-if="!$route.meta.hideNav" />
-            <v-main>
-                <div v-if="embedBlocked" class="embed-blocked">
-                    <p class="text-body-2 text-medium-emphasis">{{ embedBlockedMessage }}</p>
+        <!-- Hold all app chrome until branding is known. Rendering NavBar / router-view
+             before /api/Tenant/Branding resolves would paint the generic default-tenant
+             shell (RidePass brand, no Gift Cards, default colors) and then visibly swap +
+             reflow when the real tenant data lands. Gating on branding.loaded means the
+             content mounts once, already correct, while the splash above covers the gap. -->
+        <template v-if="branding.loaded">
+            <!-- Tenant not available to this visitor (unknown / inactive / unpublished). -->
+            <div v-if="branding.unavailable" class="tenant-unavailable">
+                <div class="tenant-unavailable-content">
+                    <img :src="splashLogo" alt="" class="tenant-unavailable-img" />
+                    <h1 class="text-h5 font-weight-bold mt-3 mb-2">This track isn't available yet</h1>
+                    <p class="text-body-2 text-medium-emphasis mb-5">
+                        This page hasn't been published. Check back soon, or explore other tracks on RidePass.
+                    </p>
+                    <v-btn color="primary" :href="apexUrl">Explore RidePass</v-btn>
                 </div>
-                <router-view v-else />
-            </v-main>
-            <Footer v-if="!$route.meta.hideFooter" />
-            <ConfirmDialog />
+            </div>
+
+            <template v-else>
+                <ImpersonationBanner />
+                <NavBar v-if="!$route.meta.hideNav" />
+                <v-main>
+                    <div v-if="embedBlocked" class="embed-blocked">
+                        <p class="text-body-2 text-medium-emphasis">{{ embedBlockedMessage }}</p>
+                    </div>
+                    <router-view v-else />
+                </v-main>
+                <Footer v-if="!$route.meta.hideFooter" />
+                <ConfirmDialog />
+            </template>
         </template>
     </v-app>
 </template>
@@ -171,6 +178,30 @@ watch([() => route.fullPath, () => branding.loaded], () => {
     if (isEmbed.value) setTimeout(postEmbedHeight, 50)
 }, { immediate: true })
 
+// Relative luminance (WCAG) of a #rrggbb color, 0 (black) .. 1 (white).
+function relLuminance(hex: string): number {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+    if (!m) return 0
+    const n = parseInt(m[1], 16)
+    const chan = (c: number) => {
+        const s = c / 255
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+    }
+    const r = chan((n >> 16) & 0xff), g = chan((n >> 8) & 0xff), b = chan(n & 0xff)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+// Pick the foreground text color (black or white) that has the higher WCAG contrast
+// against the given background. Vuetify's own on-color heuristic can return white for
+// mid-tone brand colors (e.g. #0288D1 -> white is only 3.86:1, below AA 4.5:1); choosing
+// the higher-contrast option keeps text legible on whatever brand color a tenant sets.
+function readableOn(bg: string): string {
+    const l = relLuminance(bg)
+    const contrastWhite = (1 + 0.05) / (l + 0.05)
+    const contrastBlack = (l + 0.05) / 0.05
+    return contrastBlack >= contrastWhite ? '#000000' : '#FFFFFF'
+}
+
 watchEffect(() => {
     if (!branding.loaded) return
     const themeName = branding.themeMode === 'dark' ? 'tenantDark' : 'tenant'
@@ -182,6 +213,11 @@ watchEffect(() => {
     target.colors.primary = branding.primaryColor
     target.colors.secondary = branding.secondaryColor
     target.colors.accent = branding.accentColor
+    // Set the on-* text colors explicitly so buttons/chips using these brand colors
+    // keep accessible contrast regardless of the tenant's chosen hue.
+    target.colors['on-primary'] = readableOn(branding.primaryColor)
+    target.colors['on-secondary'] = readableOn(branding.secondaryColor)
+    target.colors['on-accent'] = readableOn(branding.accentColor)
     theme.global.name.value = themeName
 })
 </script>
