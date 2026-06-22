@@ -286,7 +286,6 @@ watchEffect(() => {
 }
 .branding-splash-content {
     text-align: center;
-    opacity: 0.22;
 }
 .branding-splash-icon {
     color: #888;
@@ -297,10 +296,14 @@ watchEffect(() => {
     height: auto;
     display: block;
     margin: 0 auto;
+    /* The helmet stays intentionally faint; the wordmark below carries legibility. */
+    opacity: 0.3;
 }
 .branding-splash-text {
     font-size: 22px;
-    color: #888;
+    /* #666 on white is 5.7:1 (passes WCAG AA). The old #888 under a 0.22 content
+       opacity was far below AA; keep the splash light but the brand name legible. */
+    color: #666666;
     margin-top: 6px;
     letter-spacing: 0.18em;
     font-weight: 500;

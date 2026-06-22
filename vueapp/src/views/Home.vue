@@ -263,17 +263,26 @@
                 </section>
 
                 <!-- ── 3. Pricing snapshot ─────────────────────────────────────── -->
-                <section v-if="sectionVisible('passes') && seasonPassFromCents !== null" class="my-12">
+                <!-- Rendered (with a skeleton placeholder) from first paint whenever the
+                     season-pass feature is on, so the section reserves its slot during load
+                     instead of popping in above About and shifting the page down. Once data
+                     resolves it shows the real card, or collapses if there are no priced passes. -->
+                <section v-if="sectionVisible('passes') && branding.seasonPassesEnabled
+                             && (initialLoading || seasonPassFromCents !== null)" class="my-12">
                     <h2 class="text-h4 font-weight-bold font-display mb-4">Passes</h2>
                     <v-row>
-                        <v-col v-if="seasonPassFromCents !== null && branding.seasonPassesEnabled" cols="12" md="6">
-                            <v-card class="pa-6" variant="outlined">
-                                <h3 class="text-h5 mb-2">Season Pass</h3>
-                                <p class="text-body-2 text-medium-emphasis mb-4">Ride the whole season — best value.</p>
-                                <div class="text-h4 font-weight-bold mb-4 font-display">
-                                    From ${{ (seasonPassFromCents / 100).toFixed(2) }}
-                                </div>
-                                <v-btn color="primary" to="/SeasonPasses">See Season Passes</v-btn>
+                        <v-col cols="12" md="6">
+                            <v-card class="pa-6" variant="outlined" style="min-height: 236px">
+                                <template v-if="seasonPassFromCents !== null">
+                                    <h3 class="text-h5 mb-2">Season Pass</h3>
+                                    <p class="text-body-2 text-medium-emphasis mb-4">Ride the whole season — best value.</p>
+                                    <div class="text-h4 font-weight-bold mb-4 font-display">
+                                        From ${{ (seasonPassFromCents / 100).toFixed(2) }}
+                                    </div>
+                                    <v-btn color="primary" to="/SeasonPasses">See Season Passes</v-btn>
+                                </template>
+                                <v-skeleton-loader v-else type="heading, text, text, button"
+                                    class="bg-transparent px-0" />
                             </v-card>
                         </v-col>
                     </v-row>
@@ -475,6 +484,11 @@ const APEX_EVENT_LIMIT = 4
 // error shows a real message instead of a blank home / apex page.
 const loadError = ref('')
 
+// True until the tenant home's data fetch (events, season passes, gallery...) first
+// resolves. Lets data-dependent sections reserve their slot with a skeleton during
+// load instead of popping into flow afterward and shifting already-painted content.
+const initialLoading = ref(true)
+
 // Photo-gallery slideshow modal state. Set when a thumbnail is clicked.
 const galleryDialog = ref(false)
 const galleryIndex = ref(0)
@@ -485,6 +499,7 @@ function openGallery(index: number) {
 
 async function load() {
     if (!branding.loaded || isApex.value) return
+    initialLoading.value = true
     const tz = branding.timezone || 'UTC'
     const fromUtc = dayjs().tz(tz).startOf('day').utc().toISOString()
     const toUtc = dayjs().tz(tz).startOf('day').add(60, 'day').utc().toISOString()
@@ -513,6 +528,8 @@ async function load() {
     } catch (err: any) {
         loadError.value = err.response?.data?.error
             || 'Could not load this page. Refresh to try again, or check your connection.'
+    } finally {
+        initialLoading.value = false
     }
 }
 
