@@ -15,16 +15,15 @@
         </v-app-bar-title>
 
         <template v-if="!isMobile">
-            <!-- Tenant-context links: hidden for super admins (those live above tenants). -->
-            <template v-if="!isSuperAdmin">
-                <v-btn to="/" variant="text">Home</v-btn>
-                <v-btn to="/Events" variant="text">Events</v-btn>
-                <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
-                <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
-                <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
-                <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
-                <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
-            </template>
+            <!-- Public site links: shown to everyone (including signed-in admins / super admins)
+                 so they can always navigate back to Home / Events. -->
+            <v-btn to="/" variant="text">Home</v-btn>
+            <v-btn to="/Events" variant="text">Events</v-btn>
+            <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
+            <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
+            <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
+            <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
+            <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
 
             <v-spacer></v-spacer>
 
@@ -50,18 +49,18 @@
                     </template>
                     <v-list density="compact" min-width="200">
                         <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock">
-                            <v-list-item-title>My Upcoming</v-list-item-title>
+                            <v-list-item-title>My Events</v-list-item-title>
                         </v-list-item>
                         <v-list-item to="/User/Profile" prepend-icon="mdi-account">
                             <v-list-item-title>Profile</v-list-item-title>
                         </v-list-item>
-                        <v-list-item to="/User/MyPasses" prepend-icon="mdi-ticket-account">
+                        <v-list-item v-if="!isSuperAdmin" to="/User/MyPasses" prepend-icon="mdi-ticket-account">
                             <v-list-item-title>My Passes</v-list-item-title>
                         </v-list-item>
-                        <v-list-item to="/User/Rewards" prepend-icon="mdi-trophy">
+                        <v-list-item v-if="!isSuperAdmin" to="/User/Rewards" prepend-icon="mdi-trophy">
                             <v-list-item-title>Rewards</v-list-item-title>
                         </v-list-item>
-                        <v-list-item to="/User/SeasonPasses" prepend-icon="mdi-ticket-percent">
+                        <v-list-item v-if="!isSuperAdmin" to="/User/SeasonPasses" prepend-icon="mdi-ticket-percent">
                             <v-list-item-title>Season Passes</v-list-item-title>
                         </v-list-item>
                         <v-divider></v-divider>
@@ -78,6 +77,7 @@
 
         <template v-else>
             <v-spacer></v-spacer>
+            <NotificationBell v-if="isAuthenticated" />
             <v-app-bar-nav-icon @click="drawer = !drawer"></v-app-bar-nav-icon>
         </template>
     </v-app-bar>
@@ -128,7 +128,7 @@
                         <template #activator="{ props }">
                             <v-list-item v-bind="props" prepend-icon="mdi-account-circle" title="Account"></v-list-item>
                         </template>
-                        <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock" title="My Upcoming"></v-list-item>
+                        <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock" title="My Events"></v-list-item>
                         <v-list-item to="/User/Profile" prepend-icon="mdi-account" title="Profile"></v-list-item>
                         <v-list-item to="/User/MyPasses" prepend-icon="mdi-ticket-account" title="My Passes"></v-list-item>
                         <v-list-item to="/User/Rewards" prepend-icon="mdi-trophy" title="Rewards"></v-list-item>

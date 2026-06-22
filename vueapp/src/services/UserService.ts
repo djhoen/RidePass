@@ -29,6 +29,12 @@ export class UserService {
         return axios.post(`${this.apiUrl}/User/UpdateProfile`, req);
     }
 
+    async uploadProfilePhoto(file: File) {
+        const form = new FormData();
+        form.append('file', file);
+        return axios.post<{ data: { imageUrl: string } }>(`${this.apiUrl}/User/Profile/Photo`, form);
+    }
+
     async updatePassword(req: any) {
         return axios.post(`${this.apiUrl}/User/UpdatePassword`, req);
     }

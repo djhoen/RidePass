@@ -1,27 +1,13 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-6">My Profile</h1>
+        <div class="profile-header">
+            <h1 class="text-h4">My Profile</h1>
+            <v-spacer></v-spacer>
+            <v-btn color="primary" :loading="saving" prepend-icon="mdi-content-save"
+                @click="saveProfile">Save profile</v-btn>
+        </div>
 
         <Spinner v-model="loading" />
-
-        <v-row v-if="!loading && !isApex && newsletterStatus">
-            <v-col cols="12">
-                <v-card class="mb-4" variant="tonal">
-                    <v-card-text>
-                        <div class="d-flex align-center">
-                            <div class="flex-grow-1">
-                                <div class="text-subtitle-1">{{ branding.displayName }} newsletter</div>
-                                <div class="text-caption text-medium-emphasis">
-                                    Event updates and announcements for {{ newsletterStatus.email }}.
-                                </div>
-                            </div>
-                            <v-switch v-model="newsletterSubscribed" color="primary" hide-details density="compact"
-                                :loading="newsletterSaving" @update:model-value="toggleNewsletter"></v-switch>
-                        </div>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-        </v-row>
 
         <v-row v-if="!loading && branding.loampassMxEnabled && loampass.trackParticipates">
             <v-col cols="12">
@@ -89,46 +75,9 @@
         </v-row>
 
         <v-row v-if="!loading">
-            <v-col cols="12">
-                <v-card class="mb-4">
-                    <v-card-title>Mobile phone</v-card-title>
-                    <v-card-text>
-                        <p class="text-caption text-medium-emphasis mb-3">
-                            Used for waitlist promotions and event-day alerts.
-                        </p>
-                        <v-row>
-                            <v-col cols="12" sm="6">
-                                <PhoneField v-model="phone" label="Phone" density="compact" />
-                            </v-col>
-                        </v-row>
-                        <v-btn color="primary" :loading="savingPhone" :disabled="!canSavePhone" class="mt-2"
-                            @click="savePhone">Save phone</v-btn>
-                    </v-card-text>
-                </v-card>
-                <v-card class="mb-4">
-                    <v-card-title>Emergency contact</v-card-title>
-                    <v-card-text>
-                        <p class="text-caption text-medium-emphasis mb-3">
-                            Who to call if there's a problem at the track. Some tracks won't let you
-                            purchase passes until this is on file.
-                        </p>
-                        <v-row>
-                            <v-col cols="12" sm="6">
-                                <v-text-field v-model="emergencyContact.name" label="Name" density="compact"></v-text-field>
-                            </v-col>
-                            <v-col cols="12" sm="6">
-                                <PhoneField v-model="emergencyContact.phone" label="Phone" density="compact" />
-                            </v-col>
-                        </v-row>
-                        <v-btn color="primary" :loading="savingEmergency" :disabled="!canSaveEmergency" class="mt-2"
-                            @click="saveEmergencyContact">Save emergency contact</v-btn>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-
             <v-col cols="12" md="3" class="text-center">
                 <v-avatar size="120" color="grey-lighten-2" class="mb-4">
-                    <v-img v-if="profile.imageUrl" :src="profile.imageUrl"></v-img>
+                    <v-img v-if="avatarSrc" :src="avatarSrc"></v-img>
                     <v-icon v-else size="64">mdi-account</v-icon>
                 </v-avatar>
                 <v-file-input v-model="profileImage" label="Upload Photo" prepend-icon="mdi-camera"
@@ -150,17 +99,69 @@
                                 </v-col>
                                 <v-col cols="12" sm="6">
                                     <v-text-field v-model="profile.email" label="Email" type="email"
-                                        required></v-text-field>
+                                        readonly hint="Contact support to change your email." persistent-hint></v-text-field>
                                 </v-col>
                                 <v-col cols="12" sm="6">
-                                    <v-text-field v-model="profile.phone" label="Phone"></v-text-field>
-                                </v-col>
-                                <v-col cols="12">
-                                    <v-textarea v-model="profile.aboutMe" label="About Me" rows="3"></v-textarea>
+                                    <PhoneField v-model="profile.phone" label="Mobile Phone" />
                                 </v-col>
                             </v-row>
-                            <v-btn type="submit" color="primary" class="mt-2" :loading="saving">Save</v-btn>
                         </v-form>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+
+            <v-col cols="12">
+                <v-card class="mt-4">
+                    <v-card-title>Emergency contact</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Who to call if there's a problem at the track. Some tracks won't let you
+                            purchase passes until this is on file.
+                        </p>
+                        <v-row>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="emergencyContact.name" label="Name" density="compact"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <PhoneField v-model="emergencyContact.phone" label="Phone" density="compact" />
+                            </v-col>
+                        </v-row>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+
+
+            <v-col cols="12" v-if="!isApex && branding.allowEventSubscriptions">
+                <v-card class="mt-4">
+                    <v-card-title>New events</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Get notified when {{ branding.displayName }} posts a new event.
+                        </p>
+                        <v-alert v-if="eventSubError" type="warning" variant="tonal" density="compact" class="mb-2">
+                            {{ eventSubError }}
+                        </v-alert>
+                        <v-switch v-model="eventSub.notifyEmail" color="primary" hide-details
+                            :disabled="eventSubLoading || eventSubSaving"
+                            label="Email me about new events"
+                            @update:model-value="saveEventSub"></v-switch>
+                        <v-switch v-model="eventSub.notifySms" color="primary" hide-details class="mt-1"
+                            :disabled="eventSubLoading || eventSubSaving || !profile.phone"
+                            :label="profile.phone ? 'Text me about new events' : 'Text me about new events (add a mobile phone above)'"
+                            @update:model-value="saveEventSub"></v-switch>
+                    </v-card-text>
+                </v-card>
+            </v-col>
+
+            <v-col cols="12" v-if="!isApex && (newsletterStatus || newsletterError)">
+                <v-card class="mt-4">
+                    <v-card-text>
+                        <v-alert v-if="newsletterError" type="warning" variant="tonal" density="compact">
+                            {{ newsletterError }}
+                        </v-alert>
+                        <v-switch v-else v-model="newsletterSubscribed" color="primary" hide-details
+                            :loading="newsletterSaving" @update:model-value="toggleNewsletter"
+                            :label="`Subscribe to the ${branding.displayName} newsletter`"></v-switch>
                     </v-card-text>
                 </v-card>
             </v-col>
@@ -171,7 +172,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { UserService } from '@/services/UserService'
 import { NewsletterService } from '@/services/NewsletterService'
 import Spinner from '@/components/Spinner.vue'
@@ -179,11 +180,13 @@ import PhoneField from '@/components/PhoneField.vue'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
 import { LoampassLinkService, type LoampassStatus } from '@/services/LoampassLinkService'
+import { EventSubscriptionService } from '@/services/EventSubscriptionService'
 import { useConfirm } from '@/composables/useConfirm'
 
 const userService = new UserService()
 const newsletterService = new NewsletterService()
 const loampassService = new LoampassLinkService()
+const eventSubService = new EventSubscriptionService()
 const confirm = useConfirm()
 const isApex = computed(() => !tenantHelper.getSubdomain())
 
@@ -196,21 +199,47 @@ const loampassBusy = ref(false)
 const newsletterStatus = ref<{ subscribed: boolean; email: string } | null>(null)
 const newsletterSubscribed = ref(false)
 const newsletterSaving = ref(false)
+const newsletterError = ref('')
+
+const eventSub = ref({ notifyEmail: false, notifySms: false })
+const eventSubLoading = ref(false)
+const eventSubSaving = ref(false)
+const eventSubError = ref('')
 
 const profile = ref<any>({
-    firstName: '', lastName: '', email: '', phone: '', aboutMe: '', imageUrl: ''
+    firstName: '', lastName: '', email: '', phone: '', imageUrl: ''
 })
-const profileImage = ref<File[] | null>(null)
+// v-file-input returns a single File (non-multiple) or a File[] depending on the Vuetify
+// build, so always normalize before use.
+const profileImage = ref<any>(null)
+function pickFile(val: any): File | undefined {
+    if (!val) return undefined
+    return Array.isArray(val) ? val[0] : val
+}
 const loading = ref(false)
 const saving = ref(false)
-const phone = ref('')
-const savingPhone = ref(false)
-const canSavePhone = computed(() => phone.value.replace(/\D/g, '').length >= 7)
 const emergencyContact = ref({ name: '', phone: '' })
-const savingEmergency = ref(false)
-const canSaveEmergency = computed(() =>
-    emergencyContact.value.name.trim().length > 0
-    && emergencyContact.value.phone.replace(/\D/g, '').length >= 7)
+
+// Resolve a stored image URL for display: Spaces URLs are absolute; local-disk URLs are
+// app-relative and need the API origin (the SPA runs on a different port in dev).
+const apiOrigin = (() => {
+    try { return new URL((import.meta as any).env?.VITE_API_ENDPOINT ?? '', window.location.origin).origin }
+    catch { return '' }
+})()
+const displayImageUrl = computed(() => {
+    const u = profile.value.imageUrl
+    if (!u) return ''
+    return /^https?:\/\//i.test(u) ? u : `${apiOrigin}${u}`
+})
+
+// Live preview of a freshly selected file before it's uploaded; falls back to the saved photo.
+const localPreview = ref('')
+watch(profileImage, (val) => {
+    if (localPreview.value) URL.revokeObjectURL(localPreview.value)
+    const f = pickFile(val)
+    localPreview.value = f ? URL.createObjectURL(f) : ''
+})
+const avatarSrc = computed(() => localPreview.value || displayImageUrl.value)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('success')
@@ -219,9 +248,16 @@ onMounted(async () => {
     try {
         loading.value = true
         const response = await userService.getProfile()
-        profile.value = response.data
+        // The endpoint wraps the user in { data: {...} }; bind the UNWRAPPED object, or every
+        // form field reads off the wrapper and renders blank.
         const data = (response.data as any).data ?? response.data
-        phone.value = data?.phone ?? ''
+        profile.value = {
+            firstName: data?.firstName ?? '',
+            lastName: data?.lastName ?? '',
+            email: data?.email ?? '',
+            phone: data?.phone ?? '',
+            imageUrl: data?.imageUrl ?? '',
+        }
         emergencyContact.value = {
             name: data?.emergencyContactName ?? '',
             phone: data?.emergencyContactPhone ?? '',
@@ -238,10 +274,44 @@ onMounted(async () => {
             const r = await newsletterService.getMyStatus()
             newsletterStatus.value = (r.data as any).data
             newsletterSubscribed.value = newsletterStatus.value!.subscribed
-        } catch { /* non-critical */ }
+        } catch (err: any) {
+            newsletterError.value = err.response?.data?.error || 'Could not load your newsletter preference. Refresh to try again.'
+        }
         if (branding.loampassMxEnabled) await loadLoampassStatus()
+        if (branding.allowEventSubscriptions) await loadEventSub()
     }
 })
+
+async function loadEventSub() {
+    eventSubLoading.value = true
+    try {
+        const r = await eventSubService.mine()
+        const d = (r.data as any).data
+        eventSub.value = { notifyEmail: !!d.notifyEmail, notifySms: !!d.notifySms }
+    } catch (err: any) {
+        eventSubError.value = err.response?.data?.error
+            || 'Could not load your event notifications. Refresh to try again.'
+    } finally {
+        eventSubLoading.value = false
+    }
+}
+
+async function saveEventSub() {
+    eventSubError.value = ''
+    eventSubSaving.value = true
+    try {
+        await eventSubService.updateMine({
+            notifyEmail: eventSub.value.notifyEmail,
+            notifySms: eventSub.value.notifySms,
+        })
+    } catch (err: any) {
+        eventSubError.value = err.response?.data?.error || 'Could not update your event notifications.'
+        // Revert the optimistic toggle to the server's actual state.
+        await loadEventSub()
+    } finally {
+        eventSubSaving.value = false
+    }
+}
 
 async function loadLoampassStatus() {
     try {
@@ -328,52 +398,29 @@ async function toggleNewsletter(next: boolean | null) {
     }
 }
 
-async function savePhone() {
-    if (!canSavePhone.value) return
-    savingPhone.value = true
-    try {
-        await userService.updatePhone({ phone: phone.value.trim() })
-        snackbarText.value = 'Phone saved.'
-        snackbarColor.value = 'success'
-        snackbar.value = true
-    } catch (err: any) {
-        snackbarText.value = err.response?.data?.error || 'Failed to save phone.'
-        snackbarColor.value = 'error'
-        snackbar.value = true
-    } finally {
-        savingPhone.value = false
-    }
-}
-
-async function saveEmergencyContact() {
-    if (!canSaveEmergency.value) return
-    savingEmergency.value = true
-    try {
-        await userService.updateEmergencyContact({
-            name: emergencyContact.value.name.trim(),
-            phone: emergencyContact.value.phone.trim(),
-        })
-        snackbarText.value = 'Emergency contact saved.'
-        snackbarColor.value = 'success'
-        snackbar.value = true
-    } catch (err: any) {
-        snackbarText.value = err.response?.data?.error || 'Failed to save emergency contact.'
-        snackbarColor.value = 'error'
-        snackbar.value = true
-    } finally {
-        savingEmergency.value = false
-    }
-}
-
 async function saveProfile() {
     try {
         saving.value = true
-        await userService.updateProfile(profile.value)
-        snackbarText.value = 'Profile updated successfully!'
+        // Upload a newly chosen photo first, then persist its URL alongside the rest of the form.
+        const file = pickFile(profileImage.value)
+        if (file) {
+            const up = await userService.uploadProfilePhoto(file)
+            profile.value.imageUrl = (up.data as any).data?.imageUrl ?? profile.value.imageUrl
+            profileImage.value = null
+        }
+        await userService.updateProfile({
+            firstName: profile.value.firstName,
+            lastName: profile.value.lastName,
+            phone: profile.value.phone,
+            emergencyContactName: emergencyContact.value.name.trim() || null,
+            emergencyContactPhone: emergencyContact.value.phone.trim() || null,
+            imageUrl: profile.value.imageUrl || null,
+        })
+        snackbarText.value = 'Profile saved.'
         snackbarColor.value = 'success'
         snackbar.value = true
     } catch (error: any) {
-        snackbarText.value = error.response?.data?.message || 'Failed to update profile.'
+        snackbarText.value = error.response?.data?.error || error.response?.data?.message || 'Failed to save profile.'
         snackbarColor.value = 'error'
         snackbar.value = true
     } finally {
@@ -381,3 +428,19 @@ async function saveProfile() {
     }
 }
 </script>
+
+<style scoped>
+/* Title + Save stay pinned just below the app bar so the Save button is always reachable. */
+.profile-header {
+    position: sticky;
+    top: 64px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    margin-bottom: 16px;
+    background: rgb(var(--v-theme-background));
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+</style>

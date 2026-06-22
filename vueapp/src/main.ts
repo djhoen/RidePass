@@ -107,7 +107,12 @@ axios.interceptors.response.use(
                 })
                 // Full logout so the NavBar's reactive isAuthenticated/isAdmin computed values update.
                 authHelper.logout()
-                router.push('/Login')
+                // Preserve where they were so Login can return them after re-auth (skip when
+                // already on Login to avoid a self-referential next).
+                const current = router.currentRoute.value
+                router.push(current.path !== '/Login'
+                    ? { path: '/Login', query: { next: current.fullPath } }
+                    : '/Login')
             } else if (error.response.status === 403) {
                 console.warn('[RidePass] 403 Forbidden:', {
                     url: error.config?.url,

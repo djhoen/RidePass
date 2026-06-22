@@ -49,4 +49,8 @@ export class SuppressionService {
     unsubscribeAllTracks(token: string) {
         return axios.post(`${this.apiUrl}/Unsubscribe/AllTracks`, null, { params: { token } })
     }
+
+    resubscribe(token: string) {
+        return axios.post(`${this.apiUrl}/Unsubscribe/Resubscribe`, null, { params: { token } })
+    }
 }

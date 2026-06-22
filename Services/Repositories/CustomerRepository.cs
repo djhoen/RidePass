@@ -156,13 +156,29 @@ namespace Services.Repositories
                 ORDER BY s.signed_at DESC";
             var waivers = (await _db.Query<RiderWaiverSignatureWithWaiver>(waiverSql, new { tenantId, userId })).ToList();
 
+            // Totals from the SAME activity CTE the list summary uses, scoped to this user,
+            // so the detail page can't disagree with the list.
+            const string totalsSql = ActivityCte + @"
+                SELECT COALESCE(SUM(is_paid), 0)::int AS TotalPurchases,
+                       COALESCE(SUM(CASE WHEN is_paid = 1 THEN amount_cents ELSE 0 END), 0)::int AS TotalSpentCents
+                FROM activity WHERE user_id = @userId";
+            var totals = (await _db.Query<TotalsRow>(totalsSql, new { tenantId, userId })).FirstOrDefault();
+
             return new CustomerDetail
             {
                 User = user,
                 EventTickets = eventTickets,
                 SeasonPasses = seasonPasses,
                 WaiverSignatures = waivers,
+                TotalPurchases = totals?.TotalPurchases ?? 0,
+                TotalSpentCents = totals?.TotalSpentCents ?? 0,
             };
+        }
+
+        private sealed class TotalsRow
+        {
+            public int TotalPurchases { get; set; }
+            public int TotalSpentCents { get; set; }
         }
 
         public async Task<List<TopRiderEntry>> GetTopRiders(Guid tenantId, string metric, string period, int limit)

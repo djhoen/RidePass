@@ -315,20 +315,31 @@ async function load() {
             try {
                 const rr = await rentalService.listMine()
                 rentals.value = (rr.data as any).data
-            } catch { rentals.value = [] }
+            } catch (e: any) {
+                rentals.value = []
+                // A 404 is the documented "feature not enabled" response and renders an empty
+                // section by design; any other failure is real and must not hide silently.
+                if (e.response?.status !== 404) flash(e.response?.data?.error || 'Could not load your rentals. Refresh to try again.', 'error')
+            }
         }
         if (branding.extrasEnabled) {
             try {
                 const er = await extraService.listMine()
                 extras.value = ((er.data as any).data as MyExtra[])
                     .filter(x => x.status === 'paid' || x.status === 'redeemed')
-            } catch { extras.value = [] }
+            } catch (e: any) {
+                extras.value = []
+                if (e.response?.status !== 404) flash(e.response?.data?.error || 'Could not load your add-ons. Refresh to try again.', 'error')
+            }
         }
         try {
             const wr = await waitlistService.listMine()
             waitlists.value = ((wr.data as any).data as MyWaitlistEntry[])
                 .filter(w => w.status === 'waiting' || w.status === 'promoted' || w.status === 'confirmed')
-        } catch { waitlists.value = [] }
+        } catch (e: any) {
+            waitlists.value = []
+            if (e.response?.status !== 404) flash(e.response?.data?.error || 'Could not load your waitlist entries. Refresh to try again.', 'error')
+        }
     } catch (err: any) {
         loadError.value = err.response?.data?.error
             || 'Could not load your passes. Refresh to try again, or check your connection.'

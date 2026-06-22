@@ -315,6 +315,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
+import dayjs from 'dayjs'
 import { ExtraService, type ExtraProduct, type ExtraVariant, DEFAULT_EXTRA_KINDS, kindIcon, kindLabel } from '@/services/ExtraService'
 import { branding } from '@/stores/branding'
 import { useConfirm } from '@/composables/useConfirm'
@@ -409,11 +410,12 @@ const form = ref({
 // at the boundary so the admin only ever picks a date (the cutoff is end-of-day
 // in tenant time, sent to the server as UTC midnight of the next day).
 const expiresAtDate = computed<string | null>({
-    get: () => form.value.expiresAt ? form.value.expiresAt.slice(0, 10) : null,
+    get: () => form.value.expiresAt
+        ? dayjs.utc(form.value.expiresAt).tz(branding.timezone || 'UTC').format('YYYY-MM-DD') : null,
     set: (v: string | null) => {
         if (!v) { form.value.expiresAt = null; return }
-        // End of selected date in UTC (rough cut — good enough for "stop after this day").
-        form.value.expiresAt = new Date(`${v}T23:59:59Z`).toISOString()
+        // End of the selected day in the tenant's timezone, stored as UTC.
+        form.value.expiresAt = dayjs.tz(`${v}T23:59:59`, branding.timezone || 'UTC').utc().toISOString()
     },
 })
 

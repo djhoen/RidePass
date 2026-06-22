@@ -58,6 +58,9 @@ export interface ConfirmOptions {
 export function useConfirm() {
     return function confirm(opts: ConfirmOptions): Promise<boolean> {
         return new Promise((resolve) => {
+            // If a confirm is already open, settle its promise as cancelled before we
+            // overwrite the resolver, so the prior `await confirm(...)` never hangs.
+            if (confirmState.resolver) confirmState.resolver(false)
             confirmState.title = opts.title ?? ''
             confirmState.message = opts.message
             confirmState.confirmText = opts.confirmText ?? 'Confirm'

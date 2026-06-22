@@ -129,6 +129,7 @@
                     </v-alert>
                     <v-text-field v-if="returning.depositCents > 0" v-model.number="depositCapturedDollars"
                         type="number" min="0" :max="returning.depositCents / 100" step="0.01"
+                        :rules="[v => v == null || v === '' || (v >= 0 && v <= (returning?.depositCents ?? 0) / 100) || 'Keep between $0 and the deposit on file.']"
                         label="Deposit kept ($)" density="compact" class="mt-4"></v-text-field>
                 </v-card-text>
                 <v-card-actions>
@@ -152,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { RentalService, type CounterRental, type PerItemConditionInput } from '@/services/RentalService'
 import { branding } from '@/stores/branding'
@@ -194,6 +195,9 @@ const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
 onMounted(load)
+// Reload on filter change so the list reflects the selected range/status without a
+// separate Refresh click (matches the Purchases screen).
+watch([fromDate, toDate, statusFilter], () => { load() })
 
 function tz(): string { return branding.timezone || 'UTC' }
 function formatDate(d: string): string { return dayjs(d).format('MMM D') }
@@ -271,13 +275,19 @@ async function confirmReturn() {
             photoDataUrl: returnItemForms.value[i]?.photoDataUrl || null,
             notes: returnItemForms.value[i]?.notes?.trim() || null,
         }))
+        const capturedCents = Math.min(
+            returning.value.depositCents,
+            Math.max(0, Math.round((depositCapturedDollars.value || 0) * 100)))
         await service.markReturned(returning.value.id, {
             conditionNotes: returnForm.value.conditionNotes.trim() || null,
-            depositCapturedCents: Math.round((depositCapturedDollars.value || 0) * 100),
+            depositCapturedCents: capturedCents,
             items,
         })
-        const damaged = depositCapturedDollars.value > 0
-        flash(damaged ? 'Returned (deposit partially kept).' : 'Returned. Deposit refunded.', 'success')
+        const msg = returning.value.depositCents <= 0 ? 'Returned.'
+            : capturedCents <= 0 ? 'Returned. Deposit refunded.'
+            : capturedCents >= returning.value.depositCents ? 'Returned. Full deposit kept.'
+            : 'Returned. Partial deposit kept.'
+        flash(msg, 'success')
         returnOpen.value = false
         await load()
     } catch (err: any) {

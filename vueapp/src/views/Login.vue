@@ -55,7 +55,7 @@
                 </v-alert>
 
                 <div class="text-center text-body-2 text-medium-emphasis mt-6">
-                    No account yet? One is created for you automatically at your first purchase.
+                    No account yet? <router-link to="/SignUp" class="login-link">Create one</router-link>.
                 </div>
             </div>
         </div>
@@ -66,13 +66,14 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { UserService } from '@/services/UserService'
 import authHelper from '@/helpers/AuthHelper'
 import tenantHelper from '@/helpers/TenantHelper'
 import { branding } from '@/stores/branding'
 
 const router = useRouter()
+const route = useRoute()
 const userService = new UserService()
 
 const loading = ref(false)
@@ -109,10 +110,19 @@ async function login() {
         } else if (isTenantStaffRole(payload.role)) {
             router.push('/Admin/Dashboard')
         } else {
-            // Riders signing in on the apex (no tenant subdomain) land on
-            // the cross-tenant Upcoming feed. Same role signing in on a
-            // tenant subdomain still goes to the tenant home (existing flow).
-            router.push(tenantHelper.getSubdomain() ? '/' : '/User/Upcoming')
+            // If we were sent here to finish a gated task (waiver, waitlist confirm,
+            // membership), return there. Only same-origin relative paths are honored,
+            // so a crafted ?next=//evil.com can't redirect off-site.
+            const raw = route.query.next
+            const next = typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//') ? raw : null
+            if (next) {
+                router.push(next)
+            } else {
+                // Riders signing in on the apex (no tenant subdomain) land on
+                // the cross-tenant Upcoming feed. Same role signing in on a
+                // tenant subdomain still goes to the tenant home (existing flow).
+                router.push(tenantHelper.getSubdomain() ? '/' : '/User/Upcoming')
+            }
         }
     } catch (error: any) {
         const message = error.response?.data?.error || 'Login failed.'

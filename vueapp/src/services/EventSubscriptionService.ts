@@ -22,6 +22,9 @@ export class EventSubscriptionService {
     mine() {
         return axios.get<{ data: EventSubscriptionStatus }>(`${this.apiUrl}/EventSubscription/Mine`)
     }
+    updateMine(body: { notifyEmail: boolean; notifySms: boolean }) {
+        return axios.put<{ data: { subscribed: boolean } }>(`${this.apiUrl}/EventSubscription/Mine`, body)
+    }
     unsubscribeStatus(token: string) {
         return axios.get<{ data: EventSubscriptionStatus }>(`${this.apiUrl}/EventSubscription/Unsubscribe/${token}/Status`)
     }

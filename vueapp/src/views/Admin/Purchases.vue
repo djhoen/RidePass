@@ -141,6 +141,8 @@
                         Refunds every line that shares this charge, each in full including the service fee.
                     </div>
                     <v-text-field v-if="!refundEntireOrder" v-model.number="refundDollars" type="number" min="0"
+                        :max="refundTarget ? refundTarget.amountCents / 100 : undefined"
+                        :rules="[v => v == null || v === '' || (v >= 0 && v <= (refundTarget?.amountCents ?? 0) / 100) || 'Enter an amount between $0 and the original charge.']"
                         step="0.01" prefix="$" label="Refund amount" density="compact" class="mt-4"
                         hint="Defaults to the full amount; set per your refund policy. Loam Pass credit entries show $0 and return the credit instead."
                         persistent-hint></v-text-field>
@@ -382,7 +384,7 @@ async function confirmRefund() {
             }
         } else {
             const amountCents = Number.isFinite(refundDollars.value)
-                ? Math.max(0, Math.round(refundDollars.value * 100))
+                ? Math.min(Math.round(t.amountCents), Math.max(0, Math.round(refundDollars.value * 100)))
                 : null
             await service.refund(t.kind, t.id, amountCents, reason, refundForceCheckedIn.value)
             snackbarText.value = 'Refund processed.'

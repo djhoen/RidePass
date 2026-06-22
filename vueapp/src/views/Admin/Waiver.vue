@@ -192,6 +192,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { WaiverService, type WaiverDto, type WaiverEventAssociation } from '@/services/WaiverService'
 import { EventService, type EventDto } from '@/services/EventService'
+import { branding } from '@/stores/branding'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 
 const service = new WaiverService()
@@ -218,14 +219,21 @@ const form = ref({
 })
 
 const expiresAtDate = computed<string | null>({
-    get: () => form.value.expiresAtUtc ? form.value.expiresAtUtc.slice(0, 10) : null,
+    get: () => form.value.expiresAtUtc
+        ? dayjs.utc(form.value.expiresAtUtc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD') : null,
     set: (v: string | null) => {
         if (!v) { form.value.expiresAtUtc = null; return }
-        form.value.expiresAtUtc = new Date(`${v}T23:59:59Z`).toISOString()
+        // End of the selected day in the tenant's timezone, stored as UTC.
+        form.value.expiresAtUtc = dayjs.tz(`${v}T23:59:59`, branding.timezone || 'UTC').utc().toISOString()
     },
 })
 
-const canSave = computed(() => form.value.name.trim().length > 0 && form.value.title.trim().length > 0)
+// A waiver with empty legal text is worthless; require body content (stripped of the
+// rich-text wrapper markup, so an empty "<p></p>" doesn't count).
+const bodyText = computed(() => (form.value.body || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim())
+const canSave = computed(() => form.value.name.trim().length > 0
+    && form.value.title.trim().length > 0
+    && bodyText.value.length > 0)
 
 // Tabs inside the dialog: "Waiver" carries the existing form, "Associated
 // Events" lists the events that use this waiver and lets the admin attach

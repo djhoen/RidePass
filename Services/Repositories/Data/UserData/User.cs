@@ -23,6 +23,7 @@ namespace Services.Repositories.Data.UserData
         public string? Country { get; set; }
         public string? Bike { get; set; }
         public string? RaceNumber { get; set; }
+        public string? ImageUrl { get; set; }
         public bool EmailVerified { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

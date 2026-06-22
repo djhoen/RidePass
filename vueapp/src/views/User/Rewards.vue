@@ -31,6 +31,7 @@
         <div v-if="loading" class="text-center py-6">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </div>
+        <v-alert v-else-if="loadError" type="error" variant="tonal" class="mb-3">{{ loadError }}</v-alert>
         <v-card v-else-if="programs.length === 0" class="pa-6 text-center text-medium-emphasis">
             No reward programs at this track yet.
         </v-card>
@@ -112,7 +113,8 @@ const service = new RewardService()
 const confirm = useConfirm()
 const programs = ref<RiderRewardProgram[]>([])
 const redemptions = ref<RiderRewardRedemption[]>([])
-const loading = ref(false)
+const loading = ref(true)
+const loadError = ref('')
 const busyId = ref<string | null>(null)
 
 const snackbar = ref(false)
@@ -134,12 +136,13 @@ function formatDate(iso: string): string {
 
 async function load() {
     loading.value = true
+    loadError.value = ''
     try {
         const [p, r] = await Promise.all([service.listMyPrograms(), service.listMyRedemptions()])
         programs.value = (p.data as any).data
         redemptions.value = (r.data as any).data
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to load rewards.', 'error')
+        loadError.value = err.response?.data?.error || 'Could not load rewards. Refresh to try again.'
     } finally {
         loading.value = false
     }

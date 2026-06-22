@@ -988,6 +988,31 @@ namespace webapi.Controllers
                 }
             }
 
+            // If the buyer is logged in and has no emergency contact on file yet, backfill their
+            // account from the first one they entered here. Next time their profile pre-fills the
+            // signup, so they don't re-key it. Only fills a BLANK account field (never overwrites).
+            if (Guid.TryParse(User.FindFirst("UserId")?.Value, out var selfId))
+            {
+                var entered = request.Registrants.FirstOrDefault(r =>
+                    !string.IsNullOrWhiteSpace(r.EmergencyContactName)
+                    && !string.IsNullOrWhiteSpace(r.EmergencyContactPhone));
+                if (entered is not null)
+                {
+                    // Best-effort: registration is already committed above, so a failure to
+                    // backfill the profile must never turn a successful registration into an error.
+                    try
+                    {
+                        var self = await _users.GetById(selfId);
+                        if (self is not null && string.IsNullOrWhiteSpace(self.EmergencyContactPhone))
+                        {
+                            await _users.UpdateEmergencyContact(
+                                selfId, entered.EmergencyContactName!.Trim(), entered.EmergencyContactPhone!.Trim());
+                        }
+                    }
+                    catch { /* leave the profile as-is; the registration still succeeded */ }
+                }
+            }
+
             return new ApiResponses().OkResult(new { completed });
         }
 
@@ -1388,6 +1413,16 @@ namespace webapi.Controllers
             if (refundCents < 0) refundCents = 0;
             if (refundCents > amount) refundCents = amount;
 
+            // Card-first split for orders a gift card partially covered. The card only ever received
+            // (amount - giftCardPortion), so refund that to Stripe first and return only the overflow
+            // to the gift card. giftCardPortion is 0 for kinds a gift card never touches.
+            var giftCardPortion = (kind == "event_ticket" || kind == "season_pass")
+                ? await _giftCards.SumRedemptionsForSource(kind, purchaseId, tenantId)
+                : 0;
+            var cardChargedCents = Math.Max(0, amount - giftCardPortion);
+            var stripeRefundCents = Math.Min(refundCents, cardChargedCents);
+            var giftCardRefundCents = refundCents - stripeRefundCents;
+
             string? refundId = null;
             if (paymentMethod == "loampass_credits")
             {
@@ -1402,12 +1437,12 @@ namespace webapi.Controllers
                 refundCents = 0;   // no money moved; the credit is given back
             }
             else if ((paymentMethod == "stripe" || paymentMethod == "stripe_connect")
-                     && !string.IsNullOrEmpty(stripePi) && refundCents > 0)
+                     && !string.IsNullOrEmpty(stripePi) && stripeRefundCents > 0)
             {
                 try
                 {
-                    var r = await _payments.RefundAsync(stripePi!, refundCents,
-                        idempotencyKey: $"refund-{kind}-{purchaseId}-{refundCents}", ct: ct);
+                    var r = await _payments.RefundAsync(stripePi!, stripeRefundCents,
+                        idempotencyKey: $"refund-{kind}-{purchaseId}-{stripeRefundCents}", ct: ct);
                     refundId = r.RefundId;
                 }
                 catch (Exception ex)
@@ -1451,8 +1486,13 @@ namespace webapi.Controllers
                     break;
             }
 
+            // Return the gift-card share of the refund to the card it came from (card-first split).
+            if (giftCardRefundCents > 0)
+                await RestoreGiftCardOnRefund(kind, purchaseId, tenantId, giftCardRefundCents);
+
             // Refund ledger row: record the money returned as a negative. Platform cut/fees aren't
-            // clawed back here (a tenant-initiated refund leaves the prior cut as-is).
+            // clawed back here (a tenant-initiated refund leaves the prior cut as-is). Gross stays the
+            // full refund (the sale recorded full gross with the gift card as a payment instrument).
             try
             {
                 await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
@@ -1477,6 +1517,47 @@ namespace webapi.Controllers
             }
 
             return (true, false, null, refundCents, refundId);
+        }
+
+        // Returns the gift-card share of a refund to the card it came from. Deletes the purchase's
+        // redemption rows and restores the balance; on a partial refund (restore < applied) it
+        // re-records the still-applied remainder so the redemption audit matches the new balance.
+        // Normally one card / one row per purchase; the loop tolerates the multi-card case.
+        private async Task RestoreGiftCardOnRefund(string sourceKind, Guid purchaseId, Guid tenantId, int restoreCents)
+        {
+            if (restoreCents <= 0) return;
+            var rows = await _giftCards.DeleteRedemptionsBySource(sourceKind, new[] { purchaseId });
+            var total = rows.Sum(r => r.AmountCents);
+            if (total <= 0) return;
+
+            var restored = 0;
+            var cards = rows.GroupBy(r => r.GiftCardId).ToList();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                var byCard = cards[i];
+                var applied = byCard.Sum(r => r.AmountCents);
+                // Distribute proportionally across cards (last absorbs the rounding remainder),
+                // capped at what that card actually applied.
+                var cardRestore = i == cards.Count - 1
+                    ? Math.Min(applied, restoreCents - restored)
+                    : (int)((long)restoreCents * applied / total);
+                restored += cardRestore;
+                if (cardRestore > 0) await _giftCards.RestoreBalance(byCard.Key, cardRestore);
+
+                var remaining = applied - cardRestore;
+                if (remaining > 0)
+                {
+                    await _giftCards.RecordRedemption(new GiftCardRedemption
+                    {
+                        GiftCardId = byCard.Key,
+                        TenantId = tenantId,
+                        UserId = byCard.First().UserId,
+                        SourceKind = sourceKind,
+                        SourceId = purchaseId,
+                        AmountCents = remaining,
+                    });
+                }
+            }
         }
 
         private async Task InsertZeroLedger(Guid tenantId, string sourceKind, Guid sourceId)

@@ -40,7 +40,7 @@
             <h2 class="text-h5 mb-4">Active passes and memberships</h2>
             <v-row>
                 <v-col v-for="item in passLikeItems" :key="item.kind + item.id" cols="12" sm="6" md="4">
-                    <a :href="tenantUserUrl(item.tenantSubdomain)" rel="noopener" class="up-card-link">
+                    <a :href="tenantUserUrl(item)" rel="noopener" class="up-card-link">
                         <v-card class="h-100 up-card">
                             <div class="up-image up-image--pass">
                                 <v-icon class="up-pass-icon" :icon="kindIcon(item.kind)" size="40"></v-icon>
@@ -84,6 +84,7 @@
                     <div v-if="orderLoading" class="text-center py-6">
                         <v-progress-circular indeterminate color="primary"></v-progress-circular>
                     </div>
+                    <v-alert v-else-if="orderError" type="error" variant="tonal">{{ orderError }}</v-alert>
                     <div v-else-if="orderDetail && orderDetail.items.length === 0" class="text-medium-emphasis py-4">
                         No items found for this order.
                     </div>
@@ -181,6 +182,7 @@ const showPast = ref(false)
 const orderDialog = ref(false)
 const orderLoading = ref(false)
 const orderDetail = ref<EventOrderDetail | null>(null)
+const orderError = ref('')
 const orderEventId = ref<string | null>(null)
 const resending = ref(false)
 const snackbar = ref(false)
@@ -225,12 +227,13 @@ async function openOrder(item: UpcomingItem) {
     orderDialog.value = true
     orderLoading.value = true
     orderDetail.value = null
+    orderError.value = ''
     orderEventId.value = item.id
     try {
         const r = await service.eventOrder(item.id)
         orderDetail.value = (r.data as any).data
-    } catch {
-        orderDetail.value = { eventTitle: item.itemName, items: [] }
+    } catch (err: any) {
+        orderError.value = err.response?.data?.error || 'Could not load this order. Refresh and try again.'
     } finally {
         orderLoading.value = false
     }
@@ -279,10 +282,15 @@ function money(cents: number): string {
     return cents === 0 ? 'Free' : `$${(cents / 100).toFixed(2)}`
 }
 
-function tenantUserUrl(subdomain: string): string {
+function tenantUserUrl(item: UpcomingItem): string {
+    // Send each kind to the page that actually lists it: season passes and memberships
+    // are NOT shown on MyPasses (they live on their own pages).
+    const path = item.kind === 'season_pass' ? '/User/SeasonPasses'
+        : item.kind === 'membership' ? '/Membership'
+        : '/User/MyPasses'
     const proto = window.location.protocol
     const port = window.location.port ? `:${window.location.port}` : ''
-    return `${proto}//${subdomain}.${tenantHelper.rootDomain()}${port}/User/MyPasses`
+    return `${proto}//${item.tenantSubdomain}.${tenantHelper.rootDomain()}${port}${path}`
 }
 </script>
 

@@ -28,6 +28,11 @@
                     </v-alert>
                     <v-btn variant="tonal" :loading="acting" @click="resubscribe">Changed your mind? Resubscribe</v-btn>
                 </div>
+
+                <p class="text-caption text-medium-emphasis mt-6">
+                    This only affects event-reminder emails. Newsletter and promotional emails are
+                    managed from their own unsubscribe links or your profile.
+                </p>
             </template>
         </v-card>
     </v-container>

@@ -23,6 +23,7 @@ namespace Services.Repositories
             country,
             bike AS Bike,
             race_number AS RaceNumber,
+            image_url AS ImageUrl,
             email_verified AS EmailVerified,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
@@ -116,6 +117,21 @@ namespace Services.Repositories
                 SET emergency_contact_name = @name, emergency_contact_phone = @phone, updated_at = now()
                 WHERE id = @userId";
             await _db.Execute(sql, new { userId, name, phone });
+        }
+
+        public async Task UpdateProfile(Guid userId, string firstName, string lastName, string? phone)
+        {
+            const string sql = @"
+                UPDATE users
+                SET first_name = @firstName, last_name = @lastName, phone = @phone, updated_at = now()
+                WHERE id = @userId";
+            await _db.Execute(sql, new { userId, firstName, lastName, phone });
+        }
+
+        public async Task UpdateImageUrl(Guid userId, string? imageUrl)
+        {
+            const string sql = "UPDATE users SET image_url = @imageUrl, updated_at = now() WHERE id = @userId";
+            await _db.Execute(sql, new { userId, imageUrl });
         }
 
         public async Task UpdateRacerInfo(Guid userId, string? bike, string? raceNumber)

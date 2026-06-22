@@ -262,6 +262,12 @@ async function saveRole() {
 }
 
 async function setStatus(u: TenantUserListItem, status: 'active' | 'disabled') {
+    if (status === 'disabled' && !await confirm({
+        title: 'Disable user?',
+        message: `Disable ${u.email}? They lose access immediately until you re-enable them.`,
+        confirmText: 'Disable',
+        confirmColor: 'warning',
+    })) return
     try {
         await service.updateTenantUserStatus(u.id, status)
         flash(status === 'disabled' ? 'User disabled.' : 'User re-enabled.', 'success')

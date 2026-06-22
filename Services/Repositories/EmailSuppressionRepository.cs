@@ -76,5 +76,19 @@ namespace Services.Repositories
             const string sql = "DELETE FROM email_suppression WHERE id = @id AND tenant_id = @tenantId";
             await _db.Execute(sql, new { id, tenantId });
         }
+
+        public async Task Unsuppress(Guid? tenantId, string email, string scope)
+        {
+            // Mirror of Suppress: match the same (tenant-or-global, lower(email), scope) key the
+            // partial unique index uses, so a resubscribe clears exactly the row a prior
+            // unsubscribe wrote (the token supplies the tenant + email).
+            const string sql = @"
+                DELETE FROM email_suppression
+                WHERE lower(email) = lower(@email)
+                  AND scope = @scope
+                  AND COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                      = COALESCE(@tenantId, '00000000-0000-0000-0000-000000000000'::uuid)";
+            await _db.Execute(sql, new { tenantId, email, scope });
+        }
     }
 }

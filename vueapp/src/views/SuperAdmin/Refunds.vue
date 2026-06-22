@@ -44,7 +44,7 @@
                         </td>
                         <td class="text-right">
                             <v-btn size="small" color="primary" variant="tonal"
-                                :disabled="!r.stripePaymentIntentId" :loading="processingId === r.id"
+                                :disabled="!r.stripePaymentIntentId" :loading="processingId === r.kind + ':' + r.id"
                                 @click="processRefund(r)">
                                 Process Refund
                             </v-btn>
@@ -105,7 +105,7 @@ async function processRefund(r: RefundListItem) {
     })
     if (!ok) return
     try {
-        processingId.value = r.id
+        processingId.value = r.kind + ':' + r.id
         if (r.kind === 'pass') {
             await service.processPassRefund(r.id)
         } else {

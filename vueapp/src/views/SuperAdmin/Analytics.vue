@@ -13,6 +13,11 @@
             <v-btn color="primary" :loading="loadingAnalytics" @click="loadAnalytics">Refresh</v-btn>
         </div>
 
+        <div v-if="loadingAnalytics && !analytics" class="text-center py-12">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+        </div>
+        <v-alert v-else-if="loadError && !analytics" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
         <v-row v-if="analytics" class="mb-4">
             <v-col cols="12" sm="6" md="3">
                 <v-card><v-card-text>
@@ -108,6 +113,7 @@ const reportsService = new ReportsService()
 
 const analytics = ref<PlatformAnalyticsSummary | null>(null)
 const loadingAnalytics = ref(false)
+const loadError = ref('')
 const analyticsPresetOptions = [
     { title: 'Last 7 days', value: '7d' },
     { title: 'Last 30 days', value: '30d' },
@@ -154,13 +160,16 @@ function applyAnalyticsPreset(v: string) {
 
 async function loadAnalytics() {
     loadingAnalytics.value = true
+    loadError.value = ''
     try {
         const fromUtc = dayjs.utc(analyticsFrom.value).toISOString()
         const toUtc = dayjs.utc(analyticsTo.value).toISOString()
         const r = await reportsService.getPlatformAnalytics(fromUtc, toUtc)
         analytics.value = (r.data as any).data
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to load analytics.', 'error')
+        loadError.value = err.response?.data?.error || 'Failed to load analytics. Refresh to try again.'
+        // Keep the toast too for the refresh-after-load case, where the page already has data.
+        flash(loadError.value, 'error')
     } finally {
         loadingAnalytics.value = false
     }

@@ -161,9 +161,12 @@
                             item-title="title" item-value="value"
                             label="Apply customer voucher (optional)" density="compact"
                             clearable hide-details class="mb-3"
-                            hint="Voucher applies to one ticket, or to a single-quantity pass line."
+                            hint="Voucher applies to a single add-on or membership line."
                             persistent-hint></v-select>
 
+                        <v-alert v-if="!branding.extrasEnabled && !membershipOffered" type="info" variant="tonal" class="mb-3">
+                            Nothing is set up to sell at the counter yet. Enable add-ons or configure a membership in Settings.
+                        </v-alert>
                         <div class="text-subtitle-2 mb-2">Cart</div>
                         <div v-if="cart.length === 0" class="text-medium-emphasis pa-3 text-center"
                              style="border: 1px dashed rgba(0,0,0,0.12); border-radius: 6px">
@@ -320,9 +323,13 @@
 
                         <div v-else-if="clientSecret">
                             <div id="payment-element" class="mb-4"></div>
-                            <v-btn color="primary" :loading="paying" :disabled="!stripeReady" @click="pay">
-                                Charge ${{ totalDollars }}
-                            </v-btn>
+                            <div class="d-flex align-center ga-2">
+                                <v-btn variant="text" :disabled="paying" @click="cancelCardPayment">Start over</v-btn>
+                                <v-spacer></v-spacer>
+                                <v-btn color="primary" :loading="paying" :disabled="!stripeReady" @click="pay">
+                                    Charge ${{ totalDollars }}
+                                </v-btn>
+                            </div>
                             <div v-if="paymentError" class="text-error mt-3">{{ paymentError }}</div>
                         </div>
                     </v-card-text>
@@ -382,6 +389,7 @@ import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 import RichTextView from '@/components/RichTextView.vue'
 import QrCode from '@/components/QrCode.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import SignaturePad from '@/components/SignaturePad.vue'
 import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue'
 import PhoneField from '@/components/PhoneField.vue'
@@ -408,6 +416,7 @@ const extraService = new ExtraService()
 const rewardService = new RewardService()
 
 const stepLabels = ['Customer', 'Cart', 'Waiver', 'Payment', 'Receipt']
+const confirm = useConfirm()
 const step = ref(1)
 
 // Make earlier step headers clickable so the cashier can jump back. Once payment
@@ -441,7 +450,8 @@ const canCreateCustomer = computed(() =>
     && !!newCustomer.value.emergencyContactName.trim()
     && newCustomer.value.emergencyContactPhone.replace(/\D/g, '').length >= 7)
 
-// Cart step — accordion: only one section open at a time, default to passes.
+// Cart step accordion: only one section open at a time; defaults to add-ons. The cart
+// sells add-ons and memberships (event tickets/passes are not sold at this counter).
 const catalogPanel = ref<string | undefined>('extras')
 const extras = ref<ExtraProduct[]>([])
 const loadingExtras = ref(false)
@@ -547,6 +557,29 @@ const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
 onMounted(async () => {
+    // Return from a redirect-based payment method: restore the stashed receipt and jump to
+    // step 5 so the operator sees the confirmation + QR codes instead of a reset stepper.
+    const params = new URLSearchParams(window.location.search)
+    const pi = params.get('payment_intent')
+    const redirectStatus = params.get('redirect_status')
+    if (pi && redirectStatus) {
+        if (redirectStatus === 'succeeded') {
+            try {
+                const saved = sessionStorage.getItem(`counterReceipt:${pi}`)
+                if (saved) {
+                    const r = JSON.parse(saved)
+                    lineItems.value = r.lineItems ?? []
+                    totalAmountCents.value = r.totalAmountCents ?? 0
+                }
+                sessionStorage.removeItem(`counterReceipt:${pi}`)
+            } catch { /* ignore a malformed/missing stash; step 5 still confirms the charge */ }
+            step.value = 5
+            flash('Payment received. Sale complete.', 'success')
+        } else {
+            flash('The payment was not completed. Start the sale again.', 'error')
+        }
+        history.replaceState(null, '', window.location.pathname)
+    }
     loadingExtras.value = true
     try {
         const [w, x] = await Promise.all([
@@ -767,6 +800,18 @@ async function pay() {
     paying.value = true
     paymentError.value = null
     try {
+        // A redirect-based method (3DS / wallet) navigates away and back, remounting this
+        // page with all sale state lost. Stash the receipt keyed by PaymentIntent id so the
+        // mount-time return handler can restore step 5 with its QR codes.
+        const piId = clientSecret.value?.split('_secret')[0] ?? ''
+        if (piId) {
+            try {
+                sessionStorage.setItem(`counterReceipt:${piId}`, JSON.stringify({
+                    lineItems: lineItems.value,
+                    totalAmountCents: totalAmountCents.value,
+                }))
+            } catch { /* sessionStorage unavailable; a redirect return would show an empty receipt */ }
+        }
         const { error } = await stripe.confirmPayment({
             elements,
             confirmParams: { return_url: window.location.href },
@@ -782,6 +827,20 @@ async function pay() {
     } finally {
         paying.value = false
     }
+}
+
+// Escape hatch from the locked card-payment step (declined card, wrong item, customer
+// changed their mind). The PaymentIntent is uncaptured, so nothing was charged; any
+// leftover pending rows are cleaned up by the PendingPurchaseReconciler.
+async function cancelCardPayment() {
+    const ok = await confirm({
+        title: 'Start over?',
+        message: 'Discard this prepared payment and return to a new sale? The customer has not been charged. If they already approved it on the reader, check Purchases before re-ringing.',
+        confirmText: 'Start over',
+        confirmColor: 'warning',
+    })
+    if (!ok) return
+    reset()
 }
 
 function reset() {

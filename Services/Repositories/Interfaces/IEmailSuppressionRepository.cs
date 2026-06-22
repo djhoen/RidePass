@@ -27,5 +27,10 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Remove a tenant-scoped suppression (e.g. admin re-enables an address).</summary>
         Task RemoveForTenant(Guid id, Guid tenantId);
+
+        /// <summary>Clear the matching suppression so the address can receive that scope again
+        /// (public resubscribe from an unsubscribe link). Keyed like the unique index:
+        /// tenant-or-global + lower(email) + scope.</summary>
+        Task Unsuppress(Guid? tenantId, string email, string scope);
     }
 }

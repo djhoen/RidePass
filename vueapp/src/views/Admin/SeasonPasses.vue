@@ -96,17 +96,13 @@
                         label="Total credits" density="compact" class="mt-4"></v-text-field>
 
                     <v-divider class="my-3"></v-divider>
-                    <div class="text-subtitle-2 mb-1">Event-type perks</div>
+                    <div class="text-subtitle-2 mb-1">Valid for event types</div>
                     <p class="text-caption text-medium-emphasis mb-2">
-                        Pick event types this pass can be used at. 100% = included, smaller numbers = discount on the ticket price.
-                        (Discount application at checkout ships in a follow-up — for now, this is informational and used to gate reservations.)
+                        Pick the event types this pass can be used at.
                     </p>
                     <div v-for="t in eventTypes" :key="t.id" class="d-flex align-center ga-2 mb-1">
                         <v-checkbox :model-value="!!perkFor(t.id)" hide-details density="compact"
                             :label="t.name" @update:model-value="togglePerk(t.id, $event)"></v-checkbox>
-                        <v-text-field v-if="perkFor(t.id)" :model-value="perkFor(t.id)?.discountPercent"
-                            @update:model-value="setPerkDiscount(t.id, Number($event))" type="number" min="0" max="100"
-                            suffix="%" density="compact" hide-details style="max-width: 100px"></v-text-field>
                     </div>
 
                     <v-divider class="my-3"></v-divider>
@@ -204,11 +200,6 @@ function togglePerk(eventTypeId: string, on: boolean | null) {
         form.value.perks = form.value.perks.filter(p => p.eventTypeId !== eventTypeId)
     }
 }
-function setPerkDiscount(eventTypeId: string, value: number) {
-    const p = perkFor(eventTypeId)
-    if (p) p.discountPercent = Math.max(0, Math.min(100, value || 0))
-}
-
 onMounted(async () => {
     loadError.value = null
     try {
@@ -273,6 +264,16 @@ function openEdit(p: SeasonPassProduct) {
 }
 
 async function save() {
+    if (!form.value.name.trim()) { flash('Name is required.', 'error'); return }
+    if (form.value.validFromDate && form.value.validToDate && form.value.validFromDate > form.value.validToDate) {
+        flash('"Valid from" must be on or before "Valid to".', 'error'); return
+    }
+    if (form.value.kind === 'days_of_week' && (!form.value.validDaysOfWeek || form.value.validDaysOfWeek.length === 0)) {
+        flash('Pick at least one day of the week for this pass.', 'error'); return
+    }
+    if (form.value.kind === 'credits' && (!form.value.totalCredits || form.value.totalCredits < 1)) {
+        flash('A credits pass needs at least 1 credit.', 'error'); return
+    }
     try {
         saving.value = true
         const body: UpsertSeasonPassProduct = {

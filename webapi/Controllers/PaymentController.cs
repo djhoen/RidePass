@@ -3,6 +3,7 @@ using Services.Notifications;
 using Services.Payments;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
+using webapi.Controllers.API.Data.Payment;
 using webapi.Payments;
 
 namespace webapi.Controllers
@@ -96,6 +97,27 @@ namespace webapi.Controllers
 
             await _finalizer.ProcessPaymentIntentAsync(webhookEvent.PaymentIntentId, webhookEvent.Type);
             return Ok();
+        }
+
+        // Client-confirm fallback. When the buyer's payment succeeds inline in the browser
+        // we finalize right away instead of waiting for the async webhook (or the reconciler's
+        // 20-minute grace), so the just-bought entry appears on their schedule immediately.
+        // We re-read the status from Stripe rather than trusting the client, and the finalizer
+        // is idempotent, so racing the real webhook is safe. Anonymous: guests check out too.
+        [HttpPost("ConfirmIntent")]
+        public async Task<IActionResult> ConfirmIntent([FromBody] ConfirmIntentRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.PaymentIntentId))
+            {
+                return BadRequest();
+            }
+
+            var status = await _payments.GetPaymentIntentStatusAsync(request.PaymentIntentId);
+            if (status == "succeeded")
+            {
+                await _finalizer.ProcessPaymentIntentAsync(request.PaymentIntentId, "payment_intent.succeeded");
+            }
+            return Ok(new { status });
         }
 
         /// <summary>

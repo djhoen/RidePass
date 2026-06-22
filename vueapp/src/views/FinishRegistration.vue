@@ -9,8 +9,15 @@
             <h1 class="text-h5 font-weight-bold mt-2 mb-1">Registration complete</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">You're all set for the gate. See you at the track!</p>
             <div class="d-flex flex-column flex-sm-row justify-center ga-2">
-                <v-btn color="primary" to="/User/Upcoming" prepend-icon="mdi-calendar-check">My upcoming events</v-btn>
+                <v-btn v-if="isAuthed" color="primary" to="/User/Upcoming" prepend-icon="mdi-calendar-check">My upcoming events</v-btn>
                 <v-btn variant="tonal" to="/Events">Browse events</v-btn>
+            </div>
+
+            <!-- Guests: optional account creation, prefilled from what they just entered. -->
+            <div v-if="!isAuthed" class="reg-signup mt-6 pa-4 text-left">
+                <h2 class="text-subtitle-1 font-weight-bold mb-1">Create your free account</h2>
+                <p class="text-body-2 text-medium-emphasis mb-3">Optional, but it makes your next visit faster.</p>
+                <AccountSignupForm :prefill="signupPrefill" />
             </div>
         </div>
 
@@ -91,12 +98,17 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { TicketService, type RegistrationTicket } from '@/services/TicketService'
+import { UserService } from '@/services/UserService'
 import { branding } from '@/stores/branding'
+import authHelper from '@/helpers/AuthHelper'
 import SignaturePad from '@/components/SignaturePad.vue'
+import AccountSignupForm from '@/components/AccountSignupForm.vue'
 
 const route = useRoute()
 const service = new TicketService()
+const userService = new UserService()
 const token = String(route.params.token)
+const isAuthed = authHelper.isAuthenticated()
 
 interface RiderCard {
     firstName: string
@@ -140,6 +152,20 @@ const snackbarText = ref('')
 const todayIso = dayjs().format('YYYY-MM-DD')
 
 const anyWaiver = computed(() => riders.value.some(r => r.needsWaiver) || spectators.value.length > 0)
+
+// Prefill the post-registration signup from the first rider (or spectator) we just
+// collected. There's no purchaser email in the registration payload, so they enter that.
+const signupPrefill = computed(() => {
+    const r0 = riders.value[0]
+    const s0 = spectators.value[0]
+    return {
+        firstName: r0?.firstName || s0?.firstName || '',
+        lastName: r0?.lastName || s0?.lastName || '',
+        birthdate: r0?.birthdate || s0?.birthdate || '',
+        emergencyName: r0?.emergencyName || '',
+        emergencyPhone: r0?.emergencyPhone || '',
+    }
+})
 const riderIndexOptions = computed(() =>
     Array.from({ length: riders.value.length }, (_, i) => ({ value: i, label: `Rider ${i + 1}` })))
 
@@ -156,6 +182,7 @@ onMounted(async () => {
         const d = (r.data as any).data
         eventTitle.value = d.eventTitle
         build((d.tickets ?? []) as RegistrationTicket[])
+        await prefillEmergencyFromProfile()
     } catch (err: any) {
         riders.value = []
         spectators.value = []
@@ -201,6 +228,18 @@ function build(tickets: RegistrationTicket[]) {
         ticketId: t.ticketId, tierName: t.tierName,
         firstName: '', lastName: '', birthdate: '', parentName: '', signatureDataUrl: null,
     }))
+}
+
+// Pre-fill the first rider's emergency contact from the logged-in buyer's profile (the buyer
+// is usually the first rider). Best-effort: skipped for guests, never overwrites a typed value.
+async function prefillEmergencyFromProfile() {
+    if (!isAuthed || riders.value.length === 0) return
+    try {
+        const r = await userService.getProfile()
+        const p: any = (r.data as any).data ?? r.data
+        if (!riders.value[0].emergencyName) riders.value[0].emergencyName = p.emergencyContactName ?? ''
+        if (!riders.value[0].emergencyPhone) riders.value[0].emergencyPhone = p.emergencyContactPhone ?? ''
+    } catch { /* leave blank for them to fill */ }
 }
 
 async function finish() {
@@ -265,7 +304,8 @@ async function finish() {
 </script>
 
 <style scoped>
-.reg-card {
+.reg-card,
+.reg-signup {
     background: rgba(0, 0, 0, 0.03);
     border-radius: 8px;
 }

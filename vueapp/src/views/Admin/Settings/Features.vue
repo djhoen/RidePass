@@ -137,7 +137,7 @@ const features = computed<Feature[]>(() => [
     {
         key: 'membership',
         title: 'Memberships',
-        description: 'Sell yearly or one-time memberships and require them for selected purchases.',
+        description: 'Sell yearly or one-time memberships.',
         icon: 'mdi-card-account-details',
         enabled: branding.membershipEnabled,
         configureTo: '/Admin/Settings/Membership',

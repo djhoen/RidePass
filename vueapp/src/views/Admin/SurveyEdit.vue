@@ -79,15 +79,15 @@
                                 <div v-if="q.kind !== 'free_form'">
                                     <div class="text-subtitle-2 mb-1">Choices</div>
                                     <draggable :list="choiceDrafts[q.id]" :item-key="'label'"
-                                        handle=".choice-drag-handle"
+                                        handle=".choice-drag-handle" @end="saveChoices(q.id)"
                                         :animation="180" ghost-class="drag-ghost">
                                         <template #item="{ element: c, index: ci }">
                                             <div class="d-flex align-center mb-2 ga-2">
                                                 <v-icon class="choice-drag-handle" size="small" color="grey">mdi-drag-vertical</v-icon>
                                                 <v-text-field v-model="c.label" density="compact" hide-details
-                                                    placeholder="Choice label"></v-text-field>
+                                                    placeholder="Choice label" @blur="saveChoices(q.id)"></v-text-field>
                                                 <v-checkbox v-model="c.allowsFreeText" label="Other (allow custom answer)"
-                                                    density="compact" hide-details></v-checkbox>
+                                                    density="compact" hide-details @change="saveChoices(q.id)"></v-checkbox>
                                                 <v-btn variant="text" size="small" icon @click="removeChoice(q.id, ci)">
                                                     <v-icon>mdi-close</v-icon>
                                                 </v-btn>
@@ -98,10 +98,6 @@
                                         <v-btn size="small" variant="text" prepend-icon="mdi-plus"
                                             @click="addChoice(q.id)">
                                             Add choice
-                                        </v-btn>
-                                        <v-spacer></v-spacer>
-                                        <v-btn size="small" color="primary" variant="tonal" @click="saveChoices(q.id)">
-                                            Save choices
                                         </v-btn>
                                     </div>
                                 </div>
@@ -440,6 +436,18 @@ async function saveMeta() {
 }
 
 async function setStatus(status: 'draft' | 'published' | 'closed') {
+    if (status === 'published') {
+        // Don't publish a survey riders can't actually answer. Validate against the live
+        // choice drafts (matching saveChoices' empty-label filtering) so just-typed choices count.
+        const qs = survey.value?.questions ?? []
+        if (qs.length === 0) { flash('Add at least one question before publishing.', 'error'); return }
+        const bad = qs.find(q => q.kind !== 'free_form'
+            && (choiceDrafts[q.id] ?? []).filter(c => c.label.trim().length > 0).length < 2)
+        if (bad) {
+            flash(`"${bad.prompt || 'A choice question'}" needs at least two choices before publishing.`, 'error')
+            return
+        }
+    }
     try {
         await service.updateStatus(surveyId.value, status)
         flash(`Survey ${status}.`, 'success')
@@ -533,17 +541,19 @@ function addChoice(qId: string) {
 }
 function removeChoice(qId: string, ci: number) {
     choiceDrafts[qId].splice(ci, 1)
+    saveChoices(qId)
 }
+// Auto-saves on blur / toggle / add-remove / reorder, mirroring how the question prompt
+// and required flag already persist (silently, error-only). No explicit "Save choices"
+// button, so an edited choice can't be lost by navigating away.
 async function saveChoices(qId: string) {
     const choices = (choiceDrafts[qId] ?? [])
         .map(c => ({ label: c.label.trim(), allowsFreeText: c.allowsFreeText }))
         .filter(c => c.label.length > 0)
     try {
         await service.replaceChoices(qId, choices)
-        await load()
-        flash('Choices saved.', 'success')
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Save failed.', 'error')
+        flash(err.response?.data?.error || 'Could not save choices. Refresh and try again.', 'error')
     }
 }
 

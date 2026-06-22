@@ -129,6 +129,66 @@ namespace webapi.Controllers
             });
         }
 
+        /// <summary>
+        /// Authenticated rider updating their own new-event notification channels from the profile.
+        /// Turning a channel on requires the tenant to allow subscriptions; turning everything off
+        /// (unsubscribe) is always permitted so a rider can opt out even if the track later disabled it.
+        /// </summary>
+        [Authorize]
+        [HttpPut("Mine")]
+        public async Task<IActionResult> UpdateMine([FromBody] UpdateMyEventSubscriptionRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var claim = User.FindFirst("UserId")?.Value;
+            if (!Guid.TryParse(claim, out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var user = await _users.GetById(userId);
+            if (user is null) return new ApiResponses().NotFoundResult("User not found.");
+
+            var existing = await _subs.GetByTenantAndEmail(_tenantContext.TenantId, user.Email);
+
+            // Both channels off => unsubscribe (idempotent).
+            if (!request.NotifyEmail && !request.NotifySms)
+            {
+                if (existing is not null && existing.UnsubscribedAt is null)
+                {
+                    await _subs.SetUnsubscribed(existing.Id, true);
+                }
+                return new ApiResponses().OkResult(new { subscribed = false });
+            }
+
+            if (!_tenantContext.Tenant.AllowEventSubscriptions)
+            {
+                return new ApiResponses().BadRequestResult("This track isn't accepting event subscriptions right now.");
+            }
+
+            string? phone;
+            if (request.NotifySms)
+            {
+                phone = TwilioSmsSender.NormalizeE164(user.Phone ?? string.Empty);
+                if (phone is null)
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "Add a valid mobile phone to your profile to get text notifications.");
+                }
+            }
+            else
+            {
+                // Keep any phone already on the subscription; email-only is fine.
+                phone = existing?.Phone;
+            }
+
+            await _subs.Upsert(new EventSubscription
+            {
+                TenantId = _tenantContext.TenantId,
+                UserId = userId,
+                Email = user.Email,
+                Phone = phone,
+                NotifyEmail = request.NotifyEmail,
+                NotifySms = request.NotifySms,
+            });
+            return new ApiResponses().OkResult(new { subscribed = true });
+        }
+
         [AllowAnonymous]
         [HttpGet("Unsubscribe/{token:guid}/Status")]
         public async Task<IActionResult> UnsubscribeStatus(Guid token)

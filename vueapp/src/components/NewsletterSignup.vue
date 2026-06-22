@@ -18,7 +18,7 @@
 
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { NewsletterService } from '@/services/NewsletterService'
 
 defineProps<{
@@ -32,6 +32,10 @@ const name = ref('')
 const submitting = ref(false)
 const subscribed = ref(false)
 const error = ref('')
+
+// Editing the email after a successful subscribe re-enables the button so a different
+// (or corrected) address can be submitted.
+watch(email, () => { if (subscribed.value) subscribed.value = false })
 
 async function submit() {
     if (!email.value.trim() || !email.value.includes('@')) {

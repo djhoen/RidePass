@@ -145,6 +145,12 @@ export class TicketService {
         return axios.post(`${this.apiUrl}/Event/${eventId}/Tiers/Reorder`, { items })
     }
 
+    // Tell the server a PaymentIntent succeeded so it finalizes now instead of waiting for
+    // the async webhook. The server re-verifies with Stripe; safe to call best-effort.
+    confirmIntent(paymentIntentId: string) {
+        return axios.post(`${this.apiUrl}/Payment/ConfirmIntent`, { paymentIntentId })
+    }
+
     // Ticket purchase — cart of {tierId, quantity}. Email + name required when not authenticated.
     createTicketPurchase(req: {
         items: { tierId: string; quantity: number }[]

@@ -26,6 +26,10 @@ namespace Services.Repositories.Data.CustomerData
         public List<EventTicketPurchase> EventTickets { get; set; } = new();
         public List<SeasonPassPurchase> SeasonPasses { get; set; } = new();
         public List<RiderWaiverSignatureWithWaiver> WaiverSignatures { get; set; } = new();
+        // Server-computed from the same activity CTE the customer list uses, so the detail
+        // page and the list never show conflicting totals for the same customer.
+        public int TotalPurchases { get; set; }
+        public int TotalSpentCents { get; set; }
     }
 
     // RiderWaiverSignature joined with the waiver template's title + version so the

@@ -41,6 +41,10 @@ namespace Services.Repositories.Interfaces
         /// <summary>Used to determine if the card can be refunded ("balance untouched").</summary>
         Task<int> CountRedemptions(Guid giftCardId);
 
+        /// <summary>Total gift-card cents applied to one purchase, used by the card-first refund
+        /// split so a refund returns the gift-card share to the card and only the rest to Stripe.</summary>
+        Task<int> SumRedemptionsForSource(string sourceKind, Guid sourceId, Guid tenantId);
+
         Task<Guid> RecordRedemption(GiftCardRedemption r);
         Task<List<GiftCardRedemption>> ListRedemptionsByCard(Guid giftCardId);
     }

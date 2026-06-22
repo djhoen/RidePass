@@ -14,7 +14,7 @@
                 <v-btn color="primary" to="/User/MyPasses">View My Passes</v-btn>
             </v-card>
 
-            <v-card v-else-if="details.status === 'expired' || expiredNow" class="pa-4 text-center">
+            <v-card v-else-if="(details.status === 'expired' || expiredNow) && !clientSecret" class="pa-4 text-center">
                 <v-icon size="48" color="grey" class="mb-2">mdi-clock-outline</v-icon>
                 <h1 class="text-h5 mb-2">This window has closed</h1>
                 <p class="text-body-2 text-medium-emphasis">
@@ -58,7 +58,8 @@
                         <template v-if="!details.tierId">
                             <p class="text-body-2 mb-2">Pick the pass you want to use:</p>
                             <div v-if="details.eligiblePasses.length === 0" class="text-medium-emphasis">
-                                No passes are currently accepted at this event.
+                                No passes are currently accepted at this event, so there's nothing to claim here.
+                                <div class="mt-3"><v-btn variant="tonal" to="/Events">Back to Events</v-btn></div>
                             </div>
                             <v-radio-group v-else v-model="selectedProductId">
                                 <v-radio v-for="p in details.eligiblePasses" :key="p.id" :value="p.id">
@@ -78,7 +79,8 @@
                             </div>
                         </template>
 
-                        <v-btn color="primary" :loading="creating" :disabled="!canPay" @click="createPayIntent">
+                        <v-btn v-if="details.tierId || details.eligiblePasses.length > 0"
+                            color="primary" :loading="creating" :disabled="!canPay" @click="createPayIntent">
                             Continue to Payment
                         </v-btn>
                     </v-card-text>

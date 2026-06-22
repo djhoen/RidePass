@@ -143,6 +143,14 @@ namespace Services.Repositories
             return await _db.ExecuteScalar(sql, new { giftCardId });
         }
 
+        public async Task<int> SumRedemptionsForSource(string sourceKind, Guid sourceId, Guid tenantId)
+        {
+            const string sql = @"SELECT COALESCE(SUM(amount_cents), 0)
+                                 FROM gift_card_redemption
+                                 WHERE source_kind = @sourceKind AND source_id = @sourceId AND tenant_id = @tenantId";
+            return await _db.ExecuteScalar(sql, new { sourceKind, sourceId, tenantId });
+        }
+
         public async Task<Guid> RecordRedemption(GiftCardRedemption r)
         {
             const string sql = @"

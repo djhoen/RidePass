@@ -159,26 +159,29 @@ function tz() { return branding.timezone || 'UTC' }
 
 function applyPreset(v: string) {
     const t = dayjs()
+    // rangeTo is the inclusive last day shown to the admin; load() converts it to the
+    // exclusive query bound by adding a day. (Previously these set an exclusive bound that
+    // displayed one day past what was intended.)
     switch (v) {
         case '7d':
             rangeFrom.value = t.subtract(6, 'day').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
+            rangeTo.value = t.format('YYYY-MM-DD')
             break
         case '30d':
             rangeFrom.value = t.subtract(29, 'day').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
+            rangeTo.value = t.format('YYYY-MM-DD')
             break
         case 'thismonth':
             rangeFrom.value = t.startOf('month').format('YYYY-MM-DD')
-            rangeTo.value = t.endOf('month').add(1, 'day').format('YYYY-MM-DD')
+            rangeTo.value = t.endOf('month').format('YYYY-MM-DD')
             break
         case 'lastmonth':
             rangeFrom.value = t.subtract(1, 'month').startOf('month').format('YYYY-MM-DD')
-            rangeTo.value = t.startOf('month').format('YYYY-MM-DD')
+            rangeTo.value = t.subtract(1, 'month').endOf('month').format('YYYY-MM-DD')
             break
         case 'ytd':
             rangeFrom.value = t.startOf('year').format('YYYY-MM-DD')
-            rangeTo.value = t.add(1, 'day').format('YYYY-MM-DD')
+            rangeTo.value = t.format('YYYY-MM-DD')
             break
     }
     load()
@@ -187,8 +190,14 @@ function applyPreset(v: string) {
 async function load() {
     loading.value = true
     try {
+        if (rangeFrom.value && rangeTo.value && rangeFrom.value > rangeTo.value) {
+            snackbarText.value = '"From" must be on or before "To".'
+            snackbar.value = true
+            return
+        }
         const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
-        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
+        // rangeTo is inclusive; add a day for the exclusive upper bound the query expects.
+        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).add(1, 'day').utc().toISOString()
         const r = await service.getTenantSummary(fromUtc, toUtc)
         summary.value = (r.data as any).data
     } catch (err: any) {

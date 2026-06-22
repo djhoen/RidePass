@@ -6,7 +6,7 @@
                     <v-card-title class="text-h5">Bootstrap RidePass</v-card-title>
                     <v-card-text>
                         <p class="text-body-2 text-medium-emphasis mb-4">
-                            Create the first super admin. This form disables itself after one super admin exists.
+                            Create the first super admin. This only works during initial setup; once a super admin exists, the server rejects further attempts.
                         </p>
                         <v-form @submit.prevent="submit">
                             <v-row>

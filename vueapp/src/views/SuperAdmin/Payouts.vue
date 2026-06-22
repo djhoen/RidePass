@@ -91,9 +91,9 @@
                                         Send via Stripe
                                     </v-btn>
                                     <v-btn v-if="p.status === 'pending' || p.status === 'processing'" size="x-small" variant="text"
-                                        @click="openMarkPaid(p)">Mark paid</v-btn>
+                                        :disabled="stripeSendingId === p.id" @click="openMarkPaid(p)">Mark paid</v-btn>
                                     <v-btn v-if="p.status === 'pending'" size="x-small" variant="text" color="error"
-                                        @click="voidPayout(p)">Void</v-btn>
+                                        :disabled="stripeSendingId === p.id" @click="voidPayout(p)">Void</v-btn>
                                     <v-btn size="x-small" variant="text" icon="mdi-download" @click="downloadPayoutCsv(p)"
                                         :title="'Download CSV'"></v-btn>
                                 </td>
@@ -314,6 +314,7 @@ async function submitMarkPaid() {
         flash('Marked as paid.', 'success')
         markPaidDialog.value = false
         await refreshDetailDialog()
+        await loadBalances()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to update payout.', 'error')
     } finally {

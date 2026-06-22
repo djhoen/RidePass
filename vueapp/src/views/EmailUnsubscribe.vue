@@ -16,6 +16,10 @@
                 </h1>
                 <p class="text-body-2 mb-4"><strong>{{ status.email }}</strong></p>
 
+                <v-alert v-if="actionError" type="error" variant="tonal" density="compact" class="mb-4">
+                    {{ actionError }}
+                </v-alert>
+
                 <div v-if="!done">
                     <p class="mb-4">
                         Stop receiving promotional emails{{ status.tenantDisplayName ? ` from ${status.tenantDisplayName}` : '' }}?
@@ -31,15 +35,27 @@
                             : `Done. You won't receive promotional emails${status.tenantDisplayName ? ` from ${status.tenantDisplayName}` : ''}.` }}
                     </v-alert>
 
-                    <div v-if="!allTracksDone">
-                        <p class="text-body-2 text-medium-emphasis mb-2">
-                            Get promotional emails from other tracks on this platform too?
-                        </p>
-                        <v-btn variant="tonal" :loading="acting" @click="unsubscribeAll">
-                            Stop emails from all tracks
-                        </v-btn>
+                    <div v-if="!allTracksDone" class="d-flex flex-column ga-4">
+                        <div>
+                            <v-btn variant="tonal" :loading="acting" @click="resubscribe">
+                                Changed your mind? Resubscribe
+                            </v-btn>
+                        </div>
+                        <div>
+                            <p class="text-body-2 text-medium-emphasis mb-2">
+                                Get promotional emails from other tracks on this platform too?
+                            </p>
+                            <v-btn variant="text" :loading="acting" @click="unsubscribeAll">
+                                Stop emails from all tracks
+                            </v-btn>
+                        </div>
                     </div>
                 </div>
+
+                <p class="text-caption text-medium-emphasis mt-6">
+                    This only affects promotional emails. Newsletter and event-reminder emails are
+                    managed from their own unsubscribe links or your profile.
+                </p>
             </template>
         </v-card>
     </v-container>
@@ -55,7 +71,10 @@ const service = new SuppressionService()
 
 const loading = ref(true)
 const acting = ref(false)
+// errorText is only for a bad/expired link (the load failed). A failed unsubscribe POST
+// goes to actionError so we don't repaint a valid link as "invalid".
 const errorText = ref('')
+const actionError = ref('')
 const status = ref<MarketingUnsubStatus | null>(null)
 const done = ref(false)
 const allTracksDone = ref(false)
@@ -82,11 +101,25 @@ onMounted(async () => {
 
 async function unsubscribe() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.unsubscribe(token)
         done.value = true
     } catch (err: any) {
-        errorText.value = err.response?.data?.error || 'Something went wrong.'
+        actionError.value = err.response?.data?.error || 'Could not unsubscribe you. Please try again, or contact the track.'
+    } finally {
+        acting.value = false
+    }
+}
+
+async function resubscribe() {
+    acting.value = true
+    actionError.value = ''
+    try {
+        await service.resubscribe(token)
+        done.value = false
+    } catch (err: any) {
+        actionError.value = err.response?.data?.error || 'Could not resubscribe you. Please try again, or contact the track.'
     } finally {
         acting.value = false
     }
@@ -94,11 +127,12 @@ async function unsubscribe() {
 
 async function unsubscribeAll() {
     acting.value = true
+    actionError.value = ''
     try {
         await service.unsubscribeAllTracks(token)
         allTracksDone.value = true
     } catch (err: any) {
-        errorText.value = err.response?.data?.error || 'Something went wrong.'
+        actionError.value = err.response?.data?.error || 'Could not update your preferences. Please try again, or contact the track.'
     } finally {
         acting.value = false
     }

@@ -149,8 +149,8 @@ async function refreshStage() {
         stageMirror.value = (r.data as any).data as StageMirrorStatus
         flash('Refresh started.')
         startPolling()
-    } catch {
-        flash('Could not start the refresh.', 'error')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not start the refresh.', 'error')
     }
 }
 
@@ -169,8 +169,8 @@ async function load() {
         const data = (r.data as any).data as { globalEmbedAllowedOrigins: string[] }
         originsText.value = toLines(data.globalEmbedAllowedOrigins)
         loaded.value = true
-    } catch {
-        loadError.value = 'Could not load settings.'
+    } catch (err: any) {
+        loadError.value = err.response?.data?.error || 'Could not load settings.'
     } finally {
         loading.value = false
     }
@@ -184,8 +184,8 @@ async function save() {
         // Echo back the normalized list so the admin sees exactly what was stored.
         originsText.value = toLines(data.globalEmbedAllowedOrigins)
         flash('Saved.')
-    } catch {
-        flash('Could not save settings.', 'error')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not save settings.', 'error')
     } finally {
         saving.value = false
     }

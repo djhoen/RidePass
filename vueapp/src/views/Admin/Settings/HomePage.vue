@@ -52,7 +52,6 @@
                     :hide-details="false"
                     hint="Leave empty to include every event type."
                     persistent-hint class="mt-3"></v-autocomplete>
-                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Next Up</v-btn>
             </v-card-text>
         </v-card>
 
@@ -62,7 +61,6 @@
             <v-card-subtitle>Shown on the home page below the hero. Tell riders what your track is like.</v-card-subtitle>
             <v-card-text>
                 <RichTextEditor v-model="content.aboutHtml" />
-                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save About</v-btn>
             </v-card-text>
         </v-card>
 
@@ -75,7 +73,6 @@
                 <div class="text-subtitle-2 mt-4 mb-2">Benefits image (optional)</div>
                 <BrandingImageSlot label="Benefits Image" kind="benefits" :url="branding.benefitsImageUrl"
                     @uploaded="onUploaded" @removed="onRemoved" />
-                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Benefits</v-btn>
             </v-card-text>
         </v-card>
 
@@ -90,7 +87,6 @@
                 <p v-if="!benefitsHasContent" class="text-caption text-medium-emphasis mt-1">
                     Add Benefits content (text or an image) above to enable that section.
                 </p>
-                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Sections</v-btn>
             </v-card-text>
         </v-card>
 
@@ -113,9 +109,14 @@
                             :disabled="hours[day.key].closed"></v-text-field>
                     </v-col>
                 </v-row>
-                <v-btn color="primary" class="mt-4" :loading="savingContent" @click="saveContent">Save Hours</v-btn>
             </v-card-text>
         </v-card>
+
+        <!-- One Save covers Next Up + About + Benefits + Sections + Hours: they all persist
+             together via the same tenant content update, so per-card buttons were misleading. -->
+        <div class="d-flex justify-end mb-6">
+            <v-btn color="primary" size="large" :loading="savingContent" @click="saveContent">Save home page</v-btn>
+        </div>
 
         <!-- ── Heroes (moved from Branding admin page) ──────────────────────── -->
         <v-card class="mt-8 mb-6 pa-4">
@@ -482,6 +483,13 @@ function populateForm() {
 }
 
 async function saveContent() {
+    for (const day of days) {
+        const h = hours.value[day.key]
+        if (!h.closed && h.open && h.close && h.close <= h.open) {
+            flash(`${day.label}: close time must be after open time.`, 'error')
+            return
+        }
+    }
     try {
         savingContent.value = true
         const hoursJson = JSON.stringify(hours.value)

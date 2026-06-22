@@ -5,6 +5,7 @@ const routes = [
     // Public routes
     { path: '/', name: 'Home', component: () => import('../views/Home.vue') },
     { path: '/Login', name: 'Login', component: () => import('../views/Login.vue') },
+    { path: '/SignUp', name: 'SignUp', component: () => import('../views/SignUp.vue') },
     { path: '/ResetPassword', name: 'ResetPassword', component: () => import('../views/ResetPassword.vue') },
     { path: '/VerifyEmail', name: 'VerifyEmail', component: () => import('../views/VerifyEmail.vue') },
     { path: '/Events', name: 'Events', component: () => import('../views/Events.vue') },
@@ -54,7 +55,9 @@ const routes = [
         path: '/Membership',
         name: 'Membership',
         component: () => import('../views/User/Membership.vue'),
-        meta: { requiresAuth: false }
+        // Buying a membership requires an account (the purchase needs a user), and the page
+        // loads auth-only status on mount, so gate it and let Login return them via ?next.
+        meta: { requiresAuth: true }
     },
     {
         path: '/User/Rewards',
@@ -483,7 +486,8 @@ router.beforeEach((to, from, next) => {
         return
     }
     if (to.meta.requiresAuth && !authHelper.isAuthenticated()) {
-        next('/Login')
+        // Preserve the intended destination so Login can return them after sign-in.
+        next(to.path === '/Login' ? '/Login' : { path: '/Login', query: { next: to.fullPath } })
         return
     }
     const requiredPerm = to.meta.requiresPermission as string | undefined

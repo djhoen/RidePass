@@ -108,7 +108,7 @@ let scanner: Html5Qrcode | null = null
 
 const snackbar = ref(false)
 const snackbarText = ref('')
-const snackbarColor = ref<'success' | 'error'>('success')
+const snackbarColor = ref<'success' | 'error' | 'warning'>('success')
 
 const redeemableCount = computed(() =>
     order.value?.items.filter(i => i.isRedeemableToday).length ?? 0)
@@ -189,8 +189,11 @@ async function redeemSelected() {
             .map(i => ({ kind: i.kind, purchaseId: i.purchaseId }))
         const r = await service.redeemBulk({ orderToken: orderToken.value, items, idVerified: idVerified.value })
         const data = (r.data as any).data
-        if (data.errors?.length) flash(data.errors.join(' '), 'error')
-        else flash(`Redeemed ${data.redeemedCount}.`, 'success')
+        const n = data.redeemedCount ?? 0
+        const errs: string[] = data.errors ?? []
+        if (errs.length && n > 0) flash(`Redeemed ${n}; ${errs.length} skipped: ${errs.join(' ')}`, 'warning')
+        else if (errs.length) flash(errs.join(' '), 'error')
+        else flash(`Redeemed ${n}.`, 'success')
         // Refresh the order so the redeemed rows now show as redeemed.
         await loadOrder(orderToken.value)
     } catch (err: any) {
@@ -225,7 +228,7 @@ function statusColor(status: string): string {
     }
 }
 
-function flash(text: string, color: 'success' | 'error') {
+function flash(text: string, color: 'success' | 'error' | 'warning') {
     snackbarText.value = text
     snackbarColor.value = color
     snackbar.value = true

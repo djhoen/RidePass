@@ -2,8 +2,8 @@
     <v-container fluid class="inbox-container">
         <h1 class="text-h4 mb-2">Inbox</h1>
         <p class="text-body-2 text-medium-emphasis mb-4">
-            Two-way SMS conversations with your customers. Inbound texts land here automatically;
-            replies go out from your provisioned number.
+            Two-way SMS conversations with your customers. Inbound texts appear here; refresh to
+            check for new messages. Replies go out from your provisioned number.
         </p>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">

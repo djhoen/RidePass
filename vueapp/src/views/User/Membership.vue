@@ -244,5 +244,21 @@ function flash(text: string, color: 'success' | 'error') {
     snackbar.value = true
 }
 
-onMounted(load)
+onMounted(async () => {
+    // Return from a redirect-based payment method (3DS / bank redirect): Stripe sends the
+    // browser back here with these params. Most cards resolve inline in pay() and never
+    // hit this path.
+    const params = new URLSearchParams(window.location.search)
+    const redirectStatus = params.get('redirect_status')
+    if (params.get('payment_intent') && redirectStatus) {
+        if (redirectStatus === 'succeeded') {
+            purchased.value = true
+            flash('Membership purchased.', 'success')
+        } else {
+            flash('Your payment was not completed. Please try again.', 'error')
+        }
+        history.replaceState(null, '', window.location.pathname)
+    }
+    await load()
+})
 </script>

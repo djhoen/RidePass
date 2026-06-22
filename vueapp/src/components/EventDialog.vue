@@ -135,16 +135,20 @@
                             <TicketTiersList ref="raceClassesList" :event-id="editing?.id ?? null" kind="race_entry" />
                         </template>
 
-                        <!-- Gate fees: first-class per-event tiers for riders and spectators. A required
-                             rider gate fee forces "race class + one rider gate fee"; a required spectator
+                        <!-- Gate fees: first-class per-event tiers for riders and spectators. On a race a
+                             required rider gate fee forces "race class + one rider gate fee". On other event
+                             types the rider gate is the entry itself (no "required" flag); a required spectator
                              gate fee is how spectators are admitted. $0 allowed for free kids gates. -->
                         <v-divider class="my-5"></v-divider>
                         <label class="text-subtitle-2 d-block mb-1">Gate fees</label>
                         <p class="text-caption text-medium-emphasis mb-2">
-                            Facility gate fees for riders and spectators. Mark one <strong>required</strong> to force it —
-                            riders then pay a race class plus one rider gate fee. Use $0 for a free kids gate.
+                            Facility gate fees for riders and spectators.
+                            {{ isRaceEvent
+                                ? 'Mark a rider gate required to make riders pay a race class plus one rider gate fee.'
+                                : 'Riders pay a rider gate fee to enter.' }}
+                            Add a spectator gate fee if spectators pay to get in. Use $0 for a free kids gate.
                         </p>
-                        <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" />
+                        <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" :is-race="isRaceEvent" />
 
                         <!-- General add-ons: camping, parking, merch, etc. Gate fees live above, not here. -->
                         <template v-if="branding.extrasEnabled">
@@ -277,8 +281,12 @@ const activeTab = ref<'info' | 'entry' | 'waivers'>('info')
 
 // Child tier editors. In create mode they buffer rows locally; on save we create the
 // event then flush each editor's buffered tiers to it (persistTo).
-const raceClassesList = ref<{ persistTo: (eventId: string) => Promise<void> } | null>(null)
-const gateFeesList = ref<{ persistTo: (eventId: string) => Promise<void> } | null>(null)
+type TierListExpose = {
+    persistTo: (eventId: string) => Promise<void>
+    getBuffered: () => Array<{ isActive: boolean }>
+}
+const raceClassesList = ref<TierListExpose | null>(null)
+const gateFeesList = ref<TierListExpose | null>(null)
 
 // Race events get their capacity from the sum of race-entry tier inventories,
 // so the event-level capacity field is hidden + always saved as null.
@@ -565,6 +573,19 @@ async function save() {
     if (!form.value.allowsRiders && !form.value.allowsSpectators) {
         emit('flash', 'Pick at least one audience — riders, spectators, or both.', 'error')
         activeTab.value = 'info'
+        return
+    }
+    // Don't save an event nobody can buy anything from. In create mode the tier editors
+    // buffer their rows; in edit mode tier add/delete persists live. Fall back to the
+    // loaded event's tier flag so we don't false-alert before the editors have
+    // mounted/loaded (e.g. saving from the Info tab without opening Entry).
+    const purchasableItemCount =
+        (raceClassesList.value?.getBuffered().filter(t => t.isActive).length ?? 0)
+        + (gateFeesList.value?.getBuffered().filter(t => t.isActive).length ?? 0)
+        + form.value.eligibleExtras.length
+    if (purchasableItemCount === 0 && !editing.value?.hasActiveTiers) {
+        emit('flash', 'Add at least one purchasable item (a race class, gate fee, or add-on) before saving.', 'error')
+        activeTab.value = 'entry'
         return
     }
     try {

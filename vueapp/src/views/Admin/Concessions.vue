@@ -151,8 +151,6 @@
                                     density="compact" hide-details placeholder="∞"></v-text-field></td>
                                 <td><v-switch v-model="v.isActive" color="primary" density="compact" hide-details></v-switch></td>
                                 <td class="text-right">
-                                    <v-btn variant="text" size="small" color="primary"
-                                        :loading="savingVariantKey === (v.id ?? `new-${i}`)" @click="saveVariant(v, i)">Save</v-btn>
                                     <v-btn icon="mdi-delete" variant="text" size="small" color="error"
                                         @click="removeVariant(v, i)"></v-btn>
                                 </td>
@@ -166,7 +164,8 @@
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
-                    <v-btn @click="variantDialog = false">Done</v-btn>
+                    <v-btn variant="text" @click="variantDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingVariants" @click="saveAllVariants">Save &amp; Close</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -213,7 +212,7 @@ interface VariantRow {
 const variantDialog = ref(false)
 const variantProduct = ref<ConcessionProduct | null>(null)
 const variantRows = ref<VariantRow[]>([])
-const savingVariantKey = ref<string | null>(null)
+const savingVariants = ref(false)
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -341,32 +340,39 @@ function addVariantRow() {
     variantRows.value.push({ id: null, size: '', color: '', priceDollars: null, inventory: null, isActive: true })
 }
 
-async function saveVariant(v: VariantRow, i: number) {
+// Batch-save every row in the dialog in one action (matching the Extras variant editor),
+// so a filled-but-not-individually-saved row can no longer be silently dropped on close.
+// New rows keep their returned id, so a mid-way failure won't duplicate them on retry.
+async function saveAllVariants() {
     if (!variantProduct.value) return
-    const key = v.id ?? `new-${i}`
-    savingVariantKey.value = key
+    savingVariants.value = true
     try {
-        const payload = {
-            size: (v.size ?? '').toString().trim() || null,
-            color: (v.color ?? '').toString().trim() || null,
-            priceCents: v.priceDollars != null && v.priceDollars !== ('' as any) ? Math.round(v.priceDollars * 100) : null,
-            imageUrl: null,
-            inventory: v.inventory != null && v.inventory !== ('' as any) ? Math.trunc(v.inventory) : null,
-            isActive: v.isActive,
-            sortOrder: i * 10,
+        const productId = variantProduct.value.id
+        for (let i = 0; i < variantRows.value.length; i++) {
+            const v = variantRows.value[i]
+            const payload = {
+                size: (v.size ?? '').toString().trim() || null,
+                color: (v.color ?? '').toString().trim() || null,
+                priceCents: v.priceDollars != null && v.priceDollars !== ('' as any) ? Math.round(v.priceDollars * 100) : null,
+                imageUrl: null,
+                inventory: v.inventory != null && v.inventory !== ('' as any) ? Math.trunc(v.inventory) : null,
+                isActive: v.isActive,
+                sortOrder: i * 10,
+            }
+            if (v.id) await service.updateVariant(productId, v.id, payload)
+            else {
+                const r = await service.createVariant(productId, payload)
+                v.id = (r.data as any).data.id
+            }
         }
-        if (v.id) await service.updateVariant(variantProduct.value.id, v.id, payload)
-        else {
-            const r = await service.createVariant(variantProduct.value.id, payload)
-            v.id = (r.data as any).data.id
-        }
-        flash('Variant saved.', 'success')
+        flash('Variants saved.', 'success')
         await load()
         syncVariantProduct()
+        variantDialog.value = false
     } catch (err: any) {
         flash(err.response?.data?.error || 'Variant save failed.', 'error')
     } finally {
-        savingVariantKey.value = null
+        savingVariants.value = false
     }
 }
 

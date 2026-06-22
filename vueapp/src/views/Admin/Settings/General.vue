@@ -55,7 +55,7 @@
                 <v-row align="center">
                     <v-col cols="12" md="4">
                         <v-autocomplete v-model="form.timezone" :items="timezoneOptions" label="Timezone"
-                            density="compact" :loading="saving"></v-autocomplete>
+                            density="compact" :loading="saving" @update:model-value="tzTouched = true"></v-autocomplete>
                     </v-col>
                     <v-col cols="12" md="4">
                         <v-text-field v-model.number="form.latitude" type="number" step="0.00001"
@@ -166,6 +166,9 @@ const form = ref({
 
 const saving = ref(false)
 const geocoding = ref(false)
+// Set once the admin picks a timezone themselves, so an address geocode won't silently
+// overwrite their choice.
+const tzTouched = ref(false)
 const geocodeResult = ref('')
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -274,7 +277,7 @@ async function geocodeAddress() {
         // have to pick it manually. Offline lookup (tz-lookup) — no API call.
         try {
             const tz = tzlookup(result.lat, result.lng)
-            if (tz) form.value.timezone = tz
+            if (tz && !tzTouched.value) form.value.timezone = tz
         } catch { /* tz-lookup throws on out-of-range coords; leave timezone untouched */ }
     } catch {
         snackbarText.value = 'Couldn’t look up that address. Enter coordinates manually or try again.'

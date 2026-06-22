@@ -30,6 +30,8 @@ namespace Services.Repositories.Interfaces
         Task SuperAdminUpdateUser(User u);
         Task UpdateEmergencyContact(Guid userId, string name, string phone);
         Task UpdatePhone(Guid userId, string? phone);
+        Task UpdateProfile(Guid userId, string firstName, string lastName, string? phone);
+        Task UpdateImageUrl(Guid userId, string? imageUrl);
         Task UpdateRacerInfo(Guid userId, string? bike, string? raceNumber);
         Task UpdateBirthdate(Guid userId, DateTime birthdate);
         Task SetEmailVerificationToken(Guid userId, string tokenHash, DateTime expiresAtUtc);

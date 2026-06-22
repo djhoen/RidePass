@@ -330,8 +330,10 @@ namespace webapi.Payments
             {
                 _logger.LogDebug("Ledger entry for season_pass {Id} already exists; skipping.", pass.Id);
             }
+            // Season passes are always bought by a logged-in rider (PurchaserUserId is non-nullable),
+            // so there's no guest case here.
             _ = SendPurchaseEmailAsync(pass.TenantId, pass.PurchaserEmail, pass.PurchaserName, pass.RedemptionToken,
-                "season_pass", pass.AmountCents, null);
+                "season_pass", pass.AmountCents, null, isGuest: false);
         }
 
         // Gate fees and other add-ons: flip pending rows to paid AND write a sale ledger
@@ -448,7 +450,7 @@ namespace webapi.Payments
         }
 
         private async Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
-            string kind, int amountCents, DateTime? validOnDate)
+            string kind, int amountCents, DateTime? validOnDate, bool isGuest)
         {
             if (!_emailer.IsConfigured) return;
             // Skip hard-bounced addresses (scope='all'); a dead address only inflates the
@@ -475,6 +477,13 @@ namespace webapi.Payments
                     ? $"<p>Valid on <strong>{validOnDate.Value:dddd, MMMM d, yyyy}</strong>.</p>"
                     : string.Empty;
 
+                // Guests have no account, so point them at signup (email prefilled) instead of a
+                // My-Passes link they can't use; logged-in riders get the account link as before.
+                var accountLine = isGuest
+                    ? $@"<p>Want to manage your entries, check in faster next time, and get race-day and waitlist alerts?
+<a href=""{baseUrl}/SignUp?email={Uri.EscapeDataString(toEmail)}"">Create your free account</a>.</p>"
+                    : $@"<p>You can also find this {kindLabel} on your account at <a href=""{profileUrl}"">{profileUrl}</a>.</p>";
+
                 var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(toName)},</p>
 <p>Thanks for your {kindLabel} from <strong>{System.Net.WebUtility.HtmlEncode(tenant.DisplayName)}</strong>.
 Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
@@ -482,7 +491,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 <p>Show this QR at the gate to be checked in:</p>
 <p><img src=""{qrUrl}"" alt=""Your QR code"" width=""240"" height=""240"" style=""border:1px solid #ddd; padding:6px; background:#fff"" /></p>
 <p>If your email client doesn't show the image, open <a href=""{qrUrl}"">this link</a> on your phone — it'll display the QR.</p>
-<p>You can also find this {kindLabel} on your account at <a href=""{profileUrl}"">{profileUrl}</a>.</p>";
+{accountLine}";
 
                 await _emailer.Send(toEmail, subject, html);
             }
@@ -640,7 +649,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
             foreach (var t in tickets.Where(p => p.Status == "paid"))
             {
                 _ = SendPurchaseEmailAsync(t.TenantId, t.PurchaserEmail, t.PurchaserName, t.RedemptionToken,
-                    "event_ticket", t.AmountCents, null);
+                    "event_ticket", t.AmountCents, null, isGuest: t.PurchaserUserId is null);
             }
 
             // Run loyalty rewards once per (tenant, rider). Guest ticket purchases (no user) are skipped.

@@ -211,18 +211,10 @@ const historyTab = ref<'day' | 'event' | 'season'>('day')
 const signatureDialog = ref(false)
 const signatureUrl = ref<string | null>(null)
 
-const totalPurchases = computed(() => {
-    if (!detail.value) return 0
-    const paid = (rows: { status: string }[]) => rows.filter(r => r.status === 'paid').length
-    return paid(detail.value.passes) + paid(detail.value.eventTickets) + paid(detail.value.seasonPasses)
-})
-
-const totalSpent = computed(() => {
-    if (!detail.value) return 0
-    const sum = (rows: { status: string; amountCents: number }[]) =>
-        rows.filter(r => r.status === 'paid').reduce((acc, r) => acc + r.amountCents, 0)
-    return sum(detail.value.passes) + sum(detail.value.eventTickets) + sum(detail.value.seasonPasses)
-})
+// Use the server-computed totals (same source as the customer list) so the two screens
+// always agree, instead of re-summing a partial set of collections client-side.
+const totalPurchases = computed(() => detail.value?.totalPurchases ?? 0)
+const totalSpent = computed(() => detail.value?.totalSpentCents ?? 0)
 
 onMounted(async () => {
     const userId = route.params.userId as string

@@ -63,6 +63,9 @@
                         <!-- Pricing: everything purchasable for this event. -->
                         <section v-if="pricingGroups.length" class="mb-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">Pricing &amp; Passes</h2>
+                            <p v-if="hasServiceFee" class="text-body-2 text-medium-emphasis mb-4">
+                                All items include a {{ serviceFeePercent }}% service fee.
+                            </p>
                             <div v-for="(group, gi) in pricingGroups" :key="group.label"
                                 :class="gi > 0 ? 'mt-4' : ''">
                                 <div class="evt-section-subtitle mb-2">{{ group.label }}</div>
@@ -83,6 +86,9 @@
                                 <v-alert v-if="tiersError" type="error" variant="tonal" density="compact">
                                     {{ tiersError }}
                                 </v-alert>
+                                <div v-else-if="event.status === 'cancelled'" class="text-body-2 text-medium-emphasis">
+                                    Ticket sales are closed for this event.
+                                </div>
                                 <EventCheckout v-else-if="hasActiveTiers" :event="event" :tiers="tiers" @price-changed="reloadTiers" />
                                 <div v-else class="text-body-2 text-medium-emphasis">
                                     No entry options are available for this event yet.
@@ -183,6 +189,15 @@ const schedule = computed(() => event.value?.schedule ?? [])
 // The unified checkout renders whenever the event has any active tier (rider or gate).
 const hasActiveTiers = computed(() => tiers.value.some(t => t.isActive))
 
+// Service-fee note for the Pricing section. The percent comes straight from the tenant's
+// service-charge setting (basis points → percent), so it always matches what checkout
+// charges. Only shown when a fee actually applies: the tenant charges one AND at least
+// one active tier passes some of it to the buyer (tiers that fully absorb it add nothing).
+const serviceFeePercent = computed(() => (branding.serviceChargeBps ?? 0) / 100)
+const hasServiceFee = computed(() =>
+    (branding.serviceChargeBps ?? 0) > 0
+    && tiers.value.some(t => t.isActive && (t.riderPaidServiceChargeBps ?? 10000) > 0))
+
 // ── Pricing list ─────────────────────────────────────────────────────────────
 // Everything purchasable for this event, grouped the way the checkout sells it:
 // race classes (tiers), spectator Gate Fees, riding day passes, and other add-ons.
@@ -273,9 +288,11 @@ onMounted(async () => {
         loadError.value = err.response?.data?.error || 'This event is not available.'
         return
     }
-    // Race-class prices aren't in the public event payload, so pull the active
-    // tiers for the Pricing section. Only needed when the event has race entries.
-    if (event.value?.hasRaceEntryTiers) {
+    // Tier prices aren't in the public event payload, so pull the active tiers for the
+    // Pricing section and the unified checkout. Needed whenever the event has any active
+    // tier (race class, rider gate, or spectator gate) — not just race entries, or a
+    // gate-fee-only event (e.g. an open ride) would render no entry options.
+    if (event.value?.hasActiveTiers) {
         await reloadTiers()
     }
 })

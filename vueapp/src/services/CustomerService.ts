@@ -81,6 +81,8 @@ export interface CustomerDetailDto {
     eventTickets: CustomerEventTicketDto[]
     seasonPasses: CustomerSeasonPassDto[]
     waiverSignatures: CustomerWaiverDto[]
+    totalPurchases: number
+    totalSpentCents: number
 }
 
 export interface TopRiderDto {

@@ -60,6 +60,21 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { unsubscribed = true, scope = "all_tracks" });
         }
 
+        // Public resubscribe from the confirmation page ("changed your mind?"). Clears the
+        // tenant-scoped marketing suppression the token's address opted into. The platform-wide
+        // "all tracks" opt-out is intentionally not undone here (it's a separate, broader choice).
+        [AllowAnonymous]
+        [HttpPost("Resubscribe")]
+        public async Task<IActionResult> Resubscribe([FromQuery] string token)
+        {
+            if (!_tokens.TryParseUnsubscribe(token, out var tenantId, out var email))
+            {
+                return new ApiResponses().BadRequestResult("Unsubscribe link is invalid.");
+            }
+            await _suppression.Unsuppress(tenantId, email, "marketing");
+            return new ApiResponses().OkResult(new { unsubscribed = false });
+        }
+
         // Backing data for a visible confirmation page reached from the body link.
         [AllowAnonymous]
         [HttpGet("Status")]

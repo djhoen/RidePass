@@ -224,6 +224,9 @@ async function save() {
         ? Math.round(form.value.discountPercent * 100)   // bps
         : Math.round(form.value.discountDollars * 100)   // cents
     if (discountValue <= 0) { flash('Discount must be > 0.', 'error'); return }
+    if (form.value.validFrom && form.value.validTo && form.value.validFrom > form.value.validTo) {
+        flash('"Valid from" must be on or before "Valid until".', 'error'); return
+    }
 
     const body: UpsertCoupon = {
         code: form.value.code.trim(),

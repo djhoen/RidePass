@@ -41,6 +41,7 @@
 
             <!-- Month calendar -->
             <EventCalendar :month-start="monthStart" :events="events" :timezone="tz"
+                :min-month="windowMinMonth" :max-month="windowMaxMonth"
                 @update:month-start="monthStart = $event" @select="openEvent" />
 
             <div v-if="events.length === 0" class="text-center text-medium-emphasis py-4">
@@ -67,6 +68,10 @@ const events = ref<EventDto[]>([])
 const loading = ref(true)
 const loadError = ref('')
 const monthStart = ref(dayjs().startOf('month').format('YYYY-MM-DD'))
+// Bound calendar navigation to the window we actually fetch below, so the visitor can't
+// page into an empty grid outside the loaded range.
+const windowMinMonth = dayjs().startOf('month').format('YYYY-MM-DD')
+const windowMaxMonth = dayjs().add(12, 'month').startOf('month').format('YYYY-MM-DD')
 
 // Optional widget config (mirrors the events widget):
 //   data-limit="10"        -> cap the carousel

@@ -95,7 +95,8 @@ const confirm = useConfirm()
 
 const today = dayjs()
 const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
-const rangeTo = ref(today.endOf('month').add(1, 'day').format('YYYY-MM-DD'))
+// Inclusive last day shown in the To field; load() adds a day for the exclusive query bound.
+const rangeTo = ref(today.endOf('month').format('YYYY-MM-DD'))
 
 const rows = ref<BlackoutDto[]>([])
 const loading = ref(false)
@@ -138,7 +139,8 @@ async function load() {
     loadError.value = null
     try {
         const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
-        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
+        // rangeTo is inclusive; add a day for the exclusive upper bound.
+        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).add(1, 'day').utc().toISOString()
         const r = await service.list(fromUtc, toUtc)
         rows.value = (r.data as any).data
     } catch (err: any) {
@@ -205,8 +207,16 @@ async function save() {
             startsAtUtc = dayjs.tz(startDate + 'T00:00', tz()).utc().toISOString()
             endsAtUtc = dayjs.tz(endDate + 'T00:00', tz()).add(1, 'day').utc().toISOString()
         } else {
+            if (!form.value.startsLocal || !form.value.endsLocal) {
+                flash('Pick a start and end time.', 'error')
+                return
+            }
             startsAtUtc = localToUtc(form.value.startsLocal)
             endsAtUtc = localToUtc(form.value.endsLocal)
+            if (endsAtUtc <= startsAtUtc) {
+                flash('End must be after start.', 'error')
+                return
+            }
         }
         const body = {
             startsAtUtc,

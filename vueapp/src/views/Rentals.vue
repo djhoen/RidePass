@@ -6,7 +6,10 @@
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </div>
         <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
-        <v-card v-else-if="!branding.rentalsEnabled || products.length === 0" class="pa-6 text-center text-medium-emphasis">
+        <v-alert v-else-if="!branding.rentalsEnabled" type="info" variant="tonal">
+            This track doesn't offer rentals right now.
+        </v-alert>
+        <v-card v-else-if="products.length === 0" class="pa-6 text-center text-medium-emphasis">
             No rentals available right now.
         </v-card>
 

@@ -10,7 +10,7 @@
                     <th style="width: 36px"></th>
                     <th>Name</th>
                     <th v-if="isGate" style="width: 110px">Audience</th>
-                    <th v-if="isGate" style="width: 90px">Required</th>
+                    <th v-if="isGate && isRace" style="width: 90px">Required</th>
                     <th style="width: 100px">Price</th>
                     <th style="width: 100px">Inventory</th>
                     <th style="width: 80px">Sold</th>
@@ -37,7 +37,7 @@
                             </div>
                         </td>
                         <td v-if="isGate" class="text-capitalize">{{ t.audience }}</td>
-                        <td v-if="isGate">
+                        <td v-if="isGate && isRace">
                             <v-icon v-if="t.required" color="success" size="small">mdi-check</v-icon>
                             <span v-else class="text-medium-emphasis">—</span>
                         </td>
@@ -77,10 +77,12 @@
                             label="Entrant Type" density="compact" class="mt-4"
                             hint="Rider gate fees gate riders; spectator gate fees admit spectators."
                             persistent-hint></v-select>
-                        <v-switch v-model="form.required" color="primary" density="compact" hide-details class="mt-3"
-                            :label="form.audience === 'rider'
-                                ? 'Required — riders must buy one (race class + one rider gate fee)'
-                                : 'Required — spectators must buy one to attend'"></v-switch>
+                        <!-- "Required" is a race-only, rider-only concept: it couples a rider gate to a race
+                             class. Spectator gates and non-race rider gates are the entry themselves, so the
+                             flag is a no-op there and the toggle is hidden. -->
+                        <v-switch v-if="form.audience === 'rider' && isRace"
+                            v-model="form.required" color="primary" density="compact" hide-details class="mt-3"
+                            label="Required — riders must buy one (race class + one rider gate fee)"></v-switch>
                     </template>
 
                     <v-row class="mt-2">
@@ -200,7 +202,11 @@ type TriggerType = 'none' | 'sold' | 'days' | 'date'
 // classes (race_entry) and gate fees (gate_fee). When eventId is null the component
 // runs in BUFFER mode: rows are held locally (no API) so they can be created before
 // the event exists; the parent reads them via getBuffered() and persists on save.
-const props = defineProps<{ eventId: string | null; kind: AdmissionKind }>()
+// isRace gates the "required" toggle, which is a race-only, rider-only concept (it forces
+// "race class + rider gate"). The toggle shows only for a race rider gate; for spectator
+// gates and non-race rider gates the tier is the entry itself, so the flag is a no-op —
+// we hide the toggle and persist required=false.
+const props = defineProps<{ eventId: string | null; kind: AdmissionKind; isRace?: boolean }>()
 
 const service = new TicketService()
 const confirm = useConfirm()
@@ -362,14 +368,20 @@ function openEdit(t: TicketTier) {
 // Build the persisted/buffered tier shape from the form. Race classes are always
 // rider-audience and never themselves "required" (the gate fee carries that rule).
 function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
-    const isRace = props.kind === 'race_entry'
-    const bundledCount = (isRace && (form.value.bundledCount ?? 0) > 0) ? form.value.bundledCount : null
+    const isRaceEntry = props.kind === 'race_entry'
+    const bundledCount = (isRaceEntry && (form.value.bundledCount ?? 0) > 0) ? form.value.bundledCount : null
     const group = form.value.ladderGroup.trim() || null
     const tt = form.value.triggerType
     return {
         kind: props.kind,
-        audience: isRace ? 'rider' : form.value.audience,
-        required: isRace ? false : form.value.required,
+        audience: isRaceEntry ? 'rider' : form.value.audience,
+        // "Required" is a race-only, rider-only concept: it couples a rider gate fee to a
+        // race class. It's meaningless for race classes themselves, for non-race rider gates
+        // (the gate IS the entry), and for spectator gates (offering the tier is the
+        // decision), so persist it only for a race rider gate and force false elsewhere.
+        required: props.isRace && !isRaceEntry && form.value.audience === 'rider'
+            ? form.value.required
+            : false,
         name: form.value.name.trim(),
         priceCents: Math.round(form.value.priceDollars * 100),
         inventory: form.value.inventory || null,

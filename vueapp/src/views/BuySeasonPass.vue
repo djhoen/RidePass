@@ -6,6 +6,9 @@
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
         </div>
         <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
+        <v-alert v-else-if="featureDisabled" type="info" variant="tonal">
+            This track isn't selling season passes right now.
+        </v-alert>
         <v-card v-else-if="products.length === 0" class="pa-6 text-center text-medium-emphasis">
             No season passes available right now.
         </v-card>
@@ -110,6 +113,7 @@ import dayjs from 'dayjs'
 import { SeasonPassService, type SeasonPassProduct } from '@/services/SeasonPassService'
 import { WaiverService, type WaiverDto } from '@/services/WaiverService'
 import { branding } from '@/stores/branding'
+import authHelper from '@/helpers/AuthHelper'
 import { getStripe } from '@/helpers/StripeHelper'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import SignaturePad from '@/components/SignaturePad.vue'
@@ -121,6 +125,7 @@ const waiverService = new WaiverService()
 const products = ref<SeasonPassProduct[]>([])
 const loading = ref(false)
 const loadError = ref('')
+const featureDisabled = ref(false)
 const busyId = ref<string | null>(null)
 const photoStepOpen = ref(false)
 const photoDataUrl = ref<string | null>(null)
@@ -142,6 +147,13 @@ const parentName = ref('')
 const parentPhone = ref('')
 
 async function openPhotoStep(p: SeasonPassProduct) {
+    // Buying requires an account (the purchase endpoint is authorized). Gate at entry so a
+    // guest signs in first and returns here, instead of filling the whole photo/waiver
+    // dialog and getting bounced to Login on submit.
+    if (!authHelper.isAuthenticated()) {
+        router.push({ path: '/Login', query: { next: '/SeasonPasses' } })
+        return
+    }
     selectedProduct.value = p
     photoDataUrl.value = null
     signatureDataUrl.value = null
@@ -184,9 +196,10 @@ function daysLabel(days: number[] | null): string {
 }
 
 onMounted(async () => {
-    // Feature off: bounce to home so the public Buy page isn't reachable directly.
+    // Feature off: show an in-page explanation rather than silently bouncing to home
+    // (consistent with how rentals / gift cards report a disabled feature).
     if (branding.loaded && !branding.seasonPassesEnabled) {
-        router.replace('/')
+        featureDisabled.value = true
         return
     }
     loading.value = true

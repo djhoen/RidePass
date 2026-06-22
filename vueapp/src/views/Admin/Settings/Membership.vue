@@ -2,7 +2,7 @@
     <v-container>
         <h1 class="text-h4 mb-2">Membership</h1>
         <p class="text-body-2 text-medium-emphasis mb-6">
-            Configure the membership product riders can buy and where it's required.
+            Configure the membership product riders can buy.
             Turn the feature on or off in
             <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
         </p>

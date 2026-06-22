@@ -83,6 +83,10 @@
                 <p class="text-caption text-medium-emphasis">
                     They can apply it on any purchase until the balance runs out.
                 </p>
+                <div class="d-flex justify-center ga-2 mt-4">
+                    <v-btn color="primary" @click="sendAnother">Send another gift card</v-btn>
+                    <v-btn variant="text" to="/">Back to home</v-btn>
+                </div>
             </v-card>
         </template>
 
@@ -144,6 +148,18 @@ const canContinue = computed(() => {
     if (scheduleDelivery.value && !scheduledLocal.value) return false
     return true
 })
+
+function sendAnother() {
+    completed.value = false
+    step.value = 'compose'
+    clientSecret.value = null
+    recipientName.value = ''
+    recipientEmail.value = ''
+    personalNote.value = ''
+    scheduleDelivery.value = false
+    scheduledLocal.value = ''
+    customAmount.value = 50
+}
 
 async function createIntent() {
     if (!canContinue.value) return

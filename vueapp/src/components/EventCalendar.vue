@@ -1,9 +1,9 @@
 <template>
     <v-card class="mb-6">
         <div class="d-flex align-center pa-3 ga-2">
-            <v-btn icon="mdi-chevron-left" variant="text" size="small" @click="navigate(-1)"></v-btn>
+            <v-btn icon="mdi-chevron-left" variant="text" size="small" :disabled="!canGoPrev" @click="navigate(-1)"></v-btn>
             <div class="text-h6" style="min-width: 190px; text-align: center">{{ monthLabel }}</div>
-            <v-btn icon="mdi-chevron-right" variant="text" size="small" @click="navigate(1)"></v-btn>
+            <v-btn icon="mdi-chevron-right" variant="text" size="small" :disabled="!canGoNext" @click="navigate(1)"></v-btn>
             <v-spacer></v-spacer>
             <v-btn variant="tonal" size="small" @click="goToday">Today</v-btn>
         </div>
@@ -38,12 +38,20 @@ import dayjs from 'dayjs'
 import type { EventDto } from '@/services/EventService'
 import type { BlackoutDto } from '@/services/BlackoutService'
 
-const props = defineProps<{ monthStart: string; events: EventDto[]; timezone: string; blackouts?: BlackoutDto[] }>()
+// minMonth/maxMonth (YYYY-MM-DD month starts) optionally bound navigation. When omitted,
+// paging is unbounded (consumers that refetch per month). When set (e.g. the embed widget
+// fetches a fixed window), the chevrons clamp to the loaded range so the visitor can't page
+// into an always-empty grid.
+const props = defineProps<{ monthStart: string; events: EventDto[]; timezone: string; blackouts?: BlackoutDto[]; minMonth?: string; maxMonth?: string }>()
 const emit = defineEmits<{ (e: 'update:monthStart', v: string): void; (e: 'select', ev: EventDto): void }>()
 
 const tz = computed(() => props.timezone || 'UTC')
 const monthRef = computed(() => dayjs(props.monthStart))
 const monthLabel = computed(() => monthRef.value.format('MMMM YYYY'))
+const canGoPrev = computed(() => !props.minMonth
+    || monthRef.value.startOf('month').isAfter(dayjs(props.minMonth).startOf('month')))
+const canGoNext = computed(() => !props.maxMonth
+    || monthRef.value.startOf('month').isBefore(dayjs(props.maxMonth).startOf('month')))
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // Bucket events by their start date in the tenant's timezone.
@@ -101,6 +109,8 @@ const days = computed(() => {
 })
 
 function navigate(delta: number) {
+    if (delta < 0 && !canGoPrev.value) return
+    if (delta > 0 && !canGoNext.value) return
     emit('update:monthStart', monthRef.value.add(delta, 'month').startOf('month').format('YYYY-MM-DD'))
 }
 function goToday() {

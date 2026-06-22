@@ -1,6 +1,7 @@
 <template>
     <v-card class="h-100 up-card d-flex flex-column">
-        <div class="up-image" :style="bandStyle">
+        <div class="up-image">
+            <v-img v-if="imageUrl" :src="imageUrl" cover class="up-image-bg" />
             <div v-if="item.occursAtUtc" class="up-datebadge">
                 <div class="up-day">{{ formatDay(item.occursAtUtc) }}</div>
                 <div class="up-month">{{ formatMonth(item.occursAtUtc) }}</div>
@@ -35,22 +36,37 @@
             <div class="d-flex flex-column ga-2 flex-shrink-0 up-actions">
                 <v-btn size="small" variant="tonal" block prepend-icon="mdi-receipt-text-outline"
                     @click="$emit('order', item)">Order detail</v-btn>
+                <v-btn v-if="item.redemptionToken" size="small" variant="tonal" block
+                    prepend-icon="mdi-qrcode" @click="showQr = !showQr">
+                    {{ showQr ? 'Hide QR' : 'Check-in QR' }}
+                </v-btn>
                 <v-btn v-if="!item.registrationComplete && item.redemptionToken"
                     size="small" color="warning" variant="flat" block :href="finishUrl" rel="noopener"
                     prepend-icon="mdi-draw-pen">Finish</v-btn>
             </div>
         </v-card-text>
+
+        <!-- Expandable check-in QR: gate crew scan it to open the redemption screen for this order. -->
+        <v-expand-transition>
+            <div v-if="showQr && item.redemptionToken" class="up-qr pa-3 text-center">
+                <QrCode :value="checkInUrl" :size="180" />
+                <div class="text-caption text-medium-emphasis mt-2">Show this to gate crew to check in.</div>
+            </div>
+        </v-expand-transition>
     </v-card>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import tenantHelper from '@/helpers/TenantHelper'
+import QrCode from '@/components/QrCode.vue'
 import type { UpcomingItem } from '@/services/UpcomingService'
 
 const props = defineProps<{ item: UpcomingItem }>()
 defineEmits<{ (e: 'order', item: UpcomingItem): void }>()
+
+const showQr = ref(false)
 
 const apiOrigin = (() => {
     try { return new URL((import.meta as any).env?.VITE_API_ENDPOINT ?? '', window.location.origin).origin }
@@ -61,16 +77,7 @@ function resolveImg(url: string | null): string | null {
     return /^https?:\/\//i.test(url) ? url : `${apiOrigin}${url}`
 }
 
-const bandStyle = computed(() => {
-    const u = resolveImg(props.item.imageUrl)
-    const style: Record<string, string> = {}
-    if (u) {
-        style.backgroundImage = `url(${u})`
-        style.backgroundSize = 'cover'
-        style.backgroundPosition = 'center'
-    }
-    return style
-})
+const imageUrl = computed(() => resolveImg(props.item.imageUrl))
 const logoUrl = computed(() => resolveImg(props.item.tenantLogoUrl))
 
 // Cross-subdomain links to the track site (this card lives on the apex feed).
@@ -81,6 +88,8 @@ function tenantUrl(path: string): string {
 }
 const eventUrl = computed(() => tenantUrl(`/Event/${props.item.id}`))
 const finishUrl = computed(() => tenantUrl(`/FinishRegistration/${props.item.redemptionToken}`))
+// Points at the tenant's staff-gated redemption screen for this order's token.
+const checkInUrl = computed(() => tenantUrl(`/redeem/${props.item.redemptionToken}`))
 
 function formatWhen(utc: string): string { return dayjs.utc(utc).local().format('ddd, MMM D · h:mm A') }
 function formatDay(utc: string): string { return dayjs.utc(utc).local().format('D') }
@@ -98,11 +107,17 @@ function formatMonth(utc: string): string { return dayjs.utc(utc).local().format
     position: relative;
     height: 92px;
     background: linear-gradient(135deg, #334155, #64748b);
-    background-size: cover;
-    background-position: center;
     border-top-left-radius: inherit;
     border-top-right-radius: inherit;
 }
+/* Actual event image fills the band; the gradient above shows through if it's missing or fails to load. */
+.up-image-bg {
+    position: absolute;
+    inset: 0;
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+}
+.up-qr { border-top: 1px solid rgba(0, 0, 0, 0.06); }
 .up-datebadge {
     position: absolute;
     top: -6px;

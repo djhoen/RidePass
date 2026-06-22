@@ -28,5 +28,12 @@ namespace webapi.Controllers.API.Data.User
 
         [Required, MaxLength(40)]
         public string EmergencyContactPhone { get; set; } = null!;
+
+        // Notification choices captured at signup, scoped to this tenant. Optional (default off
+        // if an older client omits them). The form pre-checks email + newsletter and leaves SMS
+        // as an explicit opt-in (TCPA: marketing texts need express consent, not a pre-check).
+        public bool NotifyEventEmail { get; set; }
+        public bool NotifyEventSms { get; set; }
+        public bool SubscribeNewsletter { get; set; }
     }
 }

@@ -106,8 +106,10 @@ async function copyText(text: string, msg: string) {
     try {
         await navigator.clipboard.writeText(text)
     } catch {
-        // Fallback for older browsers / insecure contexts.
-        prompt('Copy this:', text)
+        // Clipboard API unavailable (insecure context / older browser): show the text in
+        // the snackbar to copy manually rather than a native prompt.
+        snackbarText.value = `Couldn't copy automatically. Copy this manually: ${text}`
+        snackbar.value = true
         return
     }
     snackbarText.value = msg

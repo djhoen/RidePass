@@ -10,6 +10,9 @@
             <div v-if="branding.seasonPassesEnabled" class="mt-3">
                 <v-btn to="/SeasonPasses" color="primary">Browse passes</v-btn>
             </div>
+            <div v-else class="text-caption mt-3">
+                This track isn't selling season passes right now.
+            </div>
         </v-card>
 
         <v-card v-for="p in passes" :key="p.id" class="mb-4 pa-4">

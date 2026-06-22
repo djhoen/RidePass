@@ -5,8 +5,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
+using Services.Repositories.Data.EventData;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
+using Services.Storage;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.User;
 using webapi.Helpers;
@@ -25,6 +27,9 @@ namespace webapi.Controllers
         private readonly ITenantRepository _tenants;
         private readonly IJwtIssuer _jwtIssuer;
         private readonly ISmtpEmailer _emailer;
+        private readonly IImageStorage _imageStorage;
+        private readonly IEventSubscriptionRepository _eventSubs;
+        private readonly INewsletterRepository _newsletter;
         private readonly ILogger<UserController> _logger;
 
         public UserController(
@@ -35,6 +40,9 @@ namespace webapi.Controllers
             ITenantRepository tenants,
             IJwtIssuer jwtIssuer,
             ISmtpEmailer emailer,
+            IImageStorage imageStorage,
+            IEventSubscriptionRepository eventSubs,
+            INewsletterRepository newsletter,
             ILogger<UserController> logger)
         {
             _userRepository = userRepository;
@@ -44,6 +52,9 @@ namespace webapi.Controllers
             _tenants = tenants;
             _jwtIssuer = jwtIssuer;
             _emailer = emailer;
+            _imageStorage = imageStorage;
+            _eventSubs = eventSubs;
+            _newsletter = newsletter;
             _logger = logger;
         }
 
@@ -220,6 +231,35 @@ namespace webapi.Controllers
             var id = await _userRepository.Create(user);
             user.Id = id;
 
+            // Persist the rider's notification choices for THIS track (signup is tenant-scoped).
+            // Best-effort: a preference write shouldn't fail an otherwise-successful signup. SMS
+            // only sticks when the phone normalizes to E.164; otherwise it falls back to email-only.
+            try
+            {
+                if ((request.NotifyEventEmail || request.NotifyEventSms) && _tenantContext.Tenant.AllowEventSubscriptions)
+                {
+                    var smsPhone = request.NotifyEventSms ? TwilioSmsSender.NormalizeE164(riderPhone) : null;
+                    await _eventSubs.Upsert(new EventSubscription
+                    {
+                        TenantId = _tenantContext.TenantId,
+                        UserId = user.Id,
+                        Email = user.Email,
+                        Phone = smsPhone,
+                        NotifyEmail = request.NotifyEventEmail,
+                        NotifySms = request.NotifyEventSms && smsPhone is not null,
+                    });
+                }
+                if (request.SubscribeNewsletter)
+                {
+                    await _newsletter.UpsertFromSignup(_tenantContext.TenantId, user.Email,
+                        $"{user.FirstName} {user.LastName}".Trim(), "signup");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist signup notification preferences for {Email}.", user.Email);
+            }
+
             // Email verification: when SMTP is configured the rider starts unverified and
             // must click a link before they can sign in. When SMTP is NOT configured we
             // can't deliver the link, so auto-verify rather than lock the account out.
@@ -288,6 +328,7 @@ namespace webapi.Controllers
                 user.Country,
                 user.Bike,
                 user.RaceNumber,
+                user.ImageUrl,
             });
         }
 
@@ -321,6 +362,66 @@ namespace webapi.Controllers
             }
             await _userRepository.UpdatePhone(userId, phone);
             return new ApiResponses().OkResult(new { phone });
+        }
+
+        // Single endpoint behind the "My Profile" form's Save — updates the editable identity
+        // fields together. Email is deliberately not updated here (auth/verification concerns).
+        [Authorize]
+        [HttpPost("UpdateProfile")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
+        {
+            if (!TryGetSelfId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var first = request.FirstName?.Trim() ?? string.Empty;
+            var last = request.LastName?.Trim() ?? string.Empty;
+            if (first.Length == 0 || last.Length == 0)
+            {
+                return new ApiResponses().BadRequestResult("First and last name are required.");
+            }
+            var phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+            await _userRepository.UpdateProfile(userId, first, last, phone);
+            // The "My Profile" form is one Save, so emergency contact + photo persist here too.
+            // Both optional: blank values clear them (no purchase-time gate is enforced here).
+            await _userRepository.UpdateEmergencyContact(userId,
+                request.EmergencyContactName?.Trim() ?? string.Empty,
+                request.EmergencyContactPhone?.Trim() ?? string.Empty);
+            await _userRepository.UpdateImageUrl(userId,
+                string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim());
+            return new ApiResponses().OkResult(new
+            {
+                firstName = first,
+                lastName = last,
+                phone,
+                emergencyContactName = request.EmergencyContactName?.Trim(),
+                emergencyContactPhone = request.EmergencyContactPhone?.Trim(),
+                imageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim(),
+            });
+        }
+
+        // Profile photo upload. Returns the stored public URL; the "My Profile" Save then
+        // persists it via UpdateProfile. Avatars aren't tenant-specific, so they live under the
+        // platform image folder (works for global riders + super admins with no tenant context).
+        [Authorize]
+        [HttpPost("Profile/Photo")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadProfilePhoto(IFormFile file, CancellationToken ct)
+        {
+            if (!TryGetSelfId(out _)) return new ApiResponses().BadRequestResult("Invalid token.");
+            if (file is null || file.Length == 0)
+                return new ApiResponses().BadRequestResult("File is required.");
+            if (file.Length > 5 * 1024 * 1024)
+                return new ApiResponses().BadRequestResult("File exceeds 5 MB limit.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+                return new ApiResponses().BadRequestResult($"Unsupported image type: {file.ContentType}. Use PNG, JPEG, or WebP.");
+
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SavePlatformAsync(stream, "avatar", ext, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
         }
 
         [Authorize]
