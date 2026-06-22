@@ -196,7 +196,7 @@
                     <div class="d-flex align-center mb-4 ga-2">
                         <h2 class="text-h4 font-weight-bold font-display">{{ nextUpTitle }}</h2>
                         <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">All events</v-btn>
+                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">See Events</v-btn>
                     </div>
                     <div class="next-up-wrap">
                         <button v-show="canScrollLeft" type="button" class="next-up-arrow next-up-arrow--left"
