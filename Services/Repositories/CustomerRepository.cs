@@ -72,6 +72,7 @@ namespace Services.Repositories
                 WHERE (@search IS NULL OR @search = ''
                        OR u.first_name ILIKE '%' || @search || '%'
                        OR u.last_name  ILIKE '%' || @search || '%'
+                       OR (u.first_name || ' ' || u.last_name) ILIKE '%' || @search || '%'
                        OR u.email      ILIKE '%' || @search || '%')
                 GROUP BY u.id, u.email, u.first_name, u.last_name, u.birthdate, w.user_id
                 ORDER BY MAX(a.activity_at) DESC NULLS LAST
@@ -90,6 +91,7 @@ namespace Services.Repositories
                 WHERE (@search IS NULL OR @search = ''
                        OR u.first_name ILIKE '%' || @search || '%'
                        OR u.last_name  ILIKE '%' || @search || '%'
+                       OR (u.first_name || ' ' || u.last_name) ILIKE '%' || @search || '%'
                        OR u.email      ILIKE '%' || @search || '%')";
             var rows = await _db.Query<int>(sql, new { tenantId, search });
             return rows.FirstOrDefault();

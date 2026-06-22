@@ -202,6 +202,28 @@ function readableOn(bg: string): string {
     return contrastBlack >= contrastWhite ? '#000000' : '#FFFFFF'
 }
 
+// Darken a color just enough that it meets WCAG AA (>= 4.5:1) as TEXT on a white
+// surface. The tenant brand color is fine as a button/background fill, but a mid-tone
+// brand hue used as colored link/button text on white can fall short (e.g. #0288D1 is
+// only 3.86:1). Returns the original when it already passes; otherwise scales toward
+// black until the contrast target is reached. Used only for primary-colored button text,
+// so the brand fill color itself is untouched.
+function darkenForTextOnWhite(hex: string, target = 4.5): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+    if (!m) return hex
+    const maxL = (1 + 0.05) / target - 0.05   // max luminance that still meets target on white
+    if (relLuminance(hex) <= maxL) return `#${m[1].toLowerCase()}`
+    const n = parseInt(m[1], 16)
+    const r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff
+    const toHex = (rr: number, gg: number, bb: number) =>
+        '#' + [rr, gg, bb].map(c => Math.max(0, Math.round(c)).toString(16).padStart(2, '0')).join('')
+    for (let k = 0.97; k > 0; k -= 0.03) {
+        const cand = toHex(r * k, g * k, b * k)
+        if (relLuminance(cand) <= maxL) return cand
+    }
+    return '#000000'
+}
+
 watchEffect(() => {
     if (!branding.loaded) return
     const themeName = branding.themeMode === 'dark' ? 'tenantDark' : 'tenant'
@@ -218,6 +240,10 @@ watchEffect(() => {
     target.colors['on-primary'] = readableOn(branding.primaryColor)
     target.colors['on-secondary'] = readableOn(branding.secondaryColor)
     target.colors['on-accent'] = readableOn(branding.accentColor)
+    // Accessible shade of primary for use as TEXT on light surfaces (text/outlined/plain
+    // buttons + links). Consumed by the global .v-btn.text-primary rule below.
+    document.documentElement.style.setProperty(
+        '--rp-primary-text-on-light', darkenForTextOnWhite(branding.primaryColor))
     theme.global.name.value = themeName
 })
 </script>
@@ -307,5 +333,17 @@ watchEffect(() => {
     width: 64px;
     height: auto;
     opacity: 0.5;
+}
+</style>
+
+<!-- Unscoped: applies to Vuetify-generated button markup across the app. -->
+<style>
+/* Primary-colored button TEXT (text/outlined/plain variants get the `.text-primary`
+   class; filled variants use `.bg-primary` instead and are unaffected) uses an
+   accessibility-darkened shade of the tenant primary on light surfaces, so colored
+   links/CTAs like "All events" meet WCAG AA against white. Falls back to the raw
+   theme primary if the variable hasn't been set yet. */
+.v-btn.text-primary {
+    color: var(--rp-primary-text-on-light, rgb(var(--v-theme-primary))) !important;
 }
 </style>
