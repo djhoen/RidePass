@@ -109,6 +109,46 @@ namespace webapi.Controllers
             });
         }
 
+        // Bootstrap for an authenticated client (the operator app calls this right after
+        // login): returns identity plus the server-computed permission set so the app never
+        // re-implements the role->permission map. Reads the user fresh by the JWT's UserId,
+        // so roles reflect any change since the token was minted.
+        [Authorize]
+        [HttpGet("Me")]
+        public async Task<IActionResult> Me()
+        {
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+            {
+                return new ApiResponses().BadRequestResult("No authenticated user.");
+            }
+
+            var user = await _userRepository.GetById(userId);
+            if (user is null || user.Status != "active")
+            {
+                return new ApiResponses().BadRequestResult("Account not found or inactive.");
+            }
+
+            var roles = user.Roles is { Length: > 0 } ? user.Roles : new[] { user.Role };
+            // Super admins implicitly hold every capability; everyone else gets the union
+            // of their roles' permission sets.
+            var permissions = roles.Contains("super_admin")
+                ? TenantPermissions.All.ToArray()
+                : TenantPermissions.ForRoles(roles).ToArray();
+
+            return new ApiResponses().OkResult(new MeResponse
+            {
+                UserId = user.Id,
+                TenantId = user.TenantId,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Role = user.Role,
+                Roles = roles,
+                Permissions = permissions,
+                RequireIdAtCheckin = _tenantContext.IsResolved && _tenantContext.Tenant.RequireIdAtCheckin,
+            });
+        }
+
         // Inline-checkout helper: does an account already exist for this email? The unified
         // event checkout uses it to decide whether to offer a "log in" prompt (known email)
         // vs. proceed as guest, without bouncing the buyer to a login page.

@@ -126,6 +126,33 @@ namespace Services.Repositories
             return result.ToList();
         }
 
+        // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /
+        // failed / cancelled never enter the gate). Tenant-scoped on the purchase; the event
+        // filter rides the tier join. Sorted spectators-after-riders, then by class then name.
+        public async Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT p.id AS PurchaseId,
+                       p.redemption_token AS RedemptionToken,
+                       p.purchaser_user_id AS PurchaserUserId,
+                       p.purchaser_name AS PurchaserName,
+                       p.purchaser_email AS PurchaserEmail,
+                       p.race_number AS RaceNumber,
+                       p.status,
+                       p.registration_complete AS RegistrationComplete,
+                       p.redeemed_at_utc AS RedeemedAtUtc,
+                       p.redeemed_by_user_id AS RedeemedByUserId,
+                       t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                WHERE p.tenant_id = @tenantId
+                  AND t.event_id = @eventId
+                  AND p.status IN ('paid', 'redeemed')
+                ORDER BY t.audience, t.kind, t.name, lower(coalesce(p.purchaser_name, ''))";
+            var result = await _db.Query<EventRosterRow>(sql, new { eventId, tenantId });
+            return result.ToList();
+        }
+
         public async Task SetStripePaymentIntentId(Guid id, string paymentIntentId)
         {
             const string sql = "UPDATE event_ticket_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
@@ -147,6 +174,19 @@ namespace Services.Repositories
                 SET status = 'redeemed', redeemed_at_utc = @atUtc, redeemed_by_user_id = @redeemedByUserId
                 WHERE id = @id AND tenant_id = @tenantId";
             await _db.Execute(sql, new { id, tenantId, redeemedByUserId, atUtc });
+        }
+
+        // Guarded redeem for offline batch sync: only a 'paid' row transitions, so a row
+        // already redeemed (by any device) is untouched and this returns false. That makes
+        // the first sync to land win and later duplicates detectable rather than overwritten.
+        public async Task<bool> TryMarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET status = 'redeemed', redeemed_at_utc = @atUtc, redeemed_by_user_id = @redeemedByUserId
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
+            var affected = await _db.Execute(sql, new { id, tenantId, redeemedByUserId, atUtc });
+            return affected > 0;
         }
 
         // Reverse a check-in (status: redeemed → paid) so staff can correct
@@ -176,7 +216,7 @@ namespace Services.Repositories
         public async Task CompleteRegistration(Guid id, Guid tenantId,
             string? riderFirstName, string? riderLastName, DateTime? riderBirthdate, string? bike,
             string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, string? parentGuardianName,
-            Guid? registrantId)
+            string? emergencyContactName, string? emergencyContactPhone, Guid? registrantId)
         {
             const string sql = @"
                 UPDATE event_ticket_purchase
@@ -189,6 +229,8 @@ namespace Services.Repositories
                     waiver_signature_data_url  = @waiverSignatureDataUrl,
                     waiver_signed_at           = CASE WHEN @waiverSignatureDataUrl IS NOT NULL THEN now() ELSE waiver_signed_at END,
                     parent_guardian_name       = @parentGuardianName,
+                    emergency_contact_name     = @emergencyContactName,
+                    emergency_contact_phone    = @emergencyContactPhone,
                     registrant_id              = @registrantId,
                     registration_complete      = true,
                     updated_at                 = now()
@@ -196,7 +238,8 @@ namespace Services.Repositories
             await _db.Execute(sql, new
             {
                 id, tenantId, riderFirstName, riderLastName, riderBirthdate, bike,
-                raceNumber, waiverId, waiverSignatureDataUrl, parentGuardianName, registrantId
+                raceNumber, waiverId, waiverSignatureDataUrl, parentGuardianName,
+                emergencyContactName, emergencyContactPhone, registrantId
             });
         }
 

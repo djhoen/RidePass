@@ -40,6 +40,10 @@
                     <v-col cols="6"><v-text-field v-model="rider.birthdate" type="date" label="Date of birth" density="compact" :max="todayIso" hide-details></v-text-field></v-col>
                     <v-col cols="6"><v-text-field v-model="rider.bike" label="Bike (optional)" density="compact" hide-details></v-text-field></v-col>
                 </v-row>
+                <v-row v-if="branding.requireEmergencyContact" dense class="mt-4">
+                    <v-col cols="6"><v-text-field v-model="rider.emergencyName" label="Emergency contact name" density="compact" hide-details></v-text-field></v-col>
+                    <v-col cols="6"><v-text-field v-model="rider.emergencyPhone" type="tel" label="Emergency contact phone" density="compact" hide-details></v-text-field></v-col>
+                </v-row>
                 <template v-if="classAssigns.length">
                     <div class="text-caption text-medium-emphasis mt-3 mb-1">Race classes for this rider</div>
                     <div v-for="ca in classesForRider(ri)" :key="ca.ticketId" class="d-flex align-center ga-2 mb-1">
@@ -87,6 +91,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { TicketService, type RegistrationTicket } from '@/services/TicketService'
+import { branding } from '@/stores/branding'
 import SignaturePad from '@/components/SignaturePad.vue'
 
 const route = useRoute()
@@ -99,6 +104,8 @@ interface RiderCard {
     birthdate: string
     bike: string
     parentName: string
+    emergencyName: string
+    emergencyPhone: string
     signatureDataUrl: string | null
     gateTicketId: string | null
     needsWaiver: boolean
@@ -179,7 +186,8 @@ function build(tickets: RegistrationTicket[]) {
         : classTickets.length
 
     riders.value = Array.from({ length: ridersNeeded }, (_, i) => ({
-        firstName: '', lastName: '', birthdate: '', bike: '', parentName: '', signatureDataUrl: null,
+        firstName: '', lastName: '', birthdate: '', bike: '', parentName: '',
+        emergencyName: '', emergencyPhone: '', signatureDataUrl: null,
         gateTicketId: riderGateTickets[i]?.ticketId ?? null,
         needsWaiver: riderWaiver,
     }))
@@ -199,7 +207,9 @@ async function finish() {
     error.value = ''
     const registrants: Array<{
         firstName: string; lastName: string; birthdate?: string | null; bike?: string | null
-        parentGuardianName?: string | null; waiverSignatureDataUrl?: string | null
+        parentGuardianName?: string | null
+        emergencyContactName?: string | null; emergencyContactPhone?: string | null
+        waiverSignatureDataUrl?: string | null
         tickets: Array<{ ticketId: string; raceNumber?: string | null }>
     }> = []
 
@@ -214,10 +224,13 @@ async function finish() {
         if (!r.firstName.trim() || !r.lastName.trim()) { error.value = `Rider ${i + 1} needs a first and last name.`; return }
         if (r.needsWaiver && !r.signatureDataUrl) { error.value = `${r.firstName || `Rider ${i + 1}`} needs to sign the waiver.`; return }
         if (r.needsWaiver && isMinor(r.birthdate) && !r.parentName.trim()) { error.value = `A parent/guardian name is required for ${r.firstName || `rider ${i + 1}`}.`; return }
+        if (branding.requireEmergencyContact && !r.emergencyPhone.trim()) { error.value = `An emergency contact phone is required for ${r.firstName || `rider ${i + 1}`}.`; return }
         registrants.push({
             firstName: r.firstName.trim(), lastName: r.lastName.trim(),
             birthdate: r.birthdate || null, bike: r.bike.trim() || null,
             parentGuardianName: r.needsWaiver && isMinor(r.birthdate) ? r.parentName.trim() : null,
+            emergencyContactName: branding.requireEmergencyContact ? (r.emergencyName.trim() || null) : null,
+            emergencyContactPhone: branding.requireEmergencyContact ? (r.emergencyPhone.trim() || null) : null,
             waiverSignatureDataUrl: r.needsWaiver ? r.signatureDataUrl : null,
             tickets,
         })

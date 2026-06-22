@@ -21,6 +21,10 @@ namespace webapi.Controllers.API.Data.Purchase
         [MaxLength(100)] public string? Bike { get; set; }
         // Parent/guardian name when the registrant is a minor.
         [MaxLength(120)] public string? ParentGuardianName { get; set; }
+        // Emergency contact for the rider. Required (server-side) when the tenant has
+        // RequireEmergencyContact on and this registrant holds a rider-audience ticket.
+        [MaxLength(120)] public string? EmergencyContactName { get; set; }
+        [MaxLength(40)] public string? EmergencyContactPhone { get; set; }
         // Data-URL of the drawn signature; required when any of this registrant's tickets
         // belong to an audience the event requires a waiver for (rider vs spectator).
         public string? WaiverSignatureDataUrl { get; set; }

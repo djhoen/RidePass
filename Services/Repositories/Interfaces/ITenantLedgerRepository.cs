@@ -33,7 +33,16 @@ namespace Services.Repositories.Interfaces
         /// Period totals across all tenants. Used by the reconciliation view to compare against Stripe.
         /// </summary>
         Task<LedgerPeriodTotals> SumForPeriod(DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>Net cash (sales minus refunds) a worker handled in a window — the basis
+        /// for a cash turn-in's expected drawer. Refund rows carry negative gross.</summary>
+        Task<long> SumCashNetForWorker(Guid tenantId, Guid workerUserId, DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>Refund volume per worker over a window, split cash vs card.</summary>
+        Task<List<WorkerRefundTotals>> ListRefundsByWorker(Guid tenantId, DateTime fromUtc, DateTime toUtc);
     }
 
     public record LedgerPeriodTotals(int Count, long GrossCents, long StripeFeeCents, long RidepassCutCents, long NetToTenantCents);
+
+    public record WorkerRefundTotals(Guid WorkerUserId, int CashCount, long CashCents, int CardCount, long CardCents);
 }

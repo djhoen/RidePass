@@ -183,6 +183,8 @@ export class TicketService {
             birthdate?: string | null
             bike?: string | null
             parentGuardianName?: string | null
+            emergencyContactName?: string | null
+            emergencyContactPhone?: string | null
             waiverSignatureDataUrl?: string | null
             tickets: Array<{ ticketId: string; raceNumber?: string | null }>
         }>

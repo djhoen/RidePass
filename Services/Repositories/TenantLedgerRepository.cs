@@ -17,6 +17,7 @@ namespace Services.Repositories
             stripe_payment_intent_id AS StripePaymentIntentId,
             payout_id AS PayoutId, memo,
             payment_method AS PaymentMethod,
+            sold_by_user_id AS SoldByUserId,
             created_at AS CreatedAt";
 
         private readonly IDbHelper _db;
@@ -30,14 +31,50 @@ namespace Services.Repositories
                     (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
                      gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
                      applied_tier_id, cumulative_monthly_volume_at_sale_cents,
-                     stripe_payment_intent_id, payout_id, memo, payment_method)
+                     stripe_payment_intent_id, payout_id, memo, payment_method, sold_by_user_id)
                 VALUES
                     (@TenantId, @EntryKind, @SourceKind, @SourceId, @OccurredAtUtc,
                      @GrossCents, @StripeFeeCents, @RidepassCutCents, @NetToTenantCents,
                      @AppliedTierId, @CumulativeMonthlyVolumeAtSaleCents,
-                     @StripePaymentIntentId, @PayoutId, @Memo, @PaymentMethod)
+                     @StripePaymentIntentId, @PayoutId, @Memo, @PaymentMethod, @SoldByUserId)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, entry)).First();
+        }
+
+        public async Task<long> SumCashNetForWorker(Guid tenantId, Guid workerUserId, DateTime fromUtc, DateTime toUtc)
+        {
+            // Net cash the worker handled in the window: 'sale' rows are positive and 'refund'
+            // rows carry negative gross, so the sum is sales minus refunds. Cash tender only.
+            const string sql = @"
+                SELECT COALESCE(SUM(gross_cents), 0)::bigint
+                FROM tenant_ledger_entry
+                WHERE tenant_id = @tenantId
+                  AND sold_by_user_id = @workerUserId
+                  AND payment_method = 'cash'
+                  AND entry_kind IN ('sale', 'refund')
+                  AND occurred_at_utc >= @fromUtc
+                  AND occurred_at_utc < @toUtc";
+            return (await _db.Query<long>(sql, new { tenantId, workerUserId, fromUtc, toUtc })).FirstOrDefault();
+        }
+
+        public async Task<List<WorkerRefundTotals>> ListRefundsByWorker(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            // Refund volume per worker over a window, split by tender. gross_cents is negative
+            // on a refund, so -gross_cents is the positive amount returned. Card = stripe rails.
+            const string sql = @"
+                SELECT sold_by_user_id AS WorkerUserId,
+                       COUNT(*) FILTER (WHERE payment_method = 'cash')                                       AS CashCount,
+                       COALESCE(SUM(-gross_cents) FILTER (WHERE payment_method = 'cash'), 0)::bigint          AS CashCents,
+                       COUNT(*) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect'))                AS CardCount,
+                       COALESCE(SUM(-gross_cents) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect')), 0)::bigint AS CardCents
+                FROM tenant_ledger_entry
+                WHERE tenant_id = @tenantId
+                  AND entry_kind = 'refund'
+                  AND sold_by_user_id IS NOT NULL
+                  AND occurred_at_utc >= @fromUtc
+                  AND occurred_at_utc < @toUtc
+                GROUP BY sold_by_user_id";
+            return (await _db.Query<WorkerRefundTotals>(sql, new { tenantId, fromUtc, toUtc })).ToList();
         }
 
         public async Task<List<TenantLedgerEntry>> ListByTenant(Guid tenantId, DateTime? fromUtc, DateTime? toUtc, int take = 200)

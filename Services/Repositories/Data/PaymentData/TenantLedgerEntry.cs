@@ -18,6 +18,7 @@
         public Guid? PayoutId { get; set; }
         public string? Memo { get; set; }
         public string PaymentMethod { get; set; } = "stripe";    // stripe | cash | voucher
+        public Guid? SoldByUserId { get; set; }                  // cashier (sale) / refunder (refund); null for online sales
         public DateTime CreatedAt { get; set; }
     }
 

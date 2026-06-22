@@ -198,11 +198,16 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("No tenant resolved.");
             }
 
-            var paymentMethod = string.IsNullOrWhiteSpace(request.PaymentMethod) ? "stripe" : request.PaymentMethod;
-            if (paymentMethod is not ("stripe" or "cash"))
+            var requestedMethod = string.IsNullOrWhiteSpace(request.PaymentMethod) ? "stripe" : request.PaymentMethod;
+            if (requestedMethod is not ("stripe" or "cash" or "card_present"))
             {
-                return new ApiResponses().BadRequestResult("paymentMethod must be 'stripe' or 'cash'.");
+                return new ApiResponses().BadRequestResult("paymentMethod must be 'stripe', 'cash', or 'card_present'.");
             }
+            // Card-present (Tap to Pay) is a Stripe charge for storage and refund purposes; only
+            // the PaymentIntent shape differs. So treat it as 'stripe' everywhere downstream
+            // (purchase rows, refund routing) and branch on cardPresent only at PI creation.
+            var cardPresent = requestedMethod == "card_present";
+            var paymentMethod = cardPresent ? "stripe" : requestedMethod;
 
             // Cashier id from the JWT — stamped on every purchase row so admins
             // can audit who rang up the sale at the counter.
@@ -712,6 +717,7 @@ namespace webapi.Controllers
                             RidepassCutCents = serviceCharge,
                             NetToTenantCents = -serviceCharge,
                             PaymentMethod = "cash",
+                            SoldByUserId = cashierId,
                             Memo = "Cash sale, tenant owes service charge",
                         });
                     }
@@ -779,16 +785,39 @@ namespace webapi.Controllers
                 ["sale_kind"] = "counter",
                 ["item_count"] = lineItems.Count.ToString(),
             };
+            if (cashierId.HasValue) metadata["sold_by_user_id"] = cashierId.Value.ToString();
+
+            // Tap to Pay: identical cart and identical PI-id-keyed webhook fulfillment, but a
+            // card_present PaymentIntent scoped to the tenant's Terminal Location so the mobile
+            // SDK can collect it. Funds settle to the track via the usual ledger + transfer path.
+            string? terminalLocationId = null;
+            if (cardPresent)
+            {
+                terminalLocationId = await EnsureTerminalLocation(ct);
+                if (terminalLocationId is null)
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "Cannot provision a Stripe Terminal Location for this tenant — fill in the tenant's address (line, city, country, postal code) under Settings first.");
+                }
+            }
 
             PaymentIntentCreated intent;
             try
             {
-                intent = await _payments.CreatePaymentIntentAsync(
-                    amountCents: totalCents,
-                    currency: "usd",
-                    metadata: metadata,
-                    receiptEmail: rider.Email,
-                    ct: ct);
+                intent = cardPresent
+                    ? await _payments.CreateCardPresentPaymentIntentAsync(
+                        amountCents: totalCents,
+                        currency: "usd",
+                        locationId: terminalLocationId!,
+                        metadata: metadata,
+                        receiptEmail: rider.Email,
+                        ct: ct)
+                    : await _payments.CreatePaymentIntentAsync(
+                        amountCents: totalCents,
+                        currency: "usd",
+                        metadata: metadata,
+                        receiptEmail: rider.Email,
+                        ct: ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -817,6 +846,7 @@ namespace webapi.Controllers
                 ClientSecret = intent.ClientSecret,
                 TotalAmountCents = totalCents,
                 LineItems = lineItems,
+                TerminalLocationId = terminalLocationId,
             });
         }
 

@@ -13,6 +13,9 @@ namespace Services.Repositories.Interfaces
         // event, across orders. Matches by user id when present, else by lower(email).
         Task<List<EventTicketPurchaseWithContext>> ListByEventForPurchaser(
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
+        // Operator-app check-in roster: every paid/redeemed attendee for one event with the
+        // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
+        Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
         Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail);
@@ -27,12 +30,15 @@ namespace Services.Repositories.Interfaces
             string firstName, string lastName, DateTime? birthdate, string? raceNumber,
             IReadOnlyList<Guid> excludeTicketIds);
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
+        // Guarded redeem for offline batch sync: flips paid -> redeemed only, returning true
+        // if THIS call made the transition (so the first sync wins and duplicates are detected).
+        Task<bool> TryMarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
         Task UndoRedeemed(Guid id, Guid tenantId);
         Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);
         Task CompleteRegistration(Guid id, Guid tenantId,
             string? riderFirstName, string? riderLastName, DateTime? riderBirthdate, string? bike,
             string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, string? parentGuardianName,
-            Guid? registrantId);
+            string? emergencyContactName, string? emergencyContactPhone, Guid? registrantId);
         // Rider-facing: all of this rider's (non-cancelled) tickets for one event,
         // across any order. Scoped by the rider's user id (Me feed, cross-tenant).
         Task<List<UserEventOrderItem>> ListForUserEvent(Guid userId, Guid eventId);

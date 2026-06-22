@@ -23,6 +23,10 @@ namespace webapi.AuthPolicies
         // Elevated: refund a purchase even after it's been checked in / used, and refund a whole
         // order at once. Held by tenant_admin + tenant_manager only.
         public const string SalesRefundOverride = "sales.refund.override";
+        // Manager-side cash reconciliation: confirm a worker's blind-count cash turn-in and
+        // view the reconciliation report. Deliberately NOT in the cashier set, so a worker
+        // can never confirm their own turn-in. Held by admin + manager + accountant.
+        public const string CashReconcile = "cash.reconcile";
 
         // Compile-time policy names for [Authorize(Policy = ...)] attributes.
         // Must match TenantPermissionRequirement.PolicyName(perm) format.
@@ -42,6 +46,7 @@ namespace webapi.AuthPolicies
             public const string BlogManage     = "TenantPerm:blog.manage";
             public const string SalesRefund    = "TenantPerm:sales.refund";
             public const string SalesRefundOverride = "TenantPerm:sales.refund.override";
+            public const string CashReconcile = "TenantPerm:cash.reconcile";
         }
 
         public static readonly string[] All =
@@ -49,7 +54,7 @@ namespace webapi.AuthPolicies
             UsersManage, SettingsManage, CatalogManage,
             SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
-            BlogManage, SalesRefund, SalesRefundOverride,
+            BlogManage, SalesRefund, SalesRefundOverride, CashReconcile,
         };
 
         public static IReadOnlySet<string> ForRole(string role) =>
@@ -105,7 +110,7 @@ namespace webapi.AuthPolicies
         {
             CatalogManage, SalesCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
-            BlogManage, SalesRefund, SalesRefundOverride,
+            BlogManage, SalesRefund, SalesRefundOverride, CashReconcile,
         };
 
         private static readonly HashSet<string> CashierSet = new()
@@ -120,7 +125,7 @@ namespace webapi.AuthPolicies
 
         private static readonly HashSet<string> AccountantSet = new()
         {
-            SalesView, ReportsView, DisputesView, CustomersView,
+            SalesView, ReportsView, DisputesView, CustomersView, CashReconcile,
         };
     }
 }

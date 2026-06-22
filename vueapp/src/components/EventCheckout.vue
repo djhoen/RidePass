@@ -180,6 +180,12 @@
                     <v-col cols="6"><v-text-field v-model="rider.bike" label="Bike (optional)" density="compact" hide-details></v-text-field></v-col>
                 </v-row>
 
+                <!-- Emergency contact (when the track requires one) -->
+                <v-row v-if="branding.requireEmergencyContact" dense class="mt-4">
+                    <v-col cols="6"><v-text-field v-model="rider.emergencyName" label="Emergency contact name" density="compact" hide-details></v-text-field></v-col>
+                    <v-col cols="6"><v-text-field v-model="rider.emergencyPhone" type="tel" label="Emergency contact phone" density="compact" hide-details></v-text-field></v-col>
+                </v-row>
+
                 <!-- Classes assigned to this rider -->
                 <template v-if="classAssigns.length">
                     <div class="text-caption text-medium-emphasis mt-3 mb-1">Race classes for this rider</div>
@@ -297,6 +303,8 @@ interface RiderCard {
     birthdate: string
     bike: string
     parentName: string
+    emergencyName: string
+    emergencyPhone: string
     signatureDataUrl: string | null
     gateTicketId: string | null    // this rider's gate fee ticket (one per rider)
     needsWaiver: boolean
@@ -574,7 +582,8 @@ function buildRegistration(tickets: TicketRedemption[]) {
         : riderGateTickets.length
 
     riders.value = Array.from({ length: ridersNeeded }, (_, i) => ({
-        firstName: '', lastName: '', birthdate: '', bike: '', parentName: '', signatureDataUrl: null,
+        firstName: '', lastName: '', birthdate: '', bike: '', parentName: '',
+        emergencyName: '', emergencyPhone: '', signatureDataUrl: null,
         gateTicketId: riderGateTickets[i]?.purchaseId ?? null,
         needsWaiver: props.event.requiresRiderWaiver,
     }))
@@ -638,7 +647,9 @@ async function finish() {
     errorMessage.value = ''
     const registrants: Array<{
         firstName: string; lastName: string; birthdate?: string | null; bike?: string | null
-        parentGuardianName?: string | null; waiverSignatureDataUrl?: string | null
+        parentGuardianName?: string | null
+        emergencyContactName?: string | null; emergencyContactPhone?: string | null
+        waiverSignatureDataUrl?: string | null
         tickets: Array<{ ticketId: string; raceNumber?: string | null }>
     }> = []
 
@@ -659,10 +670,15 @@ async function finish() {
         if (r.needsWaiver && isMinor(r.birthdate) && !r.parentName.trim()) {
             errorMessage.value = `A parent/guardian name is required for ${r.firstName || `rider ${i + 1}`}.`; return
         }
+        if (branding.requireEmergencyContact && !r.emergencyPhone.trim()) {
+            errorMessage.value = `An emergency contact phone is required for ${r.firstName || `rider ${i + 1}`}.`; return
+        }
         registrants.push({
             firstName: r.firstName.trim(), lastName: r.lastName.trim(),
             birthdate: r.birthdate || null, bike: r.bike.trim() || null,
             parentGuardianName: r.needsWaiver && isMinor(r.birthdate) ? r.parentName.trim() : null,
+            emergencyContactName: branding.requireEmergencyContact ? (r.emergencyName.trim() || null) : null,
+            emergencyContactPhone: branding.requireEmergencyContact ? (r.emergencyPhone.trim() || null) : null,
             waiverSignatureDataUrl: r.needsWaiver ? r.signatureDataUrl : null,
             tickets,
         })

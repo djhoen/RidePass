@@ -265,8 +265,12 @@ namespace webapi.Controllers
                 tierLookup[tier.Id] = tier;
             }
 
-            // Authenticated buyers must have an emergency contact when the tenant requires one.
-            if (purchaserUserId.HasValue && _tenantContext.Tenant.RequireEmergencyContact)
+            // Emergency contact gate. In DeferRegistration (unified checkout) mode this is
+            // collected per rider AFTER payment in CompleteTicketRegistration, so the buyer
+            // can pay first and finish rider details after, so don't block here. Only the
+            // legacy/POS path (purchaser IS the rider, no post-payment registration step)
+            // still enforces it up front, mirroring the waiver gate below.
+            if (!request.DeferRegistration && purchaserUserId.HasValue && _tenantContext.Tenant.RequireEmergencyContact)
             {
                 var buyer = await _users.GetById(purchaserUserId.Value);
                 if (buyer is not null && string.IsNullOrWhiteSpace(buyer.EmergencyContactPhone))
@@ -941,6 +945,19 @@ namespace webapi.Controllers
                     return new ApiResponses().BadRequestResult($"{reg.FirstName} needs a signed waiver for this event.");
                 }
 
+                // Emergency contact gate, moved here from pre-payment: when the tenant
+                // requires it, a registrant who holds any rider-audience ticket (race entry
+                // or rider gate fee) must supply an emergency contact phone. Spectators are
+                // exempt, mirroring the rider-only waiver/identity capture above.
+                var isRiderRegistrant = loaded.Any(x =>
+                    x.isRace || (x.tier.Kind == "gate_fee" && x.tier.Audience == "rider"));
+                if (_tenantContext.Tenant.RequireEmergencyContact && isRiderRegistrant
+                    && string.IsNullOrWhiteSpace(reg.EmergencyContactPhone))
+                {
+                    return new ApiResponses().BadRequestResult(
+                        $"{reg.FirstName} needs an emergency contact phone number.");
+                }
+
                 // One registrant id ties the rider's gate fee + their class entries together.
                 var registrantId = Guid.NewGuid();
                 foreach (var x in loaded)
@@ -964,6 +981,8 @@ namespace webapi.Controllers
                         raceNumber: x.isRace ? x.raceNumber?.Trim() : null,
                         waiverId: waiverId, waiverSignatureDataUrl: signature,
                         parentGuardianName: reg.ParentGuardianName?.Trim(),
+                        emergencyContactName: isRiderRegistrant ? reg.EmergencyContactName?.Trim() : null,
+                        emergencyContactPhone: isRiderRegistrant ? reg.EmergencyContactPhone?.Trim() : null,
                         registrantId: registrantId);
                     completed++;
                 }
@@ -1448,6 +1467,7 @@ namespace webapi.Controllers
                     RidepassCutCents = 0,
                     NetToTenantCents = -refundCents,
                     PaymentMethod = paymentMethod,
+                    SoldByUserId = staffId,
                     Memo = $"Tenant refund{(refundId is null ? "" : $" {refundId}")}",
                 });
             }

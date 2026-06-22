@@ -85,6 +85,90 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(preview);
         }
 
+        // Event-wide check-in roster: every paid/redeemed attendee for one event with the
+        // attributes the operator app filters on (race class / gate fee, rider vs spectator,
+        // checked-in state, race number). Powers the live roster view and the offline roster
+        // snapshot. Event- and tenant-scoped; SalesRedeem (class-level) gates it.
+        [HttpGet("Roster/{eventId:guid}")]
+        public async Task<IActionResult> Roster(Guid eventId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rows = await _tickets.ListEventRoster(eventId, _tenantContext.TenantId);
+            return new ApiResponses().OkResult(rows);
+        }
+
+        // Sync admissions an operator device made offline. Idempotent and first-to-sync-wins:
+        // each item flips paid -> redeemed only if still paid, so a re-sent batch is a no-op
+        // and a person two devices both admitted offline resolves to one admit with the other
+        // flagged as a conflict for staff to reconcile. The offline AdmittedAtUtc is preserved
+        // as the redemption time. The waiver/ID gate is NOT re-run here: the offline client
+        // gated at admit time, and the person is already inside, so re-gating would only
+        // produce false rejections. Event/tenant scope rides each token lookup.
+        [HttpPost("AdmitBatch")]
+        public async Task<IActionResult> AdmitBatch([FromBody] BatchAdmitRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var staffId = TryGetStaffUserId();
+            if (staffId is null) return new ApiResponses().BadRequestResult("No authenticated user.");
+
+            var items = request?.Items ?? new List<BatchAdmitItem>();
+            if (items.Count > 500)
+            {
+                return new ApiResponses().BadRequestResult("Too many admissions in one batch (max 500). Sync in smaller chunks.");
+            }
+
+            var tenantId = _tenantContext.TenantId;
+            var results = new List<BatchAdmitResult>(items.Count);
+
+            foreach (var item in items)
+            {
+                var result = new BatchAdmitResult { ClientRef = item.ClientRef, RedemptionToken = item.RedemptionToken };
+
+                var row = await _tickets.GetByRedemptionToken(item.RedemptionToken, tenantId);
+                if (row is null)
+                {
+                    result.Outcome = "not_found";
+                    results.Add(result);
+                    continue;
+                }
+                if (row.Status == "redeemed")
+                {
+                    // Already in: your own re-sync is idempotent success; another device that
+                    // got there first is a conflict to surface.
+                    result.RedeemedByUserId = row.RedeemedByUserId;
+                    result.RedeemedAtUtc = row.RedeemedAtUtc;
+                    result.Outcome = row.RedeemedByUserId == staffId.Value ? "admitted" : "conflict";
+                    results.Add(result);
+                    continue;
+                }
+                if (row.Status != "paid")
+                {
+                    result.Outcome = "not_admissible";
+                    results.Add(result);
+                    continue;
+                }
+
+                var flipped = await _tickets.TryMarkRedeemed(row.Id, tenantId, staffId.Value, item.AdmittedAtUtc);
+                if (flipped)
+                {
+                    result.Outcome = "admitted";
+                    result.RedeemedByUserId = staffId.Value;
+                    result.RedeemedAtUtc = item.AdmittedAtUtc;
+                }
+                else
+                {
+                    // Lost a race between the read and the write: re-read to report who holds it.
+                    var fresh = await _tickets.GetByRedemptionToken(item.RedemptionToken, tenantId);
+                    result.RedeemedByUserId = fresh?.RedeemedByUserId;
+                    result.RedeemedAtUtc = fresh?.RedeemedAtUtc;
+                    result.Outcome = fresh?.RedeemedByUserId == staffId.Value ? "admitted" : "conflict";
+                }
+                results.Add(result);
+            }
+
+            return new ApiResponses().OkResult(new BatchAdmitResponse { Results = results });
+        }
+
         // Scan-once-redeem-many: given any token the rider owns for an event, surface
         // every ticket + add-on that SAME purchaser holds for that SAME event, across
         // however many orders they placed, so the gate worker can check them all in from

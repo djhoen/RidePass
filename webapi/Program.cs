@@ -84,6 +84,7 @@ builder.Services.AddScoped<webapi.Sync.TenantPromotionService>();
 builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ICashRepository, CashRepository>();
 builder.Services.AddScoped<IPlatformSettingRepository, PlatformSettingRepository>();
 builder.Services.AddSingleton<webapi.Staging.IStageMirrorService, webapi.Staging.StageMirrorService>();
 builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();

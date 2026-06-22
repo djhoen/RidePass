@@ -5,6 +5,9 @@
         public string ClientSecret { get; set; } = null!;
         public int TotalAmountCents { get; set; }
         public List<CounterSaleLineItem> LineItems { get; set; } = new();
+        // Set only for a card_present (Tap to Pay) sale: the Stripe Terminal Location the
+        // mobile SDK scopes reader discovery to. Null for online ('stripe') and cash sales.
+        public string? TerminalLocationId { get; set; }
     }
 
     public class CounterSaleLineItem

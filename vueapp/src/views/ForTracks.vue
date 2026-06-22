@@ -116,6 +116,28 @@
                 </v-row>
             </section>
 
+            <!-- ── SAFE & SECURE ─────────────────────────────────────────── -->
+            <section class="my-12">
+                <div class="text-center mb-8">
+                    <div class="ft-section-eyebrow">Safe &amp; secure</div>
+                    <h2 class="text-h4 font-weight-bold">Payments you and your riders can trust</h2>
+                    <p class="text-body-1 text-medium-emphasis mt-3 mx-auto" style="max-width: 660px">
+                        Tap-to-pay runs on Stripe, the same payments platform trusted by millions of businesses.
+                        The card is read by the phone's own secure hardware and encrypted straight to Stripe, so
+                        neither RidePass nor your staff's phone ever sees a rider's card number.
+                    </p>
+                </div>
+                <v-row>
+                    <v-col v-for="s in securityPoints" :key="s.title" cols="12" sm="6" md="3">
+                        <v-card variant="tonal" class="h-100 pa-6 text-center">
+                            <v-icon :icon="s.icon" size="40" color="primary" class="mb-3"></v-icon>
+                            <div class="text-h6 font-weight-bold mb-2">{{ s.title }}</div>
+                            <div class="text-body-2 text-medium-emphasis">{{ s.text }}</div>
+                        </v-card>
+                    </v-col>
+                </v-row>
+            </section>
+
             <!-- ── PRICING ───────────────────────────────────────────────── -->
             <section class="my-12">
                 <div class="text-center mb-8">
@@ -263,6 +285,17 @@ const pointOfSaleFeatures = [
     { icon: 'mdi-gift', title: 'Gift cards', text: 'Sell and redeem gift cards online and at the counter.' },
     { icon: 'mdi-credit-card', title: 'Card payments', text: 'Secure Stripe checkout with payouts straight to your account.' },
     { icon: 'mdi-palette', title: 'Branded checkout', text: 'Your logo, colors, and domain on every page riders see.' },
+]
+
+const securityPoints = [
+    { icon: 'mdi-cellphone-lock', title: 'The card stays private',
+      text: 'The phone reads the card with its own secure hardware and encrypts it straight to Stripe. RidePass and your staff never see the card number.' },
+    { icon: 'mdi-shield-check-outline', title: 'PCI handled for you',
+      text: 'Because card data never touches RidePass, Stripe carries the heavy PCI compliance work, not you.' },
+    { icon: 'mdi-credit-card-lock-outline', title: 'Nothing to steal',
+      text: 'No card number is ever stored on the device or in our system, so nobody can capture one, even on a lost phone.' },
+    { icon: 'mdi-clipboard-check-outline', title: 'Every sale accountable',
+      text: 'Staff sign in to take payments, and each sale is tied to the person and device that rang it up.' },
 ]
 
 const steps = [
