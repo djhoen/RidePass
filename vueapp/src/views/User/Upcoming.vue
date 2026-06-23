@@ -93,6 +93,11 @@
                         <div class="d-flex align-start mb-4">
                             <div class="flex-grow-1" style="min-width: 0">
                                 <div class="text-h6 font-weight-bold text-truncate">{{ orderDetail.eventTitle || 'Event order' }}</div>
+                                <div v-if="orderToken || orderPlacedAt" class="text-caption text-medium-emphasis mt-1">
+                                    <span v-if="orderToken" :title="orderToken ?? undefined">Order {{ shortOrderId }}</span>
+                                    <span v-if="orderToken && orderPlacedAt"> &middot; </span>
+                                    <span v-if="orderPlacedAt">Placed {{ formatDate(orderPlacedAt) }}</span>
+                                </div>
                             </div>
                             <v-chip v-if="allPaid" size="small" color="success" variant="tonal" prepend-icon="mdi-check-circle">Paid</v-chip>
                         </div>
@@ -184,6 +189,11 @@ const orderLoading = ref(false)
 const orderDetail = ref<EventOrderDetail | null>(null)
 const orderError = ref('')
 const orderEventId = ref<string | null>(null)
+// Order date + reference token for the dialog header (already on the UpcomingItem that opened it).
+const orderPlacedAt = ref<string | null>(null)
+const orderToken = ref<string | null>(null)
+const shortOrderId = computed(() =>
+    orderToken.value ? '#' + orderToken.value.replace(/-/g, '').slice(0, 8).toUpperCase() : '')
 const resending = ref(false)
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -229,6 +239,8 @@ async function openOrder(item: UpcomingItem) {
     orderDetail.value = null
     orderError.value = ''
     orderEventId.value = item.id
+    orderPlacedAt.value = item.createdAtUtc
+    orderToken.value = item.redemptionToken
     try {
         const r = await service.eventOrder(item.id)
         orderDetail.value = (r.data as any).data

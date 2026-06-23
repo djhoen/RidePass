@@ -26,10 +26,12 @@
                     <v-icon icon="mdi-calendar" size="14"></v-icon>
                     <span>{{ formatWhen(item.occursAtUtc) }}</span>
                 </div>
-                <v-chip v-if="item.registrationComplete" size="x-small" color="success" variant="tonal"
-                    prepend-icon="mdi-check-circle" class="mt-2">Waivers signed</v-chip>
-                <v-chip v-else size="x-small" color="warning" variant="tonal"
+                <v-chip v-if="!item.registrationComplete" size="x-small" color="warning" variant="tonal"
                     prepend-icon="mdi-alert-circle" class="mt-2">Waiver / details needed</v-chip>
+                <v-chip v-else-if="item.waiverSigned" size="x-small" color="success" variant="tonal"
+                    prepend-icon="mdi-file-sign" class="mt-2">Waiver signed</v-chip>
+                <v-chip v-else size="x-small" color="success" variant="tonal"
+                    prepend-icon="mdi-check-circle" class="mt-2">Ready for gate</v-chip>
             </div>
 
             <!-- Right: actions -->

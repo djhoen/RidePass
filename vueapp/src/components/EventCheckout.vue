@@ -113,6 +113,10 @@
                 :persistent-hint="isAuthed && name.trim().length <= 1"></v-text-field>
             <v-text-field v-model="email" type="email" label="Email" density="compact" class="mt-4"
                 :readonly="isAuthed" @blur="onEmailBlur"></v-text-field>
+            <div v-if="isAuthed" class="text-caption text-medium-emphasis mt-1">
+                Not you? <a href="#" class="text-primary" style="text-decoration: underline"
+                    @click.prevent="switchUser">Log out</a>
+            </div>
 
             <v-expand-transition>
                 <div v-if="showLogin && !isAuthed" class="evt-login mt-3 pa-3">
@@ -556,6 +560,17 @@ onMounted(async () => {
         } catch { /* leave blank for them to fill */ }
     }
 })
+
+// "Not you?" on a shared device: silently sign out (no redirect, keeps the cart) and clear
+// the buyer fields so the next person enters their own. Typing a new email then re-runs the
+// account check below (offering inline login when that email already has an account).
+function switchUser() {
+    authHelper.logout()
+    isAuthed.value = false
+    name.value = ''
+    email.value = ''
+    showLogin.value = false
+}
 
 async function onEmailBlur() {
     if (isAuthed.value || !/\S+@\S+\.\S+/.test(email.value.trim())) { showLogin.value = false; return }

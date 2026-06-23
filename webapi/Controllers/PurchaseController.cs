@@ -1314,6 +1314,36 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { refundedCount, totalCents, errors });
         }
 
+        // Refund a caller-selected set of order lines, each in full (incl. service charge). Backs the
+        // Order details refund modal's row selection. RefundOne validates each line is in the tenant,
+        // so a spoofed id from another tenant resolves to "Purchase not found" and is skipped.
+        [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
+        [HttpPost("RefundLines")]
+        public async Task<IActionResult> RefundLines([FromBody] RefundLinesRequest request, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var staffId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            if (request.Lines is null || request.Lines.Count == 0)
+                return new ApiResponses().BadRequestResult("No items selected to refund.");
+            if (request.ForceCheckedIn && !HasRefundOverride())
+                return new ApiResponses().BadRequestResult("You don't have permission to refund a checked-in purchase.");
+            var tenantId = _tenantContext.TenantId;
+
+            int refundedCount = 0, totalCents = 0;
+            var errors = new List<string>();
+            foreach (var line in request.Lines)
+            {
+                var r = await RefundOne(tenantId, line.Kind, line.Id, amountCents: null, request.Reason, staffId,
+                    allowCheckedIn: request.ForceCheckedIn, fullAmount: true, ct);
+                if (r.ok) { refundedCount++; totalCents += r.refundCents; }
+                else if (!r.alreadyDone && r.error is not null) errors.Add(r.error);   // skip already-refunded lines silently
+            }
+
+            if (refundedCount == 0 && errors.Count > 0)
+                return new ApiResponses().BadRequestResult(string.Join(" ", errors));
+            return new ApiResponses().OkResult(new { refundedCount, totalCents, errors });
+        }
+
         // True when the caller may refund a checked-in / used purchase. super_admin always may;
         // otherwise the role must carry sales.refund.override (tenant_admin + tenant_manager).
         private bool HasRefundOverride()
@@ -1590,14 +1620,23 @@ namespace webapi.Controllers
         public async Task<IActionResult> ListForAdmin(
             [FromQuery] DateTime? fromUtc,
             [FromQuery] DateTime? toUtc,
-            [FromQuery] string? status)
+            [FromQuery] string? status,
+            [FromQuery] string? email,
+            [FromQuery] string? orderId)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             // Reads from v_recent_sales (Script0080) so every sale kind shows up
             // — day passes, event tickets, gate fees, season passes, memberships,
             // gift cards, rentals. A practical cap of 500 prevents a stray query
             // from pulling years of activity.
-            var rows = await _recentSales.List(_tenantContext.TenantId, fromUtc, toUtc, status, limit: 500);
+            //
+            // When the admin searches by email or order id, drop the date window so a
+            // match outside the default last-month range still surfaces (the frontend
+            // only falls back to the server when the loaded range has no match).
+            var searching = !string.IsNullOrWhiteSpace(email) || !string.IsNullOrWhiteSpace(orderId);
+            var from = searching ? (DateTime?)null : fromUtc;
+            var to = searching ? (DateTime?)null : toUtc;
+            var rows = await _recentSales.List(_tenantContext.TenantId, from, to, status, limit: 500, email, orderId);
             var response = rows.Select(r => new PurchaseResponse
             {
                 Id = r.Id,
@@ -1608,6 +1647,32 @@ namespace webapi.Controllers
                 AmountCents = r.AmountCents,
                 Status = r.Status,
                 CreatedAt = DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc),
+                RedemptionToken = r.RedemptionToken?.ToString(),
+            });
+            return new ApiResponses().OkResult(response);
+        }
+
+        // Every line in one order (all sales sharing the anchor's Stripe PaymentIntent), for the
+        // Admin Purchases "Order details" modal. Tenant-scoped in the repository.
+        [Authorize(Policy = TenantPermissions.Policy.SalesView)]
+        [HttpGet("Admin/Order")]
+        public async Task<IActionResult> ListOrderForAdmin([FromQuery] string kind, [FromQuery] Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (string.IsNullOrWhiteSpace(kind) || id == Guid.Empty)
+                return new ApiResponses().BadRequestResult("kind and id are required.");
+            var rows = await _recentSales.ListOrder(_tenantContext.TenantId, kind, id);
+            var response = rows.Select(r => new PurchaseResponse
+            {
+                Id = r.Id,
+                Kind = r.Kind,
+                ProductName = r.ItemName ?? string.Empty,
+                PurchaserName = r.PurchaserName ?? string.Empty,
+                PurchaserEmail = r.PurchaserEmail ?? string.Empty,
+                AmountCents = r.AmountCents,
+                Status = r.Status,
+                CreatedAt = DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc),
+                RedemptionToken = r.RedemptionToken?.ToString(),
             });
             return new ApiResponses().OkResult(response);
         }

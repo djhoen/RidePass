@@ -20,5 +20,8 @@ namespace Services.Repositories.Data.PaymentData
         public string? StripePaymentIntentId { get; set; }
         public string? ItemName { get; set; }
         public DateTime CreatedAt { get; set; }
+        /// <summary>The order's redemption token (the rider-facing "Order #"); null for
+        /// kinds without one (membership, gift card).</summary>
+        public Guid? RedemptionToken { get; set; }
     }
 }

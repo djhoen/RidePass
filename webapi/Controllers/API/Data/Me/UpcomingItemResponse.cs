@@ -14,7 +14,8 @@ namespace webapi.Controllers.API.Data.Me
         public string ItemName { get; set; } = null!;
         public string? ImageUrl { get; set; }            // event cover; null for passes/memberships
         public string? TenantLogoUrl { get; set; }       // track logo for the card band
-        public bool RegistrationComplete { get; set; } = true; // event_ticket: all entries registered + waivers signed
+        public bool RegistrationComplete { get; set; } = true; // event_ticket: all entries registered (waiver may not be required)
+        public bool WaiverSigned { get; set; }           // event_ticket: a waiver signature is on file for the order
         public DateTime? OccursAtUtc { get; set; }       // event tickets, day passes
         public DateTime? ValidToUtc { get; set; }        // season passes, memberships
         public int AmountCents { get; set; }

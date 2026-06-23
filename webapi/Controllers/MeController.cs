@@ -100,6 +100,7 @@ namespace webapi.Controllers
                 ImageUrl = r.ImageUrl,
                 TenantLogoUrl = r.TenantLogoUrl,
                 RegistrationComplete = r.RegistrationComplete,
+                WaiverSigned = r.WaiverSigned,
                 OccursAtUtc = r.OccursAtUtc.HasValue
                     ? DateTime.SpecifyKind(r.OccursAtUtc.Value, DateTimeKind.Utc) : null,
                 ValidToUtc = r.ValidToUtc.HasValue

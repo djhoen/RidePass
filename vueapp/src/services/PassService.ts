@@ -36,6 +36,8 @@ export interface PurchaseRow {
     amountCents: number
     status: string
     createdAt: string
+    // Order's redemption token (the rider-facing "Order #" source); null for membership/gift card.
+    redemptionToken: string | null
 }
 
 export class PassService {
@@ -54,8 +56,12 @@ export class PassService {
     }
 
     // Admin purchases / refunds / disputes
-    listPurchasesForAdmin(params: { fromUtc?: string; toUtc?: string; status?: string }) {
+    listPurchasesForAdmin(params: { fromUtc?: string; toUtc?: string; status?: string; email?: string; orderId?: string }) {
         return axios.get<{ data: PurchaseRow[] }>(`${this.apiUrl}/Purchase/Admin`, { params })
+    }
+    // Every line in one order (shares the anchor's payment intent), for the Order details modal.
+    adminOrderDetails(kind: string, id: string) {
+        return axios.get<{ data: PurchaseRow[] }>(`${this.apiUrl}/Purchase/Admin/Order`, { params: { kind, id } })
     }
     cancelTicket(id: string, reason: string | null) {
         return axios.post(`${this.apiUrl}/Purchase/Ticket/${id}/Cancel`, { reason })
@@ -74,6 +80,12 @@ export class PassService {
     refundOrder(kind: string, purchaseId: string, reason: string | null, forceCheckedIn = false) {
         return axios.post<{ data: { refundedCount: number; totalCents: number; errors: string[] } }>(
             `${this.apiUrl}/Purchase/RefundOrder`, { kind, purchaseId, reason, forceCheckedIn })
+    }
+
+    // Refund a selected set of order lines, each in full (incl. service charge). Needs sales.refund.
+    refundLines(lines: { kind: string; id: string }[], reason: string | null, forceCheckedIn = false) {
+        return axios.post<{ data: { refundedCount: number; totalCents: number; errors: string[] } }>(
+            `${this.apiUrl}/Purchase/RefundLines`, { lines, reason, forceCheckedIn })
     }
 
     listDisputes() {

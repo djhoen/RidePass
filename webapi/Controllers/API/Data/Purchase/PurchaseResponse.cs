@@ -14,5 +14,8 @@ namespace webapi.Controllers.API.Data.Purchase
         public int AmountCents { get; set; }
         public string Status { get; set; } = null!;
         public DateTime CreatedAt { get; set; }
+        // Redemption token (the rider-facing "Order #" source); null for membership/gift card.
+        // Lets the admin list show a matching short Order # and search by it.
+        public string? RedemptionToken { get; set; }
     }
 }

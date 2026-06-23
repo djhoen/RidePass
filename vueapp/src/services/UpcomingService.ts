@@ -12,6 +12,7 @@ export interface UpcomingItem {
     imageUrl: string | null
     tenantLogoUrl: string | null
     registrationComplete: boolean
+    waiverSigned: boolean
     occursAtUtc: string | null
     validToUtc: string | null
     amountCents: number

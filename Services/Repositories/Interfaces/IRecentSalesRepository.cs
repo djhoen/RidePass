@@ -10,6 +10,15 @@ namespace Services.Repositories.Interfaces
     /// </summary>
     public interface IRecentSalesRepository
     {
-        Task<List<RecentSalesItem>> List(Guid tenantId, DateTime? fromUtc, DateTime? toUtc, string? status, int limit);
+        Task<List<RecentSalesItem>> List(Guid tenantId, DateTime? fromUtc, DateTime? toUtc, string? status, int limit,
+            string? email = null, string? orderId = null);
+
+        /// <summary>
+        /// Every line in the same order as the anchor purchase: all sales sharing the anchor's
+        /// Stripe PaymentIntent (race entry + gate fees + add-ons + bundled membership/season
+        /// pass). Cash / fully-gift-card-covered orders have no shared intent, so only the anchor
+        /// line is returned. Tenant-scoped.
+        /// </summary>
+        Task<List<RecentSalesItem>> ListOrder(Guid tenantId, string kind, Guid id);
     }
 }
