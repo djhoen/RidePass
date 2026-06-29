@@ -42,8 +42,8 @@
                 </v-col>
             </v-row>
 
-            <!-- Notification choices for this track. Email + newsletter default on (opt-out);
-                 texts are an explicit opt-in. -->
+            <!-- Notification choices for this track. All start unchecked: email, newsletter,
+                 and texts are each an explicit opt-in the rider chooses. -->
             <div class="mt-4">
                 <div class="text-body-2 font-weight-medium mb-1">Stay in the loop</div>
                 <v-checkbox v-model="prefs.eventEmail" density="compact" hide-details
@@ -113,8 +113,9 @@ const form = reactive({
     emergencyPhone: props.prefill?.emergencyPhone ?? '',
 })
 
-// Defaults follow the recommended posture: email + newsletter opt-out, SMS explicit opt-in.
-const prefs = reactive({ eventEmail: true, newsletter: true, eventSms: false })
+// Explicit opt-in across the board: every marketing / announcement choice starts unchecked,
+// so subscribing is an affirmative action the rider takes, not a pre-ticked default.
+const prefs = reactive({ eventEmail: false, newsletter: false, eventSms: false })
 
 const digitCount = (s: string) => (s.match(/\d/g) || []).length
 

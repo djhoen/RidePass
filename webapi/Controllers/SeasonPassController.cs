@@ -21,6 +21,7 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly IUserRepository _users;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly ICouponRepository _coupons;
         private readonly ICouponValidator _couponValidator;
         private readonly IGiftCardRepository _giftCards;
@@ -36,6 +37,7 @@ namespace webapi.Controllers
             IEventRepository events,
             IUserRepository users,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             ICouponRepository coupons,
             ICouponValidator couponValidator,
             IGiftCardRepository giftCards,
@@ -50,6 +52,7 @@ namespace webapi.Controllers
             _events = events;
             _users = users;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _coupons = coupons;
             _couponValidator = couponValidator;
             _giftCards = giftCards;
@@ -286,16 +289,20 @@ namespace webapi.Controllers
                     request.GiftCardCode!, amountCents);
                 if (gcCheck.error is not null) return new ApiResponses().BadRequestResult(gcCheck.error);
                 spGift = gcCheck.application;
+                // Debit up front with an atomic conditional decrement so concurrent checkouts on
+                // the same card can't both spend it; only record the redemption once it succeeds.
+                if (!await _giftCards.ApplyToBalance(spGift!.Card.Id, spGift.AmountToApplyCents))
+                    return new ApiResponses().BadRequestResult(
+                        "That gift card's balance just changed. Please re-apply it and try again.");
                 await _giftCards.RecordRedemption(new GiftCardRedemption
                 {
-                    GiftCardId = spGift!.Card.Id,
+                    GiftCardId = spGift.Card.Id,
                     TenantId = _tenantContext.TenantId,
                     UserId = userId,
                     SourceKind = "season_pass",
                     SourceId = purchase.Id,
                     AmountCents = spGift.AmountToApplyCents,
                 });
-                await _giftCards.ApplyToBalance(spGift.Card.Id, spGift.AmountToApplyCents);
             }
             var spStripeChargeCents = amountCents - (spGift?.AmountToApplyCents ?? 0);
 
@@ -348,11 +355,17 @@ namespace webapi.Controllers
                 metadata["gift_card_id"] = spGift.Card.Id.ToString();
             }
 
+            // Direct-charge tenants charge on their own connected account; our service fee rides as
+            // the Stripe application fee.
             PaymentIntentCreated intent;
+            ChargePlan chargePlan;
             try
             {
+                chargePlan = _chargeRouter.Plan(tenant, serviceCharge, spStripeChargeCents);
                 intent = await _payments.CreatePaymentIntentAsync(
-                    spStripeChargeCents, "usd", metadata, user.Email, ct);
+                    spStripeChargeCents, "usd", metadata, user.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents, ct: ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -360,6 +373,10 @@ namespace webapi.Controllers
             }
 
             await _passes.SetPurchaseStripePaymentIntentId(id, intent.IntentId);
+            if (chargePlan.IsDirect)
+            {
+                await _passes.MarkPurchaseDirectCharge(id, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+            }
 
             return new ApiResponses().OkResult(new BuySeasonPassResponse
             {

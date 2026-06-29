@@ -393,10 +393,14 @@ namespace webapi.Controllers
             }
             else if (refundCents > 0 && !string.IsNullOrEmpty(purchase.StripePaymentIntentId))
             {
+                // Direct charge: refund on the tenant's connected account and return our application fee.
+                var isDirect = !string.IsNullOrEmpty(purchase.StripeConnectedAccountId);
                 try
                 {
                     var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId!, refundCents,
-                        idempotencyKey: $"refund-ticket-{id}-{refundCents}", ct: ct);
+                        idempotencyKey: $"refund-ticket-{id}-{refundCents}",
+                        connectedAccountId: isDirect ? purchase.StripeConnectedAccountId : null,
+                        refundApplicationFee: isDirect, ct: ct);
                     refundId = refund.RefundId;
                 }
                 catch (Exception ex)

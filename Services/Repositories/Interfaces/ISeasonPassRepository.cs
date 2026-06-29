@@ -25,6 +25,7 @@ namespace Services.Repositories.Interfaces
         Task<SeasonPassPurchase?> GetPurchaseByRedemptionToken(Guid token);
         Task<List<SeasonPassPurchaseWithContext>> ListMine(Guid userId, Guid tenantId);
         Task SetPurchaseStripePaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkPurchaseDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdatePurchaseStatus(Guid id, string status);
         Task DecrementCredits(Guid purchaseId);
 

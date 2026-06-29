@@ -10,14 +10,29 @@ namespace webapi.Controllers.API.Data.Concession
         [MaxLength(1000)]
         public string? Description { get; set; }
 
-        [RegularExpression("^(food|drink|swag|other)$")]
-        public string Category { get; set; } = "other";
+        // Tenant-defined category (null = uncategorized). Validated server-side against this tenant's categories.
+        public Guid? CategoryId { get; set; }
 
         [Range(0, int.MaxValue)]
         public int PriceCents { get; set; }
 
         public string? ImageUrl { get; set; }
+        // Whether this item appears in the menu-board photo carousel (only shows when it has an image).
+        public bool ShowInCarousel { get; set; } = true;
         public bool IsActive { get; set; } = true;
         public int SortOrder { get; set; }
+        // Kitchen station that prepares this item (null = default queue).
+        public Guid? StationId { get; set; }
+        // Tax category that sets this item's rate (null = the tenant's default category). Validated
+        // server-side against this tenant's categories.
+        public Guid? TaxCategoryId { get; set; }
+        // Stock count for simple (no-variant) items. Null = unlimited. Variant items track stock per variant.
+        [Range(0, int.MaxValue)]
+        public int? Inventory { get; set; }
+        // Modifier groups (by id) that apply to this item, in display order.
+        public List<Guid> ModifierGroupIds { get; set; } = new();
+        // Options (by id) pre-selected by default when the item is added. Validated to options of the
+        // item's assigned groups.
+        public List<Guid> DefaultModifierOptionIds { get; set; } = new();
     }
 }

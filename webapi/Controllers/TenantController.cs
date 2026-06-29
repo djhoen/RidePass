@@ -92,9 +92,14 @@ namespace webapi.Controllers
             string accountId;
             if (string.IsNullOrEmpty(tenant.StripeConnectAccountId))
             {
+                // Direct-mode tenants charge on their OWN account, so onboard a Standard account
+                // (they own the Stripe dashboard + are merchant of record). Platform-mode tenants
+                // get an Express account used only as the payout rail.
+                var accountType = tenant.StripeChargeMode == "direct" ? "standard" : "express";
                 accountId = await _payments.CreateConnectAccountAsync(
                     tenantEmail: $"connect+{tenant.Subdomain}@ridepass.io",   // Stripe needs an email; we use a tenant-scoped one
                     tenantDisplayName: tenant.DisplayName,
+                    accountType: accountType,
                     ct: ct);
                 await _tenants.SetStripeConnectAccount(tenant.Id, accountId, "pending");
                 InvalidateTenantCache();
@@ -240,6 +245,8 @@ namespace webapi.Controllers
         public async Task<IActionResult> UpdateConcessionsEnabled([FromBody] UpdateConcessionsEnabledRequest request)
         {
             await _tenants.UpdateConcessionsEnabled(_tenantContext.TenantId, request.Enabled);
+            // Starter content is opt-in: the tenant chooses to apply it via the "Load starter" action on
+            // the Concessions admin page (POST Concession/SeedStarter), not automatically on enable.
             return await GetBranding();
         }
 
@@ -403,6 +410,7 @@ namespace webapi.Controllers
                 RequireIdAtCheckin = tenant.RequireIdAtCheckin,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,
                 StripeConnectStatus = tenant.StripeConnectStatus,
+                StripeChargeMode = tenant.StripeChargeMode,
                 ServiceChargeBps = tenant.ServiceChargeBps,
                 ShippingName = tenant.ShippingName,
                 AboutHtml = tenant.AboutHtml,

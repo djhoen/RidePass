@@ -98,6 +98,12 @@ namespace Services.Waitlist
                 };
                 var created = await _ticketPurchases.Create(purchase);
                 await _ticketPurchases.SetStripePaymentIntentId(created.Id, next.PrepayPiId!);
+                // Direct charge: the pre-pay ran on the tenant's own connected account (snapshotted on
+                // the waitlist entry). Carry it onto the ticket so a later refund acts on that account.
+                if (!string.IsNullOrEmpty(next.StripeConnectedAccountId))
+                {
+                    await _ticketPurchases.MarkDirectCharge(created.Id, next.TenantId, next.StripeConnectedAccountId);
+                }
                 await _ticketPurchases.UpdateStatus(created.Id, "paid");
                 await _waitlist.MarkConfirmed(next.Id, created.Id, "event_ticket");
 

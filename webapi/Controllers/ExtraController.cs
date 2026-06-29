@@ -20,6 +20,7 @@ namespace webapi.Controllers
         private readonly IUserRepository _users;
         private readonly IWaiverRepository _waivers;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly IMembershipRepository _memberships;
         private readonly IImageStorage _imageStorage;
         private readonly ITenantContext _tenantContext;
@@ -30,6 +31,7 @@ namespace webapi.Controllers
             IUserRepository users,
             IWaiverRepository waivers,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             IMembershipRepository memberships,
             IImageStorage imageStorage,
             ITenantContext tenantContext)
@@ -39,6 +41,7 @@ namespace webapi.Controllers
             _users = users;
             _waivers = waivers;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _memberships = memberships;
             _imageStorage = imageStorage;
             _tenantContext = tenantContext;
@@ -483,10 +486,16 @@ namespace webapi.Controllers
                 ["user_id"] = userId.ToString(),
                 ["extra_purchase_ids"] = string.Join(",", purchaseIds),
             };
+            // Direct-charge tenants charge on their own connected account; our service fee rides as
+            // the Stripe application fee.
             PaymentIntentCreated intent;
+            ChargePlan chargePlan;
             try
             {
-                intent = await _payments.CreatePaymentIntentAsync(totalAmountCents, "usd", metadata, user.Email, ct);
+                chargePlan = _chargeRouter.Plan(tenant, totalServiceChargeCents, totalAmountCents);
+                intent = await _payments.CreatePaymentIntentAsync(totalAmountCents, "usd", metadata, user.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents, ct: ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -496,6 +505,10 @@ namespace webapi.Controllers
             foreach (var id in purchaseIds)
             {
                 await _extras.SetPaymentIntentId(id, intent.IntentId);
+                if (chargePlan.IsDirect)
+                {
+                    await _extras.MarkDirectCharge(id, tenant.Id, chargePlan.ConnectedAccountId!);
+                }
             }
 
             return new ApiResponses().OkResult(new BuyExtrasResponse

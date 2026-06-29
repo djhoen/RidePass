@@ -17,6 +17,9 @@ namespace Services.Repositories.Data.WaitlistData
 
         public bool IsPrepaid { get; set; }
         public string? PrepayPiId { get; set; }
+        // Set when the pre-pay was a direct charge on the tenant's own connected account; the
+        // promoter carries this onto the ticket row it creates so refunds act on the right account.
+        public string? StripeConnectedAccountId { get; set; }
         public int PrepayAmountCents { get; set; }
         public string? PrepayRefundId { get; set; }
         public DateTime? PrepayRefundedAtUtc { get; set; }

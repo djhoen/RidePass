@@ -16,6 +16,7 @@ const routes = [
     { path: '/SeasonPasses', name: 'SeasonPasses', component: () => import('../views/BuySeasonPass.vue') },
     { path: '/GiftCard', name: 'BuyGiftCard', component: () => import('../views/BuyGiftCard.vue'), meta: { requiresAuth: true } },
     { path: '/Rentals', name: 'Rentals', component: () => import('../views/Rentals.vue'), meta: { requiresAuth: true } },
+    { path: '/Order', name: 'OrderFood', component: () => import('../views/OrderFood.vue'), meta: { requiresAuth: true } },
     {
         path: '/Waitlist/Confirm/:token',
         name: 'WaitlistConfirm',
@@ -232,6 +233,46 @@ const routes = [
         component: () => import('../views/Admin/Concessions.vue'),
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
+    {
+        path: '/Admin/ConcessionPos',
+        name: 'AdminConcessionPos',
+        component: () => import('../views/Admin/ConcessionPos.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/ConcessionKitchen',
+        name: 'AdminConcessionKitchen',
+        component: () => import('../views/Admin/ConcessionKitchen.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/ConcessionMenu',
+        name: 'AdminConcessionMenu',
+        component: () => import('../views/Admin/ConcessionMenuBoard.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/ConcessionPickupBoard',
+        name: 'AdminConcessionPickupBoard',
+        component: () => import('../views/Admin/ConcessionPickupBoard.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/ConcessionOrders',
+        name: 'AdminConcessionOrders',
+        component: () => import('../views/Admin/ConcessionOrders.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+    },
+    {
+        // Void / Comp report. Also surfaced as a pane in the Reporting hub
+        // (/Admin/Reports?report=comps); this is the direct-link route.
+        path: '/Admin/ConcessionComps',
+        name: 'AdminConcessionComps',
+        component: () => import('../views/Admin/Reports/ConcessionComps.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    // Inventory moved into a tab on the Food & Beverage page; keep the old path working.
+    { path: '/Admin/ConcessionInventory', redirect: '/Admin/Concessions' },
     {
         path: '/Admin/Rentals',
         name: 'AdminRentals',

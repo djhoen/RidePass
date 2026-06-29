@@ -8,7 +8,14 @@
             <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
         </p>
 
-        <v-card class="pa-4">
+        <!-- Identity -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-storefront-outline</v-icon></template>
+                <v-card-title>Identity</v-card-title>
+                <v-card-subtitle>Your track's name and how packages are addressed.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
             <v-card-text>
                 <v-row>
                     <v-col cols="12" md="6">
@@ -17,120 +24,140 @@
                     </v-col>
                     <v-col cols="12" md="6">
                         <v-text-field v-model="form.shippingName" label="Shipping Name" density="compact"
-                            hint="Recipient name for packages — e.g. 'Acme MX – Office'." persistent-hint
-                            :hide-details="false"></v-text-field>
+                            hint="Recipient name for packages — e.g. 'Acme MX – Office'." persistent-hint></v-text-field>
                     </v-col>
                 </v-row>
-                <v-row>
-                    <v-col cols="12" md="6">
-                        <div class="text-caption text-medium-emphasis mb-1">Tenant type</div>
-                        <v-chip size="small" color="primary" variant="tonal">
-                            <v-icon start size="small">
-                                {{ branding.tenantType === 'mountain_bike' ? 'mdi-bike' : 'mdi-motorbike' }}
-                            </v-icon>
-                            {{ branding.tenantType === 'mountain_bike' ? 'Mountain Bike (MTB)' : 'Motocross (MX)' }}
-                        </v-chip>
-                        <div class="text-caption text-medium-emphasis mt-1">
-                            Locked at creation. Contact a super admin to change.
-                        </div>
-                    </v-col>
-                </v-row>
+                <div class="text-caption text-medium-emphasis mb-1 mt-2">Tenant type</div>
+                <v-chip size="small" color="primary" variant="tonal">
+                    <v-icon start size="small">
+                        {{ branding.tenantType === 'mountain_bike' ? 'mdi-bike' : 'mdi-motorbike' }}
+                    </v-icon>
+                    {{ branding.tenantType === 'mountain_bike' ? 'Mountain Bike (MTB)' : 'Motocross (MX)' }}
+                </v-chip>
+                <div class="text-caption text-medium-emphasis mt-1">Locked at creation. Contact a super admin to change.</div>
+            </v-card-text>
+        </v-card>
 
+        <!-- Location -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-map-marker-outline</v-icon></template>
+                <v-card-title>Location</v-card-title>
+                <v-card-subtitle>Drives the Discover map, timezone, and shipping. Type the address and we'll find the coordinates.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
                 <v-row>
                     <v-col cols="12">
-                        <v-text-field v-model="form.addressLine" label="Address" density="compact"></v-text-field>
+                        <v-text-field v-model="form.addressLine" label="Address" density="compact" hide-details></v-text-field>
                     </v-col>
                 </v-row>
                 <v-row>
                     <v-col cols="12" md="4">
-                        <v-text-field v-model="form.postalCode" label="Postal code" density="compact"></v-text-field>
+                        <v-text-field v-model="form.postalCode" label="Postal code" density="compact" hide-details></v-text-field>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-text-field v-model="form.city" label="City" density="compact"></v-text-field>
+                        <v-text-field v-model="form.city" label="City" density="compact" hide-details></v-text-field>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-text-field v-model="form.region" label="State / Region" density="compact"></v-text-field>
+                        <v-text-field v-model="form.region" label="State / Region" density="compact" hide-details></v-text-field>
                     </v-col>
                 </v-row>
                 <v-row align="center">
                     <v-col cols="12" md="4">
                         <v-autocomplete v-model="form.timezone" :items="timezoneOptions" label="Timezone"
-                            density="compact" :loading="saving" @update:model-value="tzTouched = true"></v-autocomplete>
+                            density="compact" hide-details :loading="saving" @update:model-value="tzTouched = true"></v-autocomplete>
                     </v-col>
                     <v-col cols="12" md="4">
                         <v-text-field v-model.number="form.latitude" type="number" step="0.00001"
-                            label="Latitude (-90 to 90)" density="compact"></v-text-field>
+                            label="Latitude (-90 to 90)" density="compact" hide-details></v-text-field>
                     </v-col>
                     <v-col cols="12" md="4">
                         <v-text-field v-model.number="form.longitude" type="number" step="0.00001"
-                            label="Longitude (-180 to 180)" density="compact"></v-text-field>
+                            label="Longitude (-180 to 180)" density="compact" hide-details></v-text-field>
                     </v-col>
                 </v-row>
-                <div v-if="geocodeResult" class="text-caption text-medium-emphasis mt-2">
-                    Found: {{ geocodeResult }}
+                <div class="d-flex align-center ga-3 mt-3 flex-wrap">
+                    <v-btn variant="tonal" size="small" prepend-icon="mdi-crosshairs-gps"
+                        :loading="geocoding" @click="geocodeAddress">Look up from address</v-btn>
+                    <span v-if="geocodeResult" class="text-caption text-medium-emphasis">Found: {{ geocodeResult }}</span>
                 </div>
-
-                <v-divider class="my-6"></v-divider>
-                <div class="text-subtitle-1 mb-2">Contact</div>
-                <p class="text-caption text-medium-emphasis mb-3">
-                    Shown in the home-page footer for riders to reach out.
-                </p>
-                <v-row>
-                    <v-col cols="12" md="6">
-                        <v-text-field v-model="form.contactEmail" type="email"
-                            label="Contact email" density="compact"></v-text-field>
-                    </v-col>
-                    <v-col cols="12" md="6">
-                        <PhoneField v-model="form.phone"
-                            label="Phone" density="compact" />
-                    </v-col>
-                </v-row>
-
-                <v-divider class="my-6"></v-divider>
-                <div class="text-subtitle-1 mb-2">Social links</div>
-                <p class="text-caption text-medium-emphasis mb-3">
-                    Each link's icon shows in the footer when the URL is set.
-                    Leave any field blank to hide that platform.
-                </p>
-                <v-row>
-                    <v-col cols="12" md="6">
-                        <v-text-field v-model="form.socialFacebookUrl"
-                            label="Facebook URL" density="compact"
-                            placeholder="https://facebook.com/your-track"
-                            prepend-inner-icon="mdi-facebook"></v-text-field>
-                    </v-col>
-                    <v-col cols="12" md="6">
-                        <v-text-field v-model="form.socialInstagramUrl"
-                            label="Instagram URL" density="compact"
-                            placeholder="https://instagram.com/your-track"
-                            prepend-inner-icon="mdi-instagram"></v-text-field>
-                    </v-col>
-                    <v-col cols="12" md="6">
-                        <v-text-field v-model="form.socialTiktokUrl"
-                            label="TikTok URL" density="compact"
-                            placeholder="https://tiktok.com/@your-track"
-                            prepend-inner-icon="mdi-music-note"></v-text-field>
-                    </v-col>
-                    <v-col cols="12" md="6">
-                        <v-text-field v-model="form.socialYoutubeUrl"
-                            label="YouTube URL" density="compact"
-                            placeholder="https://youtube.com/@your-track"
-                            prepend-inner-icon="mdi-youtube"></v-text-field>
-                    </v-col>
-                </v-row>
-
-                <v-divider class="my-6"></v-divider>
-                <div class="text-subtitle-1 mb-2">Refund Policy</div>
-                <p class="text-caption text-medium-emphasis mb-3">
-                    Linked from the footer. Riders can read it before purchasing.
-                </p>
-                <RichTextEditor v-model="form.refundPolicyHtml" />
-
-                <v-btn color="primary" class="mt-4" :loading="saving" @click="save">Save</v-btn>
             </v-card-text>
         </v-card>
 
-        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000" location="top">{{ snackbarText }}</v-snackbar>
+        <!-- Contact -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-card-account-phone-outline</v-icon></template>
+                <v-card-title>Contact</v-card-title>
+                <v-card-subtitle>Shown in the home-page footer for riders to reach out.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
+                <v-row>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.contactEmail" type="email" label="Contact email" density="compact" hide-details></v-text-field>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <PhoneField v-model="form.phone" label="Phone" density="compact" />
+                    </v-col>
+                </v-row>
+            </v-card-text>
+        </v-card>
+
+        <!-- Social links -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-share-variant-outline</v-icon></template>
+                <v-card-title>Social links</v-card-title>
+                <v-card-subtitle>Each link's icon shows in the footer when the URL is set; leave blank to hide that platform.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
+                <v-row>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.socialFacebookUrl" label="Facebook URL" density="compact" hide-details
+                            placeholder="https://facebook.com/your-track" prepend-inner-icon="mdi-facebook"></v-text-field>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.socialInstagramUrl" label="Instagram URL" density="compact" hide-details
+                            placeholder="https://instagram.com/your-track" prepend-inner-icon="mdi-instagram"></v-text-field>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.socialTiktokUrl" label="TikTok URL" density="compact" hide-details
+                            placeholder="https://tiktok.com/@your-track" prepend-inner-icon="mdi-music-note"></v-text-field>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.socialYoutubeUrl" label="YouTube URL" density="compact" hide-details
+                            placeholder="https://youtube.com/@your-track" prepend-inner-icon="mdi-youtube"></v-text-field>
+                    </v-col>
+                </v-row>
+            </v-card-text>
+        </v-card>
+
+        <!-- Refund policy -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-file-document-outline</v-icon></template>
+                <v-card-title>Refund policy</v-card-title>
+                <v-card-subtitle>Linked from the footer so riders can read it before purchasing.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
+                <RichTextEditor v-model="form.refundPolicyHtml" />
+            </v-card-text>
+        </v-card>
+
+        <div class="d-flex justify-end mb-4">
+            <v-btn color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save" @click="save">Save changes</v-btn>
+        </div>
+
+        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000" location="top" variant="elevated">
+            <div class="d-flex align-center ga-2">
+                <v-icon>{{ snackbarColor === 'success' ? 'mdi-check-circle' : 'mdi-alert-circle' }}</v-icon>
+                <span class="font-weight-medium">{{ snackbarText }}</span>
+            </div>
+        </v-snackbar>
     </v-container>
 </template>
 
@@ -325,7 +352,7 @@ async function save() {
             refundPolicyHtml: normalizeString(form.value.refundPolicyHtml),
         })
         await loadBranding()
-        snackbarText.value = 'Saved.'
+        snackbarText.value = 'General settings saved.'
         snackbarColor.value = 'success'
         snackbar.value = true
     } catch (err: any) {

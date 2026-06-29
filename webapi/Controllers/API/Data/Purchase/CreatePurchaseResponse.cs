@@ -11,6 +11,10 @@ namespace webapi.Controllers.API.Data.Purchase
         public string ClientSecret { get; set; } = null!;
         public int AmountCents { get; set; }
         public int RiderServiceChargeCents { get; set; }
+        // Admission tax contained in AmountCents (0 when the tenant has no admission tax). For
+        // tax-inclusive pricing this is the portion already baked into AmountCents; for on-top
+        // pricing it is what was added. Lets the checkout show a tax line.
+        public int TaxCents { get; set; }
         // When a gift card was applied, this is the amount drawn from its balance.
         // Stripe is charged AmountCents - GiftCardAppliedCents.
         public int GiftCardAppliedCents { get; set; }

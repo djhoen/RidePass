@@ -33,13 +33,19 @@ import { useRoute, useRouter } from 'vue-router'
 import SalesSummary from './Reports/SalesSummary.vue'
 import EventRiders from './Reports/EventRiders.vue'
 import DailyEvents from './Reports/DailyEvents.vue'
+import ConcessionProfitability from './Reports/ConcessionProfitability.vue'
+import ConcessionComps from './Reports/ConcessionComps.vue'
+import ConcessionStaff from './Reports/ConcessionStaff.vue'
 
-type ReportKey = 'sales-summary' | 'event-riders' | 'daily-events'
+type ReportKey = 'sales-summary' | 'event-riders' | 'daily-events' | 'fnb-profit' | 'comps' | 'fnb-staff'
 
 const reports: { key: ReportKey; title: string; subtitle: string; icon: string }[] = [
     { key: 'sales-summary', title: 'Sales Summary', subtitle: 'Revenue, top products, top events', icon: 'mdi-chart-line' },
     { key: 'event-riders',  title: 'Event Riders',  subtitle: 'Roll call + check-in for an event', icon: 'mdi-account-group' },
     { key: 'daily-events',  title: 'Daily Events',  subtitle: 'All events on a chosen date',       icon: 'mdi-calendar-today' },
+    { key: 'fnb-profit',    title: 'F&B Profit',     subtitle: 'Food & Beverage margin by item',    icon: 'mdi-silverware-fork-knife' },
+    { key: 'fnb-staff',     title: 'F&B Staff',      subtitle: 'Food & Beverage sales by employee', icon: 'mdi-account-cash' },
+    { key: 'comps',         title: 'Void / Comp',    subtitle: 'Comped F&B sales + who approved them', icon: 'mdi-cash-remove' },
 ]
 
 const route = useRoute()
@@ -52,7 +58,7 @@ const selected = ref<ReportKey>(parseReport(route.query.report as string | undef
 const activeEventId = ref<string | null>(parseEventId(route.query.eventId as string | undefined))
 
 function parseReport(v: string | undefined): ReportKey {
-    if (v === 'event-riders' || v === 'daily-events' || v === 'sales-summary') return v
+    if (v === 'event-riders' || v === 'daily-events' || v === 'sales-summary' || v === 'fnb-profit' || v === 'comps' || v === 'fnb-staff') return v
     return 'sales-summary'
 }
 function parseEventId(v: string | undefined): string | null {
@@ -63,6 +69,9 @@ const activeComponent = computed(() => {
     switch (selected.value) {
         case 'event-riders': return EventRiders
         case 'daily-events': return DailyEvents
+        case 'fnb-profit': return ConcessionProfitability
+        case 'fnb-staff': return ConcessionStaff
+        case 'comps': return ConcessionComps
         default: return SalesSummary
     }
 })

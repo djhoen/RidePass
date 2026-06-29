@@ -18,6 +18,11 @@ namespace Services.Notifications
         Task EmitToTenantAdmins(Guid tenantId, string kind, string title, string body, string? linkUrl = null);
 
         /// <summary>
+        /// Fan out to every active user in the given tenant roles (in-app only). De-duplicated per user.
+        /// </summary>
+        Task EmitToTenantRoles(Guid tenantId, string[] roles, string kind, string title, string body, string? linkUrl = null);
+
+        /// <summary>
         /// Direct notification to a single user (in-app only).
         /// </summary>
         Task EmitToUser(Guid userId, string kind, string title, string body, string? linkUrl = null, Guid? tenantId = null);
@@ -103,6 +108,32 @@ namespace Services.Notifications
                     var html = $"<p>{System.Net.WebUtility.HtmlEncode(body)}</p>"
                              + (linkUrl is null ? "" : $"<p><a href=\"{System.Net.WebUtility.HtmlEncode(linkUrl)}\">View</a></p>");
                     _ = _emailer.Send(u.Email, $"[RidePass] {title}", html);   // fire-and-forget
+                }
+            }
+        }
+
+        public async Task EmitToTenantRoles(Guid tenantId, string[] roles, string kind, string title, string body, string? linkUrl = null)
+        {
+            var seen = new HashSet<Guid>();
+            foreach (var role in roles)
+            foreach (var u in await _users.ListTenantUsersByRole(tenantId, role))
+            {
+                if (!seen.Add(u.Id)) continue;   // a user could match more than one role
+                try
+                {
+                    await _notifications.Insert(new Notification
+                    {
+                        RecipientUserId = u.Id,
+                        TenantId = tenantId,
+                        Kind = kind,
+                        Title = title,
+                        Body = body,
+                        LinkUrl = linkUrl,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to insert {Kind} notification for user {UserId}", kind, u.Id);
                 }
             }
         }

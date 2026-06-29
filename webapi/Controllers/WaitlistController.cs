@@ -21,6 +21,7 @@ namespace webapi.Controllers
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IUserRepository _users;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly ITenantContext _tenantContext;
 
         public WaitlistController(
@@ -30,6 +31,7 @@ namespace webapi.Controllers
             IEventTicketPurchaseRepository ticketPurchases,
             IUserRepository users,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             ITenantContext tenantContext)
         {
             _waitlist = waitlist;
@@ -38,6 +40,7 @@ namespace webapi.Controllers
             _ticketPurchases = ticketPurchases;
             _users = users;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _tenantContext = tenantContext;
         }
 
@@ -105,6 +108,7 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("You're already on this waitlist.");
 
             int prepayAmountCents = 0;
+            int prepayServiceChargeCents = 0;   // full RidePass cut for the tier (our application fee in direct mode)
             if (req.Prepay)
             {
                 // Compute pre-pay amount the same way regular checkout does so the rider
@@ -113,6 +117,7 @@ namespace webapi.Controllers
                 var serviceChargePerUnit = (int)((long)chargeTier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
                 var riderPortion = (int)((long)serviceChargePerUnit * chargeTier.RiderPaidServiceChargeBps / 10_000L);
                 prepayAmountCents = chargeTier.PriceCents + riderPortion;
+                prepayServiceChargeCents = serviceChargePerUnit;
             }
 
             var entry = new EventWaitlistEntry
@@ -152,13 +157,23 @@ namespace webapi.Controllers
                 metadata["tier_id"] = chargeTier.Id.ToString();
                 try
                 {
+                    // Direct-charge tenants pre-pay on their own connected account; our service fee
+                    // rides as the application fee. Snapshot the account on the waitlist entry so the
+                    // promoter can carry it onto the ticket row it later creates (for correct refunds).
+                    var chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, prepayServiceChargeCents, prepayAmountCents);
                     var pi = await _payments.CreatePaymentIntentAsync(
                         amountCents: prepayAmountCents,
                         currency: "usd",
                         metadata: metadata,
                         receiptEmail: user.Email,
+                        connectedAccountId: chargePlan.ConnectedAccountId,
+                        applicationFeeCents: chargePlan.ApplicationFeeCents,
                         ct: ct);
                     await _waitlist.SetPrepayPaymentIntentId(created.id, pi.IntentId);
+                    if (chargePlan.IsDirect)
+                    {
+                        await _waitlist.MarkPrepayDirectCharge(created.id, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                    }
                     clientSecret = pi.ClientSecret;
                 }
                 catch (InvalidOperationException ex)
@@ -322,8 +337,27 @@ namespace webapi.Controllers
                     ["waitlist_id"] = entry.Id.ToString(),
                     ["user_id"] = userId.ToString(),
                 };
-                var pi = await _payments.CreatePaymentIntentAsync(amountCents, "usd", metadata, user.Email, ct);
+                // Direct-charge tenants charge on their own connected account; our service fee rides
+                // as the application fee. The finalizer flips the row to paid + writes the ledger
+                // (detecting direct from the snapshot), so this is the normal event-ticket path.
+                PaymentIntentCreated pi;
+                ChargePlan chargePlan;
+                try
+                {
+                    chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, serviceChargePerUnit, amountCents);
+                    pi = await _payments.CreatePaymentIntentAsync(amountCents, "usd", metadata, user.Email,
+                        connectedAccountId: chargePlan.ConnectedAccountId,
+                        applicationFeeCents: chargePlan.ApplicationFeeCents, ct: ct);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return new ApiResponses().BadRequestResult(ex.Message);
+                }
                 await _ticketPurchases.SetStripePaymentIntentId(created.Id, pi.IntentId);
+                if (chargePlan.IsDirect)
+                {
+                    await _ticketPurchases.MarkDirectCharge(created.Id, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                }
                 await _waitlist.MarkConfirmed(entry.Id, created.Id, "event_ticket");
                 return new ApiResponses().OkResult(new ConfirmPayResponse { ClientSecret = pi.ClientSecret, AmountCents = amountCents });
             }
@@ -351,10 +385,15 @@ namespace webapi.Controllers
             // Refund pre-pay if applicable.
             if (entry.IsPrepaid && !string.IsNullOrEmpty(entry.PrepayPiId))
             {
+                // Direct charge: refund on the tenant's connected account and return our application
+                // fee too (a full withdrawal refunds the whole pre-pay, so our cut goes back as well).
+                var isDirect = !string.IsNullOrEmpty(entry.StripeConnectedAccountId);
                 try
                 {
                     var refund = await _payments.RefundAsync(entry.PrepayPiId!, entry.PrepayAmountCents,
-                        idempotencyKey: $"refund-waitlist-{id}-{entry.PrepayAmountCents}", ct: ct);
+                        idempotencyKey: $"refund-waitlist-{id}-{entry.PrepayAmountCents}",
+                        connectedAccountId: isDirect ? entry.StripeConnectedAccountId : null,
+                        refundApplicationFee: isDirect, ct: ct);
                     await _waitlist.SetPrepayRefund(id, refund.RefundId, DateTime.UtcNow);
                 }
                 catch

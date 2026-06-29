@@ -4,6 +4,8 @@
     {
         public string ClientSecret { get; set; } = null!;
         public int TotalAmountCents { get; set; }
+        // Admission tax contained in TotalAmountCents (0 when the tenant has no admission tax).
+        public int TaxCents { get; set; }
         public List<CounterSaleLineItem> LineItems { get; set; } = new();
         // Set only for a card_present (Tap to Pay) sale: the Stripe Terminal Location the
         // mobile SDK scopes reader discovery to. Null for online ('stripe') and cash sales.

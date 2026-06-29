@@ -17,6 +17,7 @@ namespace Services.Repositories.Interfaces
         // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
         Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdateStatus(Guid id, string status);
         Task<bool> HasActiveRaceEntry(Guid tenantId, Guid tierId, Guid? purchaserUserId, string? purchaserEmail);
 

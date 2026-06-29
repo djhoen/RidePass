@@ -248,6 +248,28 @@
                                 label="Monthly cap (blank = none)" prefix="$" density="compact" clearable
                                 hint="Once reached, 0% is taken until next UTC month." persistent-hint></v-text-field>
                         </v-col>
+                        <v-col cols="12" md="6">
+                            <v-select v-model="editForm.stripeChargeMode" :items="chargeModeItems" item-title="label"
+                                item-value="value" label="Charge mode" density="compact" class="mt-4"
+                                hint="Direct = charge on the track's own Stripe account (required over ~$1M/yr); our service charge rides as the Stripe application fee. The cap does not apply in direct mode."
+                                persistent-hint></v-select>
+                        </v-col>
+                        <v-col v-if="editForm.stripeChargeMode === 'direct' && editTenant?.stripeConnectStatus !== 'active'" cols="12" md="6" class="d-flex align-center">
+                            <v-alert type="warning" density="compact" variant="tonal" class="mt-4">
+                                This track must connect its own Stripe account (Settings &rarr; Payments) and reach "active" before direct charges will go through.
+                            </v-alert>
+                        </v-col>
+                        <v-col cols="12">
+                            <v-btn size="small" variant="tonal" color="info" :loading="testingConnect"
+                                prepend-icon="mdi-connection" @click="testStripeConnect">
+                                Test Stripe connection
+                            </v-btn>
+                            <v-alert v-if="connectTestResult" :type="connectTestResult.ok ? 'success' : 'error'"
+                                density="compact" variant="tonal" class="mt-2" closable
+                                @click:close="connectTestResult = null">
+                                {{ connectTestResult.message }}
+                            </v-alert>
+                        </v-col>
                     </v-row>
 
                     <div class="text-subtitle-2 mt-4 mb-3">Address</div>
@@ -554,7 +576,7 @@ const featureToggles: { key: FeatureKey; label: string; description: string }[] 
     { key: 'rentalsEnabled', label: 'Rentals', description: 'Rent gear (bikes, helmets, pads) per session, with deposit and insurance support.' },
     { key: 'extrasEnabled', label: 'Add-ons', description: 'Sell camping, parking, pit-vehicle passes, and merch alongside event entries.' },
     { key: 'seasonPassesEnabled', label: 'Season passes', description: 'Sell season-long passes that cover entry to qualifying events.' },
-    { key: 'concessionsEnabled', label: 'Concessions', description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.' },
+    { key: 'concessionsEnabled', label: 'Food & Beverage', description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.' },
     { key: 'blogEnabled', label: 'Blog', description: 'Publish posts with photos and add a Blog link to the public nav.' },
     { key: 'membershipEnabled', label: 'Membership', description: 'Sell yearly or one-time memberships and gate selected purchases behind them.' },
     { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.' },
@@ -600,6 +622,7 @@ interface TenantEditForm {
     isPublished: boolean
     serviceChargePct: number
     serviceChargeCapDollars: number | null
+    stripeChargeMode: 'platform' | 'direct'
     addressLine: string | null
     city: string | null
     region: string | null
@@ -647,6 +670,30 @@ const geocoding = ref(false)
 const editError = ref<string | null>(null)
 const editForm = ref<TenantEditForm>(emptyEditForm())
 const editTab = ref<'general' | 'features' | 'embed'>('general')
+const chargeModeItems = [
+    { label: 'Platform (RidePass account + payout)', value: 'platform' },
+    { label: 'Direct (track\'s own Stripe account)', value: 'direct' },
+]
+const testingConnect = ref(false)
+const connectTestResult = ref<{ ok: boolean; message: string } | null>(null)
+
+async function testStripeConnect() {
+    if (!editTenant.value) return
+    testingConnect.value = true
+    connectTestResult.value = null
+    try {
+        const r = await service.testStripeConnect(editTenant.value.id)
+        const d = (r.data as any).data
+        connectTestResult.value = {
+            ok: true,
+            message: `Connected. Charges ${d.chargesEnabled ? 'enabled' : 'NOT enabled'}, payouts ${d.payoutsEnabled ? 'enabled' : 'NOT enabled'}. Available $${(d.availableCents / 100).toFixed(2)} ${String(d.currency).toUpperCase()}.`,
+        }
+    } catch (err: any) {
+        connectTestResult.value = { ok: false, message: err.response?.data?.error || 'Stripe connection test failed.' }
+    } finally {
+        testingConnect.value = false
+    }
+}
 
 // Snippet builder: pick a widget + fill its options, get the paste-able tag.
 const embedWidgetItems = EMBED_WIDGETS.map(w => ({ title: w.label, value: w.key }))
@@ -833,7 +880,7 @@ async function submitCreateTenant() {
 function emptyEditForm(): TenantEditForm {
     return {
         displayName: '', status: 'active', timezone: 'America/New_York', isPublished: false,
-        serviceChargePct: 3, serviceChargeCapDollars: null,
+        serviceChargePct: 3, serviceChargeCapDollars: null, stripeChargeMode: 'platform',
         addressLine: null, city: null, region: null, postalCode: null, country: null,
         latitude: null, longitude: null, contactEmail: null, phone: null,
         loampassMxDestinationId: null,
@@ -848,6 +895,7 @@ function emptyEditForm(): TenantEditForm {
 function openEdit(t: TenantSummary) {
     editTenant.value = t
     editError.value = null
+    connectTestResult.value = null
     editForm.value = {
         displayName: t.displayName,
         status: t.status,
@@ -855,6 +903,7 @@ function openEdit(t: TenantSummary) {
         isPublished: t.isPublished,
         serviceChargePct: t.serviceChargeBps / 100,
         serviceChargeCapDollars: t.monthlyServiceChargeCapCents !== null ? t.monthlyServiceChargeCapCents / 100 : null,
+        stripeChargeMode: t.stripeChargeMode ?? 'platform',
         addressLine: t.addressLine,
         city: t.city,
         region: t.region,
@@ -931,6 +980,7 @@ async function saveEdit() {
             isPublished: f.isPublished,
             serviceChargeBps: Math.round(pct * 100),
             monthlyServiceChargeCapCents: capDollars !== null ? Math.round(capDollars * 100) : null,
+            stripeChargeMode: f.stripeChargeMode,
             addressLine: norm(f.addressLine),
             city: norm(f.city),
             region: norm(f.region),

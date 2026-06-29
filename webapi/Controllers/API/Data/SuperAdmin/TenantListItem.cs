@@ -9,6 +9,11 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string Timezone { get; set; } = null!;
         public int ServiceChargeBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
+        // 'platform' | 'direct' (charge on tenant's own connected account).
+        public string StripeChargeMode { get; set; } = "platform";
+        // Connect onboarding status (pending | active | restricted | null), so the super-admin UI can
+        // warn that 'direct' mode needs an active connected account before it will take payments.
+        public string? StripeConnectStatus { get; set; }
         public bool IsPublished { get; set; }
         // Tenant-level feature toggles (super-admin editable in the Feature Toggles tab).
         public bool GiftCardsEnabled { get; set; }

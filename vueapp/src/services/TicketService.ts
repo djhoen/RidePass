@@ -40,6 +40,7 @@ export interface TicketPurchaseResponse {
     clientSecret: string
     amountCents: number
     riderServiceChargeCents: number
+    taxCents: number
     giftCardAppliedCents: number
 }
 

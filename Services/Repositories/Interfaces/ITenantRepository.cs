@@ -14,6 +14,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
+        Task SetStripeChargeMode(Guid tenantId, string chargeMode);
         Task<Tenant?> GetByStripeConnectAccountId(string accountId);
         /// <summary>
         /// Reverse-lookup a tenant by its provisioned Twilio Subaccount SID.
@@ -29,6 +30,7 @@ namespace Services.Repositories.Interfaces
         /// time a cashier opens the app at that tenant.
         /// </summary>
         Task SetStripeTerminalLocationId(Guid tenantId, string locationId);
+        Task SetStripeConnectedTerminalLocationId(Guid tenantId, string locationId);
         /// <summary>
         /// Persist the freshly-provisioned Twilio Subaccount credentials and
         /// flip sms_enabled on. authTokenEncrypted must be the

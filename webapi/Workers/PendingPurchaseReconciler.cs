@@ -59,14 +59,17 @@ namespace webapi.Workers
             var finalizer = scope.ServiceProvider.GetRequiredService<IStripePurchaseFinalizer>();
 
             var now = DateTime.UtcNow;
-            var stale = await repo.ListStalePendingPaymentIntents(now - PendingGrace, take: 200);
-            if (stale.Count == 0) return;
 
+            // Reconcile against Stripe FIRST (concession sales are included in this union), so any
+            // concession card/online payment that succeeded but missed its webhook is finalized here
+            // (flips to paid, writes the ledger entry, assigns the order number) before the blind
+            // inventory sweep below could fail it.
+            var stale = await repo.ListStalePendingPaymentIntents(now - PendingGrace, take: 200);
             foreach (var pi in stale)
             {
                 if (ct.IsCancellationRequested) return;
 
-                var status = await payments.GetPaymentIntentStatusAsync(pi.PaymentIntentId, ct);
+                var status = await payments.GetPaymentIntentStatusAsync(pi.PaymentIntentId, pi.ConnectedAccountId, ct);
                 if (status is null)
                 {
                     // Stripe not configured, or the fetch failed — can't safely decide, skip.
@@ -90,7 +93,7 @@ namespace webapi.Workers
                     // completed: abandoned. Cancel the PI at Stripe FIRST so it can never be charged
                     // later — otherwise a late completion would fire payment_intent.succeeded and the
                     // finalizer would revive the failed rows, double-booking inventory we just freed.
-                    var afterCancel = await payments.CancelPaymentIntentAsync(pi.PaymentIntentId, ct);
+                    var afterCancel = await payments.CancelPaymentIntentAsync(pi.PaymentIntentId, pi.ConnectedAccountId, ct);
                     if (afterCancel == "succeeded")
                     {
                         // Buyer completed payment in the cancel race — fulfill instead of failing.
@@ -108,6 +111,22 @@ namespace webapi.Workers
                     }
                     // else (null / unexpected state): leave pending and retry on a later tick.
                 }
+            }
+
+            // Now release inventory held by abandoned concession card sales (reader cancelled /
+            // walk-off): a pending concession sale older than 30 min is failed so its variant stock
+            // frees up. Runs AFTER the Stripe reconciliation above, so any sale that actually
+            // succeeded was already finalized (no longer pending) and is safe from this blind sweep;
+            // only genuine walk-offs remain pending to be failed here.
+            try
+            {
+                var concessions = scope.ServiceProvider.GetRequiredService<IConcessionRepository>();
+                var swept = await concessions.FailStalePendingSales(now - TimeSpan.FromMinutes(30));
+                if (swept > 0) _logger.LogInformation("Reconciler failed {Count} stale pending concession sales.", swept);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Concession stale-pending sweep failed.");
             }
         }
     }

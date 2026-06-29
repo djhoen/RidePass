@@ -21,6 +21,7 @@
             <v-btn to="/Events" variant="text">Events</v-btn>
             <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
             <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
+            <v-btn v-if="showOrderFood" to="/Order" variant="text" prepend-icon="mdi-silverware-fork-knife">Order Food</v-btn>
             <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
             <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
             <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
@@ -84,7 +85,7 @@
 
     <!-- Drawer: SuperAdmin (platform-level pages) when role=super_admin,
          Tenant Admin otherwise. Also used as the mobile menu container. -->
-    <v-navigation-drawer v-model="drawer" location="right" temporary>
+    <v-navigation-drawer v-model="drawer" location="right" temporary width="320">
         <v-list density="compact" v-model:opened="openedGroups">
             <!-- Super admin drawer: flat list of platform-level pages. No
                  tenant-context links (those are meaningless for super admins). -->
@@ -106,6 +107,7 @@
                     <v-list-item to="/Events" title="Events" prepend-icon="mdi-calendar"></v-list-item>
                     <v-list-item v-if="branding.giftCardsEnabled" to="/GiftCard" title="Gift Cards" prepend-icon="mdi-gift"></v-list-item>
                     <v-list-item v-if="branding.rentalsEnabled" to="/Rentals" title="Rentals" prepend-icon="mdi-bike-fast"></v-list-item>
+                    <v-list-item v-if="showOrderFood" to="/Order" title="Order Food" prepend-icon="mdi-silverware-fork-knife"></v-list-item>
                     <v-list-item v-if="branding.blogEnabled" to="/Blog" title="Blog" prepend-icon="mdi-post"></v-list-item>
                     <v-divider></v-divider>
                 </template>
@@ -153,6 +155,7 @@ import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import NotificationBell from './NotificationBell.vue'
 import { Perm, type Permission } from '@/helpers/TenantPermissions'
+import { ConcessionService } from '@/services/ConcessionService'
 
 const router = useRouter()
 const route = useRoute()
@@ -161,6 +164,21 @@ const drawer = ref(false)
 
 const isMobile = computed(() => mobile.value)
 const isAuthenticated = computed(() => authHelper.isAuthenticated())
+
+// Order Food is only offered to a logged-in rider when F&B is enabled AND currently within operating
+// hours. Default closed and only reveal the link once the server confirms ordering is open now (it
+// returns true when no hours are configured), so a closed stand never flashes the link. On fetch
+// failure we stay hidden; the page + server enforce regardless.
+const orderingOpenNow = ref(false)
+const showOrderFood = computed(() => isAuthenticated.value && branding.concessionsEnabled && orderingOpenNow.value)
+let fetchedOrdering = false
+watch(() => [isAuthenticated.value, branding.concessionsEnabled] as const, async ([auth, enabled]) => {
+    if (auth && enabled && !fetchedOrdering) {
+        fetchedOrdering = true
+        try { orderingOpenNow.value = (await new ConcessionService().menuSettings() as any).data.data.orderingOpenNow }
+        catch { /* leave closed; the page + server still enforce */ }
+    }
+}, { immediate: true })
 
 // Pull nav bar styling from whichever branding scope applies: apex (no
 // tenant subdomain) uses the platform branding singleton; everything else
@@ -232,7 +250,6 @@ interface AdminGroup { value: string; title: string; icon: string; links: AdminL
 // Direct links: pinned at top of admin menu, no group header.
 const allDirectLinks: AdminLink[] = [
     { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null },
-    { to: '/Admin/Events',    icon: 'mdi-calendar',         title: 'Events',    perm: Perm.CatalogManage },
     { to: '/Admin/Users',     icon: 'mdi-account-multiple', title: 'Users',     perm: Perm.UsersManage },
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
@@ -243,26 +260,38 @@ const allDirectLinks: AdminLink[] = [
 // Grouped links: each group is a collapsible accordion. Groups with no permitted items are hidden.
 const allGroups: AdminGroup[] = [
     {
-        value: 'operations',
-        title: 'Operations',
-        icon: 'mdi-cash-register',
+        value: 'fnb',
+        title: 'Food & Beverage',
+        icon: 'mdi-silverware-fork-knife',
         links: [
-            { to: '/Admin/Counter',       icon: 'mdi-cash-register',       title: 'Counter Sale',  perm: Perm.SalesCounter },
-            { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan',         title: 'Redeem Tickets', perm: Perm.SalesRedeem },
+            { to: '/Admin/Concessions',       icon: 'mdi-cog',                   title: 'Administration', perm: Perm.CatalogManage, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionPos',     icon: 'mdi-point-of-sale',         title: 'Cashier Screen', perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionKitchen', icon: 'mdi-stove',                 title: 'Cook Screen',    perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionMenu',    icon: 'mdi-silverware-fork-knife', title: 'Menu Board',     perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionPickupBoard', icon: 'mdi-bell-ring-outline', title: 'Pickup Board',   perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionOrders',  icon: 'mdi-receipt-text-clock',    title: 'Order History',  perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
         ],
     },
     {
-        value: 'catalog',
-        title: 'Catalog',
-        icon: 'mdi-tag-multiple',
+        value: 'admission',
+        title: 'Admission',
+        icon: 'mdi-ticket-confirmation',
         links: [
+            { to: '/Admin/Events', icon: 'mdi-calendar-month', title: 'Manage Events', perm: Perm.CatalogManage },
+            { to: '/Admin/Counter', icon: 'mdi-cash-register', title: 'Gate Sale', perm: Perm.SalesCounter },
+            { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan', title: 'Scan Tickets', perm: Perm.SalesRedeem },
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
-            { to: '/Admin/Events',       icon: 'mdi-calendar-month',       title: 'Events',        perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
-            { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage, feature: 'rentalsEnabled' },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage, feature: 'extrasEnabled' },
-            { to: '/Admin/Concessions',  icon: 'mdi-storefront',           title: 'Concessions',   perm: Perm.CatalogManage, feature: 'concessionsEnabled' },
+        ],
+    },
+    {
+        value: 'rentals',
+        title: 'Rentals',
+        icon: 'mdi-bike-fast',
+        links: [
+            { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage, feature: 'rentalsEnabled' },
         ],
     },
     {

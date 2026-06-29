@@ -26,6 +26,10 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool RequireIdAtCheckin { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }
+        // 'platform' (default) or 'direct'. When 'direct', the SPA must initialize Stripe.js with
+        // { stripeAccount: StripeConnectAccountId } so the Payment Element confirms the direct charge
+        // on the tenant's own connected account.
+        public string StripeChargeMode { get; set; } = "platform";
         public int ServiceChargeBps { get; set; }
         public string? ShippingName { get; set; }
         public string? AboutHtml { get; set; }

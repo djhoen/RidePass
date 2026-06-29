@@ -380,7 +380,7 @@ const KIND_LABELS: Record<string, string> = {
     membership: 'Membership',
     gift_card: 'Gift Card',
     rental: 'Rental',
-    concession: 'Concession',
+    concession: 'Food & Beverage',
 }
 function kindLabel(kind: string): string {
     return KIND_LABELS[kind] ?? kind

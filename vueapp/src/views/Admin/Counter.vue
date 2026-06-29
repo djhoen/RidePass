@@ -787,7 +787,9 @@ async function createSale(method: 'stripe' | 'cash') {
 
 async function mountPaymentElement() {
     if (!clientSecret.value) return
-    stripe = await getStripe(branding.stripePublishableKey)
+    // Direct-charge tenants confirm the online counter charge on their own connected account.
+    const stripeAccount = branding.stripeChargeMode === 'direct' ? branding.stripeConnectAccountId : null
+    stripe = await getStripe(branding.stripePublishableKey, stripeAccount)
     if (!stripe) { paymentError.value = 'Stripe not available.'; return }
     elements = stripe.elements({ clientSecret: clientSecret.value })
     const pe = elements.create('payment')

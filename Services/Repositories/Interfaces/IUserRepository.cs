@@ -20,6 +20,7 @@ namespace Services.Repositories.Interfaces
         Task<Guid> Create(User user);
         Task<bool> AnySuperAdminExists();
         Task<List<User>> SearchAll(string? query, int take = 50);
+        Task<List<User>> SearchUsers(string? query, string? role, Guid? tenantId, string? status, int take = 200);
         Task<List<User>> ListByTenant(Guid tenantId);
         Task<List<User>> ListSuperAdmins();
         Task<List<User>> ListTenantUsersByRole(Guid tenantId, string role);
@@ -41,5 +42,10 @@ namespace Services.Repositories.Interfaces
             string? city, string? state, string? postalCode, string? country);
         Task<string?> GetDashboardConfig(Guid userId);
         Task SetDashboardConfig(Guid userId, string? jsonOrNull);
+
+        // POS manager PIN. SetPosPinHash stores a salted hash (or null to clear). ListTenantManagerPins
+        // returns the tenant's active managers/admins who have a PIN, so an entered PIN can be verified.
+        Task SetPosPinHash(Guid userId, string? pinHash);
+        Task<List<TenantManagerPin>> ListTenantManagerPins(Guid tenantId);
     }
 }

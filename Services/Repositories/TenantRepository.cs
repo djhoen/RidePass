@@ -15,7 +15,9 @@ namespace Services.Repositories
             require_id_at_checkin AS RequireIdAtCheckin,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
+            stripe_charge_mode AS StripeChargeMode,
             stripe_terminal_location_id AS StripeTerminalLocationId,
+            stripe_connected_terminal_location_id AS StripeConnectedTerminalLocationId,
             twilio_subaccount_sid AS TwilioSubaccountSid,
             twilio_auth_token_encrypted AS TwilioAuthTokenEncrypted,
             twilio_from_number AS TwilioFromNumber,
@@ -161,6 +163,15 @@ namespace Services.Repositories
             await _db.Execute(sql, new { accountId, status });
         }
 
+        public async Task SetStripeChargeMode(Guid tenantId, string chargeMode)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET stripe_charge_mode = @chargeMode
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, chargeMode });
+        }
+
         public async Task<Tenant?> GetByStripeConnectAccountId(string accountId)
         {
             var sql = $"SELECT {SelectColumns} FROM tenant WHERE stripe_connect_account_id = @accountId LIMIT 1";
@@ -190,6 +201,15 @@ namespace Services.Repositories
             const string sql = @"
                 UPDATE tenant
                 SET stripe_terminal_location_id = @locationId
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, locationId });
+        }
+
+        public async Task SetStripeConnectedTerminalLocationId(Guid tenantId, string locationId)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET stripe_connected_terminal_location_id = @locationId
                 WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, locationId });
         }

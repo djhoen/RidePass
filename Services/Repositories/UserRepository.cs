@@ -223,6 +223,29 @@ namespace Services.Repositories
             return result.ToList();
         }
 
+        // Super-admin user browser. With a search term, find ANY user by email/name across the whole
+        // platform (filters ignored, so an admin can locate a global rider). Without a term, default to
+        // tenant users only (tenant_id IS NOT NULL) and apply the role/tenant/status filters.
+        public async Task<List<User>> SearchUsers(string? query, string? role, Guid? tenantId, string? status, int take = 200)
+        {
+            if (!string.IsNullOrWhiteSpace(query))
+                return await SearchAll(query, take);
+
+            var clauses = new List<string> { "tenant_id IS NOT NULL" };
+            if (!string.IsNullOrWhiteSpace(role)) clauses.Add("role = @role");
+            if (tenantId.HasValue) clauses.Add("tenant_id = @tenantId");
+            if (!string.IsNullOrWhiteSpace(status)) clauses.Add("status = @status");
+
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE {string.Join(" AND ", clauses)}
+                ORDER BY created_at DESC
+                LIMIT @take";
+            var result = await _db.Query<User>(sql, new { role, tenantId, status, take });
+            return result.ToList();
+        }
+
         public async Task<List<User>> ListByTenant(Guid tenantId)
         {
             var sql = $@"
@@ -323,6 +346,24 @@ namespace Services.Repositories
             // Cast the text param to jsonb so NULLs and well-formed JSON both work.
             const string sql = "UPDATE users SET dashboard_config = @json::jsonb WHERE id = @userId";
             await _db.Execute(sql, new { userId, json = jsonOrNull });
+        }
+
+        public async Task SetPosPinHash(Guid userId, string? pinHash)
+        {
+            const string sql = "UPDATE users SET pos_pin_hash = @pinHash, updated_at = now() WHERE id = @userId";
+            await _db.Execute(sql, new { userId, pinHash });
+        }
+
+        // Active managers/admins of the tenant who have a POS PIN set. The roles array (Script0107) is
+        // intersected with the manager/admin roles so only staff allowed to authorize are returned.
+        public async Task<List<TenantManagerPin>> ListTenantManagerPins(Guid tenantId)
+        {
+            const string sql = @"
+                SELECT id AS Id, first_name AS FirstName, last_name AS LastName, pos_pin_hash AS PinHash
+                FROM users
+                WHERE tenant_id = @tenantId AND status = 'active' AND pos_pin_hash IS NOT NULL
+                  AND roles && ARRAY['tenant_admin','tenant_manager']";
+            return (await _db.Query<TenantManagerPin>(sql, new { tenantId })).ToList();
         }
     }
 }

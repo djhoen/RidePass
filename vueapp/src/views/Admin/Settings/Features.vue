@@ -190,7 +190,7 @@ const features = computed<Feature[]>(() => [
     },
     {
         key: 'concessions',
-        title: 'Concessions',
+        title: 'Food & Beverage',
         description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.',
         icon: 'mdi-storefront',
         enabled: branding.concessionsEnabled,

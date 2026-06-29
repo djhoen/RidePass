@@ -12,6 +12,7 @@ namespace Services.Repositories
             position, quantity, notes,
             is_prepaid AS IsPrepaid,
             prepay_pi_id AS PrepayPiId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             prepay_amount_cents AS PrepayAmountCents,
             prepay_refund_id AS PrepayRefundId,
             prepay_refunded_at_utc AS PrepayRefundedAtUtc,
@@ -126,6 +127,17 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE event_waitlist SET prepay_pi_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account the pre-pay was charged on so the promoter
+        // can stamp the ticket it creates (for correct refunds).
+        public async Task MarkPrepayDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE event_waitlist
+                SET stripe_connected_account_id = @connectedAccountId
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task MarkPrepaid(Guid id, int amountCents)

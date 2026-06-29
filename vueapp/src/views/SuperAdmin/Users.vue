@@ -2,12 +2,29 @@
     <v-container>
         <h1 class="text-h4 mb-4">Users</h1>
 
-        <div class="d-flex align-center mb-3 ga-2">
-            <v-text-field v-model="userQuery" label="Search users" density="compact" hide-details clearable
-                style="max-width: 360px" @keyup.enter="loadUsers"></v-text-field>
+        <div class="d-flex align-center mb-3 ga-2 flex-wrap">
+            <v-text-field v-model="userQuery" label="Search by name or email" density="compact" hide-details clearable
+                prepend-inner-icon="mdi-magnify" style="max-width: 340px"
+                @keyup.enter="loadUsers" @click:clear="onClearSearch"></v-text-field>
             <v-btn @click="loadUsers">Search</v-btn>
             <v-spacer></v-spacer>
             <v-btn color="primary" prepend-icon="mdi-shield-plus" @click="openCreateSuperAdmin">Add Super Admin</v-btn>
+        </div>
+
+        <div class="d-flex align-center mb-3 ga-2 flex-wrap">
+            <v-select v-model="filterRole" :items="filterRoleOptions" label="Role" density="compact" hide-details
+                clearable style="max-width: 200px" :disabled="searchActive"
+                @update:model-value="loadUsers"></v-select>
+            <v-autocomplete v-model="filterTenantId" :items="tenantOptions" label="Tenant" density="compact" hide-details
+                clearable style="max-width: 280px" :disabled="searchActive"
+                @update:model-value="loadUsers"></v-autocomplete>
+            <v-select v-model="filterStatus" :items="statusOptions" label="Status" density="compact" hide-details
+                clearable style="max-width: 180px" :disabled="searchActive"
+                @update:model-value="loadUsers"></v-select>
+            <v-chip v-if="searchActive" size="small" color="info" variant="tonal">
+                Search matches all users; filters are ignored.
+            </v-chip>
+            <v-btn v-else-if="hasFilters" variant="text" size="small" @click="clearFilters">Clear filters</v-btn>
         </div>
         <v-card>
             <v-table>
@@ -177,9 +194,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { SuperAdminService, type SuperAdminUser, type UpdateUserPayload } from '@/services/SuperAdminService'
+import { SuperAdminService, type SuperAdminUser, type UpdateUserPayload, type TenantSummary } from '@/services/SuperAdminService'
 import { useConfirm } from '@/composables/useConfirm'
 import authHelper from '@/helpers/AuthHelper'
 
@@ -191,6 +208,18 @@ const users = ref<SuperAdminUser[]>([])
 const loadingUsers = ref(false)
 const userQuery = ref('')
 const impersonatingId = ref<string | null>(null)
+
+// Filters (applied only when not searching; a search term searches all users platform-wide).
+const filterRole = ref<string | null>(null)
+const filterTenantId = ref<string | null>(null)
+const filterStatus = ref<string | null>(null)
+const tenants = ref<TenantSummary[]>([])
+// Tenant roles only; riders and super admins are global and reachable via search.
+const filterRoleOptions = ['tenant_admin', 'tenant_manager', 'tenant_staff']
+const tenantOptions = computed(() =>
+    tenants.value.map(t => ({ title: t.displayName ? `${t.displayName} (${t.subdomain})` : t.subdomain, value: t.id })))
+const searchActive = computed(() => !!userQuery.value?.trim())
+const hasFilters = computed(() => !!(filterRole.value || filterTenantId.value || filterStatus.value))
 
 const superAdminDialog = ref(false)
 const creatingSuperAdmin = ref(false)
@@ -209,18 +238,48 @@ const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
-onMounted(loadUsers)
+onMounted(() => { loadTenants(); loadUsers() })
+
+async function loadTenants() {
+    try {
+        const r = await service.listTenants()
+        tenants.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load the tenant list for filtering.', 'error')
+    }
+}
 
 async function loadUsers() {
     loadingUsers.value = true
     try {
-        const r = await service.listUsers(userQuery.value || undefined)
+        const q = userQuery.value?.trim()
+        // A search term searches all users (filters ignored); otherwise filter the tenant-user list.
+        const params = q
+            ? { q }
+            : {
+                role: filterRole.value || undefined,
+                tenantId: filterTenantId.value || undefined,
+                status: filterStatus.value || undefined,
+            }
+        const r = await service.listUsers(params)
         users.value = (r.data as any).data
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to load users.', 'error')
     } finally {
         loadingUsers.value = false
     }
+}
+
+function onClearSearch() {
+    userQuery.value = ''
+    loadUsers()
+}
+
+function clearFilters() {
+    filterRole.value = null
+    filterTenantId.value = null
+    filterStatus.value = null
+    loadUsers()
 }
 
 function openCreateSuperAdmin() {

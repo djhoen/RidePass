@@ -22,6 +22,7 @@ namespace webapi.Controllers
         private readonly IUserRepository _users;
         private readonly IWaiverRepository _waivers;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly ICouponRepository _coupons;
         private readonly ICouponValidator _couponValidator;
         private readonly IGiftCardRepository _giftCards;
@@ -33,6 +34,7 @@ namespace webapi.Controllers
             IUserRepository users,
             IWaiverRepository waivers,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             ICouponRepository coupons,
             ICouponValidator couponValidator,
             IGiftCardRepository giftCards,
@@ -43,6 +45,7 @@ namespace webapi.Controllers
             _users = users;
             _waivers = waivers;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _coupons = coupons;
             _couponValidator = couponValidator;
             _giftCards = giftCards;
@@ -422,16 +425,20 @@ namespace webapi.Controllers
                 var gcCheck = await _giftCardValidator.ResolveAsync(_tenantContext.TenantId, req.GiftCardCode!, grossCents);
                 if (gcCheck.error is not null) return new ApiResponses().BadRequestResult(gcCheck.error);
                 gcApp = gcCheck.application;
+                // Debit up front with an atomic conditional decrement so concurrent checkouts on
+                // the same card can't both spend it; only record the redemption once it succeeds.
+                if (!await _giftCards.ApplyToBalance(gcApp!.Card.Id, gcApp.AmountToApplyCents))
+                    return new ApiResponses().BadRequestResult(
+                        "That gift card's balance just changed. Please re-apply it and try again.");
                 await _giftCards.RecordRedemption(new GiftCardRedemption
                 {
-                    GiftCardId = gcApp!.Card.Id,
+                    GiftCardId = gcApp.Card.Id,
                     TenantId = _tenantContext.TenantId,
                     UserId = userId,
                     SourceKind = "rental",
                     SourceId = purchase.Id,
                     AmountCents = gcApp.AmountToApplyCents,
                 });
-                await _giftCards.ApplyToBalance(gcApp.Card.Id, gcApp.AmountToApplyCents);
             }
             var stripeChargeCents = grossCents - (gcApp?.AmountToApplyCents ?? 0);
 
@@ -466,14 +473,21 @@ namespace webapi.Controllers
                 metadata["gift_card_applied_cents"] = gcApp.AmountToApplyCents.ToString();
             }
 
+            // Direct-charge tenants charge on their own connected account; our service fee (the rider
+            // portion) rides as the Stripe application fee. The refundable deposit is part of the
+            // charge but carries no app fee, so we are not taking a cut of it.
             PaymentIntentCreated intent;
+            ChargePlan chargePlan;
             try
             {
+                chargePlan = _chargeRouter.Plan(tenant, riderPortion, stripeChargeCents);
                 intent = await _payments.CreatePaymentIntentAsync(
                     amountCents: stripeChargeCents,
                     currency: "usd",
                     metadata: metadata,
                     receiptEmail: user.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents,
                     ct: ct);
             }
             catch (InvalidOperationException ex)
@@ -487,6 +501,10 @@ namespace webapi.Controllers
             }
 
             await _rentals.SetRentalPaymentIntentId(purchase.Id, intent.IntentId);
+            if (chargePlan.IsDirect)
+            {
+                await _rentals.MarkDirectCharge(purchase.Id, tenant.Id, chargePlan.ConnectedAccountId!);
+            }
 
             return new ApiResponses().OkResult(new BuyRentalResponse
             {
@@ -634,10 +652,14 @@ namespace webapi.Controllers
             var refundCents = rental.DepositCents - captured;
             if (refundCents > 0 && !string.IsNullOrEmpty(rental.RentalPiId))
             {
+                // Direct charge: refund the deposit on the tenant's connected account. Do NOT return
+                // the application fee here — the fee was on the rental service charge, not the deposit.
+                var isDirect = !string.IsNullOrEmpty(rental.StripeConnectedAccountId);
                 try
                 {
                     await _payments.RefundAsync(rental.RentalPiId!, refundCents,
-                        idempotencyKey: $"refund-rental-deposit-{rental.Id}-{refundCents}");
+                        idempotencyKey: $"refund-rental-deposit-{rental.Id}-{refundCents}",
+                        connectedAccountId: isDirect ? rental.StripeConnectedAccountId : null);
                 }
                 catch
                 {

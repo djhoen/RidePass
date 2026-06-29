@@ -23,6 +23,7 @@ namespace Services.Repositories
             quantity, unit_price_cents_frozen AS UnitPriceCentsFrozen,
             amount_cents AS AmountCents, service_charge_cents AS ServiceChargeCents,
             stripe_payment_intent_id AS StripePaymentIntentId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             redemption_token AS RedemptionToken,
             status,
             redeemed_at_utc AS RedeemedAtUtc, redeemed_by_user_id AS RedeemedByUserId,
@@ -253,6 +254,18 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE event_extra_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account this extra was charged on (bundled onto a
+        // direct event-ticket cart) and flag the row so refunds act on the right account.
+        public async Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE event_extra_purchase
+                SET stripe_connected_account_id = @connectedAccountId,
+                    payment_method = 'stripe_direct'
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task UpdateStatus(Guid id, string status)

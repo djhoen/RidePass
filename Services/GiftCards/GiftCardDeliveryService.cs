@@ -20,17 +20,20 @@ namespace Services.GiftCards
         private readonly ISmtpEmailer _emailer;
         private readonly ITenantRepository _tenants;
         private readonly IGiftCardRepository _giftCards;
+        private readonly IEmailSuppressionRepository _suppression;
         private readonly ILogger<GiftCardDeliveryService> _logger;
 
         public GiftCardDeliveryService(
             ISmtpEmailer emailer,
             ITenantRepository tenants,
             IGiftCardRepository giftCards,
+            IEmailSuppressionRepository suppression,
             ILogger<GiftCardDeliveryService> logger)
         {
             _emailer = emailer;
             _tenants = tenants;
             _giftCards = giftCards;
+            _suppression = suppression;
             _logger = logger;
         }
 
@@ -41,6 +44,17 @@ namespace Services.GiftCards
             {
                 var tenant = await _tenants.GetById(card.TenantId);
                 if (tenant is null) return false;
+
+                // Never email a hard-bounced / globally-suppressed address: it would inflate the
+                // account-wide SES bounce rate. Transactional (marketing:false), so a marketing-only
+                // opt-out doesn't block a legitimate gift delivery. Mark delivered so the scheduled
+                // worker doesn't retry a dead address forever.
+                if (await _suppression.IsSuppressed(card.RecipientEmail, card.TenantId, marketing: false))
+                {
+                    _logger.LogWarning("Skipping gift-card delivery for card {Id}: recipient address is suppressed.", card.Id);
+                    await _giftCards.MarkDelivered(card.Id);
+                    return false;
+                }
 
                 var note = string.IsNullOrEmpty(card.PersonalNote)
                     ? string.Empty

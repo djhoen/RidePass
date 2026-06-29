@@ -29,6 +29,12 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         // Monthly cap in cents; null = no cap.
         public int? MonthlyServiceChargeCapCents { get; set; }
 
+        // 'platform' = charge on RidePass's account, internal split, monthly payout.
+        // 'direct' = charge on the tenant's own connected Stripe account with our service fee as the
+        // Stripe application fee (required for tenants over the $1M/yr card-network sub-merchant cap).
+        [RegularExpression("^(platform|direct)$")]
+        public string StripeChargeMode { get; set; } = "platform";
+
         [MaxLength(300)] public string? AddressLine { get; set; }
         [MaxLength(120)] public string? City { get; set; }
         [MaxLength(120)] public string? Region { get; set; }

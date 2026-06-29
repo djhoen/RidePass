@@ -92,11 +92,16 @@ namespace Services.Repositories
 
         public async Task<int> AttachUnpaidEntries(Guid payoutId, Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
+            // Exclude direct-charge entries: those sales were charged on the tenant's own Stripe
+            // account, so the tenant already holds the funds and there is nothing for the platform to
+            // pay out. Their ridepass_cut is our application-fee revenue (collected by Stripe
+            // directly), not a payout line.
             const string sql = @"
                 UPDATE tenant_ledger_entry
                 SET payout_id = @payoutId
                 WHERE tenant_id = @tenantId
                   AND payout_id IS NULL
+                  AND payment_method IS DISTINCT FROM 'stripe_direct'
                   AND occurred_at_utc >= @fromUtc
                   AND occurred_at_utc < @toUtc";
             return await _db.Execute(sql, new { payoutId, tenantId, fromUtc, toUtc });

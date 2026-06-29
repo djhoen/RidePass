@@ -8,6 +8,8 @@ export interface TenantSummary {
     timezone: string
     serviceChargeBps: number
     monthlyServiceChargeCapCents: number | null
+    stripeChargeMode: 'platform' | 'direct'
+    stripeConnectStatus: string | null
     isPublished: boolean
     giftCardsEnabled: boolean
     rentalsEnabled: boolean
@@ -46,6 +48,7 @@ export interface UpdateTenantPayload {
     isPublished: boolean
     serviceChargeBps: number
     monthlyServiceChargeCapCents: number | null
+    stripeChargeMode: 'platform' | 'direct'
     addressLine: string | null
     city: string | null
     region: string | null
@@ -253,8 +256,10 @@ export class SuperAdminService {
         return axios.post<{ data: CreateTenantResult }>(`${this.apiUrl}/SuperAdmin/Tenants`, body)
     }
 
-    listUsers(q?: string) {
-        return axios.get<{ data: SuperAdminUser[] }>(`${this.apiUrl}/SuperAdmin/Users`, { params: { q } })
+    // With q set, the server searches all users (filters ignored). Otherwise it returns tenant users
+    // only, narrowed by role/tenantId/status.
+    listUsers(params?: { q?: string; role?: string; tenantId?: string; status?: string }) {
+        return axios.get<{ data: SuperAdminUser[] }>(`${this.apiUrl}/SuperAdmin/Users`, { params })
     }
 
     getUser(id: string) {
@@ -340,6 +345,11 @@ export class SuperAdminService {
 
     updateTenant(tenantId: string, body: UpdateTenantPayload) {
         return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}`, body)
+    }
+
+    testStripeConnect(tenantId: string) {
+        return axios.post<{ data: { accountId: string; chargesEnabled: boolean; payoutsEnabled: boolean; availableCents: number; pendingCents: number; currency: string } }>(
+            `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/TestStripeConnect`, {})
     }
 
     updateTenantConcessionsEnabled(tenantId: string, enabled: boolean) {

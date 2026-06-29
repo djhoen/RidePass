@@ -1,0 +1,14 @@
+{
+    "name": "RidePass",
+    "short_name": "RidePass",
+    "start_url": "/Login",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#ffffff",
+    "theme_color": "#111827",
+    "icons": [
+        { "src": "/pwa-icon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "/pwa-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    ]
+}

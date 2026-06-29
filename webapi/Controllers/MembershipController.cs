@@ -18,6 +18,7 @@ namespace webapi.Controllers
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly ITenantContext _tenantContext;
 
         public MembershipController(
@@ -25,12 +26,14 @@ namespace webapi.Controllers
             IUserRepository users,
             ITenantRepository tenants,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             ITenantContext tenantContext)
         {
             _memberships = memberships;
             _users = users;
             _tenants = tenants;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _tenantContext = tenantContext;
         }
 
@@ -135,14 +138,20 @@ namespace webapi.Controllers
                 ["user_id"] = userId.ToString(),
             };
 
+            // Direct-charge tenants charge on their own connected account; our service fee rides as
+            // the Stripe application fee.
             PaymentIntentCreated intent;
+            ChargePlan chargePlan;
             try
             {
+                chargePlan = _chargeRouter.Plan(tenant, serviceCharge, totalToCharge);
                 intent = await _payments.CreatePaymentIntentAsync(
                     amountCents: totalToCharge,
                     currency: "usd",
                     metadata: metadata,
                     receiptEmail: user.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents,
                     ct: ct);
             }
             catch (InvalidOperationException ex)
@@ -151,6 +160,10 @@ namespace webapi.Controllers
             }
 
             await _memberships.SetStripePaymentIntentId(purchase.Id, intent.IntentId);
+            if (chargePlan.IsDirect)
+            {
+                await _memberships.MarkDirectCharge(purchase.Id, tenant.Id, chargePlan.ConnectedAccountId!);
+            }
 
             return new ApiResponses().OkResult(new BuyMembershipResponse
             {

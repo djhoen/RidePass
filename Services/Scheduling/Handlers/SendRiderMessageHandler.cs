@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Services.Helpers;
+using Services.Helpers.Interfaces;
 using Services.Repositories.Data.ScheduledData;
 using Services.Repositories.Interfaces;
 
@@ -23,6 +25,8 @@ namespace Services.Scheduling.Handlers
         private readonly ISmsSender _sms;
         private readonly ISmtpEmailer _emailer;
         private readonly IEmailSuppressionRepository _suppression;
+        private readonly IEmailLinkTokens _tokens;
+        private readonly IConfiguration _config;
         private readonly ILogger<SendRiderMessageHandler> _logger;
 
         public SendRiderMessageHandler(
@@ -32,6 +36,8 @@ namespace Services.Scheduling.Handlers
             ISmsSender sms,
             ISmtpEmailer emailer,
             IEmailSuppressionRepository suppression,
+            IEmailLinkTokens tokens,
+            IConfiguration config,
             ILogger<SendRiderMessageHandler> logger)
         {
             _reports = reports;
@@ -40,6 +46,8 @@ namespace Services.Scheduling.Handlers
             _sms = sms;
             _emailer = emailer;
             _suppression = suppression;
+            _tokens = tokens;
+            _config = config;
             _logger = logger;
         }
 
@@ -74,6 +82,10 @@ namespace Services.Scheduling.Handlers
 
             var ev = await _events.GetById(payload.EventId, task.TenantId);
             if (ev is null) return ScheduledTaskOutcome.Fail($"Event {payload.EventId} not found in tenant.");
+
+            // Base URL for the per-recipient unsubscribe link/header (email channel only).
+            var rootDomain = _config["Tenant:RootDomain"] ?? "ridepass.io";
+            var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
 
             var rows = await _reports.GetEventRiders(task.TenantId, payload.EventId);
             var requested = payload.PurchaseIds.ToHashSet();
@@ -119,8 +131,18 @@ namespace Services.Scheduling.Handlers
                     var subject = string.IsNullOrWhiteSpace(payload.Subject)
                         ? $"Update from {tenant.DisplayName}"
                         : payload.Subject!.Trim();
-                    var html = BuildEmailBody(payload.Body, tenant.DisplayName, ev.Title);
-                    ok = await _emailer.Send(row.PurchaserEmail, subject, html);
+                    // This channel is treated as marketing (suppression-filtered above), so every
+                    // send carries a one-click List-Unsubscribe header plus a visible footer link
+                    // (CAN-SPAM + SES deliverability). Token is per-recipient.
+                    var enc = Uri.EscapeDataString(_tokens.GenerateUnsubscribe(task.TenantId, row.PurchaserEmail));
+                    var headers = new Dictionary<string, string>
+                    {
+                        ["List-Unsubscribe"] = $"<{baseUrl}/api/Unsubscribe?token={enc}>",
+                        ["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click",
+                    };
+                    var html = BuildEmailBody(payload.Body, tenant.DisplayName, ev.Title,
+                        $"{baseUrl}/EmailUnsubscribe?token={enc}");
+                    ok = await _emailer.Send(row.PurchaserEmail, subject, html, headers);
                 }
                 if (ok) sent++;
                 else skipped.Add(row.PurchaserName);
@@ -136,7 +158,7 @@ namespace Services.Scheduling.Handlers
         // transactional-receipt shape elsewhere in the codebase. The admin types
         // plain text; we preserve their line breaks and escape any HTML so
         // pasting `<script>` etc. ships harmlessly as literal text.
-        private static string BuildEmailBody(string plainBody, string tenantName, string eventTitle)
+        private static string BuildEmailBody(string plainBody, string tenantName, string eventTitle, string unsubscribeUrl)
         {
             var escaped = WebUtility.HtmlEncode(plainBody).Replace("\n", "<br>");
             return $@"<!doctype html>
@@ -146,7 +168,8 @@ namespace Services.Scheduling.Handlers
     <hr style=""border: none; border-top: 1px solid #e5e7eb; margin: 16px 0;"">
     <div style=""font-size: 15px; line-height: 1.55;"">{escaped}</div>
     <hr style=""border: none; border-top: 1px solid #e5e7eb; margin: 24px 0 16px 0;"">
-    <div style=""font-size: 12px; color: #9ca3af;"">Sent from {WebUtility.HtmlEncode(tenantName)}. Reply directly to reach the track.</div>
+    <div style=""font-size: 12px; color: #9ca3af;"">Sent from {WebUtility.HtmlEncode(tenantName)}. Reply directly to reach the track.
+    <br><a href=""{unsubscribeUrl}"" style=""color: #9ca3af;"">Unsubscribe</a> from these updates.</div>
 </body></html>";
         }
     }

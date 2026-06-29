@@ -7,12 +7,16 @@ namespace webapi.Payments
     {
         private readonly string _secretKey;
         private readonly string _webhookSecret;
+        private readonly string _connectWebhookSecret;
         private readonly ILogger<StripePaymentProvider> _logger;
 
         public StripePaymentProvider(IConfiguration configuration, ILogger<StripePaymentProvider> logger)
         {
             _secretKey = configuration["Stripe:SecretKey"] ?? string.Empty;
             _webhookSecret = configuration["Stripe:WebhookSecret"] ?? string.Empty;
+            // Direct-charge (Connect) events arrive on the connected account and are signed by a
+            // separate Connect webhook endpoint, so they need their own signing secret.
+            _connectWebhookSecret = configuration["Stripe:ConnectWebhookSecret"] ?? string.Empty;
             _logger = logger;
 
             if (!string.IsNullOrEmpty(_secretKey))
@@ -21,11 +25,24 @@ namespace webapi.Payments
             }
         }
 
+        // Builds RequestOptions for acting on a connected account (direct charge) and/or with an
+        // idempotency key. Returns null when neither is needed so platform-account calls are unchanged.
+        private static RequestOptions? BuildRequestOptions(string? connectedAccountId, string? idempotencyKey = null)
+        {
+            if (string.IsNullOrEmpty(connectedAccountId) && string.IsNullOrEmpty(idempotencyKey)) return null;
+            var options = new RequestOptions();
+            if (!string.IsNullOrEmpty(connectedAccountId)) options.StripeAccount = connectedAccountId;
+            if (!string.IsNullOrEmpty(idempotencyKey)) options.IdempotencyKey = idempotencyKey;
+            return options;
+        }
+
         public async Task<PaymentIntentCreated> CreatePaymentIntentAsync(
             long amountCents,
             string currency,
             IReadOnlyDictionary<string, string> metadata,
             string? receiptEmail = null,
+            string? connectedAccountId = null,
+            long? applicationFeeCents = null,
             CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
@@ -42,9 +59,16 @@ namespace webapi.Payments
                 Metadata = metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
                 ReceiptEmail = receiptEmail,
             };
+            // Direct charge: when a connected account is supplied we create the PI ON that account
+            // (RequestOptions.StripeAccount) and route our service fee to the platform as the
+            // application fee. That is how RidePass still gets paid while the tenant is MoR.
+            if (applicationFeeCents is > 0)
+            {
+                options.ApplicationFeeAmount = applicationFeeCents.Value;
+            }
 
             var service = new PaymentIntentService();
-            var intent = await service.CreateAsync(options, cancellationToken: ct);
+            var intent = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
@@ -78,27 +102,40 @@ namespace webapi.Payments
                 Currency: transfer.Currency.ToUpperInvariant());
         }
 
-        public async Task<string> CreateConnectAccountAsync(string tenantEmail, string tenantDisplayName, CancellationToken ct = default)
+        public async Task<string> CreateConnectAccountAsync(string tenantEmail, string tenantDisplayName, string accountType = "express", CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
             {
                 throw new InvalidOperationException("Stripe:SecretKey is not configured.");
             }
-            // Express: Stripe-hosted onboarding (lighter than Standard — bank info + minimal KYC),
-            // platform owns the relationship. Charges always run on the platform account; we move
-            // funds to the connected account via Transfer.create when paying out.
             var service = new Stripe.AccountService();
             var options = new Stripe.AccountCreateOptions
             {
-                Type = "express",
+                Type = accountType,
                 Email = tenantEmail,
-                Capabilities = new Stripe.AccountCapabilitiesOptions
-                {
-                    Transfers = new Stripe.AccountCapabilitiesTransfersOptions { Requested = true },
-                },
                 BusinessProfile = new Stripe.AccountBusinessProfileOptions { Name = tenantDisplayName },
                 Metadata = new Dictionary<string, string> { ["ridepass_tenant"] = tenantDisplayName },
             };
+            if (accountType == "standard")
+            {
+                // Standard: the tenant owns the Stripe relationship/dashboard and is merchant of
+                // record on direct charges. They manage their own capabilities, so we request
+                // card_payments (needed to accept the direct charges) and let Stripe handle the rest.
+                options.Capabilities = new Stripe.AccountCapabilitiesOptions
+                {
+                    CardPayments = new Stripe.AccountCapabilitiesCardPaymentsOptions { Requested = true },
+                };
+            }
+            else
+            {
+                // Express: Stripe-hosted onboarding (bank info + minimal KYC), platform owns the
+                // relationship. Charges run on the platform account; we move funds to the connected
+                // account via Transfer.create when paying out (the 'platform' charge-mode payout rail).
+                options.Capabilities = new Stripe.AccountCapabilitiesOptions
+                {
+                    Transfers = new Stripe.AccountCapabilitiesTransfersOptions { Requested = true },
+                };
+            }
             var account = await service.CreateAsync(options, cancellationToken: ct);
             return account.Id;
         }
@@ -194,7 +231,7 @@ namespace webapi.Payments
             }
         }
 
-        public async Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, CancellationToken ct = default)
+        public async Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey)) return null;
             try
@@ -203,7 +240,7 @@ namespace webapi.Payments
                 var intent = await service.GetAsync(paymentIntentId, new PaymentIntentGetOptions
                 {
                     Expand = new List<string> { "latest_charge.balance_transaction" }
-                }, cancellationToken: ct);
+                }, BuildRequestOptions(connectedAccountId), ct);
                 var fee = intent.LatestCharge?.BalanceTransaction?.Fee;
                 if (fee is null) return null;
                 if (fee.Value > int.MaxValue) return int.MaxValue;
@@ -216,13 +253,13 @@ namespace webapi.Payments
             }
         }
 
-        public async Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, CancellationToken ct = default)
+        public async Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey)) return null;
             try
             {
                 var service = new PaymentIntentService();
-                var intent = await service.GetAsync(paymentIntentId, cancellationToken: ct);
+                var intent = await service.GetAsync(paymentIntentId, requestOptions: BuildRequestOptions(connectedAccountId), cancellationToken: ct);
                 return intent.Status;
             }
             catch (StripeException ex)
@@ -232,13 +269,14 @@ namespace webapi.Payments
             }
         }
 
-        public async Task<string?> CancelPaymentIntentAsync(string paymentIntentId, CancellationToken ct = default)
+        public async Task<string?> CancelPaymentIntentAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey)) return null;
             var service = new PaymentIntentService();
+            var requestOptions = BuildRequestOptions(connectedAccountId);
             try
             {
-                var canceled = await service.CancelAsync(paymentIntentId, cancellationToken: ct);
+                var canceled = await service.CancelAsync(paymentIntentId, requestOptions: requestOptions, cancellationToken: ct);
                 return canceled.Status;
             }
             catch (StripeException ex)
@@ -249,7 +287,7 @@ namespace webapi.Payments
                 _logger.LogWarning(ex, "Cancel rejected for PaymentIntent {IntentId}; re-reading status.", paymentIntentId);
                 try
                 {
-                    var current = await service.GetAsync(paymentIntentId, cancellationToken: ct);
+                    var current = await service.GetAsync(paymentIntentId, requestOptions: requestOptions, cancellationToken: ct);
                     return current.Status;
                 }
                 catch (StripeException ex2)
@@ -261,7 +299,7 @@ namespace webapi.Payments
         }
 
         // ── Stripe Terminal (tap-to-pay) ─────────────────────────────────────
-        public async Task<string> CreateTerminalConnectionTokenAsync(string? locationId = null, CancellationToken ct = default)
+        public async Task<string> CreateTerminalConnectionTokenAsync(string? locationId = null, string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
                 throw new InvalidOperationException("Stripe:SecretKey is not configured.");
@@ -272,12 +310,32 @@ namespace webapi.Payments
             var service = new Stripe.Terminal.ConnectionTokenService();
             var options = new Stripe.Terminal.ConnectionTokenCreateOptions();
             if (!string.IsNullOrWhiteSpace(locationId)) options.Location = locationId;
-            var token = await service.CreateAsync(options, cancellationToken: ct);
+            var token = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
             return token.Secret;
         }
 
+        // Stripe requires an ISO 3166-1 alpha-2 country code (e.g. "US"), but a tenant's stored country can
+        // be a 3-letter code or full name ("USA", "United States"). Map the common cases; pass anything
+        // already 2-letter (or unknown) through uppercased and let Stripe validate.
+        private static string? NormalizeCountry(string? country)
+        {
+            if (string.IsNullOrWhiteSpace(country)) return country;
+            var c = country.Trim();
+            if (c.Length == 2) return c.ToUpperInvariant();
+            return c.ToUpperInvariant() switch
+            {
+                "USA" or "UNITED STATES" or "UNITED STATES OF AMERICA" or "U.S." or "U.S.A." => "US",
+                "CAN" or "CANADA" => "CA",
+                "MEX" or "MEXICO" => "MX",
+                "GBR" or "UK" or "UNITED KINGDOM" or "GREAT BRITAIN" => "GB",
+                "AUS" or "AUSTRALIA" => "AU",
+                "NZL" or "NEW ZEALAND" => "NZ",
+                _ => c.ToUpperInvariant(),
+            };
+        }
+
         public async Task<string> CreateTerminalLocationAsync(string displayName, TerminalLocationAddress address,
-            CancellationToken ct = default)
+            string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
                 throw new InvalidOperationException("Stripe:SecretKey is not configured.");
@@ -291,11 +349,13 @@ namespace webapi.Payments
                     Line1 = address.Line1,
                     City = address.City,
                     State = address.State,
-                    Country = address.Country,
+                    Country = NormalizeCountry(address.Country),
                     PostalCode = address.PostalCode,
                 },
             };
-            var loc = await service.CreateAsync(options, cancellationToken: ct);
+            // Direct charge: the Location must belong to the connected account the card-present
+            // PaymentIntents will be created on.
+            var loc = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
             return loc.Id;
         }
 
@@ -305,6 +365,8 @@ namespace webapi.Payments
             string locationId,
             IReadOnlyDictionary<string, string> metadata,
             string? receiptEmail = null,
+            string? connectedAccountId = null,
+            long? applicationFeeCents = null,
             CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
@@ -331,14 +393,20 @@ namespace webapi.Payments
                 CardPresent = new PaymentIntentPaymentMethodOptionsCardPresentOptions(),
             };
             options.Metadata["stripe_terminal_location_id"] = locationId;
+            // Direct charge on the tenant's own account: route our service fee as the application fee.
+            if (applicationFeeCents is > 0)
+            {
+                options.ApplicationFeeAmount = applicationFeeCents.Value;
+            }
 
             var service = new PaymentIntentService();
-            var intent = await service.CreateAsync(options, cancellationToken: ct);
+            var intent = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
         public async Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null,
-            string? idempotencyKey = null, CancellationToken ct = default)
+            string? idempotencyKey = null, string? connectedAccountId = null,
+            bool refundApplicationFee = false, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey))
             {
@@ -347,28 +415,30 @@ namespace webapi.Payments
 
             var options = new RefundCreateOptions { PaymentIntent = paymentIntentId };
             if (amountCents.HasValue) options.Amount = amountCents.Value;
+            // For a direct charge the refund is issued on the connected account; returning the
+            // application fee hands the tenant back our cut on the refunded portion too.
+            if (refundApplicationFee) options.RefundApplicationFee = true;
 
             var service = new RefundService();
             // Idempotency key (the purchase id) so a retry or a double-click can't issue
-            // a second refund for the same purchase.
-            var requestOptions = string.IsNullOrEmpty(idempotencyKey)
-                ? null
-                : new RequestOptions { IdempotencyKey = idempotencyKey };
-            var refund = await service.CreateAsync(options, requestOptions, ct);
+            // a second refund for the same purchase; StripeAccount targets the connected account.
+            var refund = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId, idempotencyKey), ct);
             return new RefundResult(refund.Id, refund.Status);
         }
 
-        public PaymentWebhookEvent? VerifyAndParseWebhook(string rawBody, string signatureHeader)
+        public PaymentWebhookEvent? VerifyAndParseWebhook(string rawBody, string signatureHeader, bool connect = false)
         {
-            if (string.IsNullOrEmpty(_webhookSecret))
+            var secret = connect ? _connectWebhookSecret : _webhookSecret;
+            if (string.IsNullOrEmpty(secret))
             {
-                _logger.LogError("Stripe:WebhookSecret is not configured; rejecting incoming webhook.");
+                _logger.LogError("Stripe:{SecretName} is not configured; rejecting incoming webhook.",
+                    connect ? "ConnectWebhookSecret" : "WebhookSecret");
                 return null;
             }
 
             try
             {
-                var stripeEvent = EventUtility.ConstructEvent(rawBody, signatureHeader, _webhookSecret);
+                var stripeEvent = EventUtility.ConstructEvent(rawBody, signatureHeader, secret);
                 string? intentId = null;
                 string? intentStatus = null;
                 DisputeInfo? disputeInfo = null;

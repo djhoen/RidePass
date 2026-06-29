@@ -12,8 +12,10 @@ namespace Services.Repositories.Interfaces
         /// <summary>Stamp the Stripe PI on the card after PaymentIntents.Create returns.</summary>
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
 
-        /// <summary>Lower the card's balance by amount; flip status to 'depleted' when it hits zero.</summary>
-        Task ApplyToBalance(Guid id, int amountCents);
+        /// <summary>Atomically lower the card's balance by amount (only if the balance still covers it);
+        /// flip status to 'depleted' when it hits zero. Returns false when the balance was insufficient
+        /// (e.g. a concurrent checkout already spent it), so the caller must reject the redemption.</summary>
+        Task<bool> ApplyToBalance(Guid id, int amountCents);
 
         /// <summary>Add amount back to the card's balance; un-deplete it if it was depleted. Used to
         /// reverse a hold when the checkout that applied the card failed or was abandoned.</summary>

@@ -8,6 +8,9 @@ namespace Services.Repositories.Interfaces
     {
         public string PaymentIntentId { get; set; } = string.Empty;
         public DateTime OldestCreatedAtUtc { get; set; }
+        // Set when this PI was a direct charge on a tenant's own connected account; the reconciler
+        // must read the PI status / cancel it on that account, not the platform account. NULL = platform.
+        public string? ConnectedAccountId { get; set; }
     }
 
     /// <summary>

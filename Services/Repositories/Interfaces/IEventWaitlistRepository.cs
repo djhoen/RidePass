@@ -28,6 +28,7 @@ namespace Services.Repositories.Interfaces
 
         // ── State transitions ────────────────────────────────────────────────
         Task SetPrepayPaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkPrepayDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task MarkPrepaid(Guid id, int amountCents);
 
         /// <summary>Flip a waiting row to 'promoted' and set deadline + confirm token.</summary>

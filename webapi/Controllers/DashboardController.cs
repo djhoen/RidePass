@@ -47,8 +47,32 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Dashboard is only available on a tenant subdomain.");
             }
 
-            var role = User.FindFirst("role")?.Value ?? string.Empty;
-            var perms = EffectivePermissionsFor(role);
+            // A staffer's permissions only apply on their OWN tenant. Every other admin
+            // endpoint gets this cross-check for free from TenantPermissionHandler; this
+            // controller uses a bare [Authorize], so it must enforce the check explicitly.
+            // Without it, a tenant_admin of track A could point their token at track B's
+            // subdomain and read B's revenue, purchasers, and dispute/refund counts (the
+            // queries below are correctly scoped to the resolved tenant, which is exactly
+            // why they would return the wrong tenant's data). Super admins may act on any
+            // tenant, matching the policy handlers.
+            var roles = User.FindAll("role").Select(c => c.Value).ToList();
+            var isSuperAdmin = roles.Contains("super_admin");
+            if (!isSuperAdmin)
+            {
+                var tenantClaim = User.FindFirst("tenant_id")?.Value;
+                if (!Guid.TryParse(tenantClaim, out var claimTenantId)
+                    || claimTenantId != _tenantContext.TenantId)
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden,
+                        new { error = "You are not a member of this track." });
+                }
+            }
+
+            // Union permissions over every role claim (a staffer may hold several), matching
+            // TenantPermissionHandler, not just the primary role.
+            var perms = isSuperAdmin
+                ? new HashSet<string>(TenantPermissions.All)
+                : new HashSet<string>(TenantPermissions.ForRoles(roles));
             var tz = _tenantContext.Tenant.Timezone;
             var now = DateTime.UtcNow;
 
@@ -174,11 +198,6 @@ namespace webapi.Controllers
             var claim = User.FindFirst("UserId")?.Value;
             return Guid.TryParse(claim, out userId);
         }
-
-        private static HashSet<string> EffectivePermissionsFor(string role) =>
-            role == "super_admin"
-                ? new HashSet<string>(TenantPermissions.All)
-                : new HashSet<string>(TenantPermissions.ForRole(role));
 
         private static TimeZoneInfo ResolveTz(string iana)
         {

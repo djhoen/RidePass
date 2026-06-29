@@ -36,6 +36,9 @@ namespace Services.Repositories.Data.PaymentData
         public Guid ProductId { get; set; }
         public Guid? WaiverSignatureId { get; set; }
         public string? StripePaymentIntentId { get; set; }
+        // Set for direct charges: the tenant's connected account this pass was charged on.
+        // NULL = platform charge. Drives refunds/finalization onto the right account.
+        public string? StripeConnectedAccountId { get; set; }
         public int AmountCents { get; set; }
         public int ServiceChargeCents { get; set; }
         public string PaymentMethod { get; set; } = "stripe";

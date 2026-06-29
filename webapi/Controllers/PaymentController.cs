@@ -50,8 +50,16 @@ namespace webapi.Controllers
             _disputeFeeCents = configuration.GetValue<int?>("Stripe:DisputeFeeCents") ?? 1500;
         }
 
+        // Platform-account webhook: events for charges on RidePass's own account ('platform' mode).
         [HttpPost("Webhook")]
-        public async Task<IActionResult> StripeWebhook()
+        public Task<IActionResult> StripeWebhook() => HandleWebhook(connect: false);
+
+        // Connect webhook: events for direct charges on tenants' own connected accounts ('direct'
+        // mode). Signed with a separate secret; the event's `account` is the connected account id.
+        [HttpPost("ConnectWebhook")]
+        public Task<IActionResult> StripeConnectWebhook() => HandleWebhook(connect: true);
+
+        private async Task<IActionResult> HandleWebhook(bool connect)
         {
             string rawBody;
             using (var reader = new StreamReader(Request.Body))
@@ -60,7 +68,7 @@ namespace webapi.Controllers
             }
 
             var signature = Request.Headers["Stripe-Signature"].ToString();
-            var webhookEvent = _payments.VerifyAndParseWebhook(rawBody, signature);
+            var webhookEvent = _payments.VerifyAndParseWebhook(rawBody, signature, connect);
             if (webhookEvent is null)
             {
                 return BadRequest();
@@ -68,7 +76,7 @@ namespace webapi.Controllers
 
             if (webhookEvent.Dispute is not null)
             {
-                await HandleDispute(webhookEvent.Dispute);
+                await HandleDispute(webhookEvent.Dispute, webhookEvent.ConnectedAccountId);
                 return Ok();
             }
 
@@ -157,7 +165,7 @@ namespace webapi.Controllers
                 tenantId: payout.TenantId);
         }
 
-        private async Task HandleDispute(DisputeInfo info)
+        private async Task HandleDispute(DisputeInfo info, string? connectedAccountId)
         {
             if (string.IsNullOrEmpty(info.PaymentIntentId))
             {
@@ -167,6 +175,13 @@ namespace webapi.Controllers
 
             // A counter-cart PI may have many line items; back them all out on a lost dispute.
             var tickets = await _ticketPurchases.ListByStripePaymentIntentId(info.PaymentIntentId);
+
+            // Direct charge: the dispute (and its fee) hit the tenant's own Stripe account, not our
+            // platform balance, so there is nothing to claw back through our ledger. Determined from
+            // the purchase snapshot (authoritative regardless of which webhook endpoint delivered it),
+            // falling back to the connected-account id on the event.
+            var isDirect = tickets.Any(t => !string.IsNullOrEmpty(t.StripeConnectedAccountId))
+                || !string.IsNullOrEmpty(connectedAccountId);
 
             Guid? tenantId = tickets.FirstOrDefault()?.TenantId;
             Guid? ticketId = tickets.FirstOrDefault()?.Id;
@@ -224,13 +239,34 @@ namespace webapi.Controllers
             // mirroring the original sale, so tenant balance + lifetime totals stay correct.
             if (info.Status == "lost")
             {
+                var amountStr = $"${(info.AmountCents / 100m):0.00} {info.Currency.ToUpper()}";
+
+                if (isDirect)
+                {
+                    // The chargeback + Stripe's dispute fee already came out of the tenant's own
+                    // Stripe balance. We owe them nothing and they owe us nothing here, so write no
+                    // ledger entries — just inform both sides.
+                    await _notifications.EmitToSuperAdmins(
+                        kind: "dispute_lost",
+                        title: $"Chargeback lost (direct): {amountStr}",
+                        body: $"A dispute on payment_intent {info.PaymentIntentId} was lost on the tenant's own Stripe account. No platform ledger impact.",
+                        linkUrl: "/SuperAdmin",
+                        tenantId: tenantId);
+                    await _notifications.EmitToTenantAdmins(
+                        tenantId: tenantId.Value,
+                        kind: "dispute_lost",
+                        title: $"Chargeback: {amountStr}",
+                        body: "A customer dispute was lost. The amount and Stripe's dispute fee were deducted from your Stripe balance.",
+                        linkUrl: "/Admin/Purchases");
+                    return;
+                }
+
                 foreach (var t in tickets)
                 {
                     await WriteDisputeLossEntry(t.TenantId, "event_ticket", t.Id, info.DisputeId);
                 }
 
                 // Notify super admins (in-app + email) and the tenant admin team (in-app) about the chargeback.
-                var amountStr = $"${(info.AmountCents / 100m):0.00} {info.Currency.ToUpper()}";
                 await _notifications.EmitToSuperAdmins(
                     kind: "dispute_lost",
                     title: $"Chargeback lost: {amountStr}",

@@ -15,6 +15,7 @@ namespace Services.Repositories.Interfaces
         Task<List<MembershipPurchase>> ListForTenant(Guid tenantId);
 
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdateStatus(Guid id, string status);
 
         /// <summary>Tenant-scoped cancel of a paid membership purchase.</summary>

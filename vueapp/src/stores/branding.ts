@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import axios from 'axios'
 import tenantHelper from '@/helpers/TenantHelper'
 import { loadPlatformBranding } from './platformBranding'
+import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
 
 export interface BrandingState {
     loaded: boolean
@@ -32,6 +33,7 @@ export interface BrandingState {
     requireIdAtCheckin: boolean
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
+    stripeChargeMode: string
     serviceChargeBps: number
     shippingName: string | null
     aboutHtml: string | null
@@ -114,6 +116,7 @@ const defaults: BrandingState = {
     requireIdAtCheckin: false,
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
+    stripeChargeMode: 'platform',
     serviceChargeBps: 300,
     shippingName: null,
     aboutHtml: null,
@@ -243,6 +246,7 @@ export async function loadBranding(): Promise<void> {
         branding.requireIdAtCheckin = !!data.requireIdAtCheckin
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
+        branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'
         branding.serviceChargeBps = data.serviceChargeBps ?? 300
         branding.shippingName = data.shippingName ?? null
         branding.aboutHtml = data.aboutHtml ?? null
@@ -299,6 +303,7 @@ export async function loadBranding(): Promise<void> {
         branding.membershipRequiredForSpectators = !!data.membershipRequiredForSpectators
         branding.loaded = true
         applyFavicon(branding.faviconUrl)
+        applyPwaInstall(branding.faviconUrl, branding.displayName)
         document.title = branding.displayName
     } catch (err: any) {
         // A 404 from the tenant-resolution middleware means this tenant is
@@ -322,4 +327,10 @@ function applyFavicon(url: string | null): void {
         document.head.appendChild(link)
     }
     link.href = url
+}
+
+// Default home-screen install for the tenant: the tenant favicon + name, opening the login page. The
+// POS and cook screens override this with their own role icons (see setHomeScreenIcon call sites).
+function applyPwaInstall(faviconUrl: string | null, name: string): void {
+    setHomeScreenIcon({ title: name, iconUrl: faviconUrl, startPath: '/Login' })
 }

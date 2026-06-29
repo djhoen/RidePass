@@ -13,6 +13,7 @@ namespace Services.Notifications
         public const string LargeSale        = "large_sale";
         public const string RefundProcessed  = "refund_processed";
         public const string PayoutPaid       = "payout_paid";
+        public const string LowStock         = "low_stock";
 
         public record Descriptor(string Kind, string Label, string Description, string[] Audiences);
 

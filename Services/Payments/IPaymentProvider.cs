@@ -2,11 +2,20 @@ namespace Services.Payments
 {
     public interface IPaymentProvider
     {
+        /// <summary>
+        /// Creates a PaymentIntent. When <paramref name="connectedAccountId"/> is supplied the
+        /// charge is created as a Stripe Connect <b>direct charge</b> on that connected account
+        /// (the tenant becomes merchant of record and pays the Stripe fee) and
+        /// <paramref name="applicationFeeCents"/> is routed to the platform as RidePass's cut.
+        /// When both are null this is the platform-account charge used for 'platform' mode tenants.
+        /// </summary>
         Task<PaymentIntentCreated> CreatePaymentIntentAsync(
             long amountCents,
             string currency,
             IReadOnlyDictionary<string, string> metadata,
             string? receiptEmail = null,
+            string? connectedAccountId = null,
+            long? applicationFeeCents = null,
             CancellationToken ct = default);
 
         /// <summary>
@@ -18,10 +27,21 @@ namespace Services.Payments
             string? idempotencyKey = null,
             CancellationToken ct = default);
 
-        PaymentWebhookEvent? VerifyAndParseWebhook(string rawBody, string signatureHeader);
+        /// <summary>
+        /// Verifies + parses a Stripe webhook. <paramref name="connect"/>=true selects the
+        /// separate Connect webhook signing secret (events for direct charges arrive on the
+        /// connected account and are signed with the Connect endpoint's secret).
+        /// </summary>
+        PaymentWebhookEvent? VerifyAndParseWebhook(string rawBody, string signatureHeader, bool connect = false);
 
+        /// <summary>
+        /// Refunds a PaymentIntent. For a direct charge pass the <paramref name="connectedAccountId"/>
+        /// it was charged on (the refund must be issued on that account); set
+        /// <paramref name="refundApplicationFee"/> to also return RidePass's application fee.
+        /// </summary>
         Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null,
-            string? idempotencyKey = null, CancellationToken ct = default);
+            string? idempotencyKey = null, string? connectedAccountId = null,
+            bool refundApplicationFee = false, CancellationToken ct = default);
 
         // ── Stripe Connect onboarding ────────────────────────────────────────────
         /// <summary>
@@ -29,7 +49,7 @@ namespace Services.Payments
         /// Stripe account id (acct_xxx). The tenant must complete Stripe-hosted
         /// onboarding (via an Account Link) before they can charge.
         /// </summary>
-        Task<string> CreateConnectAccountAsync(string tenantEmail, string tenantDisplayName, CancellationToken ct = default);
+        Task<string> CreateConnectAccountAsync(string tenantEmail, string tenantDisplayName, string accountType = "express", CancellationToken ct = default);
 
         /// <summary>
         /// Generates a Stripe-hosted onboarding URL for an existing Connect account.
@@ -56,7 +76,7 @@ namespace Services.Payments
         /// PaymentIntent. Returns null if the PI is not yet captured / settled, or if Stripe credentials
         /// are not configured.
         /// </summary>
-        Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, CancellationToken ct = default);
+        Task<int?> GetActualStripeFeeCentsAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
         /// Reads a PaymentIntent's current status string at Stripe ("succeeded", "canceled",
@@ -64,7 +84,7 @@ namespace Services.Payments
         /// aren't configured or the PI can't be fetched. Used by the pending-purchase reconciler
         /// to decide whether a stale pending purchase actually paid (finalize) or was abandoned (fail).
         /// </summary>
-        Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, CancellationToken ct = default);
+        Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
         /// Cancels a PaymentIntent so it can no longer be charged, returning its resulting status
@@ -74,7 +94,7 @@ namespace Services.Payments
         /// Returns null when Stripe isn't configured or the call fails unexpectedly. Used by the
         /// reconciler to make an abandoned PI permanently unchargeable before failing its rows.
         /// </summary>
-        Task<string?> CancelPaymentIntentAsync(string paymentIntentId, CancellationToken ct = default);
+        Task<string?> CancelPaymentIntentAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
         /// Sums Stripe balance_transactions in [fromUtc, toUtc). Used by the reconciliation view to
@@ -91,7 +111,7 @@ namespace Services.Payments
         /// when acting as a Tap to Pay reader. Tokens last ~10 minutes and the SDK
         /// asks for a new one when it expires.
         /// </summary>
-        Task<string> CreateTerminalConnectionTokenAsync(string? locationId = null, CancellationToken ct = default);
+        Task<string> CreateTerminalConnectionTokenAsync(string? locationId = null, string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
         /// Creates a Stripe Terminal Location representing a physical site where
@@ -100,7 +120,7 @@ namespace Services.Payments
         /// group card-present sales by site. Lazily called once per tenant.
         /// </summary>
         Task<string> CreateTerminalLocationAsync(string displayName, TerminalLocationAddress address,
-            CancellationToken ct = default);
+            string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
         /// Creates a card-present PaymentIntent for the Stripe Terminal SDK to
@@ -114,6 +134,8 @@ namespace Services.Payments
             string locationId,
             IReadOnlyDictionary<string, string> metadata,
             string? receiptEmail = null,
+            string? connectedAccountId = null,
+            long? applicationFeeCents = null,
             CancellationToken ct = default);
     }
 

@@ -8,8 +8,11 @@ namespace Services.Repositories
     {
         private const string Columns = @"
             id, tenant_id AS TenantId, tier_id AS TierId, purchaser_user_id AS PurchaserUserId,
-            stripe_payment_intent_id AS StripePaymentIntentId, amount_cents AS AmountCents,
+            stripe_payment_intent_id AS StripePaymentIntentId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
+            amount_cents AS AmountCents,
             service_charge_cents AS ServiceChargeCents,
+            tax_cents AS TaxCents, tax_rate_bps AS TaxRateBps, tax_inclusive AS TaxInclusive,
             applied_reward_redemption_id AS AppliedRewardRedemptionId,
             payment_method AS PaymentMethod,
             status, purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
@@ -37,10 +40,12 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO event_ticket_purchase
-                    (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents, applied_reward_redemption_id, payment_method,
+                    (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents,
+                     tax_cents, tax_rate_bps, tax_inclusive, applied_reward_redemption_id, payment_method,
                      status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete)
                 VALUES
-                    (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents, @AppliedRewardRedemptionId, @PaymentMethod,
+                    (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents,
+                     @TaxCents, @TaxRateBps, @TaxInclusive, @AppliedRewardRedemptionId, @PaymentMethod,
                      @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete)
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
@@ -157,6 +162,18 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE event_ticket_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account the row was charged on and flag the row's
+        // payment method so downstream (finalizer / refund / reconciler / reporting) treats it as direct.
+        public async Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET stripe_connected_account_id = @connectedAccountId,
+                    payment_method = 'stripe_direct'
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task UpdateStatus(Guid id, string status)
@@ -467,7 +484,8 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT p.id, p.tenant_id AS TenantId, p.tier_id AS TierId, p.purchaser_user_id AS PurchaserUserId,
-                       p.stripe_payment_intent_id AS StripePaymentIntentId, p.amount_cents AS AmountCents,
+                       p.stripe_payment_intent_id AS StripePaymentIntentId,
+                       p.stripe_connected_account_id AS StripeConnectedAccountId, p.amount_cents AS AmountCents,
                        p.status, p.purchaser_email AS PurchaserEmail, p.purchaser_name AS PurchaserName,
                        p.redemption_token AS RedemptionToken,
                        p.cancellation_reason AS CancellationReason, p.cancelled_at AS CancelledAt,

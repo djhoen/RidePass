@@ -6,6 +6,9 @@ namespace Services.Repositories.Interfaces
     {
         Task<SalesTotals> GetTicketTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc);
 
+        /// <summary>Admission/amusement tax collected on event tickets in the period, for remittance.</summary>
+        Task<AdmissionTaxTotals> GetAdmissionTaxTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
         /// <summary>Gross sales per revenue type for the period, from the unified ledger
         /// (entry_kind='sale'). Sum across the rows for the all-kinds total.</summary>
         Task<List<RevenueByKindRow>> GetRevenueByKind(Guid tenantId, DateTime fromUtc, DateTime toUtc);

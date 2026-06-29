@@ -44,6 +44,7 @@ namespace Services.Repositories.Interfaces
         Task<List<EventExtraPurchase>> ListByPaymentIntentId(string paymentIntentId);
         Task<EventExtraPurchase?> GetPurchaseByRedemptionToken(Guid token);
         Task SetPaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdateStatus(Guid id, string status);
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
 

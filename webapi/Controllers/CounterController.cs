@@ -32,6 +32,7 @@ namespace webapi.Controllers
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IRewardRepository _rewards;
         private readonly ITenantLedgerRepository _ledger;
@@ -41,6 +42,7 @@ namespace webapi.Controllers
         private readonly ITenantRepository _tenants;
         private readonly IDbHelper _db;
         private readonly ITenantContext _tenantContext;
+        private readonly ITenantTaxRepository _tax;
 
         public CounterController(
             IUserRepository users,
@@ -49,6 +51,7 @@ namespace webapi.Controllers
             IEventTicketTierRepository tiers,
             IEventTicketPurchaseRepository ticketPurchases,
             IPaymentProvider payments,
+            IChargeRouter chargeRouter,
             IPasswordHasher<User> passwordHasher,
             IRewardRepository rewards,
             ITenantLedgerRepository ledger,
@@ -57,7 +60,8 @@ namespace webapi.Controllers
             IFeeCalculator feeCalculator,
             ITenantRepository tenants,
             IDbHelper db,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            ITenantTaxRepository tax)
         {
             _users = users;
             _waivers = waivers;
@@ -65,6 +69,7 @@ namespace webapi.Controllers
             _tiers = tiers;
             _ticketPurchases = ticketPurchases;
             _payments = payments;
+            _chargeRouter = chargeRouter;
             _passwordHasher = passwordHasher;
             _rewards = rewards;
             _ledger = ledger;
@@ -74,6 +79,16 @@ namespace webapi.Controllers
             _tenants = tenants;
             _db = db;
             _tenantContext = tenantContext;
+            _tax = tax;
+        }
+
+        // Loads the tenant's admission tax config (once per sale). None when no active, non-zero rate.
+        private async Task<AdmissionTaxConfig> LoadAdmissionTaxConfig(Guid tenantId)
+        {
+            var row = await _tax.GetByKind(tenantId, "admission");
+            return row is { IsActive: true, RateBps: > 0 }
+                ? new AdmissionTaxConfig(row.RateBps, row.PricesIncludeTax, row.ServiceChargeTaxable)
+                : AdmissionTaxConfig.None;
         }
 
         [HttpPost("Riders/Find")]
@@ -226,14 +241,16 @@ namespace webapi.Controllers
             // Validate every cart item up front and compute total before writing anything.
             // We also collect whether any item requires the waiver — purely tenant-active-waiver
             // alone is no longer enough; per-item flags govern.
-            var ticketItems = new List<(CounterCartItem Item, EventTicketTier Tier, int UnitAmountCents, int UnitServiceChargeCents)>();
+            var ticketItems = new List<(CounterCartItem Item, EventTicketTier Tier, int UnitAmountCents, int UnitServiceChargeCents, int UnitTaxCents)>();
             var extrasItems = new List<(CounterCartItem Item, EventExtraProduct Product, EventExtraVariant? Variant,
                                         int UnitAmountCents, int UnitServiceChargeCents, int UnitPriceFrozen)>();
             // Memberships: at most one per cart (every rider has exactly one active membership at a time).
             (CounterCartItem Item, int PriceCents, int ServiceChargeCents)? membershipItem = null;
             int totalCents = 0;
+            int ticketTaxCents = 0;   // admission tax contained in totalCents (for the response)
             bool waiverRequiredByCart = false;
             var tenant = _tenantContext.Tenant;
+            var admissionTax = await LoadAdmissionTaxConfig(_tenantContext.TenantId);
             foreach (var item in request.Items)
             {
                 if (item.Kind == "event_ticket")
@@ -314,10 +331,12 @@ namespace webapi.Controllers
                             }
                         }
                     }
-                    var (unitAmount, unitServiceCharge) = ComputeWithServiceCharge(
+                    var (unitPreTax, unitServiceCharge) = ComputeWithServiceCharge(
                         tier.PriceCents, quantity: 1, tenant.ServiceChargeBps, tier.RiderPaidServiceChargeBps);
-                    ticketItems.Add((item, tier, unitAmount, unitServiceCharge));
-                    totalCents += unitAmount * item.Quantity;
+                    var tktTax = AdmissionTax.Compute(tier.PriceCents, unitPreTax - tier.PriceCents, admissionTax);
+                    ticketItems.Add((item, tier, tktTax.AmountToChargeCents, unitServiceCharge, tktTax.TaxCents));
+                    totalCents += tktTax.AmountToChargeCents * item.Quantity;
+                    ticketTaxCents += tktTax.TaxCents * item.Quantity;
                     // Counter sales of race-entry tiers are rider-audience.
                     if (ev.RequiresRiderWaiver) waiverRequiredByCart = true;
                 }
@@ -449,18 +468,20 @@ namespace webapi.Controllers
                 {
                     var entry = ticketItems[tki];
                     var discountedPrice = entry.Tier.PriceCents - (entry.Tier.PriceCents * voucherPercentOff / 100);
-                    var (newUnitAmt, newUnitSc) = ComputeWithServiceCharge(
+                    var (newPreTax, newUnitSc) = ComputeWithServiceCharge(
                         discountedPrice, 1, tenant.ServiceChargeBps, entry.Tier.RiderPaidServiceChargeBps);
+                    var newTax = AdmissionTax.Compute(discountedPrice, newPreTax - discountedPrice, admissionTax);
                     totalCents -= entry.UnitAmountCents;
-                    totalCents += newUnitAmt;
+                    totalCents += newTax.AmountToChargeCents;
+                    ticketTaxCents += newTax.TaxCents - entry.UnitTaxCents;
                     // Stash the discounted unit by pre-pending a synthetic entry of qty=1 and trimming the original.
                     var trimmedItem = new CounterCartItem { Kind = entry.Item.Kind, ItemId = entry.Item.ItemId, Quantity = entry.Item.Quantity - 1 };
                     var discountedItem = new CounterCartItem { Kind = entry.Item.Kind, ItemId = entry.Item.ItemId, Quantity = 1 };
                     ticketItems.RemoveAt(tki);
-                    ticketItems.Insert(0, (discountedItem, entry.Tier, newUnitAmt, newUnitSc));
+                    ticketItems.Insert(0, (discountedItem, entry.Tier, newTax.AmountToChargeCents, newUnitSc, newTax.TaxCents));
                     if (trimmedItem.Quantity > 0)
                     {
-                        ticketItems.Insert(1, (trimmedItem, entry.Tier, entry.UnitAmountCents, entry.UnitServiceChargeCents));
+                        ticketItems.Insert(1, (trimmedItem, entry.Tier, entry.UnitAmountCents, entry.UnitServiceChargeCents, entry.UnitTaxCents));
                     }
                     voucherTicketIdx = 0;   // discounted entry is now at index 0
                 }
@@ -545,7 +566,7 @@ namespace webapi.Controllers
                         return new ApiResponses().BadRequestResult(
                             $"Only {Math.Max(0, rcEv.Capacity.Value - groupSoldNow)} spot(s) left for \"{rcEv.Title}\".");
                 }
-                foreach (var (rcItem, rcTier, _, _) in ticketItems)
+                foreach (var (rcItem, rcTier, _, _, _) in ticketItems)
                 {
                     if (rcTier.LadderGroup is null && rcTier.Inventory.HasValue)
                     {
@@ -566,7 +587,7 @@ namespace webapi.Controllers
 
             for (var tkiIdx = 0; tkiIdx < ticketItems.Count; tkiIdx++)
             {
-                var (item, tier, unitAmount, unitServiceCharge) = ticketItems[tkiIdx];
+                var (item, tier, unitAmount, unitServiceCharge, unitTax) = ticketItems[tkiIdx];
                 for (int i = 0; i < item.Quantity; i++)
                 {
                     // The discounted entry was placed at index 0 with Quantity=1, so the voucher
@@ -579,6 +600,9 @@ namespace webapi.Controllers
                         PurchaserUserId = rider.Id,
                         AmountCents = unitAmount,
                         ServiceChargeCents = unitServiceCharge,
+                        TaxCents = unitTax,
+                        TaxRateBps = admissionTax.RateBps,
+                        TaxInclusive = admissionTax.PricesIncludeTax,
                         AppliedRewardRedemptionId = applyVoucherHere ? request.RewardRedemptionId : null,
                         PaymentMethod = paymentMethod,
                         Status = "pending",
@@ -732,6 +756,7 @@ namespace webapi.Controllers
                 {
                     ClientSecret = string.Empty,
                     TotalAmountCents = totalCents,
+                    TaxCents = ticketTaxCents,
                     LineItems = lineItems,
                 });
             }
@@ -787,13 +812,25 @@ namespace webapi.Controllers
             };
             if (cashierId.HasValue) metadata["sold_by_user_id"] = cashierId.Value.ToString();
 
+            // Direct-charge tenants run the sale on their own connected account (card-present or
+            // online); our service fee (summed across line items) rides as the application fee.
+            ChargePlan chargePlan;
+            try
+            {
+                chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, ledgerLines.Sum(l => (long)l.ServiceCharge), totalCents);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new ApiResponses().BadRequestResult(ex.Message);
+            }
+
             // Tap to Pay: identical cart and identical PI-id-keyed webhook fulfillment, but a
             // card_present PaymentIntent scoped to the tenant's Terminal Location so the mobile
-            // SDK can collect it. Funds settle to the track via the usual ledger + transfer path.
+            // SDK can collect it. In direct mode the Location lives on the connected account.
             string? terminalLocationId = null;
             if (cardPresent)
             {
-                terminalLocationId = await EnsureTerminalLocation(ct);
+                terminalLocationId = await EnsureTerminalLocation(chargePlan.ConnectedAccountId, ct);
                 if (terminalLocationId is null)
                 {
                     return new ApiResponses().BadRequestResult(
@@ -811,12 +848,16 @@ namespace webapi.Controllers
                         locationId: terminalLocationId!,
                         metadata: metadata,
                         receiptEmail: rider.Email,
+                        connectedAccountId: chargePlan.ConnectedAccountId,
+                        applicationFeeCents: chargePlan.ApplicationFeeCents,
                         ct: ct)
                     : await _payments.CreatePaymentIntentAsync(
                         amountCents: totalCents,
                         currency: "usd",
                         metadata: metadata,
                         receiptEmail: rider.Email,
+                        connectedAccountId: chargePlan.ConnectedAccountId,
+                        applicationFeeCents: chargePlan.ApplicationFeeCents,
                         ct: ct);
             }
             catch (InvalidOperationException ex)
@@ -824,19 +865,27 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
 
-            // Stamp the same PaymentIntent id onto every line item so the webhook can finalize them all.
+            // Stamp the same PaymentIntent id onto every line item so the webhook can finalize them
+            // all, and (for a direct charge) snapshot the connected account on each so refunds route
+            // to the right account.
             foreach (var li in lineItems)
             {
                 switch (li.Kind)
                 {
                     case "event_ticket":
                         await _ticketPurchases.SetStripePaymentIntentId(li.PurchaseId, intent.IntentId);
+                        if (chargePlan.IsDirect)
+                            await _ticketPurchases.MarkDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
                         break;
                     case "extras":
                         await _extras.SetPaymentIntentId(li.PurchaseId, intent.IntentId);
+                        if (chargePlan.IsDirect)
+                            await _extras.MarkDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
                         break;
                     case "membership":
                         await _memberships.SetStripePaymentIntentId(li.PurchaseId, intent.IntentId);
+                        if (chargePlan.IsDirect)
+                            await _memberships.MarkDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
                         break;
                 }
             }
@@ -845,6 +894,7 @@ namespace webapi.Controllers
             {
                 ClientSecret = intent.ClientSecret,
                 TotalAmountCents = totalCents,
+                TaxCents = ticketTaxCents,
                 LineItems = lineItems,
                 TerminalLocationId = terminalLocationId,
             });
@@ -877,7 +927,15 @@ namespace webapi.Controllers
         public async Task<IActionResult> CreateTerminalConnectionToken(CancellationToken ct)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var locationId = await EnsureTerminalLocation(ct);
+            // Direct mode: the token + Location must live on the tenant's connected account so the
+            // SDK collects card-present payments there.
+            if (_tenantContext.Tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(_tenantContext.Tenant.StripeConnectAccountId))
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track is set to charge on its own Stripe account but hasn't connected one yet. Connect it in Settings before taking card-present payments.");
+            }
+            var connectedAccountId = DirectConnectedAccountId();
+            var locationId = await EnsureTerminalLocation(connectedAccountId, ct);
             if (locationId is null)
             {
                 return new ApiResponses().BadRequestResult(
@@ -886,7 +944,7 @@ namespace webapi.Controllers
             string secret;
             try
             {
-                secret = await _payments.CreateTerminalConnectionTokenAsync(locationId, ct);
+                secret = await _payments.CreateTerminalConnectionTokenAsync(locationId, connectedAccountId, ct: ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -910,7 +968,13 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (req.AmountCents < 50) return new ApiResponses().BadRequestResult("Amount must be at least 50 cents.");
 
-            var locationId = await EnsureTerminalLocation(ct);
+            if (_tenantContext.Tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(_tenantContext.Tenant.StripeConnectAccountId))
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track is set to charge on its own Stripe account but hasn't connected one yet.");
+            }
+            var connectedAccountId = DirectConnectedAccountId();
+            var locationId = await EnsureTerminalLocation(connectedAccountId, ct);
             if (locationId is null)
             {
                 return new ApiResponses().BadRequestResult(
@@ -930,12 +994,14 @@ namespace webapi.Controllers
             PaymentIntentCreated intent;
             try
             {
+                // A standalone validation charge has no cart/service charge, so no application fee.
                 intent = await _payments.CreateCardPresentPaymentIntentAsync(
                     amountCents: req.AmountCents,
                     currency: "usd",
                     locationId: locationId,
                     metadata: metadata,
                     receiptEmail: string.IsNullOrWhiteSpace(req.ReceiptEmail) ? null : req.ReceiptEmail.Trim(),
+                    connectedAccountId: connectedAccountId,
                     ct: ct);
             }
             catch (InvalidOperationException ex)
@@ -953,12 +1019,25 @@ namespace webapi.Controllers
         // Returns the existing Terminal Location id, or provisions one from the
         // tenant's address fields and persists it. Idempotent — repeated calls
         // for an already-provisioned tenant just return the stored id.
-        private async Task<string?> EnsureTerminalLocation(CancellationToken ct)
+        // The connected account a 'direct' tenant's card-present sales run on (null = platform mode).
+        // Card-present direct charges require the Terminal Location, connection token, and PI to all
+        // live on this account.
+        private string? DirectConnectedAccountId()
+            => _tenantContext.Tenant.StripeChargeMode == "direct"
+                ? _tenantContext.Tenant.StripeConnectAccountId
+                : null;
+
+        // Returns the Terminal Location id for the given account (the tenant's connected account in
+        // 'direct' mode, else the platform account), provisioning + persisting it from the tenant's
+        // address on first use. Returns null when the address is incomplete. Idempotent.
+        private async Task<string?> EnsureTerminalLocation(string? connectedAccountId, CancellationToken ct)
         {
             var tenant = _tenantContext.Tenant;
-            if (!string.IsNullOrWhiteSpace(tenant.StripeTerminalLocationId))
+            var direct = !string.IsNullOrEmpty(connectedAccountId);
+            var existing = direct ? tenant.StripeConnectedTerminalLocationId : tenant.StripeTerminalLocationId;
+            if (!string.IsNullOrWhiteSpace(existing))
             {
-                return tenant.StripeTerminalLocationId;
+                return existing;
             }
             // Need enough address to satisfy Stripe's Location requirements.
             if (string.IsNullOrWhiteSpace(tenant.AddressLine)
@@ -979,13 +1058,15 @@ namespace webapi.Controllers
                         Country: tenant.Country,
                         PostalCode: tenant.PostalCode,
                         State: tenant.Region),
+                    connectedAccountId,
                     ct);
             }
             catch (InvalidOperationException)
             {
                 return null;
             }
-            await _tenants.SetStripeTerminalLocationId(_tenantContext.TenantId, locationId);
+            if (direct) await _tenants.SetStripeConnectedTerminalLocationId(_tenantContext.TenantId, locationId);
+            else await _tenants.SetStripeTerminalLocationId(_tenantContext.TenantId, locationId);
             return locationId;
         }
     }

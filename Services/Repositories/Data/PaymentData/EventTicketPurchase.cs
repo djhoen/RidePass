@@ -7,8 +7,17 @@ namespace Services.Repositories.Data.PaymentData
         public Guid TierId { get; set; }
         public Guid? PurchaserUserId { get; set; }
         public string? StripePaymentIntentId { get; set; }
+        // Set only for direct charges: the tenant's own connected account this purchase was
+        // charged on. NULL = charged on the platform account. Read by the finalizer, refunds,
+        // and the reconciler so they act on the right account regardless of the tenant's current mode.
+        public string? StripeConnectedAccountId { get; set; }
         public int AmountCents { get; set; }
         public int ServiceChargeCents { get; set; }
+        // Admission tax snapshot, frozen at checkout. TaxCents is the tax portion contained in
+        // AmountCents (which is stored tax-inclusive). 0 when no admission tax applied.
+        public int TaxCents { get; set; }
+        public int TaxRateBps { get; set; }
+        public bool TaxInclusive { get; set; }
         public Guid? AppliedRewardRedemptionId { get; set; }
         public string PaymentMethod { get; set; } = "stripe";
         public string Status { get; set; } = "pending";

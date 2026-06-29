@@ -218,7 +218,7 @@ const KIND_LABELS: Record<string, string> = {
     membership: 'Memberships',
     extras: 'Add-ons',
     rental: 'Rentals',
-    concession: 'Concessions',
+    concession: 'Food & Beverage',
     pass: 'Day passes',
     day_pass: 'Day passes',
 }

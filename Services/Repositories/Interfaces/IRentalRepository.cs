@@ -49,6 +49,7 @@ namespace Services.Repositories.Interfaces
         Task<RentalPurchase?> GetPurchaseByDepositPaymentIntentId(string paymentIntentId);
 
         Task SetRentalPaymentIntentId(Guid id, string paymentIntentId);
+        Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task SetDepositPaymentIntentId(Guid id, string paymentIntentId);
         Task UpdateStatus(Guid id, string status);
 

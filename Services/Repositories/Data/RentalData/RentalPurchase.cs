@@ -22,6 +22,9 @@ namespace Services.Repositories.Data.RentalData
 
         public string? RentalPiId { get; set; }
         public string? DepositPiId { get; set; }
+        // Set for direct charges: the tenant's connected account the rental was charged on.
+        // NULL = platform charge. Drives the deposit refund onto the right account.
+        public string? StripeConnectedAccountId { get; set; }
         public int DepositCapturedCents { get; set; }
         public Guid RedemptionToken { get; set; }
         // pending | paid | out | returned | damaged | cancelled | failed

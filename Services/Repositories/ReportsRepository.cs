@@ -25,6 +25,20 @@ namespace Services.Repositories
             return r.FirstOrDefault() ?? new SalesTotals();
         }
 
+        public async Task<AdmissionTaxTotals> GetAdmissionTaxTotals(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            const string sql = @"
+                SELECT
+                    COALESCE(SUM(CASE WHEN status IN ('paid','redeemed') THEN tax_cents ELSE 0 END), 0) AS TaxCollectedCents,
+                    COALESCE(SUM(CASE WHEN status IN ('paid','redeemed') AND tax_cents > 0 THEN amount_cents ELSE 0 END), 0) AS TaxableSalesCents,
+                    COALESCE(SUM(CASE WHEN status IN ('paid','redeemed') AND tax_cents > 0 THEN 1 ELSE 0 END), 0)::int AS TaxedTicketCount,
+                    COALESCE(SUM(CASE WHEN status = 'refunded' THEN tax_cents ELSE 0 END), 0) AS RefundedTaxCents
+                FROM event_ticket_purchase
+                WHERE tenant_id = @tenantId AND created_at >= @fromUtc AND created_at < @toUtc";
+            var r = await _db.Query<AdmissionTaxTotals>(sql, new { tenantId, fromUtc, toUtc });
+            return r.FirstOrDefault() ?? new AdmissionTaxTotals();
+        }
+
         public async Task<List<RevenueByKindRow>> GetRevenueByKind(Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
             // Unified revenue from the ledger: every finalized sale (stripe, cash, voucher) writes

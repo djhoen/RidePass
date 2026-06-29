@@ -16,6 +16,10 @@ If the audit reports findings, fix them, then re-run until it reports clean. Onl
 - Tenant scope is resolved by `TenantResolutionMiddleware` from the request subdomain into `ITenantContext` — controllers read `_tenantContext.TenantId` and verify `_tenantContext.IsResolved` first.
 - Permission policies are declared in `webapi/AuthPolicies/TenantPermissions.cs`. Common ones: `CatalogManage`, `SettingsManage`, `CampaignsManage`, `SalesCounter`, `SalesRedeem`, `SalesView`, `ReportsView`.
 
+## Migration safety radar
+
+**Whenever you create or edit a `.sql` under `RidePass.Migrator/Scripts/`, silently apply the rules in `.claude/skills/ridepass-migration/SKILL.md`.** Two are non-negotiable: every script must be **rerunnable** (idempotent — use `IF NOT EXISTS` / `IF EXISTS`, `CREATE OR REPLACE`, `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`, `ON CONFLICT DO NOTHING` on seeds, `WHERE col IS NULL` on backfills, `DO`-block guards for constraints) and **backwards-compatible where possible** (additive by default; new `NOT NULL` columns carry a `DEFAULT` or are backfilled-then-tightened later; renames/drops/type-narrowing go expand-then-contract across releases so the deployed app keeps working). Script numbers must be unique 4-digit and consecutive. If a one-step breaking change is truly unavoidable, call it out explicitly at end-of-turn.
+
 ## v_recent_sales radar
 
 `v_recent_sales` (defined in `RidePass.Migrator/Scripts/Script0080_RecentSalesView.sql`) is the unified read model the admin dashboard and the Admin → Purchases list both read from. **Whenever you add a new purchase-shaped table, change a column the view selects, or wire up a new sale repository, silently apply the rules in `.claude/skills/recent-sales-view/SKILL.md` and surface a one-paragraph update offer at end-of-turn.** Skipping it means the new sale kind silently disappears from those screens.

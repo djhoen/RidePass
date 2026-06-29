@@ -28,6 +28,7 @@ namespace webapi.Controllers
         private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IDisputeRepository _disputes;
         private readonly IPaymentProvider _payments;
+        private readonly IChargeRouter _chargeRouter;
         private readonly IRewardRepository _rewards;
         private readonly ITenantLedgerRepository _ledger;
         private readonly ICouponRepository _coupons;
@@ -45,6 +46,7 @@ namespace webapi.Controllers
         private readonly ILoamPassMxService _loampass;
         private readonly ILoampassRedemptionRepository _loampassRedemptions;
         private readonly ISeasonPassRepository _seasonPasses;
+        private readonly ITenantTaxRepository _tax;
 
         public PurchaseController(
             IWaiverRepository waivers,
@@ -70,7 +72,9 @@ namespace webapi.Controllers
             IRiderLoampassLinkRepository loampassLinks,
             ILoamPassMxService loampass,
             ILoampassRedemptionRepository loampassRedemptions,
-            ISeasonPassRepository seasonPasses)
+            IChargeRouter chargeRouter,
+            ISeasonPassRepository seasonPasses,
+            ITenantTaxRepository tax)
         {
             _waivers = waivers;
             _users = users;
@@ -95,7 +99,19 @@ namespace webapi.Controllers
             _loampassLinks = loampassLinks;
             _loampass = loampass;
             _loampassRedemptions = loampassRedemptions;
+            _chargeRouter = chargeRouter;
             _seasonPasses = seasonPasses;
+            _tax = tax;
+        }
+
+        // Loads the tenant's admission tax config (once per checkout). Returns None when no active,
+        // non-zero rate is configured, so the math below is a no-op for tenants without tax.
+        private async Task<AdmissionTaxConfig> LoadAdmissionTaxConfig(Guid tenantId)
+        {
+            var row = await _tax.GetByKind(tenantId, "admission");
+            return row is { IsActive: true, RateBps: > 0 }
+                ? new AdmissionTaxConfig(row.RateBps, row.PricesIncludeTax, row.ServiceChargeTaxable)
+                : AdmissionTaxConfig.None;
         }
 
         // Mirrors ExtraController.ResolveVariantOrError. Variants short-circuit the
@@ -497,6 +513,7 @@ namespace webapi.Controllers
             // row reflects what was actually discounted on it. Last unit absorbs rounding so the
             // sum exactly matches the validator's cap.
             var ticketTenant = _tenantContext.Tenant;
+            var admissionTax = await LoadAdmissionTaxConfig(_tenantContext.TenantId);
             var couponSubtotalDenom = couponApp is null ? 0 : items.Sum(i => tierLookup[i.TierId].PriceCents * i.Quantity);
             var couponRemaining = couponApp?.DiscountCents ?? 0;
             var totalUnitsRemaining = totalUnits;
@@ -560,8 +577,13 @@ namespace webapi.Controllers
                         totalUnitsRemaining--;
                     }
 
-                    var (unitAmount, unitServiceCharge) = ComputeWithServiceCharge(
+                    var (unitPreTax, unitServiceCharge) = ComputeWithServiceCharge(
                         unitPrice, quantity: 1, ticketTenant.ServiceChargeBps, tier.RiderPaidServiceChargeBps);
+
+                    // Admission tax on the post-discount base (+ rider fee when taxable). amount_cents
+                    // is stored tax-inclusive: on-top tax grows it; inclusive tax leaves it unchanged.
+                    var tax = AdmissionTax.Compute(unitPrice, unitPreTax - unitPrice, admissionTax);
+                    var unitAmount = tax.AmountToChargeCents;
 
                     var purchase = new EventTicketPurchase
                     {
@@ -570,6 +592,9 @@ namespace webapi.Controllers
                         PurchaserUserId = purchaserUserId,
                         AmountCents = unitAmount,
                         ServiceChargeCents = unitServiceCharge,
+                        TaxCents = tax.TaxCents,
+                        TaxRateBps = admissionTax.RateBps,
+                        TaxInclusive = admissionTax.PricesIncludeTax,
                         AppliedRewardRedemptionId = (q == 0 && voucherCheck.percentOff.HasValue) ? request.RewardRedemptionId : null,
                         PaymentMethod = unitAmount == 0 ? "voucher" : "stripe",
                         Status = "pending",
@@ -629,6 +654,11 @@ namespace webapi.Controllers
                 if (gcCheck.error is not null) return new ApiResponses().BadRequestResult(gcCheck.error);
                 gcApp = gcCheck.application;
                 gcRemaining = gcApp!.AmountToApplyCents;
+                // Debit the card up front with an atomic conditional decrement so two concurrent
+                // checkouts on the same card can't both spend it; the loser gets a clean error.
+                if (!await _giftCards.ApplyToBalance(gcApp.Card.Id, gcApp.AmountToApplyCents))
+                    return new ApiResponses().BadRequestResult(
+                        "That gift card's balance just changed. Please re-apply it and try again.");
             }
             var stripeChargeCents = totalAmountCents - (gcApp?.AmountToApplyCents ?? 0);
 
@@ -672,7 +702,7 @@ namespace webapi.Controllers
                         AmountCents = amt,
                     });
                 }
-                await _giftCards.ApplyToBalance(gcApp.Card.Id, gcApp.AmountToApplyCents);
+                // Balance was already debited up front (atomic conditional decrement above).
             }
 
             // Persist extras rows (one per unit so each gets its own QR). They share
@@ -713,12 +743,14 @@ namespace webapi.Controllers
             // payment_intent.succeeded.
             Guid? bundledMembershipPurchaseId = null;
             int membershipChargeCents = 0;
+            int membershipServiceChargeCents = 0;
             if (bundleMembership && purchaserUserId.HasValue)
             {
                 var tenant = _tenantContext.Tenant;
                 var nowUtc = DateTime.UtcNow;
                 DateTime? validTo = tenant.MembershipDurationKind == "yearly" ? nowUtc.AddDays(365) : (DateTime?)null;
                 var membershipServiceCharge = (int)((long)tenant.MembershipPriceCents * tenant.ServiceChargeBps / 10_000L);
+                membershipServiceChargeCents = membershipServiceCharge;
                 var membership = new Services.Repositories.Data.MembershipData.MembershipPurchase
                 {
                     TenantId = tenant.Id,
@@ -798,14 +830,23 @@ namespace webapi.Controllers
                 metadata["membership_charge_cents"] = membershipChargeCents.ToString();
             }
 
+            // Direct-charge tenants charge on their own connected account; our service fee rides as
+            // the Stripe application fee (that is how RidePass gets paid). serviceFeeCents is the total
+            // RidePass cut for this cart (ticket + extras + bundled-membership service charges).
+            var serviceFeeCents = (long)totalServiceChargeCents + extrasServiceChargeCents + membershipServiceChargeCents;
+
             PaymentIntentCreated intent;
+            ChargePlan chargePlan;
             try
             {
+                chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, serviceFeeCents, combinedStripeChargeCents);
                 intent = await _payments.CreatePaymentIntentAsync(
                     amountCents: combinedStripeChargeCents,
                     currency: "usd",
                     metadata: metadata,
                     receiptEmail: purchaserEmail,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents,
                     ct: ct);
             }
             catch (InvalidOperationException ex)
@@ -814,17 +855,31 @@ namespace webapi.Controllers
             }
 
             // Every ticket row points at the same PI so the webhook handler can find them all.
+            // For direct charges, snapshot the connected account on each row so refunds/finalization
+            // act on the right account regardless of any later tenant mode change.
             foreach (var t in createdTickets)
             {
                 await _ticketPurchases.SetStripePaymentIntentId(t.purchase.Id, intent.IntentId);
+                if (chargePlan.IsDirect)
+                {
+                    await _ticketPurchases.MarkDirectCharge(t.purchase.Id, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                }
             }
             foreach (var exId in extraPurchaseIds)
             {
                 await _extras.SetPaymentIntentId(exId, intent.IntentId);
+                if (chargePlan.IsDirect)
+                {
+                    await _extras.MarkDirectCharge(exId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                }
             }
             if (bundledMembershipPurchaseId.HasValue)
             {
                 await _memberships.SetStripePaymentIntentId(bundledMembershipPurchaseId.Value, intent.IntentId);
+                if (chargePlan.IsDirect)
+                {
+                    await _memberships.MarkDirectCharge(bundledMembershipPurchaseId.Value, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                }
             }
 
             return new ApiResponses().OkResult(new CreatePurchaseResponse
@@ -835,6 +890,7 @@ namespace webapi.Controllers
                 ClientSecret = intent.ClientSecret,
                 AmountCents = combinedStripeChargeCents,
                 RiderServiceChargeCents = totalServiceChargeCents + extrasServiceChargeCents,
+                TaxCents = createdTickets.Sum(t => t.purchase.TaxCents),
                 GiftCardAppliedCents = gcApp?.AmountToApplyCents ?? 0,
             });
         }
@@ -1388,6 +1444,9 @@ namespace webapi.Controllers
             int amount = 0, serviceCharge = 0;
             string paymentMethod = "stripe", status = "";
             string? stripePi = null;
+            // Connected account a direct charge was made on (NULL = platform charge). Refunds for a
+            // direct charge must be issued on that account, returning our application fee too.
+            string? connectedAccount = null;
             string ledgerSourceKind;
             Guid eventTicketTierId = Guid.Empty;
 
@@ -1398,6 +1457,7 @@ namespace webapi.Controllers
                     var p = await _ticketPurchases.GetById(purchaseId, tenantId);
                     if (p is null) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    connectedAccount = p.StripeConnectedAccountId;
                     eventTicketTierId = p.TierId;
                     ledgerSourceKind = "event_ticket";
                     break;
@@ -1407,6 +1467,7 @@ namespace webapi.Controllers
                     var p = await _seasonPasses.GetPurchase(purchaseId);
                     if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    connectedAccount = p.StripeConnectedAccountId;
                     ledgerSourceKind = "season_pass";
                     break;
                 }
@@ -1415,6 +1476,7 @@ namespace webapi.Controllers
                     var p = await _memberships.GetById(purchaseId);
                     if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    connectedAccount = p.StripeConnectedAccountId;
                     ledgerSourceKind = "membership";
                     break;
                 }
@@ -1423,6 +1485,7 @@ namespace webapi.Controllers
                     var p = await _extras.GetPurchase(purchaseId);
                     if (p is null || p.TenantId != tenantId) return (false, false, "Purchase not found.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
+                    connectedAccount = p.StripeConnectedAccountId;
                     ledgerSourceKind = "extras";   // ledger uses 'extras'; v_recent_sales kind is 'event_extra'
                     break;
                 }
@@ -1466,13 +1529,19 @@ namespace webapi.Controllers
                 }
                 refundCents = 0;   // no money moved; the credit is given back
             }
-            else if ((paymentMethod == "stripe" || paymentMethod == "stripe_connect")
+            else if ((paymentMethod == "stripe" || paymentMethod == "stripe_connect" || paymentMethod == "stripe_direct")
                      && !string.IsNullOrEmpty(stripePi) && stripeRefundCents > 0)
             {
+                // Direct charge: issue the refund on the tenant's connected account and return our
+                // application fee on the refunded portion so the tenant is made whole.
+                var isDirect = paymentMethod == "stripe_direct";
                 try
                 {
                     var r = await _payments.RefundAsync(stripePi!, stripeRefundCents,
-                        idempotencyKey: $"refund-{kind}-{purchaseId}-{stripeRefundCents}", ct: ct);
+                        idempotencyKey: $"refund-{kind}-{purchaseId}-{stripeRefundCents}",
+                        connectedAccountId: isDirect ? connectedAccount : null,
+                        refundApplicationFee: isDirect,
+                        ct: ct);
                     refundId = r.RefundId;
                 }
                 catch (Exception ex)
@@ -1520,9 +1589,31 @@ namespace webapi.Controllers
             if (giftCardRefundCents > 0)
                 await RestoreGiftCardOnRefund(kind, purchaseId, tenantId, giftCardRefundCents);
 
-            // Refund ledger row: record the money returned as a negative. Platform cut/fees aren't
-            // clawed back here (a tenant-initiated refund leaves the prior cut as-is). Gross stays the
-            // full refund (the sale recorded full gross with the gift card as a payment instrument).
+            // Refund ledger amounts depend on how the sale was funded:
+            //  - stripe / stripe_connect: the platform moved the money, so the refund debits the
+            //    tenant's payout by the refunded amount (net = -refundCents). Platform cut/fees
+            //    aren't clawed back (a tenant-initiated refund leaves the prior cut as-is).
+            //  - cash / voucher: the tenant always held the cash; the platform only ever booked its
+            //    cut (the cash sale recorded net = -serviceCharge). Debiting the tenant the full
+            //    cash amount here would reduce their payout by money the platform never touched, so
+            //    instead reverse the proportional cut, which nets a fully-refunded cash sale to zero.
+            //  - loampass_credits: refundCents is already 0 (the credit was returned, no cash moved).
+            int ledgerGross, ledgerCut, ledgerNet;
+            if (paymentMethod == "cash" || paymentMethod == "voucher")
+            {
+                var cutReversed = amount > 0
+                    ? (int)Math.Round((double)serviceCharge * refundCents / amount, MidpointRounding.AwayFromZero)
+                    : 0;
+                ledgerGross = -refundCents;
+                ledgerCut = -cutReversed;
+                ledgerNet = cutReversed;   // reverses the cash sale's -serviceCharge
+            }
+            else
+            {
+                ledgerGross = -refundCents;
+                ledgerCut = 0;
+                ledgerNet = -refundCents;
+            }
             try
             {
                 await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
@@ -1532,10 +1623,10 @@ namespace webapi.Controllers
                     SourceKind = ledgerSourceKind,
                     SourceId = purchaseId,
                     OccurredAtUtc = DateTime.UtcNow,
-                    GrossCents = -refundCents,
+                    GrossCents = ledgerGross,
                     StripeFeeCents = 0,
-                    RidepassCutCents = 0,
-                    NetToTenantCents = -refundCents,
+                    RidepassCutCents = ledgerCut,
+                    NetToTenantCents = ledgerNet,
                     PaymentMethod = paymentMethod,
                     SoldByUserId = staffId,
                     Memo = $"Tenant refund{(refundId is null ? "" : $" {refundId}")}",
@@ -1812,14 +1903,20 @@ namespace webapi.Controllers
                 ["user_id"] = userId.ToString(),
             };
 
+            // Direct-charge tenants sell the gift card on their own account; our service fee rides as
+            // the application fee. The face value lands in the tenant's account (their liability to
+            // honor on redemption). Gift cards are never refunded/reconciled, so no snapshot is needed.
             PaymentIntentCreated intent;
             try
             {
+                var chargePlan = _chargeRouter.Plan(tenant, serviceCharge, totalToCharge);
                 intent = await _payments.CreatePaymentIntentAsync(
                     amountCents: totalToCharge,
                     currency: "usd",
                     metadata: metadata,
                     receiptEmail: buyer.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents,
                     ct: ct);
             }
             catch (InvalidOperationException ex)

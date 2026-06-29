@@ -39,6 +39,7 @@ namespace Services.Repositories
             deposit_cents AS DepositCents,
             rental_pi_id AS RentalPiId,
             deposit_pi_id AS DepositPiId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             deposit_captured_cents AS DepositCapturedCents,
             redemption_token AS RedemptionToken,
             status,
@@ -287,6 +288,17 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE rental_purchase SET rental_pi_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account the rental was charged on and flag the row.
+        public async Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE rental_purchase
+                SET stripe_connected_account_id = @connectedAccountId,
+                    payment_method = 'stripe_direct'
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task SetDepositPaymentIntentId(Guid id, string paymentIntentId)

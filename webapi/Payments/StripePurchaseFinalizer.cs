@@ -116,6 +116,20 @@ namespace webapi.Payments
                 return;
             }
 
+            // Direct charge detection: in 'direct' mode the charge ran on the tenant's own connected
+            // account, snapshotted on the purchase row at charge time. The ticket rows carry the
+            // snapshot; anything bundled on the same PaymentIntent (extras / membership) shares the
+            // charge, so one flag drives the ledger semantics for the whole PI. For a direct charge
+            // the tenant is MoR (they hold the funds and bore the Stripe fee), so we record no Stripe
+            // fee and no net-to-tenant, and our cut = the application fee Stripe routed to us.
+            var connectedAccountId = tickets
+                    .FirstOrDefault(t => !string.IsNullOrEmpty(t.StripeConnectedAccountId))?.StripeConnectedAccountId
+                ?? extras.FirstOrDefault(e => !string.IsNullOrEmpty(e.StripeConnectedAccountId))?.StripeConnectedAccountId
+                ?? membership?.StripeConnectedAccountId
+                ?? seasonPass?.StripeConnectedAccountId
+                ?? rental?.StripeConnectedAccountId;
+            var isDirect = !string.IsNullOrEmpty(connectedAccountId);
+
             // Gift-card purchase: the card is minted 'pending' (not spendable/deliverable). On
             // success we activate it, then immediate-delivery cards get emailed inline while
             // future-scheduled cards stay 'pending' delivery for the worker (which gates on
@@ -163,7 +177,7 @@ namespace webapi.Payments
                     // tickets, which absorb the Stripe fee in OnPaymentSucceeded. So the
                     // membership only carries the fee when it's standalone on its own PI;
                     // otherwise it would double-count the PI fee in the ledger.
-                    await OnMembershipPaid(membership, membershipOwnsTheFee: tickets.Count == 0);
+                    await OnMembershipPaid(membership, membershipOwnsTheFee: tickets.Count == 0, isDirect);
                 }
                 else if (eventType == "payment_intent.payment_failed" && membership.Status == "pending")
                 {
@@ -189,7 +203,7 @@ namespace webapi.Payments
                     // Gate Fee flow), they get the whole fee distributed across them.
                     var extrasOwnTheFee = tickets.Count == 0
                         && membership is null && seasonPass is null;
-                    await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee);
+                    await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee, isDirect);
                 }
                 else if (eventType == "payment_intent.payment_failed")
                 {
@@ -207,7 +221,7 @@ namespace webapi.Payments
             {
                 if (eventType == "payment_intent.succeeded" && rental.Status == "pending")
                 {
-                    await OnRentalPaid(rental);
+                    await OnRentalPaid(rental, isDirect);
                 }
                 else if (eventType == "payment_intent.payment_failed" && rental.Status == "pending")
                 {
@@ -235,10 +249,10 @@ namespace webapi.Payments
             switch (eventType)
             {
                 case "payment_intent.succeeded":
-                    await OnPaymentSucceeded(paymentIntentId, tickets);
+                    await OnPaymentSucceeded(paymentIntentId, tickets, isDirect);
                     if (seasonPass is not null && seasonPass.Status == "pending")
                     {
-                        await OnSeasonPassPaid(seasonPass);
+                        await OnSeasonPassPaid(seasonPass, isDirect);
                     }
                     break;
                 case "payment_intent.payment_failed":
@@ -274,15 +288,16 @@ namespace webapi.Payments
             await _coupons.DeleteRedemptionsBySource(sourceKind, sourceIds);
         }
 
-        private async Task OnMembershipPaid(Services.Repositories.Data.MembershipData.MembershipPurchase m, bool membershipOwnsTheFee)
+        private async Task OnMembershipPaid(Services.Repositories.Data.MembershipData.MembershipPurchase m, bool membershipOwnsTheFee, bool isDirect)
         {
-            // Zero fee when bundled with passes/tickets (they absorbed the PI fee) so the
+            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
+            // Otherwise zero fee when bundled with passes/tickets (they absorbed the PI fee) so the
             // PI's Stripe fee is counted exactly once across the ledger.
-            var stripeFee = membershipOwnsTheFee ? (await _payments.GetActualStripeFeeCentsAsync(m.StripePaymentIntentId!) ?? 0) : 0;
+            var stripeFee = (isDirect || !membershipOwnsTheFee) ? 0 : (await _payments.GetActualStripeFeeCentsAsync(m.StripePaymentIntentId!) ?? 0);
             await _memberships.UpdateStatus(m.Id, "paid");
             try
             {
-                var calc = await _feeCalculator.Calculate(m.TenantId, m.AmountCents, stripeFee, m.ServiceChargeCents, DateTime.UtcNow);
+                var calc = await _feeCalculator.Calculate(m.TenantId, m.AmountCents, stripeFee, m.ServiceChargeCents, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = m.TenantId,
@@ -295,7 +310,7 @@ namespace webapi.Payments
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = calc.NetToTenantCents,
                     StripePaymentIntentId = m.StripePaymentIntentId,
-                    PaymentMethod = "stripe",
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -304,13 +319,14 @@ namespace webapi.Payments
             }
         }
 
-        private async Task OnSeasonPassPaid(SeasonPassPurchase pass)
+        private async Task OnSeasonPassPaid(SeasonPassPurchase pass, bool isDirect)
         {
-            var stripeFee = await _payments.GetActualStripeFeeCentsAsync(pass.StripePaymentIntentId!) ?? 0;
+            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(pass.StripePaymentIntentId!) ?? 0);
             await _seasonPasses.UpdatePurchaseStatus(pass.Id, "paid");
             try
             {
-                var calc = await _feeCalculator.Calculate(pass.TenantId, pass.AmountCents, stripeFee, pass.ServiceChargeCents, DateTime.UtcNow);
+                var calc = await _feeCalculator.Calculate(pass.TenantId, pass.AmountCents, stripeFee, pass.ServiceChargeCents, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = pass.TenantId,
@@ -323,7 +339,7 @@ namespace webapi.Payments
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = calc.NetToTenantCents,
                     StripePaymentIntentId = pass.StripePaymentIntentId,
-                    PaymentMethod = "stripe",
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -341,12 +357,13 @@ namespace webapi.Payments
         // only flipped status and never hit the ledger, so spectator/add-on income was lost
         // from payouts. Idempotent: the unique (tenant, source_kind, source_id) sale index
         // makes a duplicate webhook/reconciler pass a no-op.
-        private async Task OnExtrasPaid(string paymentIntentId, List<EventExtraPurchase> extras, bool extrasOwnTheFee)
+        private async Task OnExtrasPaid(string paymentIntentId, List<EventExtraPurchase> extras, bool extrasOwnTheFee, bool isDirect)
         {
             var pending = extras.Where(e => e.Status == "pending").ToList();
             if (pending.Count == 0) return;
 
-            var totalFee = extrasOwnTheFee ? (await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0) : 0;
+            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
+            var totalFee = (isDirect || !extrasOwnTheFee) ? 0 : (await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0);
             var totalGross = pending.Sum(e => (long)e.AmountCents);
             var feeDistributed = 0;
             var occurredAt = DateTime.UtcNow;
@@ -364,7 +381,7 @@ namespace webapi.Payments
                 x.Status = "paid";
                 try
                 {
-                    var calc = await _feeCalculator.Calculate(x.TenantId, x.AmountCents, stripeFeeForLine, x.ServiceChargeCents, occurredAt);
+                    var calc = await _feeCalculator.Calculate(x.TenantId, x.AmountCents, stripeFeeForLine, x.ServiceChargeCents, occurredAt, isDirect);
                     await _ledger.Insert(new TenantLedgerEntry
                     {
                         TenantId = x.TenantId,
@@ -377,7 +394,7 @@ namespace webapi.Payments
                         RidepassCutCents = calc.RidepassCutCents,
                         NetToTenantCents = calc.NetToTenantCents,
                         StripePaymentIntentId = paymentIntentId,
-                        PaymentMethod = "stripe",
+                        PaymentMethod = isDirect ? "stripe_direct" : "stripe",
                     });
                 }
                 catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -390,13 +407,14 @@ namespace webapi.Payments
         // Rental: flip to paid AND write a sale ledger entry. A rental is the only sale on
         // its PaymentIntent (the security deposit is a separate hold on its own PI), so it
         // carries the full Stripe fee.
-        private async Task OnRentalPaid(RentalPurchase r)
+        private async Task OnRentalPaid(RentalPurchase r, bool isDirect)
         {
-            var stripeFee = await _payments.GetActualStripeFeeCentsAsync(r.RentalPiId!) ?? 0;
+            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(r.RentalPiId!) ?? 0);
             await _rentals.UpdateStatus(r.Id, "paid");
             try
             {
-                var calc = await _feeCalculator.Calculate(r.TenantId, r.AmountCents, stripeFee, r.ServiceChargeCents, DateTime.UtcNow);
+                var calc = await _feeCalculator.Calculate(r.TenantId, r.AmountCents, stripeFee, r.ServiceChargeCents, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = r.TenantId,
@@ -409,7 +427,7 @@ namespace webapi.Payments
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = calc.NetToTenantCents,
                     StripePaymentIntentId = r.RentalPiId,
-                    PaymentMethod = "stripe",
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -423,11 +441,38 @@ namespace webapi.Payments
         // cut is computed from the tenant's bps on the gross.
         private async Task OnConcessionPaid(Services.Repositories.Data.ConcessionData.ConcessionSale sale)
         {
-            var stripeFee = await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0;
+            // Direct mode = the card sale ran on the tenant's own connected account (snapshotted on
+            // the sale). In direct mode the tenant bore the Stripe fee, so we record no Stripe fee and
+            // no net-to-tenant (they already hold the funds).
+            var isDirect = !string.IsNullOrEmpty(sale.StripeConnectedAccountId);
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0);
             await _concessions.MarkSalePaid(sale.Id);
+            // Assign the pickup number now that the card sale is paid (cash sales get theirs at the
+            // counter). Skipped automatically on a duplicate webhook (order_number already set).
+            if (sale.OrderNumber is null)
+            {
+                var orderNumber = await _concessions.NextOrderNumber(sale.TenantId, DateTime.UtcNow);
+                await _concessions.SetOrderNumber(sale.Id, orderNumber);
+                // Deplete theoretical inventory once, when the order number is first assigned (so a
+                // duplicate webhook can't double-deplete). Best-effort.
+                try { await _concessions.DepleteInventoryForSale(sale.Id, sale.TenantId); } catch { /* inventory is best-effort */ }
+                // Alert F&B managers + admins about any item that just went low (de-duped, best-effort).
+                try
+                {
+                    var low = await _concessions.MarkAndGetNewlyLowStock(sale.TenantId);
+                    if (low.Count > 0)
+                    {
+                        var names = string.Join(", ", low.Select(i => i.Name));
+                        var title = low.Count == 1 ? "1 item low on stock" : $"{low.Count} items low on stock";
+                        await _notifications.EmitToTenantRoles(sale.TenantId, new[] { "tenant_manager", "tenant_admin" },
+                            NotificationKinds.LowStock, title, $"Running low: {names}.", "/Admin/Concessions");
+                    }
+                }
+                catch { /* alerting is best-effort */ }
+            }
             try
             {
-                var calc = await _feeCalculator.Calculate(sale.TenantId, sale.TotalCents, stripeFee, 0, DateTime.UtcNow);
+                var calc = await _feeCalculator.Calculate(sale.TenantId, sale.TotalCents, stripeFee, 0, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = sale.TenantId,
@@ -440,7 +485,8 @@ namespace webapi.Payments
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = calc.NetToTenantCents,
                     StripePaymentIntentId = sale.StripePaymentIntentId,
-                    PaymentMethod = "stripe",
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    SoldByUserId = sale.SoldByUserId,   // cashier on counter card sales; null for online orders
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -542,9 +588,12 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 
         private async Task OnPaymentSucceeded(
             string paymentIntentId,
-            List<EventTicketPurchase> tickets)
+            List<EventTicketPurchase> tickets,
+            bool isDirect)
         {
-            var totalStripeFee = await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0;
+            // Direct charge: the tenant's own account bore the Stripe fee, so we record none on our
+            // ledger (and skip the fee lookup, which would target the platform account anyway).
+            var totalStripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0);
 
             // Pro-rata distribute the single PI-level Stripe fee across all line items by gross.
             // MarkPaid updates BOTH the DB and the in-memory POCO so the per-purchase
@@ -587,7 +636,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                     : (int)(totalStripeFee * line.Gross / totalGross);
                 feeDistributed += stripeFeeForLine;
 
-                var calc = await _feeCalculator.Calculate(line.TenantId, line.Gross, stripeFeeForLine, line.ServiceCharge, occurredAt);
+                var calc = await _feeCalculator.Calculate(line.TenantId, line.Gross, stripeFeeForLine, line.ServiceCharge, occurredAt, isDirect);
 
                 await line.MarkPaid();
 
@@ -607,7 +656,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                         AppliedTierId = calc.AppliedTierId,
                         CumulativeMonthlyVolumeAtSaleCents = calc.CumulativeMonthlyVolumeAtSaleCents,
                         StripePaymentIntentId = paymentIntentId,
-                        PaymentMethod = "stripe",
+                        PaymentMethod = isDirect ? "stripe_direct" : "stripe",
                     });
                 }
                 catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")

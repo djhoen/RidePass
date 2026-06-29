@@ -17,6 +17,7 @@ namespace Services.Repositories
             service_charge_cents AS ServiceChargeCents,
             payment_method AS PaymentMethod,
             stripe_payment_intent_id AS StripePaymentIntentId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             status,
             cancelled_reason AS CancelledReason,
             cancelled_by_user_id AS CancelledByUserId,
@@ -110,6 +111,18 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE membership_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account this membership was charged on (bundled onto a
+        // direct event-ticket cart) and flag the row so refunds act on the right account.
+        public async Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE membership_purchase
+                SET stripe_connected_account_id = @connectedAccountId,
+                    payment_method = 'stripe_direct'
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task UpdateStatus(Guid id, string status)

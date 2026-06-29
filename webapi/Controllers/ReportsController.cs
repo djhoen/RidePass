@@ -14,6 +14,7 @@ namespace webapi.Controllers
     public class ReportsController : ControllerBase
     {
         private readonly IReportsRepository _reports;
+        private readonly IConcessionRepository _concessions;
         private readonly IEventRepository _events;
         private readonly IWaiverRepository _waivers;
         private readonly IMembershipRepository _memberships;
@@ -24,9 +25,11 @@ namespace webapi.Controllers
         private readonly IScheduledTaskRepository _scheduledTasks;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
+        private readonly ITenantTaxRepository _tax;
 
         public ReportsController(
             IReportsRepository reports,
+            IConcessionRepository concessions,
             IEventRepository events,
             IWaiverRepository waivers,
             IMembershipRepository memberships,
@@ -36,9 +39,11 @@ namespace webapi.Controllers
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
             Services.Waivers.IWaiverCheckInGate waiverGate,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            ITenantTaxRepository tax)
         {
             _reports = reports;
+            _concessions = concessions;
             _events = events;
             _waivers = waivers;
             _memberships = memberships;
@@ -49,6 +54,7 @@ namespace webapi.Controllers
             _scheduledTasks = scheduledTasks;
             _waiverGate = waiverGate;
             _tenantContext = tenantContext;
+            _tax = tax;
         }
 
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
@@ -106,6 +112,32 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(summary);
         }
 
+        // ── Admission / amusement tax collected ─────────────────────────────────
+        // Tax the tenant collected on event admissions in the range, so they can remit it. Net =
+        // collected minus tax on refunded tickets. Excludes concession sales tax (a separate report).
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/AdmissionTax")]
+        public async Task<IActionResult> GetAdmissionTax([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");
+
+            var totals = await _reports.GetAdmissionTaxTotals(_tenantContext.TenantId, fromUtc, toUtc);
+            var cfg = await _tax.GetByKind(_tenantContext.TenantId, "admission");
+            return new ApiResponses().OkResult(new AdmissionTaxReport
+            {
+                FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
+                ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
+                TaxCollectedCents = totals.TaxCollectedCents,
+                RefundedTaxCents = totals.RefundedTaxCents,
+                NetTaxCents = totals.TaxCollectedCents - totals.RefundedTaxCents,
+                TaxableSalesCents = totals.TaxableSalesCents,
+                TaxedTicketCount = totals.TaxedTicketCount,
+                CurrentRateBps = cfg?.RateBps ?? 0,
+                JurisdictionLabel = cfg?.JurisdictionLabel,
+            });
+        }
+
         private static DailyRevenuePointDto MapDaily(DailyRevenuePoint p) => new()
         {
             Date = p.Date,
@@ -113,6 +145,113 @@ namespace webapi.Controllers
             PassesSold = p.PassesSold,
             TicketsSold = p.TicketsSold,
         };
+
+        // ── Food & Beverage profitability ───────────────────────────────────────
+        // Revenue, theoretical COGS (from recipes), and margin for concession sales in a range, broken
+        // out by item, category, payment method, and hour of day. Paid sales only; refunds reported apart.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/ConcessionProfitability")]
+        public async Task<IActionResult> GetConcessionProfitability([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");
+
+            var tenantId = _tenantContext.TenantId;
+            var tz = _tenantContext.Tenant.Timezone;
+
+            var agg = await _concessions.GetSalesAggregate(tenantId, fromUtc, toUtc);
+            var cogs = await _concessions.GetCogsTotal(tenantId, fromUtc, toUtc);
+            var refunds = await _concessions.GetRefundAggregate(tenantId, fromUtc, toUtc);
+            var payments = await _concessions.GetPaymentBreakdown(tenantId, fromUtc, toUtc);
+            var items = await _concessions.GetItemProfitability(tenantId, fromUtc, toUtc);
+            var categories = await _concessions.GetCategoryProfitability(tenantId, fromUtc, toUtc);
+            var hours = await _concessions.GetHourlyProfitability(tenantId, fromUtc, toUtc, tz);
+
+            var grossProfit = agg.NetSalesCents - cogs;
+            var report = new ConcessionProfitabilityReport
+            {
+                FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
+                ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
+                NetSalesCents = agg.NetSalesCents,
+                TaxCents = agg.TaxCents,
+                TipsCents = agg.TipCents,
+                GrossSalesCents = agg.TotalCents,
+                CogsCents = cogs,
+                GrossProfitCents = grossProfit,
+                MarginPct = Margin(grossProfit, agg.NetSalesCents),
+                OrderCount = agg.OrderCount,
+                AvgOrderValueCents = agg.OrderCount > 0 ? agg.TotalCents / agg.OrderCount : 0,
+                RefundedCount = refunds.RefundedCount,
+                RefundedAmountCents = refunds.RefundedAmountCents,
+                Items = items.Select(i => new ConcessionProfitabilityReport.ItemRow
+                {
+                    Name = i.Name,
+                    QtySold = i.QtySold,
+                    RevenueCents = i.RevenueCents,
+                    CogsCents = i.CogsCents,
+                    ProfitCents = i.RevenueCents - i.CogsCents,
+                    MarginPct = Margin(i.RevenueCents - i.CogsCents, i.RevenueCents),
+                }).ToList(),
+                Categories = categories.Select(c => new ConcessionProfitabilityReport.CategoryRow
+                {
+                    Category = c.Category,
+                    RevenueCents = c.RevenueCents,
+                    CogsCents = c.CogsCents,
+                    ProfitCents = c.RevenueCents - c.CogsCents,
+                    MarginPct = Margin(c.RevenueCents - c.CogsCents, c.RevenueCents),
+                }).ToList(),
+                Payments = payments.Select(p => new ConcessionProfitabilityReport.PaymentRow
+                {
+                    Method = p.PaymentMethod,
+                    Count = p.SaleCount,
+                    AmountCents = p.AmountCents,
+                }).ToList(),
+                Hours = hours.Select(h => new ConcessionProfitabilityReport.HourRow
+                {
+                    Hour = h.Hour,
+                    RevenueCents = h.RevenueCents,
+                    OrderCount = h.OrderCount,
+                }).ToList(),
+            };
+            return new ApiResponses().OkResult(report);
+        }
+
+        // Margin % of a revenue base, rounded to one decimal; 0 when there's no revenue.
+        private static double Margin(long profitCents, long baseCents)
+            => baseCents > 0 ? Math.Round(profitCents * 100.0 / baseCents, 1) : 0;
+
+        // ── Food & Beverage sales by employee ────────────────────────────────────
+        // Per-seller F&B totals (sales, tender, tips, refunds) over a range, for staff accountability.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/ConcessionEmployees")]
+        public async Task<IActionResult> GetConcessionEmployees([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");
+
+            var rows = await _concessions.GetEmployeeSales(_tenantContext.TenantId, fromUtc, toUtc);
+            var report = new ConcessionEmployeeReport
+            {
+                FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
+                ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
+                Rows = rows.Select(r => new ConcessionEmployeeReport.Row
+                {
+                    UserId = r.UserId,
+                    Name = string.IsNullOrWhiteSpace(r.Name) ? "Unattributed" : r.Name,
+                    OrdersCount = r.OrdersCount,
+                    GrossSalesCents = r.GrossSalesCents,
+                    NetSalesCents = r.NetSalesCents,
+                    TaxCents = r.TaxCents,
+                    TipCents = r.TipCents,
+                    CashCents = r.CashCents,
+                    CardCents = r.CardCents,
+                    RefundedCount = r.RefundedCount,
+                    RefundedCents = r.RefundedCents,
+                    AvgOrderValueCents = r.OrdersCount > 0 ? r.GrossSalesCents / r.OrdersCount : 0,
+                }).ToList(),
+            };
+            return new ApiResponses().OkResult(report);
+        }
 
         // ── Event Riders ────────────────────────────────────────────────────
         // Roll-call for one event: every paid registrant across pass / ticket /

@@ -207,7 +207,9 @@ async function createIntent() {
 
 async function mountPayElement() {
     if (!clientSecret.value) return
-    stripe = await getStripe(branding.stripePublishableKey)
+    // Direct-charge tenants confirm on their own connected account; platform tenants pass no account.
+    const stripeAccount = branding.stripeChargeMode === 'direct' ? branding.stripeConnectAccountId : null
+    stripe = await getStripe(branding.stripePublishableKey, stripeAccount)
     if (!stripe) { paymentError.value = 'Stripe not available.'; return }
     elements = stripe.elements({ clientSecret: clientSecret.value })
     const pe = elements.create('payment')

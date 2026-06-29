@@ -65,16 +65,19 @@ namespace Services.Repositories
             await _db.Execute(sql, new { id, paymentIntentId });
         }
 
-        public async Task ApplyToBalance(Guid id, int amountCents)
+        public async Task<bool> ApplyToBalance(Guid id, int amountCents)
         {
-            // Atomic decrement + status flip. CASE handles the depleted transition without
-            // a follow-up UPDATE; refund flow uses a separate path.
+            // Atomic CONDITIONAL decrement + status flip. The `balance_cents >= @amountCents`
+            // guard means two concurrent checkouts on the same card can't both spend it: the
+            // loser's UPDATE matches no row and returns false, so the caller can reject it
+            // instead of driving the balance negative (double-spend). CASE handles the depleted
+            // transition without a follow-up UPDATE; refund flow uses a separate path.
             const string sql = @"
                 UPDATE gift_card
                 SET balance_cents = balance_cents - @amountCents,
                     status = CASE WHEN balance_cents - @amountCents <= 0 THEN 'depleted' ELSE status END
-                WHERE id = @id";
-            await _db.Execute(sql, new { id, amountCents });
+                WHERE id = @id AND balance_cents >= @amountCents";
+            return await _db.Execute(sql, new { id, amountCents }) > 0;
         }
 
         public async Task RestoreBalance(Guid id, int amountCents)

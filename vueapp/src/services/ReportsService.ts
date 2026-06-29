@@ -45,6 +45,73 @@ export interface TenantReportSummary {
     topEvents: TopEvent[]
 }
 
+// ── F&B profitability ────────────────────────────────────────────────
+export interface ConcessionProfitItem {
+    name: string
+    qtySold: number
+    revenueCents: number
+    cogsCents: number
+    profitCents: number
+    marginPct: number
+}
+export interface ConcessionProfitCategory {
+    category: string
+    revenueCents: number
+    cogsCents: number
+    profitCents: number
+    marginPct: number
+}
+export interface ConcessionProfitPayment {
+    method: string
+    count: number
+    amountCents: number
+}
+export interface ConcessionProfitHour {
+    hour: number
+    revenueCents: number
+    orderCount: number
+}
+export interface ConcessionProfitabilityReport {
+    fromUtc: string
+    toUtc: string
+    netSalesCents: number
+    taxCents: number
+    tipsCents: number
+    grossSalesCents: number
+    cogsCents: number
+    grossProfitCents: number
+    marginPct: number
+    orderCount: number
+    avgOrderValueCents: number
+    refundedCount: number
+    refundedAmountCents: number
+    items: ConcessionProfitItem[]
+    categories: ConcessionProfitCategory[]
+    payments: ConcessionProfitPayment[]
+    hours: ConcessionProfitHour[]
+}
+
+// ── F&B sales by employee ─────────────────────────────────────────────
+export interface ConcessionEmployeeRow {
+    userId: string | null
+    name: string
+    ordersCount: number
+    grossSalesCents: number
+    netSalesCents: number
+    taxCents: number
+    tipCents: number
+    cashCents: number
+    cardCents: number
+    refundedCount: number
+    refundedCents: number
+    avgOrderValueCents: number
+}
+export interface ConcessionEmployeeReport {
+    fromUtc: string
+    toUtc: string
+    rows: ConcessionEmployeeRow[]
+}
+
 export interface TenantBreakdownRow {
     tenantId: string
     subdomain: string
@@ -79,6 +146,18 @@ export class ReportsService {
 
     getTenantSummary(fromUtc: string, toUtc: string) {
         return axios.get<{ data: TenantReportSummary }>(`${this.apiUrl}/Reports/Admin/Summary`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    getConcessionProfitability(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: ConcessionProfitabilityReport }>(`${this.apiUrl}/Reports/Admin/ConcessionProfitability`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    getConcessionEmployees(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: ConcessionEmployeeReport }>(`${this.apiUrl}/Reports/Admin/ConcessionEmployees`, {
             params: { fromUtc, toUtc },
         })
     }

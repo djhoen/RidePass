@@ -268,7 +268,9 @@ async function buy(p: SeasonPassProduct) {
 
 async function mountStripe() {
     if (!purchaseInFlight.value) return
-    stripe = await getStripe(branding.stripePublishableKey)
+    // Direct-charge tenants confirm on their own connected account; platform tenants pass no account.
+    const stripeAccount = branding.stripeChargeMode === 'direct' ? branding.stripeConnectAccountId : null
+    stripe = await getStripe(branding.stripePublishableKey, stripeAccount)
     if (!stripe) { paymentError.value = 'Stripe not available.'; return }
     elements = stripe.elements({ clientSecret: purchaseInFlight.value.clientSecret })
     const pe = elements.create('payment')

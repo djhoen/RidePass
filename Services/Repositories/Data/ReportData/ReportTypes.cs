@@ -9,6 +9,15 @@
         public long RefundedCents { get; set; }
     }
 
+    // Admission/amusement tax collected on event tickets in a date range, for the tenant's remittance.
+    public class AdmissionTaxTotals
+    {
+        public long TaxCollectedCents { get; set; }   // paid + redeemed
+        public long TaxableSalesCents { get; set; }    // gross (tax-inclusive) of taxed rows
+        public int TaxedTicketCount { get; set; }
+        public long RefundedTaxCents { get; set; }     // tax on refunded rows
+    }
+
     public class DailyRevenuePoint
     {
         public string Date { get; set; } = null!;

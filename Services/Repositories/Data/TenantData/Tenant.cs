@@ -23,9 +23,17 @@ namespace Services.Repositories.Data.TenantData
         public bool RequireIdAtCheckin { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted
+        // 'platform' (default): charges run on the platform account, internal split, monthly payout.
+        // 'direct': charges run on the tenant's own connected account with an application fee = our
+        // service fee; the tenant is merchant of record and there is no platform payout. Required for
+        // tenants exceeding the $1M/yr card-network sub-merchant threshold. Super-admin controlled.
+        public string StripeChargeMode { get; set; } = "platform";
         // Lazily provisioned the first time a cashier opens the mobile app at
         // this tenant — required for Stripe Terminal tap-to-pay.
         public string? StripeTerminalLocationId { get; set; }
+        // Terminal Location on the tenant's OWN connected account, provisioned lazily for 'direct'
+        // mode card-present sales. Separate from StripeTerminalLocationId (the platform-account one).
+        public string? StripeConnectedTerminalLocationId { get; set; }
         // Per-tenant Twilio Subaccount, provisioned lazily via Settings → SMS.
         // AuthToken is stored encrypted via EncryptionHelper; consumers must
         // decrypt before passing to Twilio. Until populated, SMS sends fall

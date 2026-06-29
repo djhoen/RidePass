@@ -341,9 +341,12 @@ namespace webapi.Controllers
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Users")]
-        public async Task<IActionResult> ListUsers([FromQuery] string? q)
+        public async Task<IActionResult> ListUsers([FromQuery] string? q, [FromQuery] string? role,
+            [FromQuery] Guid? tenantId, [FromQuery] string? status)
         {
-            var users = await _users.SearchAll(q, 100);
+            // A search term searches every user (filters ignored); otherwise default to tenant users
+            // only, narrowed by the role/tenant/status filters.
+            var users = await _users.SearchUsers(q, role, tenantId, status, 200);
             var tenantIds = users.Where(u => u.TenantId.HasValue).Select(u => u.TenantId!.Value).Distinct();
             var tenantsById = new Dictionary<Guid, Tenant>();
             foreach (var id in tenantIds)
@@ -603,10 +606,14 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Nothing to refund (service charge already withheld).");
             }
 
+            // Direct charge: refund on the tenant's connected account and return our application fee.
+            var isDirect = !string.IsNullOrEmpty(purchase.StripeConnectedAccountId);
             try
             {
                 var refund = await _payments.RefundAsync(purchase.StripePaymentIntentId, refundCents,
-                    idempotencyKey: $"refund-ticket-{id}-{refundCents}", ct: ct);
+                    idempotencyKey: $"refund-ticket-{id}-{refundCents}",
+                    connectedAccountId: isDirect ? purchase.StripeConnectedAccountId : null,
+                    refundApplicationFee: isDirect, ct: ct);
                 await _tickets.MarkRefunded(id, $"stripe_refund={refund.RefundId} status={refund.Status} amount_cents={refundCents}");
                 await WriteRefundLedgerEntry(purchase.TenantId, "event_ticket", id, refund.RefundId);
                 var amount = $"${(refundCents / 100m):0.00}";
@@ -761,6 +768,7 @@ namespace webapi.Controllers
                 request.ClientType, customDomain, request.CustomDomainVerified, request.EmbedEnabled, embedOrigins,
                 Norm(request.ExternalHomeUrl), Norm(request.ExternalEventsUrl), request.EmbedEventTarget);
             await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
+            await _tenants.SetStripeChargeMode(tenantId, request.StripeChargeMode);
             await _tenants.UpdateFeatures(tenantId,
                 request.GiftCardsEnabled, request.RentalsEnabled, request.ExtrasEnabled, request.SeasonPassesEnabled,
                 request.ConcessionsEnabled, request.BlogEnabled, request.MembershipEnabled,
@@ -776,6 +784,32 @@ namespace webapi.Controllers
                 new { request.DisplayName, request.Status, request.Timezone, request.IsPublished, request.City, request.Region, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents });
 
             return new ApiResponses().OkResult(new { tenantId });
+        }
+
+        // Round-trips a no-op call to the tenant's connected Stripe account to confirm direct charges
+        // will work (account exists, platform access not revoked, charges/payouts enabled). Lets a
+        // super-admin verify a track's own-account setup before/after flipping it to 'direct' mode.
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("Tenants/{tenantId:guid}/TestStripeConnect")]
+        public async Task<IActionResult> TestTenantStripeConnect(Guid tenantId, CancellationToken ct)
+        {
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
+            if (string.IsNullOrEmpty(tenant.StripeConnectAccountId))
+                return new ApiResponses().BadRequestResult("This track has no connected Stripe account on file.");
+            try
+            {
+                var result = await _payments.TestConnectAccountAsync(tenant.StripeConnectAccountId, ct);
+                return new ApiResponses().OkResult(result);
+            }
+            catch (Stripe.StripeException ex)
+            {
+                return new ApiResponses().BadRequestResult($"Stripe rejected the call: {ex.StripeError?.Message ?? ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                return new ApiResponses().BadRequestResult($"Test failed: {ex.Message}");
+            }
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -1093,6 +1127,8 @@ namespace webapi.Controllers
             Timezone = t.Timezone,
             ServiceChargeBps = t.ServiceChargeBps,
             MonthlyServiceChargeCapCents = t.MonthlyServiceChargeCapCents,
+            StripeChargeMode = t.StripeChargeMode,
+            StripeConnectStatus = t.StripeConnectStatus,
             IsPublished = t.IsPublished,
             GiftCardsEnabled = t.GiftCardsEnabled,
             RentalsEnabled = t.RentalsEnabled,

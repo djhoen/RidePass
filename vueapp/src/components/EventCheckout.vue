@@ -81,6 +81,10 @@
                         <span>{{ priceLabel(serviceFeeCents) }}</span>
                     </div>
                 </template>
+                <div v-if="estTaxCents > 0" class="d-flex align-center justify-space-between text-body-2 text-medium-emphasis mb-1">
+                    <span>Tax</span>
+                    <span>{{ priceLabel(estTaxCents) }}</span>
+                </div>
                 <div class="d-flex align-center justify-space-between mb-3">
                     <span class="text-h6">Total</span>
                     <span class="text-h6 font-weight-bold">{{ priceLabel(grandTotalCents) }}</span>
@@ -145,6 +149,10 @@
                 <div v-if="serviceFeeCents > 0" class="d-flex justify-space-between text-body-2 py-1 pl-4">
                     <span class="text-medium-emphasis">Service fee</span>
                     <span class="text-medium-emphasis">{{ priceLabel(serviceFeeCents) }}</span>
+                </div>
+                <div v-if="estTaxCents > 0" class="d-flex justify-space-between text-body-2 py-1 pl-4">
+                    <span class="text-medium-emphasis">Tax</span>
+                    <span class="text-medium-emphasis">{{ priceLabel(estTaxCents) }}</span>
                 </div>
                 <v-divider class="my-2"></v-divider>
                 <div class="d-flex justify-space-between">
@@ -282,6 +290,7 @@ import { getStripe } from '@/helpers/StripeHelper'
 import SignaturePad from '@/components/SignaturePad.vue'
 import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue'
 import AccountSignupForm from '@/components/AccountSignupForm.vue'
+import { TaxService } from '@/services/TaxService'
 import type { EventDto, EligibleExtra } from '@/services/EventService'
 
 const props = defineProps<{ event: EventDto; tiers: TicketTier[] }>()
@@ -292,7 +301,13 @@ const emit = defineEmits<{ (e: 'price-changed'): void }>()
 const ticketService = new TicketService()
 const userService = new UserService()
 const upcomingService = new UpcomingService()
+const taxService = new TaxService()
 const confirm = useConfirm()
+
+// Admission tax config for the estimate shown before payment. The server is authoritative
+// (it returns the exact taxCents on the purchase), so this only drives the pre-pay estimate.
+const admissionTaxCfg = ref<{ rateBps: number; pricesIncludeTax: boolean; serviceChargeTaxable: boolean }>(
+    { rateBps: 0, pricesIncludeTax: false, serviceChargeTaxable: true })
 
 type Step = 'select' | 'details' | 'payment' | 'register' | 'done'
 const step = ref<Step>('select')
@@ -469,7 +484,23 @@ const serviceFeeCents = computed(() => {
     }
     return fee
 })
-const grandTotalCents = computed(() => estTotalCents.value + serviceFeeCents.value)
+// Estimated admission tax for the pre-pay summary. Tickets only (admission tax doesn't apply to
+// extras). Mirrors the server's per-unit rounding. Inclusive pricing adds nothing on top (the tax
+// is already in the listed price), so the estimate is 0 there. The server returns the exact tax.
+const estTaxCents = computed(() => {
+    const cfg = admissionTaxCfg.value
+    if (!cfg.rateBps || cfg.pricesIncludeTax) return 0
+    let tax = 0
+    for (const t of props.tiers) {
+        const q = qty[t.id] || 0
+        if (q <= 0) continue
+        const fee = riderFeePerUnit(t.priceCents, t.riderPaidServiceChargeBps ?? 10000)
+        const base = cfg.serviceChargeTaxable ? t.priceCents + fee : t.priceCents
+        tax += Math.round((base * cfg.rateBps) / 10000) * q
+    }
+    return tax
+})
+const grandTotalCents = computed(() => estTotalCents.value + serviceFeeCents.value + estTaxCents.value)
 const detailsValid = computed(() => name.value.trim().length > 1 && /\S+@\S+\.\S+/.test(email.value.trim()))
 const anyWaiver = computed(() => riders.value.some(r => r.needsWaiver) || spectators.value.length > 0)
 
@@ -547,6 +578,19 @@ watch([maxClassQty, totalRaceQty], ([lo, hi]) => {
 })
 
 onMounted(async () => {
+    // Load the tenant's admission tax so the pre-pay estimate can show a tax line.
+    try {
+        const tr = await taxService.getAdmissionTax()
+        const cfg = tr.data?.data
+        if (cfg) {
+            admissionTaxCfg.value = {
+                rateBps: cfg.rateBps ?? 0,
+                pricesIncludeTax: !!cfg.pricesIncludeTax,
+                serviceChargeTaxable: cfg.serviceChargeTaxable ?? true,
+            }
+        }
+    } catch { /* estimate falls back to no tax; the server still charges the correct amount */ }
+
     if (isAuthed.value) {
         try {
             const r = await userService.getProfile()
@@ -725,7 +769,10 @@ function buildRegistration(tickets: TicketRedemption[]) {
 
 async function mountPaymentElement() {
     if (!clientSecret.value) return
-    stripe = await getStripe(branding.stripePublishableKey)
+    // Direct-charge tenants confirm the payment on their own connected account, so Stripe.js must
+    // be initialized with that account; platform-mode tenants pass no account (charge on platform).
+    const stripeAccount = branding.stripeChargeMode === 'direct' ? branding.stripeConnectAccountId : null
+    stripe = await getStripe(branding.stripePublishableKey, stripeAccount)
     if (!stripe) { paymentError.value = 'Stripe is not available.'; return }
     elements = stripe.elements({ clientSecret: clientSecret.value })
     const pe = elements.create('payment')

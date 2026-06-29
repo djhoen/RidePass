@@ -24,6 +24,7 @@ namespace Services.Repositories
             id, tenant_id AS TenantId, purchaser_user_id AS PurchaserUserId,
             product_id AS ProductId, waiver_signature_id AS WaiverSignatureId,
             stripe_payment_intent_id AS StripePaymentIntentId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             amount_cents AS AmountCents, service_charge_cents AS ServiceChargeCents,
             payment_method AS PaymentMethod, status,
             purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
@@ -217,6 +218,7 @@ namespace Services.Repositories
                     sp.id, sp.tenant_id AS TenantId, sp.purchaser_user_id AS PurchaserUserId,
                     sp.product_id AS ProductId, sp.waiver_signature_id AS WaiverSignatureId,
                     sp.stripe_payment_intent_id AS StripePaymentIntentId,
+                    sp.stripe_connected_account_id AS StripeConnectedAccountId,
                     sp.amount_cents AS AmountCents, sp.service_charge_cents AS ServiceChargeCents,
                     sp.payment_method AS PaymentMethod, sp.status,
                     sp.purchaser_email AS PurchaserEmail, sp.purchaser_name AS PurchaserName,
@@ -243,6 +245,17 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE season_pass_purchase SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
             await _db.Execute(sql, new { id, paymentIntentId });
+        }
+
+        // Direct charge: snapshot the connected account this pass was charged on and flag the row.
+        public async Task MarkPurchaseDirectCharge(Guid id, Guid tenantId, string connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET stripe_connected_account_id = @connectedAccountId,
+                    payment_method = 'stripe_direct'
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, connectedAccountId });
         }
 
         public async Task UpdatePurchaseStatus(Guid id, string status)

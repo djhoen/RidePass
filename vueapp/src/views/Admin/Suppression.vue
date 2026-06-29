@@ -8,7 +8,7 @@
             <v-btn color="primary" prepend-icon="mdi-email-off" @click="addDialog = true">Suppress address</v-btn>
         </div>
 
-        <p class="text-body-2 text-medium-emphasis mb-6" style="max-width: 720px;">
+        <p class="text-body-2 text-medium-emphasis mb-6">
             Addresses here are skipped on every marketing send (campaigns, reward nudges, rider email blasts).
             Entries come from one-click unsubscribes, spam complaints, hard bounces, or a manual add below.
             Receipts and account emails are unaffected. Platform-wide hard bounces are enforced automatically

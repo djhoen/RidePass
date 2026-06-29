@@ -30,7 +30,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Use the fully-qualified type name for schema ids so nested DTO classes that share a simple name
+    // (e.g. several `Option` / `Line` request/response classes) don't collide on the default short name.
+    options.CustomSchemaIds(type => (type.FullName ?? type.Name).Replace('+', '.'));
+});
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 
@@ -82,6 +87,7 @@ builder.Services.AddSingleton<webapi.Sync.TenantSyncImageStore>();
 builder.Services.AddHttpClient<webapi.Sync.TenantSyncClient>();
 builder.Services.AddScoped<webapi.Sync.TenantPromotionService>();
 builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
+builder.Services.AddScoped<ITenantTaxRepository, TenantTaxRepository>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICashRepository, CashRepository>();
@@ -108,6 +114,7 @@ builder.Services.AddScoped<IMembershipRepository, MembershipRepository>();
 builder.Services.AddScoped<Services.Waitlist.IWaitlistPromoter, Services.Waitlist.WaitlistPromoter>();
 builder.Services.AddHostedService<webapi.Workers.WaitlistExpiryWorker>();
 builder.Services.AddScoped<IFeeCalculator, FeeCalculator>();
+builder.Services.AddSingleton<IChargeRouter, ChargeRouter>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationPreferenceRepository, NotificationPreferenceRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();

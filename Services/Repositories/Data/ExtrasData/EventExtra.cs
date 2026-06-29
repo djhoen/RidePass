@@ -72,6 +72,9 @@ namespace Services.Repositories.Data.ExtrasData
         public int AmountCents { get; set; }
         public int ServiceChargeCents { get; set; }
         public string? StripePaymentIntentId { get; set; }
+        // Set for direct charges (bundled onto a direct event-ticket cart): the connected account
+        // this row was charged on. NULL = platform charge. Drives refunds onto the right account.
+        public string? StripeConnectedAccountId { get; set; }
         public Guid RedemptionToken { get; set; }
         public string Status { get; set; } = "pending";
         public DateTime? RedeemedAtUtc { get; set; }
