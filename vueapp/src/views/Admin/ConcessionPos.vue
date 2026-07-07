@@ -1300,7 +1300,8 @@ async function sendReceipt() {
             quantity: l.quantity, name: l.name, variantLabel: l.variantLabel,
             modifierLabels: l.modifierLabels, notes: l.notes, lineTotal: l.lineTotal,
         })),
-        subtotalCents: rec.subtotal, taxCents: rec.tax, pricesIncludeTax: rec.pricesIncludeTax,
+        subtotalCents: rec.subtotal, discountCents: rec.discount ?? 0, discountLabel: null,
+        taxCents: rec.tax, pricesIncludeTax: rec.pricesIncludeTax,
         tipCents: rec.tip, totalCents: rec.total, method: rec.method,
     }
     await printReceipt(printerUrl.value, receipt)

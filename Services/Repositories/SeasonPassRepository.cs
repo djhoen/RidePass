@@ -338,7 +338,9 @@ namespace Services.Repositories
             return (await _db.Query<SeasonPassReservationWithContext>(sql, new { purchaseId, atUtc, untilUtc })).ToList();
         }
 
-        public async Task UpdateReservationStatus(Guid id, Guid tenantId, string status, Guid? checkedInByUserId = null)
+        // Returns the number of rows affected so callers can detect a no-op transition (e.g. an
+        // attempt to check in a reservation whose parent pass was refunded/cancelled).
+        public async Task<int> UpdateReservationStatus(Guid id, Guid tenantId, string status, Guid? checkedInByUserId = null)
         {
             // Tenant scope is enforced by joining to season_pass_purchase. season_pass_reservation
             // doesn't carry tenant_id directly, so we filter via its parent purchase to refuse
@@ -347,13 +349,18 @@ namespace Services.Repositories
             string sql;
             if (status == "checked_in")
             {
+                // Only a live 'reserved' row on a still-paid pass may be checked in. This blocks
+                // checking in a cancelled reservation or one whose pass was refunded/cancelled (which
+                // a later un-check would resurrect to 'reserved', re-granting event access).
                 sql = @"UPDATE season_pass_reservation r
                         SET status = @status, checked_in_at = now(),
                             checked_in_by_user_id = @checkedInByUserId
                         FROM season_pass_purchase p
                         WHERE r.id = @id
                           AND r.season_pass_purchase_id = p.id
-                          AND p.tenant_id = @tenantId";
+                          AND p.tenant_id = @tenantId
+                          AND r.status = 'reserved'
+                          AND p.status NOT IN ('refunded', 'cancelled')";
             }
             else if (status == "cancelled")
             {
@@ -373,7 +380,7 @@ namespace Services.Repositories
                           AND r.season_pass_purchase_id = p.id
                           AND p.tenant_id = @tenantId";
             }
-            await _db.Execute(sql, new { id, tenantId, status, checkedInByUserId });
+            return await _db.Execute(sql, new { id, tenantId, status, checkedInByUserId });
         }
 
         public async Task<Dictionary<Guid, int>> ActiveReservationsForEvents(IEnumerable<Guid> eventIds)

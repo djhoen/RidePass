@@ -108,6 +108,9 @@ function formatTime(iso: string): string {
 
 async function loadReport() {
     if (!localDate.value) return
+    // Tapping prev/next day quickly can leave two loads in flight; only the latest applies its
+    // result so an older day's slower response can't display under the current date.
+    const seq = ++reportSeq
     loading.value = true
     try {
         // Compute the local-day window in tenant tz, convert to UTC for the API.
@@ -115,13 +118,16 @@ async function loadReport() {
         const fromUtc = start.utc().toISOString()
         const toUtc = start.add(1, 'day').utc().toISOString()
         const r = await reportsService.getDailyEvents(fromUtc, toUtc, localDate.value)
+        if (seq !== reportSeq) return
         report.value = (r.data as any).data
     } catch (err: any) {
+        if (seq !== reportSeq) return
         flash(err.response?.data?.error || 'Failed to load report.')
     } finally {
-        loading.value = false
+        if (seq === reportSeq) loading.value = false
     }
 }
+let reportSeq = 0
 
 function flash(text: string) {
     snackbarText.value = text

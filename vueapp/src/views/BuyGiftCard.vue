@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { GiftCardService } from '@/services/GiftCardService'
 import { branding } from '@/stores/branding'
@@ -235,4 +235,20 @@ function flash(text: string, color: 'success' | 'error') {
     snackbarColor.value = color
     snackbar.value = true
 }
+
+onMounted(() => {
+    // Returning from a redirect-based payment method (3DS / wallet): Stripe sends the browser back to
+    // return_url (this page) with these params. Without handling them the buyer sees the untouched
+    // form and assumes it failed, then buys a second card (the first already went through).
+    const params = new URLSearchParams(window.location.search)
+    const redirectStatus = params.get('redirect_status')
+    if (params.get('payment_intent') && redirectStatus) {
+        if (redirectStatus === 'succeeded') {
+            completed.value = true
+        } else {
+            flash('Your payment was not completed. Please try again.', 'error')
+        }
+        history.replaceState(null, '', window.location.pathname)
+    }
+})
 </script>

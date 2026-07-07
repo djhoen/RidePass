@@ -28,5 +28,12 @@ namespace Services.Repositories.Interfaces
             string signatureDataUrl, string signerEmail, string signerName,
             string spectatorFirstName, string spectatorLastName, DateTime? spectatorBirthdate,
             bool signedByParent, string? parentName, string? parentPhone);
+
+        /// <summary>Signature captured during event-ticket registration (rider or spectator), written
+        /// to the shared rider_waiver_signature store. Returns the new signature row id.</summary>
+        Task<Guid> SignRegistrant(Guid tenantId, Guid waiverId, string? ipAddress,
+            string signatureDataUrl, string? signerEmail, string? signerName,
+            string attendeeFirstName, string attendeeLastName, DateTime? attendeeBirthdate,
+            bool signedByParent, string? parentName, string? parentPhone);
     }
 }

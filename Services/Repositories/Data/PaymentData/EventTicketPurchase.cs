@@ -47,6 +47,9 @@ namespace Services.Repositories.Data.PaymentData
         public Guid? WaiverId { get; set; }
         public DateTime? WaiverSignedAt { get; set; }
         public string? WaiverSignatureDataUrl { get; set; }
+        // Link to the normalized rider_waiver_signature row for this ticket's rider. The check-in
+        // gate and the "who has signed" report read this so both sale paths share one signature store.
+        public Guid? WaiverSignatureId { get; set; }
         public string? ParentGuardianName { get; set; }
         // Groups a rider's gate fee + their race-class entries within one order so the
         // post-payment step can attach each class to a rider (one rider may hold several
@@ -73,6 +76,10 @@ namespace Services.Repositories.Data.PaymentData
         public DateTime EventStartsAt { get; set; }
         public DateTime EventEndsAt { get; set; }
         public bool EventAllDay { get; set; }
+        // Waiver signer context for the check-in screen: when a minor's waiver was signed by a
+        // parent/guardian, so the gate can display who signed on the rider's behalf.
+        public bool SignedByParent { get; set; }
+        public string? GuardianName { get; set; }
     }
 
     // Reminder-worker projection: an incomplete paid ticket eligible for a

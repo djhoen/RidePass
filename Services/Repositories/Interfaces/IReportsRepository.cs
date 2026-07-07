@@ -24,6 +24,7 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>All registrants for an event — pass purchasers, ticket purchasers, and season-pass holders who reserved.</summary>
         Task<List<EventRiderRow>> GetEventRiders(Guid tenantId, Guid eventId);
+        Task<List<EventWaiverSignatureRow>> GetEventWaiverSignatures(Guid tenantId, Guid eventId);
 
         /// <summary>One row per scheduled event in [fromUtc, toUtc) with registered/checked-in/revenue aggregates.</summary>
         Task<List<DailyEventRow>> GetEventsInRange(Guid tenantId, DateTime fromUtc, DateTime toUtc);

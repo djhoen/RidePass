@@ -4,6 +4,7 @@ using Services.Payments;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 using webapi.Controllers.API.Data.Payment;
+using webapi.Multitenancy;
 using webapi.Payments;
 
 namespace webapi.Controllers
@@ -21,6 +22,7 @@ namespace webapi.Controllers
         private readonly ITenantPayoutRepository _payouts;
         private readonly IConfiguration _config;
         private readonly IStripePurchaseFinalizer _finalizer;
+        private readonly ITenantContext _tenantContext;
         private readonly ILogger<PaymentController> _logger;
         private readonly int _disputeFeeCents;
 
@@ -33,6 +35,7 @@ namespace webapi.Controllers
             ITenantRepository tenants,
             ITenantPayoutRepository payouts,
             IStripePurchaseFinalizer finalizer,
+            ITenantContext tenantContext,
             IConfiguration configuration,
             ILogger<PaymentController> logger)
         {
@@ -44,6 +47,7 @@ namespace webapi.Controllers
             _tenants = tenants;
             _payouts = payouts;
             _finalizer = finalizer;
+            _tenantContext = tenantContext;
             _config = configuration;
             _logger = logger;
             // Stripe charges $15 USD per lost dispute (default). Override per-deploy via Stripe:DisputeFeeCents.
@@ -120,7 +124,16 @@ namespace webapi.Controllers
                 return BadRequest();
             }
 
-            var status = await _payments.GetPaymentIntentStatusAsync(request.PaymentIntentId);
+            // A direct-charge tenant's PaymentIntent lives on its own connected account, so a
+            // platform-key status GET would 404 and return null (never finalizing). Resolve the
+            // connected account from the tenant context and pass it through. The client calls this from
+            // the tenant subdomain, so the tenant is resolved here.
+            string? connectedAccountId =
+                _tenantContext.IsResolved && _tenantContext.Tenant?.StripeChargeMode == "direct"
+                    ? _tenantContext.Tenant.StripeConnectAccountId
+                    : null;
+
+            var status = await _payments.GetPaymentIntentStatusAsync(request.PaymentIntentId, connectedAccountId);
             if (status == "succeeded")
             {
                 await _finalizer.ProcessPaymentIntentAsync(request.PaymentIntentId, "payment_intent.succeeded");

@@ -10,7 +10,7 @@ namespace Services.Repositories.Interfaces
         Task<GiftCard?> GetByPaymentIntentId(string paymentIntentId);
 
         /// <summary>Stamp the Stripe PI on the card after PaymentIntents.Create returns.</summary>
-        Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
+        Task SetStripePaymentIntentId(Guid id, string paymentIntentId, string? connectedAccountId = null);
 
         /// <summary>Atomically lower the card's balance by amount (only if the balance still covers it);
         /// flip status to 'depleted' when it hits zero. Returns false when the balance was insufficient
@@ -28,7 +28,7 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Flip a freshly-minted 'pending' card to 'active' once its purchase is paid.
         /// Guarded on status='pending' so a duplicate webhook is a no-op.</summary>
-        Task Activate(Guid id);
+        Task<bool> Activate(Guid id);
 
         /// <summary>Void a 'pending' card whose purchase failed/was abandoned, so it can never be
         /// spent or delivered. Guarded on status='pending'.</summary>

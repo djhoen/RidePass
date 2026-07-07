@@ -47,5 +47,12 @@ namespace Services.Repositories.Interfaces
         // returns the tenant's active managers/admins who have a PIN, so an entered PIN can be verified.
         Task SetPosPinHash(Guid userId, string? pinHash);
         Task<List<TenantManagerPin>> ListTenantManagerPins(Guid tenantId);
+        Task<bool> HasPosPin(Guid userId);
+
+        // Manager-PIN brute-force lockout state, keyed by the staff member entering the PIN.
+        Task<ManagerPinAttempt?> GetPinAttempt(Guid tenantId, Guid userId);
+        Task UpsertPinAttempt(Guid tenantId, Guid userId, int failedCount, DateTime? lockedUntilUtc);
+        Task<int> IncrementPinFailure(Guid tenantId, Guid userId);
+        Task ResetPinAttempt(Guid tenantId, Guid userId);
     }
 }

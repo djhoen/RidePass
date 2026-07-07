@@ -14,6 +14,7 @@ namespace Services.Notifications
         public const string RefundProcessed  = "refund_processed";
         public const string PayoutPaid       = "payout_paid";
         public const string LowStock         = "low_stock";
+        public const string PinLockout       = "pin_lockout";
 
         public record Descriptor(string Kind, string Label, string Description, string[] Audiences);
 

@@ -31,5 +31,10 @@
         // registration (rider details + required waiver). Surfaced as a gate warning.
         public bool RegistrationComplete { get; set; } = true;
         public string? RaceNumber { get; set; }
+        // The rider this ticket is for, and, when they're a minor, the parent/guardian who
+        // signed their waiver so the gate can display it.
+        public string? AttendeeName { get; set; }
+        public bool SignedByParent { get; set; }
+        public string? GuardianName { get; set; }
     }
 }

@@ -107,6 +107,9 @@ namespace Services.Scheduling.Handlers
                 {
                     ["List-Unsubscribe"] = $"<{baseUrl}/api/Unsubscribe?token={enc}>",
                     ["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click",
+                    // SendGrid copies unique_args onto every webhook event, so a spam report on this
+                    // send scopes its suppression to this tenant. Other relays pass it through inertly.
+                    ["X-SMTPAPI"] = JsonSerializer.Serialize(new { unique_args = new { tenant_id = task.TenantId } }),
                 };
                 var html = campaign.BodyHtml + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName);
 

@@ -36,9 +36,10 @@ namespace Services.Repositories.Interfaces
         Task<bool> TryMarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
         Task UndoRedeemed(Guid id, Guid tenantId);
         Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);
-        Task CompleteRegistration(Guid id, Guid tenantId,
+        Task<bool> CompleteRegistration(Guid id, Guid tenantId,
             string? riderFirstName, string? riderLastName, DateTime? riderBirthdate, string? bike,
-            string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, string? parentGuardianName,
+            string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, Guid? waiverSignatureId,
+            string? parentGuardianName,
             string? emergencyContactName, string? emergencyContactPhone, Guid? registrantId);
         // Rider-facing: all of this rider's (non-cancelled) tickets for one event,
         // across any order. Scoped by the rider's user id (Me feed, cross-tenant).

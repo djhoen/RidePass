@@ -13,6 +13,7 @@ using Services.LoamPassMx;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Extras;
 using webapi.Controllers.API.Data.Purchase;
+using webapi.Helpers;
 using webapi.Multitenancy;
 
 namespace webapi.Controllers
@@ -47,6 +48,7 @@ namespace webapi.Controllers
         private readonly ILoampassRedemptionRepository _loampassRedemptions;
         private readonly ISeasonPassRepository _seasonPasses;
         private readonly ITenantTaxRepository _tax;
+        private readonly Services.Payments.IFeeCalculator _feeCalculator;
 
         public PurchaseController(
             IWaiverRepository waivers,
@@ -74,7 +76,8 @@ namespace webapi.Controllers
             ILoampassRedemptionRepository loampassRedemptions,
             IChargeRouter chargeRouter,
             ISeasonPassRepository seasonPasses,
-            ITenantTaxRepository tax)
+            ITenantTaxRepository tax,
+            Services.Payments.IFeeCalculator feeCalculator)
         {
             _waivers = waivers;
             _users = users;
@@ -102,6 +105,7 @@ namespace webapi.Controllers
             _chargeRouter = chargeRouter;
             _seasonPasses = seasonPasses;
             _tax = tax;
+            _feeCalculator = feeCalculator;
         }
 
         // Loads the tenant's admission tax config (once per checkout). Returns None when no active,
@@ -778,7 +782,14 @@ namespace webapi.Controllers
                 foreach (var t in createdTickets)
                 {
                     await _ticketPurchases.UpdateStatus(t.purchase.Id, "paid");
-                    await InsertZeroLedger(_tenantContext.TenantId, "event_ticket", t.purchase.Id);
+                    // A gift card fully covered this ticket (gcApp set) is NOT a $0 sale: the buyer
+                    // paid real money for the card, so the tenant is owed the value. A reward voucher
+                    // (no gift card) is a genuine $0 sale.
+                    if (gcApp is not null && perTicketGiftCard.TryGetValue(t.purchase.Id, out var gcAmt) && gcAmt > 0)
+                        await InsertGiftCardCoveredLedger(_tenantContext.TenantId, "event_ticket",
+                            t.purchase.Id, t.unitAmountCents, t.unitServiceChargeCents);
+                    else
+                        await InsertZeroLedger(_tenantContext.TenantId, "event_ticket", t.purchase.Id);
                 }
                 foreach (var exId in extraPurchaseIds)
                 {
@@ -948,6 +959,12 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult("That ticket is no longer valid.");
                     }
+                    // A checked-in ticket's rider identity + signed waiver are a locked legal record;
+                    // anyone holding the ticket GUID must not be able to overwrite them post-admission.
+                    if (ticket.Status == "redeemed")
+                    {
+                        return new ApiResponses().BadRequestResult("That ticket is already checked in and can't be re-registered.");
+                    }
                     var tier = await _tiers.GetById(ticket.TierId, tenantId);
                     var ev = tier is null ? null : await _events.GetById(tier.EventId, tenantId);
                     if (tier is null || ev is null) return new ApiResponses().BadRequestResult("Ticket is missing its event.");
@@ -996,7 +1013,7 @@ namespace webapi.Controllers
                     loaded.Add((ticket, tier, isRace, needsWaiver, waiverId, ti.RaceNumber));
                 }
 
-                if (loaded.Any(x => x.needsWaiver) && string.IsNullOrWhiteSpace(reg.WaiverSignatureDataUrl))
+                if (loaded.Any(x => x.needsWaiver) && !IsValidSignatureDataUrl(reg.WaiverSignatureDataUrl))
                 {
                     return new ApiResponses().BadRequestResult($"{reg.FirstName} needs a signed waiver for this event.");
                 }
@@ -1014,32 +1031,83 @@ namespace webapi.Controllers
                         $"{reg.FirstName} needs an emergency contact phone number.");
                 }
 
+                // Minor / parent-guardian, enforced server-side (the counter path does the same). A
+                // rider who must sign a waiver needs a birthdate so we can tell whether they're a minor;
+                // a minor needs a parent/guardian name on the waiver. Without the birthdate requirement a
+                // minor could be signed in as an adult simply by leaving the DOB blank.
+                if (isRiderRegistrant && loaded.Any(x => x.needsWaiver))
+                {
+                    if (reg.Birthdate is null)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            $"{reg.FirstName} needs a date of birth to sign the waiver.");
+                    }
+                    if (WaiverPolicy.IsMinor(reg.Birthdate) && string.IsNullOrWhiteSpace(reg.ParentGuardianName))
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            $"{reg.FirstName} is under 18 and needs a parent or guardian's name on the waiver.");
+                    }
+                }
+
                 // One registrant id ties the rider's gate fee + their class entries together.
                 var registrantId = Guid.NewGuid();
+
+                // Resolve this registrant's effective waiver (the first waiver-bearing ticket's id,
+                // else the tenant's active waiver), shared by all their tickets.
+                Guid? registrantWaiverId = null;
+                if (loaded.Any(x => x.needsWaiver))
+                {
+                    registrantWaiverId = loaded.First(x => x.needsWaiver).waiverId;
+                    if (registrantWaiverId is null)
+                    {
+                        if (!activeFetched) { activeWaiverId = (await _waivers.GetActive(tenantId))?.Id; activeFetched = true; }
+                        registrantWaiverId = activeWaiverId;
+                    }
+                }
+
+                // Write ONE signature row per registrant to the shared rider_waiver_signature store,
+                // then link it from each of this registrant's tickets. This is what makes the gate and
+                // the "who has signed" report read one source of truth across the counter + online paths.
+                Guid? registrantSignatureId = null;
+                if (registrantWaiverId is not null && !string.IsNullOrWhiteSpace(reg.WaiverSignatureDataUrl))
+                {
+                    var isMinorRider = WaiverPolicy.IsMinor(reg.Birthdate);
+                    var riderName = $"{reg.FirstName!.Trim()} {reg.LastName!.Trim()}".Trim();
+                    var signerName = isMinorRider && !string.IsNullOrWhiteSpace(reg.ParentGuardianName)
+                        ? reg.ParentGuardianName!.Trim()
+                        : riderName;
+                    var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+                    registrantSignatureId = await _waivers.SignRegistrant(tenantId, registrantWaiverId.Value, ip,
+                        reg.WaiverSignatureDataUrl!, signerEmail: null, signerName: signerName,
+                        attendeeFirstName: reg.FirstName!.Trim(), attendeeLastName: reg.LastName!.Trim(),
+                        attendeeBirthdate: reg.Birthdate,
+                        signedByParent: isMinorRider,
+                        parentName: isMinorRider ? reg.ParentGuardianName?.Trim() : null,
+                        parentPhone: null);
+                }
+
                 foreach (var x in loaded)
                 {
-                    Guid? waiverId = null;
-                    string? signature = null;
-                    if (x.needsWaiver)
-                    {
-                        waiverId = x.waiverId;
-                        if (waiverId is null)
-                        {
-                            if (!activeFetched) { activeWaiverId = (await _waivers.GetActive(tenantId))?.Id; activeFetched = true; }
-                            waiverId = activeWaiverId;
-                        }
-                        signature = reg.WaiverSignatureDataUrl;
-                    }
+                    Guid? waiverId = x.needsWaiver ? registrantWaiverId : null;
+                    string? signature = x.needsWaiver ? reg.WaiverSignatureDataUrl : null;
+                    Guid? signatureId = x.needsWaiver ? registrantSignatureId : null;
 
-                    await _ticketPurchases.CompleteRegistration(x.ticket.Id, tenantId,
+                    var wrote = await _ticketPurchases.CompleteRegistration(x.ticket.Id, tenantId,
                         riderFirstName: reg.FirstName!.Trim(), riderLastName: reg.LastName!.Trim(),
                         riderBirthdate: reg.Birthdate, bike: x.isRace ? reg.Bike?.Trim() : null,
                         raceNumber: x.isRace ? x.raceNumber?.Trim() : null,
-                        waiverId: waiverId, waiverSignatureDataUrl: signature,
+                        waiverId: waiverId, waiverSignatureDataUrl: signature, waiverSignatureId: signatureId,
                         parentGuardianName: reg.ParentGuardianName?.Trim(),
                         emergencyContactName: isRiderRegistrant ? reg.EmergencyContactName?.Trim() : null,
                         emergencyContactPhone: isRiderRegistrant ? reg.EmergencyContactPhone?.Trim() : null,
                         registrantId: registrantId);
+                    // Guarded write: a concurrent check-in can flip the ticket to 'redeemed' between the
+                    // status check above and here. Treat that as a conflict rather than silently no-op.
+                    if (!wrote)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            "That ticket changed state (it may have just been checked in). Please reload and try again.");
+                    }
                     completed++;
                 }
             }
@@ -1598,22 +1666,15 @@ namespace webapi.Controllers
             //    cash amount here would reduce their payout by money the platform never touched, so
             //    instead reverse the proportional cut, which nets a fully-refunded cash sale to zero.
             //  - loampass_credits: refundCents is already 0 (the credit was returned, no cash moved).
-            int ledgerGross, ledgerCut, ledgerNet;
-            if (paymentMethod == "cash" || paymentMethod == "voucher")
-            {
-                var cutReversed = amount > 0
-                    ? (int)Math.Round((double)serviceCharge * refundCents / amount, MidpointRounding.AwayFromZero)
-                    : 0;
-                ledgerGross = -refundCents;
-                ledgerCut = -cutReversed;
-                ledgerNet = cutReversed;   // reverses the cash sale's -serviceCharge
-            }
-            else
-            {
-                ledgerGross = -refundCents;
-                ledgerCut = 0;
-                ledgerNet = -refundCents;
-            }
+            // Refund ledger amounts depend on how the sale was funded — see RefundLedgerMath. isDirect
+            // is only consulted for the gift-card-funded branch (a direct-mode tenant already holds the
+            // gift-card float); the stripe_direct case is keyed off paymentMethod itself.
+            var isDirectRefund = _tenantContext.IsResolved && _tenantContext.Tenant?.StripeChargeMode == "direct";
+            var ledgerAmounts = Services.Payments.RefundLedgerMath.Compute(
+                paymentMethod, amount, serviceCharge, refundCents, stripeRefundCents, giftCardRefundCents, isDirectRefund);
+            var ledgerGross = ledgerAmounts.GrossCents;
+            var ledgerCut = ledgerAmounts.RidepassCutCents;
+            var ledgerNet = ledgerAmounts.NetToTenantCents;
             try
             {
                 await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
@@ -1681,6 +1742,16 @@ namespace webapi.Controllers
             }
         }
 
+        // Validates a drawn-signature data URL (mirrors CounterController.IsValidPngDataUrl): a PNG data
+        // URL within a sane size band. Guards against an unbounded/garbage string being stored as the
+        // waiver signature via the anonymous CompleteRegistration endpoint.
+        private static bool IsValidSignatureDataUrl(string? dataUrl)
+        {
+            if (string.IsNullOrWhiteSpace(dataUrl)) return false;
+            if (!dataUrl.StartsWith("data:image/png;base64,", StringComparison.Ordinal)) return false;
+            return dataUrl.Length is > 800 and < 1_400_000;
+        }
+
         private async Task InsertZeroLedger(Guid tenantId, string sourceKind, Guid sourceId)
         {
             try
@@ -1698,6 +1769,51 @@ namespace webapi.Controllers
                     NetToTenantCents = 0,
                     PaymentMethod = "voucher",
                     Memo = "Free purchase via reward voucher",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // Idempotent — duplicate sale row for this source.
+            }
+        }
+
+        // A gift card fully covered this sale. Unlike a reward voucher this is NOT free: the buyer paid
+        // real money for the card, so the tenant is owed the value delivered. There's no Stripe fee at
+        // redemption (no card charge happens now — it happened when the card was bought).
+        //   • Platform-charge tenant: the platform holds the gift-card float, so credit the tenant the
+        //     normal net (gross minus our cut) and book our cut.
+        //   • Direct-charge tenant: the float already sits in the tenant's own account (gift cards for
+        //     direct tenants are sold there) and our fee was taken at sale time, so net = 0 / cut = 0.
+        private async Task InsertGiftCardCoveredLedger(Guid tenantId, string sourceKind, Guid sourceId, int grossCents, int serviceChargeCents)
+        {
+            var isDirect = _tenantContext.IsResolved && _tenantContext.Tenant?.StripeChargeMode == "direct";
+            int cut, net;
+            if (isDirect)
+            {
+                cut = 0;
+                net = 0;
+            }
+            else
+            {
+                var calc = await _feeCalculator.Calculate(tenantId, grossCents, 0, serviceChargeCents, DateTime.UtcNow, isDirect: false);
+                cut = calc.RidepassCutCents;
+                net = calc.NetToTenantCents;
+            }
+            try
+            {
+                await _ledger.Insert(new Services.Repositories.Data.PaymentData.TenantLedgerEntry
+                {
+                    TenantId = tenantId,
+                    EntryKind = "sale",
+                    SourceKind = sourceKind,
+                    SourceId = sourceId,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = grossCents,
+                    StripeFeeCents = 0,
+                    RidepassCutCents = cut,
+                    NetToTenantCents = net,
+                    PaymentMethod = "voucher",   // funded by a gift card, no card charge at redemption
+                    Memo = "Gift card covered purchase",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -1905,11 +2021,12 @@ namespace webapi.Controllers
 
             // Direct-charge tenants sell the gift card on their own account; our service fee rides as
             // the application fee. The face value lands in the tenant's account (their liability to
-            // honor on redemption). Gift cards are never refunded/reconciled, so no snapshot is needed.
+            // honor on redemption). The connected account is snapshotted below so the reconciler can
+            // check the PI status on the right account if the webhook is missed.
+            var chargePlan = _chargeRouter.Plan(tenant, serviceCharge, totalToCharge);
             PaymentIntentCreated intent;
             try
             {
-                var chargePlan = _chargeRouter.Plan(tenant, serviceCharge, totalToCharge);
                 intent = await _payments.CreatePaymentIntentAsync(
                     amountCents: totalToCharge,
                     currency: "usd",
@@ -1924,7 +2041,7 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
 
-            await _giftCards.SetStripePaymentIntentId(card.Id, intent.IntentId);
+            await _giftCards.SetStripePaymentIntentId(card.Id, intent.IntentId, chargePlan.ConnectedAccountId);
 
             return new ApiResponses().OkResult(new BuyGiftCardResponse
             {

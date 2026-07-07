@@ -171,6 +171,9 @@ export class ReportsService {
     getEventRiders(eventId: string) {
         return axios.get<{ data: EventRiderReport }>(`${this.apiUrl}/Reports/Admin/EventRiders/${eventId}`)
     }
+    getEventWaiverSignatures(eventId: string) {
+        return axios.get<{ data: EventWaiverSignatureReport }>(`${this.apiUrl}/Reports/Admin/Events/${eventId}/WaiverSignatures`)
+    }
     setCheckIn(purchaseId: string, source: 'pass' | 'event_ticket' | 'season_pass', checkedIn: boolean) {
         return axios.put(`${this.apiUrl}/Reports/Admin/EventRiders/${purchaseId}/CheckIn`,
             { source, checkedIn })
@@ -278,6 +281,31 @@ export interface EventRiderRow {
     checkedIn: boolean
     checkedInAtUtc: string | null
     createdAtUtc: string
+}
+
+export interface EventWaiverSignatureReport {
+    eventId: string
+    eventTitle: string
+    eventStartsAtUtc: string
+    totalAttendees: number
+    totalSigned: number
+    rows: EventWaiverSignatureRow[]
+}
+
+export interface EventWaiverSignatureRow {
+    purchaseId: string
+    attendeeName: string
+    audience: 'rider' | 'spectator'
+    tierName: string
+    raceNumber: string | null
+    status: string
+    registrationComplete: boolean
+    waiverRequired: boolean
+    waiverSigned: boolean
+    signedAtUtc: string | null
+    signedByParent: boolean
+    parentGuardianName: string | null
+    signerName: string | null
 }
 
 export interface SendRiderSmsResponse {

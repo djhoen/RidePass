@@ -100,10 +100,13 @@ namespace webapi.Controllers
         // Sync admissions an operator device made offline. Idempotent and first-to-sync-wins:
         // each item flips paid -> redeemed only if still paid, so a re-sent batch is a no-op
         // and a person two devices both admitted offline resolves to one admit with the other
-        // flagged as a conflict for staff to reconcile. The offline AdmittedAtUtc is preserved
-        // as the redemption time. The waiver/ID gate is NOT re-run here: the offline client
-        // gated at admit time, and the person is already inside, so re-gating would only
-        // produce false rejections. Event/tenant scope rides each token lookup.
+        // flagged as a conflict for staff to reconcile.
+        //
+        // The waiver/registration gate and the event-date window ARE re-run server-side: the offline
+        // roster can be stale (or a tampered/replayed client could send anything), so the server is the
+        // authority. The client-supplied AdmittedAtUtc is preserved as the redemption time but clamped
+        // to a sane range so it can't be a bogus year-0001 or future timestamp. Event/tenant scope
+        // rides each token lookup.
         [HttpPost("AdmitBatch")]
         public async Task<IActionResult> AdmitBatch([FromBody] BatchAdmitRequest request)
         {
@@ -118,6 +121,7 @@ namespace webapi.Controllers
             }
 
             var tenantId = _tenantContext.TenantId;
+            var nowUtc = DateTime.UtcNow;
             var results = new List<BatchAdmitResult>(items.Count);
 
             foreach (var item in items)
@@ -148,12 +152,40 @@ namespace webapi.Controllers
                     continue;
                 }
 
-                var flipped = await _tickets.TryMarkRedeemed(row.Id, tenantId, staffId.Value, item.AdmittedAtUtc);
+                // Event-date window: admit only within the event's check-in window (event date ±1 day
+                // in the tenant's timezone), so a stale device can't admit against an event months off.
+                if (!IsWithinGateWindow(row.EventStartsAt, row.EventEndsAt))
+                {
+                    result.Outcome = "blocked";
+                    result.BlockReason = "This admission is outside the event's check-in window.";
+                    results.Add(result);
+                    continue;
+                }
+
+                // Re-run the waiver / registration gate authoritatively. GetByRedemptionToken doesn't
+                // carry the waiver columns, so load the full row for the gate.
+                var full = await _tickets.GetById(row.Id, tenantId);
+                if (full is not null)
+                {
+                    var block = await _waiverGate.BlockReasonForTicket(tenantId, full);
+                    if (block is not null)
+                    {
+                        result.Outcome = "blocked";
+                        result.BlockReason = block;
+                        results.Add(result);
+                        continue;
+                    }
+                }
+
+                // Clamp the offline timestamp to [purchase time, now]; fall back to now if bogus.
+                var admittedAt = ClampAdmitTime(item.AdmittedAtUtc, DateTime.SpecifyKind(row.CreatedAt, DateTimeKind.Utc), nowUtc);
+
+                var flipped = await _tickets.TryMarkRedeemed(row.Id, tenantId, staffId.Value, admittedAt);
                 if (flipped)
                 {
                     result.Outcome = "admitted";
                     result.RedeemedByUserId = staffId.Value;
-                    result.RedeemedAtUtc = item.AdmittedAtUtc;
+                    result.RedeemedAtUtc = admittedAt;
                 }
                 else
                 {
@@ -167,6 +199,26 @@ namespace webapi.Controllers
             }
 
             return new ApiResponses().OkResult(new BatchAdmitResponse { Results = results });
+        }
+
+        // Whether today (tenant tz) falls within the event's date window widened by one day on each
+        // side, to allow legitimate early gate-open the night before and next-morning teardown.
+        private bool IsWithinGateWindow(DateTime eventStartsAtUtc, DateTime eventEndsAtUtc)
+        {
+            var tz = ResolveTenantTimeZone();
+            var today = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
+            var start = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(eventStartsAtUtc, DateTimeKind.Utc), tz).Date.AddDays(-1);
+            var end = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(eventEndsAtUtc, DateTimeKind.Utc), tz).Date.AddDays(1);
+            return today >= start && today <= end;
+        }
+
+        // Keep the offline admit time honest: use it only when it falls between the purchase and now;
+        // otherwise (year-0001 default, future, or pre-purchase) record the sync time.
+        private static DateTime ClampAdmitTime(DateTime clientUtc, DateTime purchaseCreatedUtc, DateTime nowUtc)
+        {
+            var t = DateTime.SpecifyKind(clientUtc, DateTimeKind.Utc);
+            if (t < purchaseCreatedUtc || t > nowUtc) return nowUtc;
+            return t;
         }
 
         // Scan-once-redeem-many: given any token the rider owns for an event, surface
@@ -205,7 +257,15 @@ namespace webapi.Controllers
                     var s = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(t.EventStartsAt, DateTimeKind.Utc), tz).Date;
                     var e = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(t.EventEndsAt, DateTimeKind.Utc), tz).Date;
                     var ok = todayInTenant >= s && todayInTenant <= e;
-                    var reason = ok ? null : (todayInTenant < s ? $"Event starts {s:yyyy-MM-dd}." : $"Event ended {e:yyyy-MM-dd}.");
+                    var windowReason = ok ? null : (todayInTenant < s ? $"Event starts {s:yyyy-MM-dd}." : $"Event ended {e:yyyy-MM-dd}.");
+                    // A rider whose registration isn't finished can't be checked in (the gate blocks it),
+                    // so mark it non-redeemable with a clear reason instead of letting staff select it and
+                    // hit a redeem error. Priority: window → status → registration.
+                    var redeemable = ok && t.Status == "paid" && t.RegistrationComplete;
+                    var reason = !ok ? windowReason
+                        : t.Status != "paid" ? $"Status is '{t.Status}'."
+                        : !t.RegistrationComplete ? "Registration not finished — rider details and waiver still needed."
+                        : null;
                     resp.Items.Add(new webapi.Controllers.API.Data.Redemption.OrderItem
                     {
                         Kind = "event_ticket",
@@ -214,10 +274,13 @@ namespace webapi.Controllers
                         ItemName = $"{t.EventTitle} — {t.TierName}",
                         AmountCents = t.AmountCents,
                         Status = t.Status,
-                        IsRedeemableToday = ok && t.Status == "paid",
-                        NotRedeemableReason = !ok ? reason : (t.Status != "paid" ? $"Status is '{t.Status}'." : null),
+                        IsRedeemableToday = redeemable,
+                        NotRedeemableReason = reason,
                         RedeemedAtUtc = t.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(t.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
                         RegistrationComplete = t.RegistrationComplete,
+                        AttendeeName = BuildAttendeeName(t.RiderFirstName, t.RiderLastName),
+                        SignedByParent = t.SignedByParent,
+                        GuardianName = t.SignedByParent ? t.GuardianName : null,
                     });
                     if (t.RedeemedByUserId.HasValue) redeemerIds.Add(t.RedeemedByUserId.Value);
                 }
@@ -426,6 +489,13 @@ namespace webapi.Controllers
             return Guid.TryParse(claim, out var id) ? id : (Guid?)null;
         }
 
+        // The rider name captured at registration, or null when not yet registered.
+        private static string? BuildAttendeeName(string? first, string? last)
+        {
+            var name = $"{first} {last}".Trim();
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+
         private async Task<RedemptionPreviewResponse?> LookupAsync(Guid token)
         {
             var tenantId = _tenantContext.TenantId;
@@ -448,6 +518,13 @@ namespace webapi.Controllers
                         ? $"Event is on {startInTenant:yyyy-MM-dd} — too early to redeem."
                         : $"Event ended {endInTenant:yyyy-MM-dd} — ticket expired.";
                 }
+                else if (!tk.RegistrationComplete)
+                {
+                    // Registration must be finished before check-in (the gate blocks it), so surface it
+                    // here too rather than only failing at redeem time.
+                    reason = "Registration not finished — rider details and waiver still needed.";
+                }
+                var redeemableToday = ok && tk.RegistrationComplete;
 
                 return new RedemptionPreviewResponse
                 {
@@ -467,10 +544,13 @@ namespace webapi.Controllers
                     EventEndsAtUtc = endUtc,
                     EventAllDay = tk.EventAllDay,
                     CreatedAtUtc = DateTime.SpecifyKind(tk.CreatedAt, DateTimeKind.Utc),
-                    IsRedeemableToday = ok,
+                    IsRedeemableToday = redeemableToday,
                     NotRedeemableReason = reason,
                     RegistrationComplete = tk.RegistrationComplete,
                     RaceNumber = tk.RaceNumber,
+                    AttendeeName = BuildAttendeeName(tk.RiderFirstName, tk.RiderLastName),
+                    SignedByParent = tk.SignedByParent,
+                    GuardianName = tk.SignedByParent ? tk.GuardianName : null,
                 };
             }
 

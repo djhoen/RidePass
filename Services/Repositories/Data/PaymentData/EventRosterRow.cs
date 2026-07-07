@@ -15,6 +15,9 @@ namespace Services.Repositories.Data.PaymentData
         public string? RaceNumber { get; set; }
         public string Status { get; set; } = null!;        // paid | redeemed
         public bool RegistrationComplete { get; set; }
+        // Whether this ticket's rider has a waiver signature on file, so the offline operator app
+        // can pre-gate locally. The server re-checks authoritatively at AdmitBatch sync.
+        public bool WaiverSigned { get; set; }
         public DateTime? RedeemedAtUtc { get; set; }
         public Guid? RedeemedByUserId { get; set; }
         public string TierName { get; set; } = null!;

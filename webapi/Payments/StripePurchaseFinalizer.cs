@@ -139,9 +139,12 @@ namespace webapi.Payments
             {
                 if (eventType == "payment_intent.succeeded")
                 {
-                    await _giftCards.Activate(giftCard.Id);
+                    // Only the call that actually activates the card sends the delivery email, so a late
+                    // webhook racing the reconciler (both processing 'succeeded') can't email twice.
+                    var justActivated = await _giftCards.Activate(giftCard.Id);
                     giftCard.Status = "active";
-                    if (!giftCard.ScheduledDeliveryAtUtc.HasValue || giftCard.ScheduledDeliveryAtUtc.Value <= DateTime.UtcNow)
+                    if (justActivated
+                        && (!giftCard.ScheduledDeliveryAtUtc.HasValue || giftCard.ScheduledDeliveryAtUtc.Value <= DateTime.UtcNow))
                     {
                         _ = _giftCardDelivery.SendDeliveryEmail(giftCard);
                     }
@@ -451,7 +454,7 @@ namespace webapi.Payments
             // counter). Skipped automatically on a duplicate webhook (order_number already set).
             if (sale.OrderNumber is null)
             {
-                var orderNumber = await _concessions.NextOrderNumber(sale.TenantId, DateTime.UtcNow);
+                var orderNumber = await _concessions.NextOrderNumber(sale.TenantId);
                 await _concessions.SetOrderNumber(sale.Id, orderNumber);
                 // Deplete theoretical inventory once, when the order number is first assigned (so a
                 // duplicate webhook can't double-deplete). Best-effort.

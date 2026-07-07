@@ -49,6 +49,10 @@ namespace webapi.Helpers
         private static string Esc(string v)
         {
             if (string.IsNullOrEmpty(v)) return "";
+            // Neutralize spreadsheet formula injection: a leading = + - @ (or tab/CR) makes Excel and
+            // Sheets evaluate the cell as a formula. Memo/SourceKind can carry user text, so prefix a
+            // single quote to force the cell to be treated as text.
+            if ("=+-@\t\r".IndexOf(v[0]) >= 0) v = "'" + v;
             if (v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
             {
                 return "\"" + v.Replace("\"", "\"\"") + "\"";

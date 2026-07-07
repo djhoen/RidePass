@@ -279,6 +279,41 @@ namespace Services.Repositories
             return rows.ToList();
         }
 
+        // "Who has signed" report for one event: each event ticket's attendee and their waiver signing
+        // status, read from the normalized rider_waiver_signature store via the ticket's link, so
+        // counter and online sales report uniformly. Tenant- and event-scoped.
+        public async Task<List<EventWaiverSignatureRow>> GetEventWaiverSignatures(Guid tenantId, Guid eventId)
+        {
+            const string sql = @"
+                SELECT
+                    p.id AS PurchaseId,
+                    COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.rider_first_name, p.rider_last_name)), ''), p.purchaser_name) AS AttendeeName,
+                    CASE WHEN tier.kind = 'race_entry' OR (tier.kind = 'gate_fee' AND tier.audience = 'rider')
+                         THEN 'rider' ELSE 'spectator' END AS Audience,
+                    tier.name AS TierName,
+                    p.race_number AS RaceNumber,
+                    p.status AS Status,
+                    p.registration_complete AS RegistrationComplete,
+                    CASE WHEN tier.kind = 'race_entry' OR (tier.kind = 'gate_fee' AND tier.audience = 'rider')
+                         THEN e.requires_rider_waiver ELSE e.requires_spectator_waiver END AS WaiverRequired,
+                    (p.waiver_signature_id IS NOT NULL OR p.waiver_signed_at IS NOT NULL OR p.waiver_signature_data_url IS NOT NULL) AS WaiverSigned,
+                    COALESCE(sig.signed_at, p.waiver_signed_at) AS SignedAtUtc,
+                    COALESCE(sig.signed_by_parent, false) AS SignedByParent,
+                    COALESCE(sig.parent_name, p.parent_guardian_name) AS ParentGuardianName,
+                    sig.signer_name AS SignerName
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier tier ON tier.id = p.tier_id
+                JOIN event e ON e.id = tier.event_id
+                LEFT JOIN rider_waiver_signature sig
+                       ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
+                WHERE p.tenant_id = @tenantId
+                  AND tier.event_id = @eventId
+                  AND p.status <> 'cancelled'
+                ORDER BY Audience, tier.name, AttendeeName";
+            var rows = await _db.Query<EventWaiverSignatureRow>(sql, new { tenantId, eventId });
+            return rows.ToList();
+        }
+
         public async Task<CheckInLookup?> LookupCheckInByToken(Guid tenantId, Guid token, DateTime fromUtc, DateTime toUtc)
         {
             // First identify the rider — the token may match any of three tables. We need

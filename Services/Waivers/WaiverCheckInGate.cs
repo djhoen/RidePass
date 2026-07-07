@@ -53,8 +53,40 @@ namespace Services.Waivers
             var riderAudience = tier.Kind == "race_entry"
                 || (tier.Kind == "gate_fee" && tier.Audience == "rider");
 
-            return await BlockReason(tenantId, tier.EventId, riderAudience,
-                ticket.PurchaserUserId, ticket.PurchaserEmail, ticket.PurchaserName);
+            var ev = await _events.GetById(tier.EventId, tenantId);
+            if (ev is null) return null;
+
+            // Registration must be finished before admission for rider-audience tickets: registration
+            // is where the rider's identity, signed waiver, and any required emergency contact are
+            // captured. This is keyed on THIS ticket's rider, not on whoever bought it — a purchaser
+            // who once signed can otherwise walk unregistered/unsigned riders (incl. minors) in.
+            if (riderAudience && !ticket.RegistrationComplete)
+            {
+                var who0 = string.IsNullOrWhiteSpace(ticket.RiderFirstName) ? "This rider" : ticket.RiderFirstName;
+                return $"{who0} hasn't finished registration for this event. Complete registration (rider details and waiver) before checking in.";
+            }
+
+            var required = riderAudience ? ev.RequiresRiderWaiver : ev.RequiresSpectatorWaiver;
+            if (!required) return null;
+
+            // The waiver must be signed for THIS ticket's rider. Both sale paths now link the
+            // signature row (waiver_signature_id); the inline image / signed timestamp are accepted as
+            // a fallback for any ticket that predates the link.
+            var signed = ticket.WaiverSignatureId is not null
+                || ticket.WaiverSignedAt is not null
+                || !string.IsNullOrWhiteSpace(ticket.WaiverSignatureDataUrl);
+            if (signed) return null;
+
+            // Nothing to enforce if the tenant has no waiver document configured (misconfiguration
+            // escape hatch, matching the previous behavior).
+            var waiverId = riderAudience ? ev.RacerWaiverId : ev.SpectatorWaiverId;
+            if (waiverId is null) waiverId = (await _waivers.GetActive(tenantId))?.Id;
+            if (waiverId is null) return null;
+
+            var who = riderAudience ? "rider" : "spectator";
+            var name = !string.IsNullOrWhiteSpace(ticket.RiderFirstName) ? ticket.RiderFirstName
+                : string.IsNullOrWhiteSpace(ticket.PurchaserName) ? "This attendee" : ticket.PurchaserName;
+            return $"This event requires a signed {who} waiver. {name} must sign the waiver before checking in.";
         }
 
         public async Task<string?> BlockReason(Guid tenantId, Guid eventId, bool riderAudience,

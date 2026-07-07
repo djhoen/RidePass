@@ -18,6 +18,7 @@
         public DateTime? DeliveredAtUtc { get; set; }
         public string Status { get; set; } = "active";            // active | depleted | refunded
         public string? StripePaymentIntentId { get; set; }
+        public string? StripeConnectedAccountId { get; set; }     // direct-charge account; NULL = platform
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

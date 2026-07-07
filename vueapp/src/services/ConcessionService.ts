@@ -630,6 +630,10 @@ export class ConcessionService {
     setManagerPin(pin: string) {
         return axios.put(`${this.apiUrl}/Concession/ManagerPin`, { pin })
     }
+    // Whether the signed-in user is a manager/admin and has a PIN set (drives the forced-setup prompt).
+    managerPinStatus() {
+        return axios.get<{ data: { isManager: boolean; hasPin: boolean } }>(`${this.apiUrl}/Concession/ManagerPin/Status`)
+    }
     // Confirm a manager PIN authorizes a gated action; returns the approving manager (or 400 on a bad PIN).
     verifyManagerPin(pin: string) {
         return axios.post<{ data: ConcessionManagerPinResult }>(`${this.apiUrl}/Concession/VerifyManagerPin`, { pin })
@@ -704,8 +708,9 @@ export class ConcessionService {
     finalizeCard(id: string) {
         return axios.post<{ data: { status: string; orderNumber: number | null } }>(`${this.apiUrl}/Concession/Sale/${id}/Finalize`, {})
     }
-    refundSale(id: string) {
-        return axios.post(`${this.apiUrl}/Concession/Sale/${id}/Refund`, {})
+    // A refund requires a manager PIN (verified server-side), same as a comp/discount.
+    refundSale(id: string, managerPin: string) {
+        return axios.post(`${this.apiUrl}/Concession/Sale/${id}/Refund`, { managerPin })
     }
     // Send a receipt for a completed sale to the customer's phone (sms) or email.
     sendReceipt(saleId: string, channel: 'sms' | 'email', destination: string) {

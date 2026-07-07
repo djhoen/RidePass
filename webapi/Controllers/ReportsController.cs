@@ -303,6 +303,44 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(resp);
         }
 
+        // "Who has signed" report: every event-ticket attendee for one event and their waiver signing
+        // status, read from the normalized signature store (counter + online sales unified).
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/Events/{eventId:guid}/WaiverSignatures")]
+        public async Task<IActionResult> GetEventWaiverSignatures(Guid eventId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var ev = await _events.GetById(eventId, _tenantContext.TenantId);
+            if (ev is null) return new ApiResponses().NotFoundResult("Event not found.");
+
+            var rows = await _reports.GetEventWaiverSignatures(_tenantContext.TenantId, eventId);
+            var resp = new EventWaiverSignatureReportResponse
+            {
+                EventId = ev.Id,
+                EventTitle = ev.Title,
+                EventStartsAtUtc = DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc),
+                TotalAttendees = rows.Count,
+                TotalSigned = rows.Count(r => !r.WaiverRequired || r.WaiverSigned),
+                Rows = rows.Select(r => new EventWaiverSignatureRowDto
+                {
+                    PurchaseId = r.PurchaseId,
+                    AttendeeName = r.AttendeeName,
+                    Audience = r.Audience,
+                    TierName = r.TierName,
+                    RaceNumber = r.RaceNumber,
+                    Status = r.Status,
+                    RegistrationComplete = r.RegistrationComplete,
+                    WaiverRequired = r.WaiverRequired,
+                    WaiverSigned = r.WaiverSigned,
+                    SignedAtUtc = r.SignedAtUtc.HasValue ? DateTime.SpecifyKind(r.SignedAtUtc.Value, DateTimeKind.Utc) : null,
+                    SignedByParent = r.SignedByParent,
+                    ParentGuardianName = r.ParentGuardianName,
+                    SignerName = r.SignerName,
+                }).ToList(),
+            };
+            return new ApiResponses().OkResult(resp);
+        }
+
         // ── Per-row actions for the Event Riders report ─────────────────────
         // SalesRedeem permission so any staff member running the gate / pit
         // tent can flip these fields. (ReportsView is read-only.)
@@ -327,7 +365,13 @@ namespace webapi.Controllers
                             var waiverBlock = await _waiverGate.BlockReasonForTicket(tenantId, t);
                             if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
                         }
-                        await _tickets.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
+                        // Only a 'paid' ticket may be checked in. TryMarkRedeemed enforces that in SQL,
+                        // so a refunded/cancelled ticket can't be flipped to redeemed (which UndoRedeemed
+                        // would then resurrect back to 'paid', making it sellable/refundable again).
+                        var redeemed = await _tickets.TryMarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow);
+                        if (!redeemed)
+                            return new ApiResponses().BadRequestResult(
+                                "This ticket can't be checked in. It may be refunded, cancelled, or already checked in.");
                     }
                     else await _tickets.UndoRedeemed(purchaseId, tenantId);
                     break;
@@ -343,9 +387,12 @@ namespace webapi.Controllers
                             if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
                         }
                     }
-                    await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,
+                    var affected = await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,
                         req.CheckedIn ? "checked_in" : "reserved",
                         req.CheckedIn ? staffId : null);
+                    if (req.CheckedIn && affected == 0)
+                        return new ApiResponses().BadRequestResult(
+                            "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
                     break;
                 default:
                     return new ApiResponses().BadRequestResult("Unknown source.");
@@ -596,6 +643,10 @@ namespace webapi.Controllers
         private static string CsvEscape(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
+            // Neutralize spreadsheet formula injection: a leading = + - @ (or tab/CR) makes Excel and
+            // Sheets evaluate the cell as a formula. Rider-controlled fields (name, hometown, email)
+            // flow through here, so prefix a single quote to force the cell to be treated as text.
+            if ("=+-@\t\r".IndexOf(value[0]) >= 0) value = "'" + value;
             var needsQuoting = value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0;
             if (!needsQuoting) return value;
             return "\"" + value.Replace("\"", "\"\"") + "\"";

@@ -7,6 +7,14 @@
             then flip it on in <router-link to="/Admin/Settings/Features">Settings &rarr; Features</router-link>.
         </v-alert>
 
+        <v-alert v-if="needsPin" type="warning" variant="tonal" class="mb-4" icon="mdi-shield-key-outline">
+            You're a manager but haven't set an authorization PIN. Every manager needs their own PIN so comps,
+            discounts, and gate overrides record who approved them.
+            <template #append>
+                <v-btn size="small" variant="flat" color="warning" @click="tab = 'settings'">Set PIN</v-btn>
+            </template>
+        </v-alert>
+
         <v-tabs v-model="tab" color="primary" class="mb-4">
             <v-tab value="items">Items</v-tab>
             <v-tab value="categories">Categories</v-tab>
@@ -524,6 +532,12 @@
                                     Tax is applied at checkout on every F&amp;B sale. Leave a rate at 0% for no tax.
                                 </p>
 
+                                <v-alert v-if="noTaxConfigured" type="warning" variant="tonal" density="compact" class="mb-3"
+                                    icon="mdi-alert-outline">
+                                    No sales tax is set. F&amp;B sales will be rung with $0 tax. If your jurisdiction
+                                    requires sales tax, enter a rate below.
+                                </v-alert>
+
                                 <v-switch v-model="menuStyle.pricesIncludeTax" color="primary" density="compact" hide-details
                                     label="Item prices already include tax"
                                     messages="On = tax is backed out of the listed price. Off = tax is added on top at checkout."></v-switch>
@@ -873,6 +887,8 @@ const inventoryLowFromChild = ref<number | null>(null)
 const inventoryLowCount = computed(() => inventoryLowFromChild.value
     ?? inventoryItems.value.filter(i => i.isActive && i.isLow).length)
 const recipeRows = ref<{ inventoryItemId: string; quantity: number }[]>([])
+// Guards against wiping an item's saved recipe when the recipe failed to load in the editor.
+const recipeLoaded = ref(false)
 
 // Variant editor rows carry a dollar field for the price; id null = not yet created.
 interface VariantRow {
@@ -998,9 +1014,15 @@ async function toggleEditor86() {
     }
 }
 
+const needsPin = ref(false)
 onMounted(async () => {
     if (!branding.loaded) await loadBranding()
     await load()
+    // Managers must each carry a PIN; prompt if this one hasn't set one yet (best-effort).
+    try {
+        const s = (await service.managerPinStatus() as any).data.data
+        needsPin.value = s.isManager && !s.hasPin
+    } catch { /* non-blocking */ }
 })
 
 // Tabbed sections. Each management tab lazy-loads its editor data when first shown.
@@ -1042,6 +1064,7 @@ function openCreate() {
     editing.value = null
     form.value = { name: '', categoryId: null, priceDollars: 0, description: '', imageUrl: null, isActive: true, stationId: null, taxCategoryId: null, modifierGroupIds: [], inventory: null, showInCarousel: true, defaultOptionIds: [], comboAvailable: false }
     recipeRows.value = []
+    recipeLoaded.value = true   // new item: empty recipe is the correct starting state
     productDialog.value = true
 }
 
@@ -1056,12 +1079,15 @@ async function openEdit(p: ConcessionProduct) {
         comboAvailable: p.comboAvailable,
     }
     recipeRows.value = []
+    recipeLoaded.value = false
     productDialog.value = true
     try {
         const { data } = await service.getRecipe(p.id)
         recipeRows.value = (data as any).data.map((l: any) => ({ inventoryItemId: l.inventoryItemId, quantity: l.quantity }))
+        recipeLoaded.value = true
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Could not load the recipe for this item.', 'error')
+        // Leave recipeLoaded false so Save won't overwrite the existing recipe with an empty set.
+        flash(err.response?.data?.error || 'Could not load the recipe for this item. It will not be changed on save.', 'error')
     }
 }
 
@@ -1104,10 +1130,14 @@ async function saveProduct() {
         let productId: string
         if (editing.value) { await service.update(editing.value.id, payload); productId = editing.value.id }
         else { const res = await service.create(payload); productId = (res.data as any).data.id }
-        const recipe = recipeRows.value
-            .filter(r => r.inventoryItemId && Number(r.quantity) > 0)
-            .map(r => ({ inventoryItemId: r.inventoryItemId, quantity: Number(r.quantity) }))
-        await service.setRecipe(productId, recipe)
+        // Only write the recipe if it actually loaded in the editor; otherwise a failed load would
+        // silently wipe the item's existing recipe with an empty set.
+        if (recipeLoaded.value) {
+            const recipe = recipeRows.value
+                .filter(r => r.inventoryItemId && Number(r.quantity) > 0)
+                .map(r => ({ inventoryItemId: r.inventoryItemId, quantity: Number(r.quantity) }))
+            await service.setRecipe(productId, recipe)
+        }
         productDialog.value = false
         flash('Item saved.', 'success')
         await load()
@@ -1518,6 +1548,8 @@ async function saveManagerPin() {
 interface TaxRow { id: string; name: string; ratePct: number; isDefault: boolean; sortOrder: number; isActive: boolean }
 const taxRows = ref<TaxRow[]>([])
 const removedTaxIds = ref<string[]>([])
+// Warn the operator when no tax is configured (every category at 0%), so missing tax isn't silent.
+const noTaxConfigured = computed(() => taxRows.value.every(t => !(Number(t.ratePct) > 0)))
 
 function loadTaxRows() {
     taxRows.value = taxCategories.value.map(t => ({

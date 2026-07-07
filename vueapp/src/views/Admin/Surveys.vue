@@ -75,6 +75,25 @@
         </v-dialog>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
+
+        <v-dialog v-model="shareLinkDialog" max-width="520">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Share link
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="shareLinkDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">Copying to the clipboard isn’t available here. Select the link below and copy it manually.</p>
+                    <v-text-field :model-value="shareLinkUrl" readonly variant="outlined" density="compact"
+                        hide-details @focus="(e: FocusEvent) => (e.target as HTMLInputElement).select()"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="shareLinkDialog = false">Close</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
     </v-container>
 </template>
 
@@ -96,6 +115,8 @@ const saving = ref(false)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
+const shareLinkDialog = ref(false)
+const shareLinkUrl = ref('')
 
 const form = ref({
     name: '',
@@ -157,7 +178,10 @@ async function copyShareLink(s: SurveyListItem) {
         await navigator.clipboard.writeText(url)
         flash('Share link copied.', 'success')
     } catch {
-        prompt('Share link:', url)
+        // Clipboard API can be unavailable (insecure context / kiosk / permissions). Show the link in
+        // a selectable dialog so staff can copy it by hand, instead of the unstyled native prompt().
+        shareLinkUrl.value = url
+        shareLinkDialog.value = true
     }
 }
 

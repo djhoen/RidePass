@@ -89,6 +89,7 @@ builder.Services.AddScoped<webapi.Sync.TenantPromotionService>();
 builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
 builder.Services.AddScoped<ITenantTaxRepository, TenantTaxRepository>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
+builder.Services.AddScoped<Services.Email.ISendGridEventService, Services.Email.SendGridEventService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICashRepository, CashRepository>();
 builder.Services.AddScoped<IPlatformSettingRepository, PlatformSettingRepository>();
@@ -174,6 +175,19 @@ builder.Services.AddRateLimiter(opts =>
             QueueLimit = 0,
             AutoReplenishment = true,
         }));
+
+    // Manager-PIN verification: coarse per-user throttle on top of the DB-backed lockout. Partition by
+    // the authenticated staff user when present so one cashier can't probe PINs in a tight loop.
+    opts.AddPolicy("manager-pin", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.User?.FindFirst("UserId")?.Value ?? PartitionKey(ctx),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
 });
 
 // At-rest encryption for sensitive blobs (Twilio subaccount tokens, etc.).
@@ -217,6 +231,7 @@ else
 
 // Password hashing
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<webapi.Security.IManagerPinService, webapi.Security.ManagerPinService>();
 
 // Tenant context (same instance via both interface and concrete type per request)
 builder.Services.AddScoped<TenantContext>();

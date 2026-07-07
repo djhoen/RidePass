@@ -65,8 +65,8 @@ namespace Services.Repositories
                 SELECT sold_by_user_id AS WorkerUserId,
                        COUNT(*) FILTER (WHERE payment_method = 'cash')                                       AS CashCount,
                        COALESCE(SUM(-gross_cents) FILTER (WHERE payment_method = 'cash'), 0)::bigint          AS CashCents,
-                       COUNT(*) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect'))                AS CardCount,
-                       COALESCE(SUM(-gross_cents) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect')), 0)::bigint AS CardCents
+                       COUNT(*) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect', 'stripe_direct'))                AS CardCount,
+                       COALESCE(SUM(-gross_cents) FILTER (WHERE payment_method IN ('stripe', 'stripe_connect', 'stripe_direct')), 0)::bigint AS CardCents
                 FROM tenant_ledger_entry
                 WHERE tenant_id = @tenantId
                   AND entry_kind = 'refund'

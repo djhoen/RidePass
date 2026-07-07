@@ -29,6 +29,13 @@ namespace webapi.Controllers.API.Data.Redemption
         // registration (rider details + required waiver). The gate surfaces this as a
         // warning so staff can collect the waiver before letting them on track.
         public bool RegistrationComplete { get; set; } = true;
+        // The rider this ticket is for (when captured at registration), so a multi-rider
+        // order reads clearly at the gate. Falls back to null when not yet registered.
+        public string? AttendeeName { get; set; }
+        // When the rider is a minor whose waiver was signed by a parent/guardian, the gate
+        // shows who signed on their behalf.
+        public bool SignedByParent { get; set; }
+        public string? GuardianName { get; set; }
     }
 
     public class BulkRedeemRequest

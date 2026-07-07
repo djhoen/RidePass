@@ -87,13 +87,13 @@
                                 <td>{{ p.payoutDateUtc ? formatDate(p.payoutDateUtc) : '—' }}</td>
                                 <td class="text-right">
                                     <v-btn v-if="p.status === 'pending'" size="x-small" variant="tonal" color="primary"
-                                        :loading="stripeSendingId === p.id" @click="sendPayoutViaStripe(p)">
+                                        :loading="stripeSendingId === p.id" :disabled="voidingId === p.id" @click="sendPayoutViaStripe(p)">
                                         Send via Stripe
                                     </v-btn>
                                     <v-btn v-if="p.status === 'pending' || p.status === 'processing'" size="x-small" variant="text"
-                                        :disabled="stripeSendingId === p.id" @click="openMarkPaid(p)">Mark paid</v-btn>
+                                        :disabled="stripeSendingId === p.id || voidingId === p.id" @click="openMarkPaid(p)">Mark paid</v-btn>
                                     <v-btn v-if="p.status === 'pending'" size="x-small" variant="text" color="error"
-                                        :disabled="stripeSendingId === p.id" @click="voidPayout(p)">Void</v-btn>
+                                        :loading="voidingId === p.id" :disabled="stripeSendingId === p.id" @click="voidPayout(p)">Void</v-btn>
                                     <v-btn size="x-small" variant="text" icon="mdi-download" @click="downloadPayoutCsv(p)"
                                         :title="'Download CSV'"></v-btn>
                                 </td>
@@ -233,6 +233,7 @@ const markPaidDate = ref(dayjs.utc().format('YYYY-MM-DD'))
 const markPaidReference = ref('')
 
 const stripeSendingId = ref<string | null>(null)
+const voidingId = ref<string | null>(null)
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -286,13 +287,13 @@ async function submitCreatePayout() {
         const data = (r.data as any).data
         flash(`Payout created with ${data.attachedCount} ledger entr${data.attachedCount === 1 ? 'y' : 'ies'} attached.`, 'success')
         createPayoutDialog.value = false
-        await refreshDetailDialog()
-        await loadBalances()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to create payout.', 'error')
+        return
     } finally {
         creatingPayout.value = false
     }
+    await refreshAfterMoneyAction()
 }
 
 function openMarkPaid(p: PayoutSummary) {
@@ -313,17 +314,17 @@ async function submitMarkPaid() {
         })
         flash('Marked as paid.', 'success')
         markPaidDialog.value = false
-        await refreshDetailDialog()
-        await loadBalances()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to update payout.', 'error')
+        return
     } finally {
         markingPaid.value = false
     }
+    await refreshAfterMoneyAction()
 }
 
 async function voidPayout(p: PayoutSummary) {
-    if (!detailTenant.value) return
+    if (!detailTenant.value || voidingId.value) return
     const ok = await confirm({
         title: 'Void this payout?',
         message: 'Attached ledger entries will become unpaid again.',
@@ -331,14 +332,17 @@ async function voidPayout(p: PayoutSummary) {
         confirmColor: 'error',
     })
     if (!ok) return
+    voidingId.value = p.id
     try {
         await service.voidPayout(detailTenant.value.tenantId, p.id)
         flash('Payout voided.', 'success')
-        await refreshDetailDialog()
-        await loadBalances()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to void payout.', 'error')
+        return
+    } finally {
+        voidingId.value = null
     }
+    await refreshAfterMoneyAction()
 }
 
 async function sendPayoutViaStripe(p: PayoutSummary) {
@@ -354,13 +358,13 @@ async function sendPayoutViaStripe(p: PayoutSummary) {
         stripeSendingId.value = p.id
         const r = await service.sendPayoutViaStripe(detailTenant.value.tenantId, p.id)
         flash(`Sent via Stripe (transfer ${r.data.data.transferId}).`, 'success')
-        await refreshDetailDialog()
-        await loadBalances()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Stripe transfer failed.', 'error')
+        return
     } finally {
         stripeSendingId.value = null
     }
+    await refreshAfterMoneyAction()
 }
 
 async function downloadPayoutCsv(p: PayoutSummary) {
@@ -380,6 +384,18 @@ async function refreshDetailDialog() {
     ])
     detailPayouts.value = (p.data as any).data
     detailLedger.value = (l.data as any).data
+}
+
+// Refresh the dialog + balances AFTER a money action has already succeeded. It has its own
+// try/catch so a refresh failure can't be caught by the money action's catch and mis-reported as
+// "the transfer/payout failed" (which would tempt an operator to run the money action again).
+async function refreshAfterMoneyAction() {
+    try {
+        await refreshDetailDialog()
+        await loadBalances()
+    } catch {
+        flash('The action succeeded, but the view couldn’t refresh. Reload the page to see the latest state.', 'error')
+    }
 }
 
 function payoutStatusColor(s: string): string {

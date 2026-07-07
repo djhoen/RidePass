@@ -17,6 +17,7 @@ namespace Services.Repositories
             delivered_at_utc AS DeliveredAtUtc,
             status,
             stripe_payment_intent_id AS StripePaymentIntentId,
+            stripe_connected_account_id AS StripeConnectedAccountId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -59,10 +60,15 @@ namespace Services.Repositories
             return (await _db.Query<GiftCard>(sql, new { paymentIntentId })).FirstOrDefault();
         }
 
-        public async Task SetStripePaymentIntentId(Guid id, string paymentIntentId)
+        public async Task SetStripePaymentIntentId(Guid id, string paymentIntentId, string? connectedAccountId = null)
         {
-            const string sql = "UPDATE gift_card SET stripe_payment_intent_id = @paymentIntentId WHERE id = @id";
-            await _db.Execute(sql, new { id, paymentIntentId });
+            // Snapshot the connected account alongside the PI so the reconciler can query Stripe on the
+            // right account for direct-charge tenants (NULL leaves it as a platform charge).
+            const string sql = @"UPDATE gift_card
+                SET stripe_payment_intent_id = @paymentIntentId,
+                    stripe_connected_account_id = @connectedAccountId
+                WHERE id = @id";
+            await _db.Execute(sql, new { id, paymentIntentId, connectedAccountId });
         }
 
         public async Task<bool> ApplyToBalance(Guid id, int amountCents)
@@ -103,10 +109,13 @@ namespace Services.Repositories
             return (await _db.Query<GiftCardRedemption>(sql, new { sourceKind, sourceIds = sourceIds.ToArray() })).ToList();
         }
 
-        public async Task Activate(Guid id)
+        // Returns true only when this call actually flipped pending → active, so the caller can send
+        // the one-time delivery email exactly once even if the success event is processed more than
+        // once (a late webhook racing the reconciler that already finalized the card).
+        public async Task<bool> Activate(Guid id)
         {
             const string sql = "UPDATE gift_card SET status = 'active' WHERE id = @id AND status = 'pending'";
-            await _db.Execute(sql, new { id });
+            return await _db.Execute(sql, new { id }) > 0;
         }
 
         public async Task Void(Guid id)

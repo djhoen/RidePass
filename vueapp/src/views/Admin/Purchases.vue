@@ -13,10 +13,14 @@
         </div>
 
         <v-progress-linear v-if="searching" indeterminate color="primary" class="mb-2"></v-progress-linear>
+        <v-alert v-if="searchError" type="error" variant="tonal" density="compact" class="mb-2">{{ searchError }}</v-alert>
         <div v-if="serverResults !== null" class="text-caption text-medium-emphasis mb-2 d-flex align-center ga-1">
             <v-icon icon="mdi-information-outline" size="14"></v-icon>
             No matches in the selected dates. Showing all-time results for your search.
         </div>
+
+        <!-- Disputes carry evidence-due deadlines, so if the check fails say so rather than hiding it. -->
+        <v-alert v-if="disputesError" type="warning" variant="tonal" density="compact" class="mb-4">{{ disputesError }}</v-alert>
 
         <v-card v-if="disputes.length > 0" class="mb-4" color="red-lighten-5">
             <v-card-title class="d-flex align-center">
@@ -96,7 +100,8 @@
                     </tr>
                     <tr v-if="!loading && !loadError && !searching && displayRows.length === 0">
                         <td colspan="7" class="text-center text-medium-emphasis py-8">
-                            {{ hasQuery ? 'No orders match your search.' : 'No purchases in this range.' }}
+                            {{ searchError ? 'Search failed — see the message above.'
+                                : hasQuery ? 'No orders match your search.' : 'No purchases in this range.' }}
                         </td>
                     </tr>
                 </tbody>
@@ -290,6 +295,12 @@ const orderIdQuery = ref('')
 // null = not in server mode (show the client-filtered list); an array = all-time results.
 const serverResults = ref<PurchaseRow[] | null>(null)
 const searching = ref(false)
+// Persistent (not just a toast) so a failed all-time search isn't read as "order doesn't exist".
+const searchError = ref<string | null>(null)
+// Monotonic request tokens: a response only applies if it's still the latest of its kind, so a
+// slower older response can't overwrite newer data (out-of-order responses).
+let loadSeq = 0
+let searchSeq = 0
 
 const purchases = ref<PurchaseRow[]>([])
 const loading = ref(false)
@@ -321,6 +332,7 @@ function orderRef(p: PurchaseRow): string {
 }
 
 const disputes = ref<TenantDisputeListItem[]>([])
+const disputesError = ref<string | null>(null)
 
 const cancelDialog = ref(false)
 const cancelTarget = ref<PurchaseRow | null>(null)
@@ -364,11 +376,14 @@ onMounted(async () => {
 })
 
 async function loadDisputes() {
+    disputesError.value = null
     try {
         const r = await service.listDisputes()
         disputes.value = (r.data as any).data
-    } catch {
-        // silent — disputes are nice-to-have on this page
+    } catch (err: any) {
+        // Not silent: the banner carries evidence-due deadlines, so a hidden failure could cost a
+        // dispute by default. Surface a warning so staff know to refresh rather than assume none.
+        disputesError.value = err.response?.data?.error || 'Couldn’t check for active disputes. Refresh to retry.'
     }
 }
 
@@ -396,6 +411,9 @@ function evidenceDueClass(dueUtc: string): string {
 function tz() { return branding.timezone || 'UTC' }
 
 async function load() {
+    // Rapid filter changes can leave two loads in flight; only the latest may apply its result,
+    // so a slower older response can't clobber newer data.
+    const seq = ++loadSeq
     loading.value = true
     loadError.value = null
     try {
@@ -406,17 +424,21 @@ async function load() {
             toUtc,
             status: statusFilter.value || undefined,
         })
+        if (seq !== loadSeq) return
         purchases.value = (r.data as any).data
     } catch (err: any) {
+        if (seq !== loadSeq) return
         const msg = err.response?.data?.error ?? 'Couldn’t load purchases. Refresh to try again.'
         loadError.value = msg
         snackbarText.value = msg
         snackbarColor.value = 'error'
         snackbar.value = true
     } finally {
-        loading.value = false
-        // A fresh load changes the candidate set; re-run any active search against it.
-        if (hasQuery.value) evaluateSearch()
+        if (seq === loadSeq) {
+            loading.value = false
+            // A fresh load changes the candidate set; re-run any active search against it.
+            if (hasQuery.value) evaluateSearch()
+        }
     }
 }
 
@@ -428,13 +450,17 @@ watch([rangeFrom, rangeTo, statusFilter], () => { load() })
 // Decide where the search results come from: if the loaded range already contains a
 // match, show that (client-side, instant); otherwise query the DB across all time.
 async function evaluateSearch() {
+    searchError.value = null
     if (!hasQuery.value) { serverResults.value = null; return }
     if (filtered.value.length > 0) { serverResults.value = null; return }
     await serverSearch()
 }
 
 async function serverSearch() {
+    // Debounced keystrokes + load()'s re-run can overlap; only the latest search applies its result.
+    const seq = ++searchSeq
     searching.value = true
+    searchError.value = null
     try {
         const r = await service.listPurchasesForAdmin({
             // Keep the status filter; the controller drops the date window when searching.
@@ -442,14 +468,21 @@ async function serverSearch() {
             email: emailQuery.value.trim() || undefined,
             orderId: orderIdQuery.value.trim().replace(/^#/, '') || undefined,
         })
+        if (seq !== searchSeq) return
         serverResults.value = (r.data as any).data
     } catch (err: any) {
-        serverResults.value = []
-        snackbarText.value = err.response?.data?.error ?? 'Couldn’t search purchases. Try again.'
+        if (seq !== searchSeq) return
+        // Fall back to the client-filtered list (null), not a fake empty array — an empty array reads
+        // as "this order doesn't exist" during a support call. Keep a persistent error so the admin
+        // knows the SEARCH failed, not that the order is missing.
+        serverResults.value = null
+        const msg = err.response?.data?.error ?? 'Couldn’t search all-time purchases. Try again.'
+        searchError.value = msg
+        snackbarText.value = msg
         snackbarColor.value = 'error'
         snackbar.value = true
     } finally {
-        searching.value = false
+        if (seq === searchSeq) searching.value = false
     }
 }
 

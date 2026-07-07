@@ -616,7 +616,12 @@ async function findCustomer() {
         try {
             const v = await rewardService.listRiderRedemptions(customer.value!.id)
             availableVouchers.value = ((v.data as any).data as RiderRewardRedemption[]).filter(x => !x.redeemedAtUtc)
-        } catch { availableVouchers.value = [] }
+        } catch (err: any) {
+            // Don't render a load failure as "no vouchers" — the cashier would charge full price and
+            // silently skip a reward the rider earned. Warn so they can retry the lookup.
+            availableVouchers.value = []
+            flash(err.response?.data?.error || 'Couldn’t load this rider’s reward vouchers. Retry the lookup before charging.', 'error')
+        }
     } catch (err: any) {
         if (err.response?.status === 404) {
             lookupError.value = `No customer found for "${customerEmail.value.trim()}".`

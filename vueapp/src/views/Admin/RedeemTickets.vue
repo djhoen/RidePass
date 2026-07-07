@@ -44,11 +44,20 @@
                             <v-chip size="x-small" class="ml-2" :color="statusColor(item.status)">{{ item.status }}</v-chip>
                             <v-chip size="x-small" class="ml-1" variant="tonal">{{ kindLabel(item.kind) }}</v-chip>
                         </div>
+                        <div v-if="item.attendeeName" class="text-caption text-medium-emphasis">
+                            Rider: {{ item.attendeeName }}
+                        </div>
+                        <div v-if="item.signedByParent" class="text-caption d-flex align-center ga-1" style="color: rgb(var(--v-theme-info))">
+                            <v-icon icon="mdi-shield-account" size="14"></v-icon>
+                            Minor — waiver signed by guardian{{ item.guardianName ? `: ${item.guardianName}` : '' }}
+                        </div>
                         <div v-if="item.redeemedAtUtc" class="text-caption text-medium-emphasis">
                             Redeemed {{ formatInTenant(item.redeemedAtUtc) }}
                             <span v-if="item.redeemedByName"> by {{ item.redeemedByName }}</span>
                         </div>
-                        <div v-else-if="!item.isRedeemableToday && item.notRedeemableReason" class="text-caption text-warning">
+                        <div v-else-if="!item.isRedeemableToday && item.notRedeemableReason"
+                             class="text-caption text-warning d-flex align-center ga-1">
+                            <v-icon icon="mdi-alert-circle-outline" size="14"></v-icon>
                             {{ item.notRedeemableReason }}
                         </div>
                     </div>
@@ -165,7 +174,13 @@ async function loadOrder(token: string) {
             .filter(i => i.isRedeemableToday)
             .map(i => i.purchaseId) ?? []
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Order not found.', 'error')
+        // Only a real 404 means the QR/token is invalid. A network blip or server error must NOT read
+        // as "not found" — that would turn away a paying customer holding a valid ticket.
+        const status = err.response?.status
+        const msg = status === 404
+            ? (err.response?.data?.error || 'Order not found. Double-check the code and rescan.')
+            : (err.response?.data?.error || 'Couldn’t look up the order. Check the connection and rescan.')
+        flash(msg, 'error')
         order.value = null
         orderToken.value = null
         selectedIds.value = []

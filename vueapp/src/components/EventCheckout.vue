@@ -843,6 +843,11 @@ async function finish() {
         if (r.needsWaiver && !r.signatureDataUrl) {
             errorMessage.value = `${r.firstName || `Rider ${i + 1}`} needs to sign the waiver.`; return
         }
+        // Birthdate is required to sign a waiver (matches the server), so a minor can't be signed in as
+        // an adult by leaving it blank, which would also skip the parent/guardian requirement below.
+        if (r.needsWaiver && !r.birthdate) {
+            errorMessage.value = `${r.firstName || `Rider ${i + 1}`} needs a date of birth to sign the waiver.`; return
+        }
         if (r.needsWaiver && isMinor(r.birthdate) && !r.parentName.trim()) {
             errorMessage.value = `A parent/guardian name is required for ${r.firstName || `rider ${i + 1}`}.`; return
         }

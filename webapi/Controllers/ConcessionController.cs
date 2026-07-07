@@ -44,6 +44,7 @@ namespace webapi.Controllers
         private readonly IStripePurchaseFinalizer _finalizer;
         private readonly INotificationService _notifications;
         private readonly IEventRepository _events;
+        private readonly webapi.Security.IManagerPinService _managerPin;
         private readonly ITenantContext _tenantContext;
 
         public ConcessionController(
@@ -63,6 +64,7 @@ namespace webapi.Controllers
             IStripePurchaseFinalizer finalizer,
             INotificationService notifications,
             IEventRepository events,
+            webapi.Security.IManagerPinService managerPin,
             ITenantContext tenantContext)
         {
             _concessions = concessions;
@@ -81,6 +83,7 @@ namespace webapi.Controllers
             _finalizer = finalizer;
             _notifications = notifications;
             _events = events;
+            _managerPin = managerPin;
             _tenantContext = tenantContext;
         }
 
@@ -645,7 +648,11 @@ namespace webapi.Controllers
         // ── Manager PIN ───────────────────────────────────────────────────────────────
         // A staff member sets/clears their own POS authorization PIN. Only managers/admins may hold one;
         // a cashier-only account is rejected. Stored as a salted hash.
+        // Rate-limited like VerifyManagerPin: the uniqueness check below is an oracle ("that PIN is
+        // taken" confirms a hit), so without a throttle a manager could enumerate the 4-digit space to
+        // learn a colleague's PIN and forge their comp/void approvals.
         [Authorize]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPut("ManagerPin")]
         public async Task<IActionResult> SetManagerPin([FromBody] ConcessionManagerPinRequest req)
         {
@@ -666,20 +673,47 @@ namespace webapi.Controllers
             }
             if (pin.Length < 4 || pin.Length > 8 || !pin.All(char.IsDigit))
                 return new ApiResponses().BadRequestResult("PIN must be 4 to 8 digits.");
+            // Every manager has a distinct PIN so the authorizer on a comp/override is unambiguous.
+            if (!await _managerPin.IsPinAvailableAsync(_tenantContext.TenantId, uid, pin))
+                return new ApiResponses().BadRequestResult("Another manager already uses that PIN. Choose a different one.");
             await _users.SetPosPinHash(uid, _passwordHasher.HashPassword(user, pin));
             return new ApiResponses().OkResult();
         }
 
+        // Whether the signed-in user is a manager/admin and (if so) has set a PIN. Drives the forced
+        // PIN-setup prompt so every manager carries one.
+        [Authorize]
+        [HttpGet("ManagerPin/Status")]
+        public async Task<IActionResult> ManagerPinStatus()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+            var user = await _users.GetById(uid);
+            var isManager = user is not null && user.TenantId == _tenantContext.TenantId && IsManagerOrAdmin(user);
+            var hasPin = isManager && await _managerPin.HasPinAsync(uid);
+            return new ApiResponses().OkResult(new { isManager, hasPin });
+        }
+
         // The POS confirms a PIN authorizes a gated action and shows whose approval it is. A bad PIN is a
-        // 400 with a generic message so the digits never reveal which (if any) manager they hit.
+        // 400 with a generic message so the digits never reveal which (if any) manager they hit; repeated
+        // wrong guesses lock the entering user out (rate-limited + DB lockout).
         [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPost("VerifyManagerPin")]
         public async Task<IActionResult> VerifyManagerPin([FromBody] ConcessionVerifyManagerPinRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var (userId, name) = await VerifyManagerPinInternal(_tenantContext.TenantId, req.Pin);
-            if (userId is null) return new ApiResponses().BadRequestResult("That manager PIN wasn't recognized.");
-            return new ApiResponses().OkResult(new ConcessionManagerPinResponse { ManagerUserId = userId.Value, ManagerName = name! });
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+            var result = await _managerPin.VerifyAsync(_tenantContext.TenantId, uid, req.Pin);
+            if (!result.Authorized)
+                return new ApiResponses().BadRequestResult(result.Error ?? "That manager PIN wasn't recognized.");
+            return new ApiResponses().OkResult(new ConcessionManagerPinResponse
+            {
+                ManagerUserId = result.AuthorizedUserId!.Value,
+                ManagerName = result.AuthorizedName!,
+            });
         }
 
         // ── Member discount lookup ─────────────────────────────────────────────────────
@@ -795,6 +829,17 @@ namespace webapi.Controllers
         private static string DescribeDiscount(string kind, int value) =>
             kind == "amount" ? $"${value / 100.0:0.00}" : $"{value / 100.0:0.##}%";
 
+        // Rejects an impossible modifier group (blank name, negative min, or max below min) before it can
+        // be saved and silently block every sale of its product. Returns an error string, or null if ok.
+        private static string? ValidateModifierGroup(ConcessionModifierGroupRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.Name)) return "Name is required.";
+            if (req.MinSelect < 0) return "Minimum selections can't be negative.";
+            if (req.MaxSelect.HasValue && req.MaxSelect.Value < Math.Max(1, req.MinSelect))
+                return "Maximum selections must be at least the minimum (and at least 1).";
+            return null;
+        }
+
         private static bool IsManagerOrAdmin(User u) =>
             (u.Roles ?? Array.Empty<string>()).Any(r => r is "tenant_admin" or "tenant_manager")
             || u.Role is "tenant_admin" or "tenant_manager";
@@ -838,21 +883,6 @@ namespace webapi.Controllers
             return result;
         }
 
-        // Verify a manager PIN against the tenant's managers/admins who have one set. Salted hashes can't
-        // be queried by value, so each candidate is checked in code. Returns the matching manager, or null.
-        private async Task<(Guid? userId, string? name)> VerifyManagerPinInternal(Guid tenantId, string? pin)
-        {
-            if (string.IsNullOrWhiteSpace(pin)) return (null, null);
-            var candidates = await _users.ListTenantManagerPins(tenantId);
-            var probe = new User();
-            foreach (var c in candidates)
-            {
-                if (_passwordHasher.VerifyHashedPassword(probe, c.PinHash, pin) != PasswordVerificationResult.Failed)
-                    return (c.Id, $"{c.FirstName} {c.LastName}".Trim());
-            }
-            return (null, null);
-        }
-
         // Resolve an email/phone to a customer and whether they hold an active Season Pass and/or a linked
         // LoamPass account at this tenant. The LoamPass perk is membership-based (a link is enough) and
         // does NOT consume an admission credit.
@@ -866,7 +896,7 @@ namespace webapi.Controllers
                 : await _users.GetByPhoneE164(NormalizeToE164(q)) ?? await _users.GetByEmail(tenantId, q);
             if (user is null) return (null, false, false);
 
-            var today = DateTime.UtcNow.Date;
+            var today = TenantToday();
             var passes = await _seasonPasses.ListMine(user.Id, tenantId);
             var hasPass = passes.Any(p => p.Status == "paid"
                 && p.ValidFromDate.Date <= today && p.ValidToDate.Date >= today);
@@ -907,7 +937,7 @@ namespace webapi.Controllers
         // net total + tax snapshot, and returns the summary to stamp on the sale. Enforces the manager-PIN
         // gate (comps always; manual percent/amount when the tenant requires it) and member eligibility.
         private async Task<(bool ok, string? error, DiscountOutcome outcome)> ApplyDiscounts(
-            Guid tenantId, List<ConcessionSaleLine> lines, List<ConcessionSaleRequest.SaleLine> requested,
+            Guid tenantId, Guid requestingUserId, List<ConcessionSaleLine> lines, List<ConcessionSaleRequest.SaleLine> requested,
             ConcessionSaleRequest req, ConcessionMenuSettings? settings, bool pricesIncludeTax)
         {
             var outcome = new DiscountOutcome();
@@ -920,11 +950,11 @@ namespace webapi.Controllers
             // One PIN authorizes the whole sale. Verify up front if anything needs it.
             if (NeedsPin(req.Discount) || requested.Any(i => NeedsPin(i.Discount)))
             {
-                var (authId, authName) = await VerifyManagerPinInternal(tenantId, req.ManagerPin);
-                if (authId is null)
-                    return (false, "A manager PIN is required to apply a manual discount or comp.", outcome);
-                outcome.AuthorizedByUserId = authId;
-                outcome.AuthorizedByName = authName;
+                var pinResult = await _managerPin.VerifyAsync(tenantId, requestingUserId, req.ManagerPin);
+                if (!pinResult.Authorized)
+                    return (false, pinResult.Error ?? "A manager PIN is required to apply a manual discount or comp.", outcome);
+                outcome.AuthorizedByUserId = pinResult.AuthorizedUserId;
+                outcome.AuthorizedByName = pinResult.AuthorizedName;
             }
 
             // Cache member lookups so applying the same perk to several lines hits the DB once.
@@ -1070,6 +1100,10 @@ namespace webapi.Controllers
             try { return TimeZoneInfo.FindSystemTimeZoneById(_tenantContext.Tenant.Timezone ?? "UTC"); }
             catch { return TimeZoneInfo.Utc; }
         }
+
+        // "Today" as a date in the tenant's timezone (for 86 / availability / validity-window checks). The
+        // stored 86 sold_out_date is compared by .Date, so this keeps the 86 valid until LOCAL midnight.
+        private DateTime TenantToday() => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TenantTz()).Date;
 
         // Start of "today" in the tenant's timezone, as a UTC instant (for daily stats windows).
         private DateTime TenantTodayStartUtc()
@@ -1327,6 +1361,8 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var item = await _concessions.GetInventoryItem(id, _tenantContext.TenantId);
             if (item is null) return new ApiResponses().NotFoundResult("Inventory item not found.");
+            // Receiving is additive only; a negative quantity would silently deplete on-hand.
+            if (req.Quantity <= 0) return new ApiResponses().BadRequestResult("Enter a quantity greater than zero.");
             await _concessions.ReceiveStock(id, _tenantContext.TenantId, req.Quantity);
             return new ApiResponses().OkResult();
         }
@@ -1364,7 +1400,8 @@ namespace webapi.Controllers
 
         // ── Combo definition (shared, tenant-level) ─────────────────────────────────
         // Read the "make it a combo" config (tiers + slots). Available to the POS and the rider menu so
-        // they can render the upgrade; no role required beyond a resolved, F&B-enabled tenant.
+        // they can render the upgrade; any authenticated tenant user (matches the other menu reads).
+        [Authorize]
         [HttpGet("Combo")]
         public async Task<IActionResult> GetCombo()
         {
@@ -1495,6 +1532,7 @@ namespace webapi.Controllers
         public async Task<IActionResult> CreateModifierGroup([FromBody] ConcessionModifierGroupRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (ValidateModifierGroup(req) is { } gErr) return new ApiResponses().BadRequestResult(gErr);
             var g = new ConcessionModifierGroup
             {
                 TenantId = _tenantContext.TenantId,
@@ -1515,6 +1553,7 @@ namespace webapi.Controllers
         {
             var existing = await _concessions.GetModifierGroup(id, _tenantContext.TenantId);
             if (existing is null) return new ApiResponses().NotFoundResult("Modifier group not found.");
+            if (ValidateModifierGroup(req) is { } gErr) return new ApiResponses().BadRequestResult(gErr);
             existing.Name = req.Name.Trim();
             existing.MinSelect = req.MinSelect;
             existing.MaxSelect = req.MaxSelect;
@@ -1605,7 +1644,7 @@ namespace webapi.Controllers
             var product = await _concessions.GetProduct(id, _tenantContext.TenantId);
             if (product is null) return new ApiResponses().NotFoundResult("Item not found.");
             await _concessions.SetProductSoldOut(
-                id, _tenantContext.TenantId, req.SoldOut ? DateTime.UtcNow.Date : (DateTime?)null);
+                id, _tenantContext.TenantId, req.SoldOut ? TenantToday() : (DateTime?)null);
             return new ApiResponses().OkResult(new { soldOut = req.SoldOut });
         }
 
@@ -1643,17 +1682,19 @@ namespace webapi.Controllers
             var (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
             if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
 
+            // The signed-in cashier: attributes the sale and is the subject of the manager-PIN lockout.
+            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+
             // Apply any discounts/comps server-side: this mutates the lines to NET totals + recomputed tax,
             // gates manual discounts/comps behind a manager PIN, and returns the summary to stamp on the sale.
             var requestedItems = req.Items.Where(i => i.Quantity > 0).ToList();
-            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, lines, requestedItems, req, menuSettings, pricesIncludeTax);
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, req, menuSettings, pricesIncludeTax);
             if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
 
             // Inclusive: tax is already inside the line totals (subtotal); exclusive: it's added on top.
             // SubtotalCents stays GROSS; the discount is subtracted to reach the total. Tax is on the net.
             var taxCents = lines.Sum(l => l.TaxCents);
             var total = subtotal - disc.DiscountCents + (pricesIncludeTax ? 0 : taxCents) + tipCents;
-            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
             var customerName = disc.PurchaserName ?? Blank(req.CustomerName);   // member name wins over a typed one
 
             // ── Paid immediately at the counter: cash, OR a fully-comped $0 order (no card to run). Order
@@ -1661,7 +1702,7 @@ namespace webapi.Controllers
             if (paymentMethod == "cash" || total <= 0)
             {
                 if (subtotal <= 0) return new ApiResponses().BadRequestResult("Sale total must be greater than zero.");
-                var orderNumber = await _concessions.NextOrderNumber(tenantId, DateTime.UtcNow);
+                var orderNumber = await _concessions.NextOrderNumber(tenantId);
                 var cashSale = new ConcessionSale
                 {
                     TenantId = tenantId,
@@ -1823,6 +1864,8 @@ namespace webapi.Controllers
             // Inclusive: line totals already contain tax, so show the pre-tax subtotal + "tax included".
             var subtotalLabel = sale.PricesIncludeTax ? sale.SubtotalCents - sale.TaxCents : sale.SubtotalCents;
             sb.AppendLine($"Subtotal {ReceiptMoney(subtotalLabel)}");
+            if (sale.DiscountCents > 0)
+                sb.AppendLine($"{(string.IsNullOrWhiteSpace(sale.DiscountLabel) ? "Discount" : sale.DiscountLabel)} -{ReceiptMoney(sale.DiscountCents)}");
             if (sale.TaxCents > 0)
                 sb.AppendLine($"Tax{(sale.PricesIncludeTax ? " (incl.)" : "")} {ReceiptMoney(sale.TaxCents)}");
             if (sale.TipCents > 0) sb.AppendLine($"Tip {ReceiptMoney(sale.TipCents)}");
@@ -1848,6 +1891,8 @@ namespace webapi.Controllers
             sb.Append("</table><hr style=\"border:none;border-top:1px solid #ddd;margin:10px 0\">");
             var subtotalLabel = sale.PricesIncludeTax ? sale.SubtotalCents - sale.TaxCents : sale.SubtotalCents;
             sb.Append($"<div style=\"font-size:14px\">Subtotal: {ReceiptMoney(subtotalLabel)}<br>");
+            if (sale.DiscountCents > 0)
+                sb.Append($"{Enc(string.IsNullOrWhiteSpace(sale.DiscountLabel) ? "Discount" : sale.DiscountLabel)}: -{ReceiptMoney(sale.DiscountCents)}<br>");
             if (sale.TaxCents > 0)
                 sb.Append($"Tax{(sale.PricesIncludeTax ? " (incl.)" : "")}: {ReceiptMoney(sale.TaxCents)}<br>");
             if (sale.TipCents > 0) sb.Append($"Tip: {ReceiptMoney(sale.TipCents)}<br>");
@@ -1859,10 +1904,19 @@ namespace webapi.Controllers
         // Reverses a paid sale: card via Stripe (on the connected account for direct sales), cash as
         // a recorded reversal. Writes a negative ledger entry so balances stay correct.
         [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPost("Sale/{id:guid}/Refund")]
-        public async Task<IActionResult> RefundSale(Guid id, CancellationToken ct)
+        public async Task<IActionResult> RefundSale(Guid id, [FromBody] ConcessionRefundRequest req, CancellationToken ct)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var actingUserId))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+
+            // A refund moves money and is a shrinkage vector, so it takes a manager PIN just like a comp.
+            var pinResult = await _managerPin.VerifyAsync(_tenantContext.TenantId, actingUserId, req?.ManagerPin);
+            if (!pinResult.Authorized)
+                return new ApiResponses().BadRequestResult(pinResult.Error ?? "Manager authorization required to refund.");
+
             var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
             if (sale is null) return new ApiResponses().NotFoundResult("Sale not found.");
             if (sale.Status != "paid") return new ApiResponses().BadRequestResult($"A {sale.Status} sale can't be refunded.");
@@ -1886,8 +1940,7 @@ namespace webapi.Controllers
 
             await _concessions.MarkSaleRefunded(sale.Id, _tenantContext.TenantId);
             await _concessions.MarkSaleCompleted(sale.Id, _tenantContext.TenantId);
-            Guid? refundedBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var ruid) ? ruid : null;
-            await WriteRefundLedger(sale, refundedBy);
+            await WriteRefundLedger(sale, actingUserId, pinResult.AuthorizedName);
             return new ApiResponses().OkResult();
         }
 
@@ -2325,7 +2378,7 @@ namespace webapi.Controllers
                 })
                 .Select(p => p.Id).ToList();
             var soldByProduct = await _concessions.SumSoldProducts(baseProductIds);
-            var today = DateTime.UtcNow.Date;
+            var today = TenantToday();
 
             var responses = new List<ConcessionProductResponse>();
             foreach (var p in products)
@@ -2615,7 +2668,7 @@ namespace webapi.Controllers
             var requestedByProduct = requested.Where(i => !i.VariantId.HasValue)
                 .GroupBy(i => i.ProductId)
                 .ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
-            var today = DateTime.UtcNow.Date;
+            var today = TenantToday();
 
             // Tax config: each item's rate comes from its tax category (or the tenant default). Inclusive
             // pricing backs tax out of the listed price; otherwise it's added on top. Loaded once here so
@@ -2866,6 +2919,12 @@ namespace webapi.Controllers
 
         // Cash concession sale: record a 'sale' ledger entry as payment_method='cash' so it flows
         // into the worker's cash reconciliation (sold_by_user_id attribution + cash method).
+        //
+        // The tenant already holds the cash from the drawer, so net_to_tenant must NOT be the gross
+        // (that would sweep the same money into their next platform payout — paying it out twice).
+        // Mirror CounterController's cash convention: net = -RidepassCut, i.e. the tenant owes the
+        // platform only its cut. With the current F&B policy of a zero cut this nets to 0; if an F&B
+        // cut is ever introduced this stays correct without another change here.
         private async Task WriteCashLedger(ConcessionSale sale)
         {
             try
@@ -2881,35 +2940,45 @@ namespace webapi.Controllers
                     GrossCents = sale.TotalCents,
                     StripeFeeCents = 0,
                     RidepassCutCents = calc.RidepassCutCents,
-                    NetToTenantCents = calc.NetToTenantCents,
+                    NetToTenantCents = -calc.RidepassCutCents,
                     PaymentMethod = "cash",
                     SoldByUserId = sale.SoldByUserId,   // cashier, for worker reconciliation
+                    Memo = "Cash sale, tenant owes service charge",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
         }
 
         // Negative-mirror of the original sale entry (matches the platform refund convention).
-        private async Task WriteRefundLedger(ConcessionSale sale, Guid? refundedBy)
+        private async Task WriteRefundLedger(ConcessionSale sale, Guid? refundedBy, string? authorizedByName = null)
         {
             var entry = await _ledger.GetSaleEntryForSource(sale.TenantId, "concession", sale.Id);
             if (entry is null) return;
-            await _ledger.Insert(new TenantLedgerEntry
+            var memo = string.IsNullOrWhiteSpace(authorizedByName)
+                ? "Food & Beverage refund"
+                : $"Food & Beverage refund (approved by {authorizedByName})";
+            try
             {
-                TenantId = sale.TenantId,
-                EntryKind = "refund",
-                SourceKind = "concession",
-                SourceId = sale.Id,
-                OccurredAtUtc = DateTime.UtcNow,
-                GrossCents = -entry.GrossCents,
-                StripeFeeCents = -entry.StripeFeeCents,
-                RidepassCutCents = -entry.RidepassCutCents,
-                NetToTenantCents = -entry.NetToTenantCents,
-                StripePaymentIntentId = entry.StripePaymentIntentId,
-                PaymentMethod = sale.PaymentMethod,
-                SoldByUserId = refundedBy,   // who issued the refund, for worker reconciliation
-                Memo = "Food & Beverage refund",
-            });
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = sale.TenantId,
+                    EntryKind = "refund",
+                    SourceKind = "concession",
+                    SourceId = sale.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = -entry.GrossCents,
+                    StripeFeeCents = -entry.StripeFeeCents,
+                    RidepassCutCents = -entry.RidepassCutCents,
+                    NetToTenantCents = -entry.NetToTenantCents,
+                    StripePaymentIntentId = entry.StripePaymentIntentId,
+                    PaymentMethod = sale.PaymentMethod,
+                    SoldByUserId = refundedBy,   // who issued the refund, for worker reconciliation
+                    Memo = memo,
+                });
+            }
+            // The unique refund-per-source index makes a concurrent double-refund's loser idempotent
+            // (the money + status change already happened); swallow it like the other ledger inserts.
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { }
         }
     }
 }

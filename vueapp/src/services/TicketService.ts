@@ -273,6 +273,9 @@ export interface OrderItem {
     redeemedAtUtc: string | null
     redeemedByName: string | null
     registrationComplete: boolean
+    attendeeName: string | null
+    signedByParent: boolean
+    guardianName: string | null
 }
 
 export interface BulkRedeemResponse {

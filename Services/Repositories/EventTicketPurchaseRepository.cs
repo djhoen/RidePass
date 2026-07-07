@@ -24,6 +24,7 @@ namespace Services.Repositories
             rider_birthdate AS RiderBirthdate, bike AS Bike,
             waiver_id AS WaiverId, waiver_signed_at AS WaiverSignedAt,
             waiver_signature_data_url AS WaiverSignatureDataUrl,
+            waiver_signature_id AS WaiverSignatureId,
             parent_guardian_name AS ParentGuardianName,
             registration_complete AS RegistrationComplete,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
@@ -42,11 +43,13 @@ namespace Services.Repositories
                 INSERT INTO event_ticket_purchase
                     (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents,
                      tax_cents, tax_rate_bps, tax_inclusive, applied_reward_redemption_id, payment_method,
-                     status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete)
+                     status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete,
+                     waiver_signature_id)
                 VALUES
                     (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents,
                      @TaxCents, @TaxRateBps, @TaxInclusive, @AppliedRewardRedemptionId, @PaymentMethod,
-                     @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete)
+                     @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete,
+                     @WaiverSignatureId)
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
             return (row.Id, row.RedemptionToken);
@@ -83,6 +86,9 @@ namespace Services.Repositories
                        p.race_number AS RaceNumber, p.registration_complete AS RegistrationComplete,
                        p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
+                       p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
+                       COALESCE(sig.signed_by_parent, false) AS SignedByParent,
+                       COALESCE(sig.parent_name, p.parent_guardian_name) AS GuardianName,
                        t.name AS TierName,
                        e.id AS EventId, e.title AS EventTitle, e.description AS EventDescription,
                        e.location_label AS EventLocationLabel,
@@ -90,6 +96,8 @@ namespace Services.Repositories
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id
                 JOIN event e ON e.id = t.event_id
+                LEFT JOIN rider_waiver_signature sig
+                       ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
                 WHERE p.redemption_token = @token AND p.tenant_id = @tenantId
                 LIMIT 1";
             var result = await _db.Query<EventTicketPurchaseWithContext>(sql, new { token, tenantId });
@@ -111,6 +119,9 @@ namespace Services.Repositories
                        p.race_number AS RaceNumber, p.registration_complete AS RegistrationComplete,
                        p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
+                       p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
+                       COALESCE(sig.signed_by_parent, false) AS SignedByParent,
+                       COALESCE(sig.parent_name, p.parent_guardian_name) AS GuardianName,
                        t.name AS TierName,
                        e.id AS EventId, e.title AS EventTitle, e.description AS EventDescription,
                        e.location_label AS EventLocationLabel,
@@ -118,6 +129,8 @@ namespace Services.Repositories
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id
                 JOIN event e ON e.id = t.event_id
+                LEFT JOIN rider_waiver_signature sig
+                       ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
                 WHERE p.tenant_id = @tenantId
                   AND t.event_id = @eventId
                   AND p.status <> 'cancelled'
@@ -145,6 +158,9 @@ namespace Services.Repositories
                        p.race_number AS RaceNumber,
                        p.status,
                        p.registration_complete AS RegistrationComplete,
+                       (p.waiver_signature_id IS NOT NULL
+                        OR p.waiver_signed_at IS NOT NULL
+                        OR p.waiver_signature_data_url IS NOT NULL) AS WaiverSigned,
                        p.redeemed_at_utc AS RedeemedAtUtc,
                        p.redeemed_by_user_id AS RedeemedByUserId,
                        t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience
@@ -230,9 +246,14 @@ namespace Services.Repositories
         // identity + signed waiver and flip registration_complete. Tenant-scoped. The
         // caller is responsible for enforcing that a required waiver signature is present
         // before marking complete.
-        public async Task CompleteRegistration(Guid id, Guid tenantId,
+        // Returns false (no row written) when the ticket isn't in a registerable state. Only a
+        // 'pending' or 'paid' ticket may be (re)registered; once it's 'redeemed' (checked in) its
+        // rider identity, birthdate, and signed waiver are a locked legal record and must not be
+        // overwritten by anyone holding the ticket GUID.
+        public async Task<bool> CompleteRegistration(Guid id, Guid tenantId,
             string? riderFirstName, string? riderLastName, DateTime? riderBirthdate, string? bike,
-            string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, string? parentGuardianName,
+            string? raceNumber, Guid? waiverId, string? waiverSignatureDataUrl, Guid? waiverSignatureId,
+            string? parentGuardianName,
             string? emergencyContactName, string? emergencyContactPhone, Guid? registrantId)
         {
             const string sql = @"
@@ -244,6 +265,7 @@ namespace Services.Repositories
                     race_number                = COALESCE(@raceNumber, race_number),
                     waiver_id                  = @waiverId,
                     waiver_signature_data_url  = @waiverSignatureDataUrl,
+                    waiver_signature_id        = @waiverSignatureId,
                     waiver_signed_at           = CASE WHEN @waiverSignatureDataUrl IS NOT NULL THEN now() ELSE waiver_signed_at END,
                     parent_guardian_name       = @parentGuardianName,
                     emergency_contact_name     = @emergencyContactName,
@@ -251,13 +273,14 @@ namespace Services.Repositories
                     registrant_id              = @registrantId,
                     registration_complete      = true,
                     updated_at                 = now()
-                WHERE id = @id AND tenant_id = @tenantId";
-            await _db.Execute(sql, new
+                WHERE id = @id AND tenant_id = @tenantId AND status IN ('pending', 'paid')";
+            var affected = await _db.Execute(sql, new
             {
                 id, tenantId, riderFirstName, riderLastName, riderBirthdate, bike,
-                raceNumber, waiverId, waiverSignatureDataUrl, parentGuardianName,
+                raceNumber, waiverId, waiverSignatureDataUrl, waiverSignatureId, parentGuardianName,
                 emergencyContactName, emergencyContactPhone, registrantId
             });
+            return affected > 0;
         }
 
         // Rider-facing order detail: every (non-cancelled) ticket this rider holds for an

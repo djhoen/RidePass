@@ -43,6 +43,7 @@ namespace webapi.Controllers
         private readonly IDbHelper _db;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantTaxRepository _tax;
+        private readonly IConfiguration _config;
 
         public CounterController(
             IUserRepository users,
@@ -61,7 +62,8 @@ namespace webapi.Controllers
             ITenantRepository tenants,
             IDbHelper db,
             ITenantContext tenantContext,
-            ITenantTaxRepository tax)
+            ITenantTaxRepository tax,
+            IConfiguration config)
         {
             _users = users;
             _waivers = waivers;
@@ -80,6 +82,7 @@ namespace webapi.Controllers
             _db = db;
             _tenantContext = tenantContext;
             _tax = tax;
+            _config = config;
         }
 
         // Loads the tenant's admission tax config (once per sale). None when no active, non-zero rate.
@@ -609,6 +612,9 @@ namespace webapi.Controllers
                         PurchaserEmail = rider.Email,
                         PurchaserName = purchaserName,
                         SoldByUserId = cashierId,
+                        // Link the rider's waiver signature (when they signed one) so the check-in gate
+                        // and the "who has signed" report read the same signature store as online sales.
+                        WaiverSignatureId = waiverSignatureId,
                     };
                     var created = await _ticketPurchases.Create(t);
                     lineItems.Add(new CounterSaleLineItem
@@ -961,10 +967,17 @@ namespace webapi.Controllers
         // and an optional receipt email, creates a PI the mobile SDK can collect
         // and confirm. The full cart-validating endpoint (mirroring CreateSale's
         // gates) lands in v1.5 alongside the mobile cashier UX.
+        //
+        // This charges an arbitrary amount and writes NO purchase or ledger row, so any money it
+        // collects is invisible to sales/refunds/reconciliation. It must never be reachable in
+        // production: gate it behind Features:CardPresentTestCharge (default off). Remove the gate
+        // when the v1.5 cart-validating endpoint that records a sale replaces it.
         [HttpPost("Terminal/PaymentIntent")]
         public async Task<IActionResult> CreateCardPresentPaymentIntent(
             [FromBody] CardPresentTestChargeRequest req, CancellationToken ct)
         {
+            if (!_config.GetValue<bool>("Features:CardPresentTestCharge"))
+                return new ApiResponses().BadRequestResult("Card-present test charges are not enabled.");
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (req.AmountCents < 50) return new ApiResponses().BadRequestResult("Amount must be at least 50 cents.");
 

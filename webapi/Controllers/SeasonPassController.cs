@@ -30,6 +30,7 @@ namespace webapi.Controllers
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantLedgerRepository _ledger;
+        private readonly Services.Payments.IFeeCalculator _feeCalculator;
         private readonly ITenantContext _tenantContext;
 
         public SeasonPassController(
@@ -46,6 +47,7 @@ namespace webapi.Controllers
             IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantLedgerRepository ledger,
+            Services.Payments.IFeeCalculator feeCalculator,
             ITenantContext tenantContext)
         {
             _passes = passes;
@@ -61,6 +63,7 @@ namespace webapi.Controllers
             _waivers = waivers;
             _waiverGate = waiverGate;
             _ledger = ledger;
+            _feeCalculator = feeCalculator;
             _tenantContext = tenantContext;
         }
 
@@ -306,12 +309,29 @@ namespace webapi.Controllers
             }
             var spStripeChargeCents = amountCents - (spGift?.AmountToApplyCents ?? 0);
 
-            // Free fast-path: gift card fully covered the pass. No PaymentIntent, so the webhook's
-            // OnSeasonPassPaid never runs; record the $0 sale on the ledger here (mirrors the
-            // event-ticket free-cart path) so the pass isn't missing from the ledger entirely.
+            // Free fast-path: no PaymentIntent (a gift card fully covered the pass, or a coupon zeroed
+            // it). The webhook's OnSeasonPassPaid never runs, so record the sale on the ledger here.
+            // A gift-card-covered pass is NOT a $0 sale — the buyer paid real money for the card, so the
+            // tenant is owed the value; only a coupon-zeroed pass is genuinely free.
             if (spStripeChargeCents == 0)
             {
                 await _passes.UpdatePurchaseStatus(purchase.Id, "paid");
+
+                int gcGross = 0, gcCut = 0, gcNet = 0;
+                if (spGift is not null)
+                {
+                    var isDirect = _tenantContext.Tenant?.StripeChargeMode == "direct";
+                    gcGross = amountCents;
+                    if (!isDirect)
+                    {
+                        // Platform holds the gift-card float, so credit the tenant net = gross - cut.
+                        var calc = await _feeCalculator.Calculate(_tenantContext.TenantId, amountCents, 0, serviceCharge, DateTime.UtcNow, isDirect: false);
+                        gcCut = calc.RidepassCutCents;
+                        gcNet = calc.NetToTenantCents;
+                    }
+                    // Direct: float already sits in the tenant's account, our fee was taken at card
+                    // sale time, so gross is recorded for reporting but net = 0 / cut = 0.
+                }
                 try
                 {
                     await _ledger.Insert(new TenantLedgerEntry
@@ -321,12 +341,12 @@ namespace webapi.Controllers
                         SourceKind = "season_pass",
                         SourceId = purchase.Id,
                         OccurredAtUtc = DateTime.UtcNow,
-                        GrossCents = 0,
+                        GrossCents = gcGross,
                         StripeFeeCents = 0,
-                        RidepassCutCents = 0,
-                        NetToTenantCents = 0,
+                        RidepassCutCents = gcCut,
+                        NetToTenantCents = gcNet,
                         PaymentMethod = "voucher",
-                        Memo = "Gift card covered season pass",
+                        Memo = spGift is not null ? "Gift card covered season pass" : "Coupon covered season pass",
                     });
                 }
                 catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
@@ -559,7 +579,10 @@ namespace webapi.Controllers
                 if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 
-            await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
+            var affected = await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
+            if (affected == 0)
+                return new ApiResponses().BadRequestResult(
+                    "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
             return new ApiResponses().OkResult();
         }
 

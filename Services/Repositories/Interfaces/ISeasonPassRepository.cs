@@ -44,7 +44,7 @@ namespace Services.Repositories.Interfaces
         /// reservations that belong to a different tenant — so a staff JWT scoped to
         /// tenant A can't flip reservation status on tenant B's records.
         /// </summary>
-        Task UpdateReservationStatus(Guid id, Guid tenantId, string status, Guid? checkedInByUserId = null);
+        Task<int> UpdateReservationStatus(Guid id, Guid tenantId, string status, Guid? checkedInByUserId = null);
 
         /// <summary>Tenant-scoped cancel of a paid season-pass purchase (mirrors pass/ticket).</summary>
         Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);

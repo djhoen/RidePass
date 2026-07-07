@@ -20,7 +20,9 @@ export interface Receipt {
     header: string            // tenant name
     orderNumber: number | null
     lines: ReceiptLine[]
-    subtotalCents: number      // pre-tax subtotal
+    subtotalCents: number      // pre-tax, pre-discount subtotal
+    discountCents: number      // total discount/comp knocked off (0 = none)
+    discountLabel: string | null
     taxCents: number
     pricesIncludeTax: boolean  // true = tax already in line prices (labeled "incl.")
     tipCents: number
@@ -44,6 +46,7 @@ function buildEposXml(r: Receipt): string {
     }
     b += `<text>--------------------------------&#10;</text>`
     b += `<text>Subtotal  ${money(r.subtotalCents)}&#10;</text>`
+    if (r.discountCents) b += `<text>${esc(r.discountLabel || 'Discount')}  -${money(r.discountCents)}&#10;</text>`
     if (r.taxCents) b += `<text>Tax${r.pricesIncludeTax ? ' (incl.)' : ''}  ${money(r.taxCents)}&#10;</text>`
     if (r.tipCents) b += `<text>Tip  ${money(r.tipCents)}&#10;</text>`
     b += `<text width="2" height="2">Total  ${money(r.totalCents)}&#10;</text>`

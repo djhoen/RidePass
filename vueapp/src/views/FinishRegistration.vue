@@ -21,6 +21,15 @@
             </div>
         </div>
 
+        <div v-else-if="paymentFailed" class="text-center py-8">
+            <v-icon color="error" size="56">mdi-alert-circle</v-icon>
+            <h1 class="text-h5 font-weight-bold mt-2 mb-1">Payment not completed</h1>
+            <p class="text-body-2 text-medium-emphasis mb-4">
+                Your payment didn't go through, so your entry wasn't purchased. Head back to the event to try again.
+            </p>
+            <v-btn color="primary" to="/Events">Browse events</v-btn>
+        </div>
+
         <div v-else-if="loadError" class="text-center py-8">
             <v-alert type="error" variant="tonal">{{ loadError }}</v-alert>
         </div>
@@ -143,6 +152,7 @@ const saving = ref(false)
 const done = ref(false)
 const error = ref('')
 const loadError = ref('')
+const paymentFailed = ref(false)
 const eventTitle = ref<string | null>(null)
 const riders = ref<RiderCard[]>([])
 const classAssigns = ref<ClassAssign[]>([])
@@ -177,6 +187,24 @@ function classesForRider(ri: number): ClassAssign[] {
 }
 
 onMounted(async () => {
+    // Returning from a redirect-based payment method (3DS / wallet): Stripe appends these params.
+    const params = new URLSearchParams(window.location.search)
+    const redirectStatus = params.get('redirect_status')
+    const paymentIntentId = params.get('payment_intent')
+    if (redirectStatus && redirectStatus !== 'succeeded') {
+        // The payment failed or was cancelled. Do NOT show the registration form — otherwise the rider
+        // would sign a waiver and see "You're all set" for an entry they never actually paid for.
+        paymentFailed.value = true
+        loading.value = false
+        history.replaceState(null, '', window.location.pathname)
+        return
+    }
+    if (redirectStatus === 'succeeded' && paymentIntentId) {
+        // Flip the order to paid now instead of waiting on the webhook, so the tickets resolve to
+        // 'paid' before the rider finishes. Best-effort: the webhook/reconciler finalizes regardless.
+        try { await service.confirmIntent(paymentIntentId) } catch { /* finalized by webhook/reconciler */ }
+        history.replaceState(null, '', window.location.pathname)
+    }
     try {
         const r = await service.getRegistration(token)
         const d = (r.data as any).data
@@ -262,6 +290,9 @@ async function finish() {
         if (tickets.length === 0) continue
         if (!r.firstName.trim() || !r.lastName.trim()) { error.value = `Rider ${i + 1} needs a first and last name.`; return }
         if (r.needsWaiver && !r.signatureDataUrl) { error.value = `${r.firstName || `Rider ${i + 1}`} needs to sign the waiver.`; return }
+        // Birthdate is required to sign a waiver (matches the server), so a minor can't be signed in as
+        // an adult by leaving it blank — which would also skip the parent/guardian requirement below.
+        if (r.needsWaiver && !r.birthdate) { error.value = `${r.firstName || `Rider ${i + 1}`} needs a date of birth to sign the waiver.`; return }
         if (r.needsWaiver && isMinor(r.birthdate) && !r.parentName.trim()) { error.value = `A parent/guardian name is required for ${r.firstName || `rider ${i + 1}`}.`; return }
         if (branding.requireEmergencyContact && !r.emergencyPhone.trim()) { error.value = `An emergency contact phone is required for ${r.firstName || `rider ${i + 1}`}.`; return }
         registrants.push({

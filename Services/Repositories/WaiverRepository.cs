@@ -159,6 +159,38 @@ namespace Services.Repositories
             return result.First();
         }
 
+        // Signature captured during event-ticket registration (a rider or spectator on a purchased
+        // ticket), written to the shared rider_waiver_signature store so the "who has signed" report
+        // and the check-in gate read one source of truth across sale paths. The attending person lands
+        // in the generic (spectator_*) attendee columns; the signer (purchaser, or the parent for a
+        // minor) is recorded separately. user_id stays NULL because registration attendees are
+        // identified by name, not account, so there's no per-user uniqueness to enforce.
+        public async Task<Guid> SignRegistrant(Guid tenantId, Guid waiverId, string? ipAddress,
+            string signatureDataUrl, string? signerEmail, string? signerName,
+            string attendeeFirstName, string attendeeLastName, DateTime? attendeeBirthdate,
+            bool signedByParent, string? parentName, string? parentPhone)
+        {
+            const string sql = @"
+                INSERT INTO rider_waiver_signature
+                    (tenant_id, user_id, waiver_id, ip_address, signature_data_url,
+                     signed_by_parent, parent_name, parent_phone,
+                     signer_email, signer_name,
+                     spectator_first_name, spectator_last_name, spectator_birthdate)
+                VALUES (@tenantId, NULL, @waiverId, @ipAddress, @signatureDataUrl,
+                        @signedByParent, @parentName, @parentPhone,
+                        @signerEmail, @signerName,
+                        @attendeeFirstName, @attendeeLastName, @attendeeBirthdate)
+                RETURNING id";
+            var result = await _db.Query<Guid>(sql, new
+            {
+                tenantId, waiverId, ipAddress, signatureDataUrl,
+                signedByParent, parentName, parentPhone,
+                signerEmail, signerName,
+                attendeeFirstName, attendeeLastName, attendeeBirthdate,
+            });
+            return result.First();
+        }
+
         public async Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
             bool signedByParent, string? parentName, string? parentPhone)
         {

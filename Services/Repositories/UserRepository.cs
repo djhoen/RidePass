@@ -365,5 +365,49 @@ namespace Services.Repositories
                   AND roles && ARRAY['tenant_admin','tenant_manager']";
             return (await _db.Query<TenantManagerPin>(sql, new { tenantId })).ToList();
         }
+
+        public async Task<bool> HasPosPin(Guid userId)
+        {
+            const string sql = "SELECT pos_pin_hash IS NOT NULL FROM users WHERE id = @userId";
+            return (await _db.Query<bool>(sql, new { userId })).FirstOrDefault();
+        }
+
+        public async Task<ManagerPinAttempt?> GetPinAttempt(Guid tenantId, Guid userId)
+        {
+            const string sql = @"SELECT tenant_id AS TenantId, user_id AS UserId, failed_count AS FailedCount,
+                       locked_until AS LockedUntilUtc
+                FROM manager_pin_attempt WHERE tenant_id = @tenantId AND user_id = @userId";
+            return (await _db.Query<ManagerPinAttempt>(sql, new { tenantId, userId })).FirstOrDefault();
+        }
+
+        public async Task UpsertPinAttempt(Guid tenantId, Guid userId, int failedCount, DateTime? lockedUntilUtc)
+        {
+            const string sql = @"
+                INSERT INTO manager_pin_attempt (tenant_id, user_id, failed_count, locked_until, updated_at)
+                VALUES (@tenantId, @userId, @failedCount, @lockedUntilUtc, now())
+                ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+                    failed_count = @failedCount, locked_until = @lockedUntilUtc, updated_at = now()";
+            await _db.Execute(sql, new { tenantId, userId, failedCount, lockedUntilUtc });
+        }
+
+        // Atomically bump the failure counter and return the new value, so concurrent wrong-PIN
+        // attempts can't each read the same stale count and collectively advance it by only one
+        // (which would let a scripted attacker amortize far more than MaxFailures guesses per lockout).
+        public async Task<int> IncrementPinFailure(Guid tenantId, Guid userId)
+        {
+            const string sql = @"
+                INSERT INTO manager_pin_attempt (tenant_id, user_id, failed_count, updated_at)
+                VALUES (@tenantId, @userId, 1, now())
+                ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+                    failed_count = manager_pin_attempt.failed_count + 1, updated_at = now()
+                RETURNING failed_count";
+            return (await _db.Query<int>(sql, new { tenantId, userId })).First();
+        }
+
+        public async Task ResetPinAttempt(Guid tenantId, Guid userId)
+        {
+            await _db.Execute("DELETE FROM manager_pin_attempt WHERE tenant_id = @tenantId AND user_id = @userId",
+                new { tenantId, userId });
+        }
     }
 }

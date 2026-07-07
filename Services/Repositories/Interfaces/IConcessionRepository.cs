@@ -102,7 +102,7 @@ namespace Services.Repositories.Interfaces
         Task<ConcessionSale?> GetSale(Guid id, Guid tenantId);
         Task MarkSalePaid(Guid saleId);
         Task MarkSaleFailed(Guid saleId);
-        Task<int> NextOrderNumber(Guid tenantId, DateTime nowUtc);
+        Task<int> NextOrderNumber(Guid tenantId);
         Task<List<ConcessionSale>> ListOrdersForPurchaser(Guid tenantId, Guid userId, int take = 20);
         Task SetOrderNumber(Guid saleId, int orderNumber);
         Task MarkSaleRefunded(Guid saleId, Guid tenantId);

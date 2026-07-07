@@ -21,12 +21,14 @@ namespace webapi.Controllers
             "logo", "logoWhite", "favicon", "hero", "secondaryHero", "benefits"
         };
 
+        // SVG is intentionally excluded: uploads are served same-origin from /uploads in local-disk
+        // mode, and an SVG can carry inline <script>, giving a malicious tenant admin a stored-XSS
+        // vector that runs on any tenant's origin (JWT lives in localStorage). Raster + icon only.
         private static readonly Dictionary<string, string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
         {
             ["image/png"]     = ".png",
             ["image/jpeg"]    = ".jpg",
             ["image/webp"]    = ".webp",
-            ["image/svg+xml"] = ".svg",
             ["image/x-icon"]  = ".ico",
             ["image/vnd.microsoft.icon"] = ".ico",
         };

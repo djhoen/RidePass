@@ -77,6 +77,8 @@ const loadError = ref<string | null>(null)
 
 // Debounce the typed search so we don't hammer the API on every keystroke.
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+// Monotonic token so an out-of-order (slower, older) response can't clobber newer results.
+let loadSeq = 0
 function onSearchChanged() {
     if (searchTimer) clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
@@ -88,17 +90,22 @@ function onSearchChanged() {
 onMounted(load)
 
 async function load() {
+    // Debounced search + pagination can overlap; only the latest response applies, so a slower older
+    // query can't overwrite newer results (out-of-order responses).
+    const seq = ++loadSeq
     loading.value = true
     loadError.value = null
     try {
         const r = await service.list(search.value || undefined, limit.value, offset.value)
+        if (seq !== loadSeq) return
         const data = (r.data as any).data
         customers.value = data.items
         total.value = data.total
     } catch (err: any) {
+        if (seq !== loadSeq) return
         loadError.value = err.response?.data?.error ?? 'Couldn’t load customers. Refresh to try again.'
     } finally {
-        loading.value = false
+        if (seq === loadSeq) loading.value = false
     }
 }
 

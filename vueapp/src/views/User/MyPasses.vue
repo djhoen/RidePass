@@ -290,7 +290,26 @@ const rentalExpanded = reactive<Record<string, boolean>>({})
 // Coupons grouped by their issuing purchase id so the per-card render stays simple.
 const couponsByPurchase = reactive<Record<string, MyCoupon[]>>({})
 
-onMounted(load)
+onMounted(() => {
+    handlePaymentRedirect()
+    load()
+})
+
+// A season-pass / rental / waitlist checkout using a redirect-based payment method (3DS, wallet)
+// lands back here. Surface the outcome so a failed payment isn't silently shown as "nothing new"
+// and a succeeded one explains why the item may take a moment to appear (webhook finalizes it).
+function handlePaymentRedirect() {
+    const params = new URLSearchParams(window.location.search)
+    const redirectStatus = params.get('redirect_status')
+    if (params.get('payment_intent') && redirectStatus) {
+        if (redirectStatus === 'succeeded') {
+            flash('Payment received. Your purchase will appear here shortly.', 'success')
+        } else {
+            flash('Your payment was not completed. Please try again.', 'error')
+        }
+        history.replaceState(null, '', window.location.pathname)
+    }
+}
 
 async function load() {
     loading.value = true

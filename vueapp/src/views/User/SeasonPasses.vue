@@ -65,6 +65,20 @@ function daysLabel(days: number[] | null): string {
 }
 
 onMounted(async () => {
+    // A season-pass checkout using a redirect-based payment method (3DS, wallet) lands back here.
+    // Surface the outcome so a failed payment isn't silently shown as "no new pass" and a succeeded
+    // one explains the brief delay before the pass appears (the webhook finalizes it).
+    const params = new URLSearchParams(window.location.search)
+    const redirectStatus = params.get('redirect_status')
+    if (params.get('payment_intent') && redirectStatus) {
+        snackbarText.value = redirectStatus === 'succeeded'
+            ? 'Payment received. Your pass will appear here shortly.'
+            : 'Your payment was not completed. Please try again.'
+        snackbarColor.value = redirectStatus === 'succeeded' ? 'success' : 'error'
+        snackbar.value = true
+        history.replaceState(null, '', window.location.pathname)
+    }
+
     loading.value = true
     try {
         const r = await service.listMine()

@@ -612,16 +612,19 @@ namespace Services.Repositories
             }
         }
 
-        // Atomically assign the next per-tenant, per-day order number (resets each UTC day).
-        public async Task<int> NextOrderNumber(Guid tenantId, DateTime nowUtc)
+        // Atomically assign the next per-tenant, per-day order number. The business date is the tenant's
+        // LOCAL date (derived from the tenant's stored timezone), so the counter resets at local midnight,
+        // not UTC midnight (which for a non-UTC track would reset mid-service and collide numbers).
+        public async Task<int> NextOrderNumber(Guid tenantId)
         {
             const string sql = @"
                 INSERT INTO concession_order_counter (tenant_id, business_date, last_number)
-                VALUES (@tenantId, @date, 1)
+                SELECT @tenantId, (now() AT TIME ZONE COALESCE(NULLIF(t.timezone, ''), 'UTC'))::date, 1
+                FROM tenant t WHERE t.id = @tenantId
                 ON CONFLICT (tenant_id, business_date)
                 DO UPDATE SET last_number = concession_order_counter.last_number + 1
                 RETURNING last_number";
-            return (await _db.Query<int>(sql, new { tenantId, date = nowUtc.Date })).First();
+            return (await _db.Query<int>(sql, new { tenantId })).First();
         }
 
         public async Task SetSalePaymentIntentId(Guid saleId, string paymentIntentId)
@@ -1467,10 +1470,12 @@ namespace Services.Repositories
 
         public async Task<ConcessionSalesAggregate> GetSalesAggregate(Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
-            // Net sales = item subtotal minus any tax already baked into it (inclusive pricing).
+            // Net sales = gross item subtotal, less any discount/comp, less any tax baked into it
+            // (inclusive pricing). subtotal_cents is the pre-discount gross, so discount_cents must be
+            // subtracted here for the dashboards to reconcile with the per-item/line totals.
             const string sql = @"
                 SELECT COUNT(*)::int AS OrderCount,
-                       COALESCE(SUM(subtotal_cents - CASE WHEN prices_include_tax THEN tax_cents ELSE 0 END), 0)::bigint AS NetSalesCents,
+                       COALESCE(SUM(subtotal_cents - discount_cents - CASE WHEN prices_include_tax THEN tax_cents ELSE 0 END), 0)::bigint AS NetSalesCents,
                        COALESCE(SUM(tax_cents), 0)::bigint  AS TaxCents,
                        COALESCE(SUM(tip_cents), 0)::bigint  AS TipCents,
                        COALESCE(SUM(total_cents), 0)::bigint AS TotalCents
@@ -1525,7 +1530,8 @@ namespace Services.Repositories
             const string sql = @"
                 WITH rev AS (
                     SELECT l.product_id AS pid, MIN(l.name_snapshot) AS name,
-                           SUM(l.quantity)::int AS qty, SUM(l.line_total_cents)::bigint AS revenue
+                           SUM(l.quantity)::int AS qty,
+                           SUM(l.line_total_cents - CASE WHEN s.prices_include_tax THEN l.tax_cents ELSE 0 END)::bigint AS revenue
                     FROM concession_sale_line l
                     JOIN concession_sale s ON s.id = l.sale_id
                     WHERE s.tenant_id = @tenantId AND s.status = 'paid'
@@ -1553,7 +1559,8 @@ namespace Services.Repositories
         {
             const string sql = @"
                 WITH rev AS (
-                    SELECT COALESCE(c.name, 'Uncategorized') AS cat, SUM(l.line_total_cents)::bigint AS revenue
+                    SELECT COALESCE(c.name, 'Uncategorized') AS cat,
+                           SUM(l.line_total_cents - CASE WHEN s.prices_include_tax THEN l.tax_cents ELSE 0 END)::bigint AS revenue
                     FROM concession_sale_line l
                     JOIN concession_sale s ON s.id = l.sale_id
                     LEFT JOIN concession_product p ON p.id = l.product_id
@@ -1585,7 +1592,7 @@ namespace Services.Repositories
             // Bucket net sales by local hour-of-day so the daypart chart reflects the track's timezone.
             const string sql = @"
                 SELECT EXTRACT(HOUR FROM (s.created_at AT TIME ZONE @timezone))::int AS Hour,
-                       COALESCE(SUM(s.subtotal_cents - CASE WHEN s.prices_include_tax THEN s.tax_cents ELSE 0 END), 0)::bigint AS RevenueCents,
+                       COALESCE(SUM(s.subtotal_cents - s.discount_cents - CASE WHEN s.prices_include_tax THEN s.tax_cents ELSE 0 END), 0)::bigint AS RevenueCents,
                        COUNT(*)::int AS OrderCount
                 FROM concession_sale s
                 WHERE s.tenant_id = @tenantId AND s.status = 'paid'
@@ -1604,7 +1611,7 @@ namespace Services.Repositories
                        COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), '') AS Name,
                        COUNT(*) FILTER (WHERE s.status = 'paid')::int AS OrdersCount,
                        COALESCE(SUM(s.total_cents) FILTER (WHERE s.status = 'paid'), 0)::bigint AS GrossSalesCents,
-                       COALESCE(SUM(s.subtotal_cents - CASE WHEN s.prices_include_tax THEN s.tax_cents ELSE 0 END)
+                       COALESCE(SUM(s.subtotal_cents - s.discount_cents - CASE WHEN s.prices_include_tax THEN s.tax_cents ELSE 0 END)
                                 FILTER (WHERE s.status = 'paid'), 0)::bigint AS NetSalesCents,
                        COALESCE(SUM(s.tax_cents) FILTER (WHERE s.status = 'paid'), 0)::bigint AS TaxCents,
                        COALESCE(SUM(s.tip_cents) FILTER (WHERE s.status = 'paid'), 0)::bigint AS TipCents,

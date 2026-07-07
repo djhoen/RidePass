@@ -73,8 +73,13 @@ var scheduledTaskRepo = new ScheduledTaskRepository(dbHelper);
 var reportsRepo = new ReportsRepository(dbHelper);
 var eventRepo = new EventRepository(dbHelper);
 var conversationRepo = new TenantConversationRepository(dbHelper);
-var sms = new TwilioSmsSender(configuration, conversationRepo, NullLogger<TwilioSmsSender>.Instance);
+var smsOptOutRepo = new TenantSmsOptOutRepository(dbHelper);
+var sms = new TwilioSmsSender(configuration, conversationRepo, smsOptOutRepo,
+    NullLogger<TwilioSmsSender>.Instance);
 var emailer = new SmtpEmailer(configuration, NullLogger<SmtpEmailer>.Instance);
+var suppressionRepo = new EmailSuppressionRepository(dbHelper);
+var emailLinkTokens = new EmailLinkTokens(configuration);
+var campaignRepo = new EmailCampaignRepository(dbHelper);
 
 // SMS billing attacher dependencies.
 var billingEventRepo = new TenantBillingEventRepository(dbHelper);
@@ -82,11 +87,18 @@ var ledgerRepo = new TenantLedgerRepository(dbHelper);
 var smsBillingAttacher = new SmsBillingPayoutAttacher(billingEventRepo, ledgerRepo,
     NullLogger<SmsBillingPayoutAttacher>.Instance);
 
-// One entry per handler kind. Add new jobs here.
+// One entry per handler kind. Add new jobs here. These must mirror the
+// IScheduledTaskHandler registrations in webapi/Program.cs — TaskRunner is the
+// only process that actually runs the dispatcher, so a handler missing here
+// means its task kind fails terminally ("No handler registered for kind ...").
 var handlers = new IScheduledTaskHandler[]
 {
     new SendRiderMessageHandler(reportsRepo, eventRepo, tenantRepo, sms, emailer,
+        suppressionRepo, emailLinkTokens, configuration,
         NullLogger<SendRiderMessageHandler>.Instance),
+    new SendCampaignHandler(campaignRepo, emailer, suppressionRepo, emailLinkTokens,
+        tenantRepo, ledgerRepo, configuration,
+        NullLogger<SendCampaignHandler>.Instance),
 };
 var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
     NullLogger<ScheduledTaskDispatcher>.Instance);
