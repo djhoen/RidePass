@@ -685,11 +685,18 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                         var tier = await _tiers.GetById(ticketRow.TierId, line.TenantId);
                         if (tier is not null && tier.BundledCouponCount is > 0)
                         {
-                            var minted = await _bundledCouponMinter.MintForPurchase(
-                                tier, line.TenantId, ticketRow.Id, ticketRow.PurchaserUserId);
-                            if (minted.Count > 0)
+                            // Bundled coupons are a tenant feature toggle: turning it off stops
+                            // minting new codes even on tiers configured while it was on
+                            // (already-issued codes stay redeemable).
+                            var mintTenant = await _tenants.GetById(line.TenantId);
+                            if (mintTenant?.BundledCouponsEnabled == true)
                             {
-                                _ = SendBundledCouponEmailAsync(line.TenantId, ticketRow, tier, minted);
+                                var minted = await _bundledCouponMinter.MintForPurchase(
+                                    tier, line.TenantId, ticketRow.Id, ticketRow.PurchaserUserId);
+                                if (minted.Count > 0)
+                                {
+                                    _ = SendBundledCouponEmailAsync(line.TenantId, ticketRow, tier, minted);
+                                }
                             }
                         }
                     }

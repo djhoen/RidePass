@@ -94,6 +94,7 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICashRepository, CashRepository>();
 builder.Services.AddScoped<IPlatformSettingRepository, PlatformSettingRepository>();
 builder.Services.AddSingleton<webapi.Staging.IStageMirrorService, webapi.Staging.StageMirrorService>();
+builder.Services.AddScoped<webapi.Seeding.ITenantSeeder, webapi.Seeding.TenantSeeder>();
 builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();
 builder.Services.AddScoped<ITenantLedgerRepository, TenantLedgerRepository>();
 builder.Services.AddScoped<ITenantPayoutRepository, TenantPayoutRepository>();

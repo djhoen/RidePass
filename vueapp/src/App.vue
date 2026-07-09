@@ -5,7 +5,7 @@
              the tenant colors arrive. Vue's <transition> handles the fade-out the
              moment branding.loaded flips true. -->
         <transition name="splash-fade">
-            <div v-if="!branding.loaded" class="branding-splash">
+            <div v-if="!branding.loaded || !routerReady" class="branding-splash">
                 <div class="branding-splash-content">
                     <img :src="splashLogo" alt="RidePass" class="branding-splash-img" />
                     <div class="branding-splash-text">RidePass</div>
@@ -17,8 +17,11 @@
              before /api/Tenant/Branding resolves would paint the generic default-tenant
              shell (RidePass brand, no Gift Cards, default colors) and then visibly swap +
              reflow when the real tenant data lands. Gating on branding.loaded means the
-             content mounts once, already correct, while the splash above covers the gap. -->
-        <template v-if="branding.loaded">
+             content mounts once, already correct, while the splash above covers the gap.
+             routerReady matters for the same reason: until the initial (lazy-loaded) route
+             resolves, route.meta is empty, so hideNav pages (embed widgets especially)
+             would flash the NavBar and then drop it. -->
+        <template v-if="branding.loaded && routerReady">
             <!-- Tenant not available to this visitor (unknown / inactive / unpublished). -->
             <div v-if="branding.unavailable" class="tenant-unavailable">
                 <div class="tenant-unavailable-content">
@@ -48,8 +51,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch, watchEffect, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { onMounted, watch, watchEffect, computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import NavBar from './components/NavBar.vue'
 import Footer from './components/Footer.vue'
@@ -61,6 +64,14 @@ import splashLogo from './assets/helmet.png'
 
 const theme = useTheme()
 const route = useRoute()
+const router = useRouter()
+
+// True once the initial navigation (including its lazy component chunk) has
+// resolved and route.meta is trustworthy. See the chrome-gating comment above.
+const routerReady = ref(false)
+// finally: if the initial navigation fails (e.g. a chunk fails to load), still lift
+// the gate — a possibly-wrong nav state beats an everlasting splash screen.
+router.isReady().catch(() => {}).finally(() => { routerReady.value = true })
 
 // Embed mode: chromeless widget framed on a track's own site (via embed.js).
 const isEmbed = computed(() => !!route.meta.embed)

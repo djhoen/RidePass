@@ -261,7 +261,8 @@
                 <v-icon color="success" size="56">mdi-check-circle</v-icon>
                 <h2 class="text-h6 font-weight-bold mt-2 mb-1">You're all set!</h2>
                 <p class="text-body-2 text-medium-emphasis mb-4">A confirmation and your entry QR codes are on the way to {{ email }}.</p>
-                <v-btn color="primary" :to="isAuthed ? '/User/Upcoming' : '/Events'">{{ isAuthed ? 'View my entries' : 'Done' }}</v-btn>
+                <v-btn v-if="isEmbed && embedCameFromWidget" color="primary" @click="router.back()">Done</v-btn>
+                <v-btn v-else-if="!isEmbed" color="primary" :to="isAuthed ? '/User/Upcoming' : '/Events'">{{ isAuthed ? 'View my entries' : 'Done' }}</v-btn>
             </div>
 
             <!-- Guest conversion: invite account creation while their details are still fresh
@@ -279,6 +280,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { TicketService, type TicketTier, type TicketRedemption } from '@/services/TicketService'
 import { UserService } from '@/services/UserService'
@@ -297,6 +299,20 @@ const props = defineProps<{ event: EventDto; tiers: TicketTier[] }>()
 // Asks the parent to re-fetch tiers (e.g. after a 409 price_changed) so the buyer
 // sees the new active-step price without a manual page refresh.
 const emit = defineEmits<{ (e: 'price-changed'): void }>()
+
+const route = useRoute()
+const router = useRouter()
+
+// Embed mode: the checkout is framed on the track's own site, so the "done" step
+// must not lead anywhere outside the flow. If the visitor came from an embedded
+// events/calendar widget in this iframe, "Done" returns to it (history back keeps
+// the widget's query config); on a direct single-event embed there's nowhere to
+// go, so no button renders at all.
+const isEmbed = computed(() => !!route.meta.embed)
+const embedCameFromWidget: boolean = (() => {
+    const back = String(window.history.state?.back ?? '')
+    return back.startsWith('/embed/events') || back.startsWith('/embed/calendar')
+})()
 
 const ticketService = new TicketService()
 const userService = new UserService()
@@ -902,14 +918,16 @@ async function finish() {
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.06);
 }
+/* on-surface (not hardcoded black) so dark-theme tenants keep readable labels on
+   the dark checkout card. */
 .evt-group-label {
     font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: rgba(0, 0, 0, 0.6);
+    color: rgba(var(--v-theme-on-surface), 0.6);
 }
 .evt-qty {
     min-width: 26px;
@@ -920,7 +938,7 @@ async function finish() {
 .evt-reg,
 .evt-riders,
 .evt-signup {
-    background: rgba(0, 0, 0, 0.03);
+    background: rgba(var(--v-theme-on-surface), 0.03);
     border-radius: 8px;
 }
 .evt-codes :deep(.v-expansion-panel) {

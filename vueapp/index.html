@@ -15,6 +15,19 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="RidePass" />
     <link rel="apple-touch-icon" href="/pwa-icon.png" />
+    <!-- Open Graph / social share preview. These are the defaults for non-event pages.
+         For /Event/:id the Node server (server.js) replaces everything between the
+         OG_START/OG_END markers with the specific event's title, description, and image
+         so shared event links render a rich preview card. Social scrapers don't run JS,
+         so this MUST be server-rendered, not set client-side. -->
+    <!--OG_START-->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RidePass" />
+    <meta property="og:title" content="RidePass" />
+    <meta property="og:description" content="Find and register for track events." />
+    <meta property="og:image" content="/pwa-icon.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!--OG_END-->
 </head>
 <body>
     <div id="app"></div>

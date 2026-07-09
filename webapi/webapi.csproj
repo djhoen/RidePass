@@ -27,4 +27,9 @@
     <ProjectReference Include="..\Services\Services.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Demo/seed images, deployed alongside the app so the stage/local tenant seeder can load them. -->
+    <Content Include="SeedData\images\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

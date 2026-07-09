@@ -55,6 +55,8 @@ namespace Services.Repositories
             season_passes_enabled AS SeasonPassesEnabled,
             concessions_enabled AS ConcessionsEnabled,
             blog_enabled AS BlogEnabled,
+            dynamic_pricing_enabled AS DynamicPricingEnabled,
+            bundled_coupons_enabled AS BundledCouponsEnabled,
             loampass_mx_destination_id AS LoampassMxDestinationId,
             client_type AS ClientType,
             custom_domain AS CustomDomain,
@@ -73,7 +75,8 @@ namespace Services.Repositories
             membership_duration_kind AS MembershipDurationKind,
             membership_required_for_riders AS MembershipRequiredForRiders,
             membership_required_for_spectators AS MembershipRequiredForSpectators,
-            created_at AS CreatedAt, updated_at AS UpdatedAt";
+            created_at AS CreatedAt, updated_at AS UpdatedAt,
+            seed_data_populated_at AS SeedDataPopulatedAt";
 
         private readonly IDbHelper _db;
 
@@ -103,12 +106,14 @@ namespace Services.Repositories
                     client_type, custom_domain, custom_domain_verified, embed_enabled, embed_allowed_origins,
                     external_home_url, external_events_url, embed_event_target,
                     gift_cards_enabled, rentals_enabled, extras_enabled, season_passes_enabled,
-                    concessions_enabled, blog_enabled, membership_enabled, waitlist_enabled, allow_self_cancel)
+                    concessions_enabled, blog_enabled, dynamic_pricing_enabled, bundled_coupons_enabled,
+                    membership_enabled, waitlist_enabled, allow_self_cancel)
                 VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @VenueCategory, @Timezone,
                     @ClientType, @CustomDomain, @CustomDomainVerified, @EmbedEnabled, @EmbedAllowedOrigins,
                     @ExternalHomeUrl, @ExternalEventsUrl, @EmbedEventTarget,
                     @GiftCardsEnabled, @RentalsEnabled, @ExtrasEnabled, @SeasonPassesEnabled,
-                    @ConcessionsEnabled, @BlogEnabled, @MembershipEnabled, @WaitlistEnabled, @AllowSelfCancel)
+                    @ConcessionsEnabled, @BlogEnabled, @DynamicPricingEnabled, @BundledCouponsEnabled,
+                    @MembershipEnabled, @WaitlistEnabled, @AllowSelfCancel)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, tenant);
             return result.First();
@@ -311,7 +316,7 @@ namespace Services.Repositories
         // which the tenant manages on their own Settings -> Features page.
         public async Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
             bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
-            bool waitlistEnabled, bool allowSelfCancel)
+            bool waitlistEnabled, bool allowSelfCancel, bool dynamicPricingEnabled, bool bundledCouponsEnabled)
         {
             const string sql = @"
                 UPDATE tenant
@@ -323,12 +328,15 @@ namespace Services.Repositories
                     blog_enabled = @blogEnabled,
                     membership_enabled = @membershipEnabled,
                     waitlist_enabled = @waitlistEnabled,
-                    allow_self_cancel = @allowSelfCancel
+                    allow_self_cancel = @allowSelfCancel,
+                    dynamic_pricing_enabled = @dynamicPricingEnabled,
+                    bundled_coupons_enabled = @bundledCouponsEnabled
                 WHERE id = @tenantId";
             await _db.Execute(sql, new
             {
                 tenantId, giftCardsEnabled, rentalsEnabled, extrasEnabled, seasonPassesEnabled,
                 concessionsEnabled, blogEnabled, membershipEnabled, waitlistEnabled, allowSelfCancel,
+                dynamicPricingEnabled, bundledCouponsEnabled,
             });
         }
 

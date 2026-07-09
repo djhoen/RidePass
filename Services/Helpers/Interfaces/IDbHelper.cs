@@ -2,6 +2,11 @@ namespace Services.Helpers.Interfaces
 {
     public interface IDbHelper
     {
+        // The configured Default connection string. Exposed so callers that need to run a
+        // multi-statement unit of work in a single transaction (e.g. the demo seeder) can
+        // open their own connection instead of the per-call connections these methods use.
+        string ConnectionString { get; }
+
         Task<int> Execute(string sql, object? param = null, int timeout = 30);
         Task<int> ExecuteScalar(string sql, object? param = null, int timeout = 30);
 

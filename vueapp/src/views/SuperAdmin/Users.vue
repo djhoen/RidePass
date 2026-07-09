@@ -77,21 +77,23 @@
                         The new super admin will have full platform-level access. They sign in at
                         <code>https://ridepass.io/Login</code> with the password you set here.
                     </p>
-                    <v-row>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model="superAdminForm.firstName" label="First name" density="compact"></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model="superAdminForm.lastName" label="Last name" density="compact"></v-text-field>
-                        </v-col>
-                    </v-row>
-                    <v-text-field v-model="superAdminForm.email" type="email" label="Email" density="compact" class="mb-2"></v-text-field>
-                    <v-text-field v-model="superAdminForm.password" type="password" label="Password (min 8 chars)" density="compact" class="mt-4"></v-text-field>
+                    <v-form v-model="superAdminFormValid">
+                        <v-row>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model="superAdminForm.firstName" label="First name" density="compact" :rules="[rules.required]"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model="superAdminForm.lastName" label="Last name" density="compact" :rules="[rules.required]"></v-text-field>
+                            </v-col>
+                        </v-row>
+                        <v-text-field v-model="superAdminForm.email" type="email" label="Email" density="compact" class="mb-2" :rules="[rules.required, rules.email]"></v-text-field>
+                        <v-text-field v-model="superAdminForm.password" type="password" label="Password (min 8 chars)" density="compact" class="mt-4" :rules="[rules.required, rules.minPassword]"></v-text-field>
+                    </v-form>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
                     <v-btn @click="superAdminDialog = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="creatingSuperAdmin" @click="submitCreateSuperAdmin">Create</v-btn>
+                    <v-btn color="primary" :loading="creatingSuperAdmin" :disabled="!superAdminFormValid" @click="submitCreateSuperAdmin">Create</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -223,7 +225,15 @@ const hasFilters = computed(() => !!(filterRole.value || filterTenantId.value ||
 
 const superAdminDialog = ref(false)
 const creatingSuperAdmin = ref(false)
+const superAdminFormValid = ref(false)
 const superAdminForm = ref({ firstName: '', lastName: '', email: '', password: '' })
+
+// Mirrors the server-side DataAnnotations on CreateSuperAdminRequest.
+const rules = {
+    required: (v: string) => !!v?.trim() || 'Required.',
+    email: (v: string) => /.+@.+\..+/.test(v ?? '') || 'Enter a valid email address.',
+    minPassword: (v: string) => (v?.length ?? 0) >= 8 || 'Password must be at least 8 characters.',
+}
 
 const roleOptions = ['rider', 'tenant_admin', 'tenant_staff', 'super_admin']
 const statusOptions = ['active', 'suspended', 'pending']
@@ -300,7 +310,7 @@ async function submitCreateSuperAdmin() {
         superAdminDialog.value = false
         await loadUsers()
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Failed to create super admin.', 'error')
+        flash(apiError(err, 'Failed to create super admin.'), 'error')
     } finally {
         creatingSuperAdmin.value = false
     }
@@ -349,7 +359,7 @@ async function submitEdit() {
         editDialog.value = false
         await loadUsers()
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Update failed.', 'error')
+        flash(apiError(err, 'Update failed.'), 'error')
     } finally {
         saving.value = false
     }
@@ -400,5 +410,17 @@ function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text
     snackbarColor.value = color
     snackbar.value = true
+}
+
+// Handled 400s carry .error; ASP.NET model-validation 400s are ValidationProblemDetails whose
+// .title is the useless "One or more validation errors occurred." and whose real messages live
+// in .errors as { Field: ["msg", ...] }. Flatten those first, then fall back to .error / .title.
+function apiError(err: any, fallback: string): string {
+    const data = err.response?.data
+    if (data?.errors && typeof data.errors === 'object') {
+        const msgs = Object.values(data.errors).flat().filter(m => typeof m === 'string')
+        if (msgs.length) return msgs.join(' ')
+    }
+    return data?.error || data?.title || fallback
 }
 </script>

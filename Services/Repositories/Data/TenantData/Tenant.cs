@@ -85,10 +85,16 @@ namespace Services.Repositories.Data.TenantData
         public int GiftCardMinCents { get; set; } = 1000;       // $10 default
         public int GiftCardMaxCents { get; set; } = 50000;      // $500 default
         public bool RentalsEnabled { get; set; } = false;
-        public bool ExtrasEnabled { get; set; } = false;
+        public bool ExtrasEnabled { get; set; } = true;
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; } = false;
         public bool BlogEnabled { get; set; } = false;
+        // Stepped event-ticket price ladders (price rises by date or sales volume).
+        // Gates CONFIGURING steps; already-configured ladders keep resolving.
+        public bool DynamicPricingEnabled { get; set; } = false;
+        // Race-entry tiers minting single-use share coupons at purchase. Gates both
+        // configuring bundles and minting new codes at purchase time.
+        public bool BundledCouponsEnabled { get; set; } = false;
         // When set, this tenant is a LoamPassMx track mapped to this LoamMx destination id.
         // NULL = not a LoamPassMx track. Super-admin controlled.
         public string? LoampassMxDestinationId { get; set; }
@@ -122,5 +128,7 @@ namespace Services.Repositories.Data.TenantData
         public bool MembershipRequiredForSpectators { get; set; } = false;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+        // Set when the stage/local demo seeder has populated this tenant (hides the button). NULL = never.
+        public DateTime? SeedDataPopulatedAt { get; set; }
     }
 }

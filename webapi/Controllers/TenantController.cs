@@ -446,6 +446,8 @@ namespace webapi.Controllers
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BlogEnabled = tenant.BlogEnabled,
+                DynamicPricingEnabled = tenant.DynamicPricingEnabled,
+                BundledCouponsEnabled = tenant.BundledCouponsEnabled,
                 LoampassMxEnabled = !string.IsNullOrWhiteSpace(tenant.LoampassMxDestinationId),
                 EmbedEnabled = tenant.EmbedEnabled,
                 EmbedAllowedOrigins = Services.Embed.EmbedPolicy.NormalizeList(tenant.EmbedAllowedOrigins).ToArray(),

@@ -25,6 +25,8 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public bool MembershipEnabled { get; set; }
         public bool WaitlistEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
+        public bool DynamicPricingEnabled { get; set; }
+        public bool BundledCouponsEnabled { get; set; }
         public string? AddressLine { get; set; }
         public string? City { get; set; }
         public string? Region { get; set; }
@@ -44,5 +46,9 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public string? ExternalEventsUrl { get; set; }
         public string EmbedEventTarget { get; set; } = "external";
         public DateTime CreatedAtUtc { get; set; }
+        // Demo-seed state (stage/local only). SeedDataPopulated hides the button once used;
+        // CanSeedData is the platform env flag (true only on stage/local), stamped per response.
+        public bool SeedDataPopulated { get; set; }
+        public bool CanSeedData { get; set; }
     }
 }

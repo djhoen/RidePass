@@ -107,7 +107,10 @@
                         @click:append-inner="openHelp('serviceCharge')"></v-text-field>
 
                     <!-- Dynamic pricing: group tiers into a price ladder. Steps sharing a group
-                         escalate the price; the buyer sees the cheapest step whose trigger fired. -->
+                         escalate the price; the buyer sees the cheapest step whose trigger fired.
+                         Super-admin feature toggle: hidden when off, unless this tier already has
+                         a ladder configured (so legacy config can still be edited or cleared). -->
+                    <template v-if="branding.dynamicPricingEnabled || form.ladderGroup.trim()">
                     <v-divider class="my-4"></v-divider>
                     <div class="text-subtitle-2 mb-1">Dynamic pricing (optional)</div>
                     <p class="text-caption text-medium-emphasis mb-2">
@@ -126,11 +129,14 @@
                         <v-text-field v-if="form.triggerType === 'date'" v-model="form.effectiveDate" type="datetime-local"
                             label="Date/time it kicks in" density="compact" class="mt-2"></v-text-field>
                     </template>
+                    </template>
 
                     <!-- Bundled coupons — race-entry only. Codes are pinned to this event,
                          so scope and expiration aren't configurable: they apply to spectator
-                         tickets for the same race and stay valid until the race happens. -->
-                    <template v-if="kind === 'race_entry'">
+                         tickets for the same race and stay valid until the race happens.
+                         Super-admin feature toggle: hidden when off, unless this tier already
+                         has a bundle configured (so legacy config can still be cleared). -->
+                    <template v-if="kind === 'race_entry' && (branding.bundledCouponsEnabled || (form.bundledCount ?? 0) > 0)">
                         <v-divider class="my-4"></v-divider>
                         <div class="text-subtitle-2 mb-1">Bundled coupons (optional)</div>
                         <p class="text-caption text-medium-emphasis mb-2">
@@ -191,6 +197,7 @@ import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { useConfirm } from '@/composables/useConfirm'
+import { branding } from '@/stores/branding'
 
 type AdmissionKind = 'race_entry' | 'gate_fee'
 type Audience = 'rider' | 'spectator'

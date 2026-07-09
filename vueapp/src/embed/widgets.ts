@@ -37,7 +37,7 @@ export const EMBED_WIDGETS: EmbedWidgetDef[] = [
     {
         key: 'events',
         label: 'Events list',
-        description: 'A grid of upcoming events. Each card opens registration + checkout inline.',
+        description: 'A carousel of upcoming events. Each card opens registration + checkout inline.',
         icon: 'mdi-calendar-month',
         params: [
             {

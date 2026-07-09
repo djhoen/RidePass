@@ -16,15 +16,18 @@ namespace webapi.Controllers
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventRepository _events;
         private readonly ITenantContext _tenantContext;
+        private readonly ITenantRepository _tenants;
 
         public EventTicketTierController(
             IEventTicketTierRepository tiers,
             IEventRepository events,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            ITenantRepository tenants)
         {
             _tiers = tiers;
             _events = events;
             _tenantContext = tenantContext;
+            _tenants = tenants;
         }
 
         [HttpGet]
@@ -127,6 +130,10 @@ namespace webapi.Controllers
             if (!ValidateBundledCoupon(request, out var bundleErr))
                 return new ApiResponses().BadRequestResult(bundleErr);
 
+            var toggleErr = await CheckFeatureToggles(request, existing: null);
+            if (toggleErr is not null)
+                return new ApiResponses().BadRequestResult(toggleErr);
+
             NormalizeAudience(request);
 
             var tier = new EventTicketTier
@@ -168,6 +175,10 @@ namespace webapi.Controllers
 
             if (!ValidateBundledCoupon(request, out var bundleErr))
                 return new ApiResponses().BadRequestResult(bundleErr);
+
+            var toggleErr = await CheckFeatureToggles(request, existing);
+            if (toggleErr is not null)
+                return new ApiResponses().BadRequestResult(toggleErr);
 
             NormalizeAudience(request);
 
@@ -264,6 +275,35 @@ namespace webapi.Controllers
                 r.Audience = "rider";
                 r.Required = false;
             }
+        }
+
+        private static bool ConfiguresPriceSteps(UpsertEventTicketTierRequest r) =>
+            !string.IsNullOrWhiteSpace(r.LadderGroup) || r.MinSold.HasValue
+            || r.EffectiveDaysBefore.HasValue || r.EffectiveAtUtc.HasValue;
+
+        // Dynamic pricing and bundled coupons are per-tenant feature toggles (super-admin
+        // controlled, default off). Creating config requires the toggle; updates are only
+        // blocked when they ADD config the tier didn't already have, so a tenant whose
+        // toggle was later turned off can still edit or clear pre-existing config.
+        private async Task<string?> CheckFeatureToggles(UpsertEventTicketTierRequest request, EventTicketTier? existing)
+        {
+            var tenant = await _tenants.GetById(_tenantContext.TenantId);
+
+            if (ConfiguresPriceSteps(request)
+                && tenant?.DynamicPricingEnabled != true
+                && (existing is null || existing.LadderGroup is null))
+            {
+                return "Dynamic pricing is not enabled for this track. Contact RidePass support to enable stepped price ladders.";
+            }
+
+            if (request.BundledCouponCount is > 0
+                && tenant?.BundledCouponsEnabled != true
+                && (existing is null || existing.BundledCouponCount is null or <= 0))
+            {
+                return "Bundled coupons are not enabled for this track. Contact RidePass support to enable them.";
+            }
+
+            return null;
         }
 
         // Bundled-coupon fields are all-or-nothing: when count is set, kind/value/scope must

@@ -11,10 +11,14 @@
             <section class="evt-hero" :style="heroStyle">
                 <div class="evt-hero-overlay">
                     <v-container class="evt-hero-inner">
-                        <router-link to="/Events" class="evt-back">
+                        <router-link v-if="!isEmbed" to="/Events" class="evt-back">
                             <v-icon icon="mdi-arrow-left" size="18"></v-icon>
                             <span>Back to Events</span>
                         </router-link>
+                        <a v-else-if="embedCameFromWidget" class="evt-back" role="button" @click.prevent="router.back()">
+                            <v-icon icon="mdi-arrow-left" size="18"></v-icon>
+                            <span>Back to Events</span>
+                        </a>
                         <div class="evt-hero-bottom">
                             <h1 class="evt-title font-display text-white">{{ event.title }}</h1>
                         </div>
@@ -106,7 +110,7 @@
                         <section v-if="aboutHtml || aboutPhoto" class="mt-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">About {{ branding.displayName }}</h2>
                             <div v-if="aboutHtml" class="rich-text-body mb-3" v-html="aboutHtml"></div>
-                            <a class="evt-link" href="/">Visit track home &rarr;</a>
+                            <a v-if="!isEmbed" class="evt-link" href="/">Visit track home &rarr;</a>
                             <div v-if="aboutPhoto" class="evt-about-photo mt-4"
                                 :style="{ backgroundImage: `url(${aboutPhoto})` }"></div>
                         </section>
@@ -123,7 +127,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
 import { TicketService, type TicketTier } from '@/services/TicketService'
@@ -132,6 +136,19 @@ import EventCheckout from '@/components/EventCheckout.vue'
 import DOMPurify from 'dompurify'
 
 const route = useRoute()
+const router = useRouter()
+
+// Embed mode (/embed/event/:id): the page is framed on a track's own site, so it
+// must not offer navigation out of the checkout flow. The only escape hatch is
+// "Back to Events" and only when the visitor arrived from an embedded widget in
+// this same iframe — then it returns to that widget (history.state.back is the
+// previous in-iframe route). A direct single-event embed shows no back link.
+const isEmbed = computed(() => !!route.meta.embed)
+const embedCameFromWidget: boolean = (() => {
+    const back = String(window.history.state?.back ?? '')
+    return back.startsWith('/embed/events') || back.startsWith('/embed/calendar')
+})()
+
 const service = new EventService()
 const ticketService = new TicketService()
 const event = ref<EventDto | null>(null)
@@ -314,8 +331,17 @@ async function reloadTiers() {
 </script>
 
 <style scoped>
+/* Theme-aware surface + text colors: dark-mode tenants (theme_mode = 'dark') get a
+   dark page with light text; hardcoding light-mode values here made their inherited
+   white headings vanish on the light page and the black labels vanish on the dark
+   checkout card. */
 .evt-page {
-    background-color: #f5f5f5;
+    /* Theme background plus a 4% on-surface tint: ~#f5f5f5 on light (the previous
+       hardcoded value) and a softly-raised near-black on dark, so the surface-colored
+       entry card keeps its subtle separation from the page on both. */
+    background:
+        linear-gradient(rgba(var(--v-theme-on-surface), 0.04), rgba(var(--v-theme-on-surface), 0.04)),
+        rgb(var(--v-theme-background));
     min-height: 100vh;
 }
 
@@ -357,6 +383,8 @@ async function reloadTiers() {
     text-decoration: none;
     backdrop-filter: blur(4px);
     transition: background-color 0.15s ease;
+    /* Also rendered as an href-less <a role="button"> in embed mode. */
+    cursor: pointer;
 }
 .evt-back:hover { background: rgba(255, 255, 255, 0.3); }
 .evt-hero-bottom { margin-top: 1rem; }
@@ -379,7 +407,7 @@ async function reloadTiers() {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    color: rgba(0, 0, 0, 0.82);
+    color: rgba(var(--v-theme-on-surface), 0.82);
     font-size: 1rem;
 }
 .evt-meta-icon { color: rgb(var(--v-theme-primary)); }
@@ -390,7 +418,7 @@ async function reloadTiers() {
     letter-spacing: 0.06em;
     font-size: 0.78rem;
     font-weight: 700;
-    color: rgba(0, 0, 0, 0.6);
+    color: rgba(var(--v-theme-on-surface), 0.6);
 }
 
 /* ── Pricing list ───────────────────────────────────────────────────────── */
@@ -400,10 +428,10 @@ async function reloadTiers() {
     justify-content: space-between;
     gap: 1rem;
     padding: 0.3rem 0;
-    border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+    border-bottom: 1px dashed rgba(var(--v-theme-on-surface), 0.08);
 }
 .evt-price-row:last-child { border-bottom: none; }
-.evt-price-name { color: rgba(0, 0, 0, 0.82); }
+.evt-price-name { color: rgba(var(--v-theme-on-surface), 0.82); }
 .evt-price-amt {
     font-weight: 700;
     white-space: nowrap;
@@ -429,18 +457,19 @@ async function reloadTiers() {
 .evt-infobox {
     display: flex;
     gap: 0.75rem;
-    background: #fff6ed;
-    border: 1px solid #ffd9b3;
+    /* Alpha-tinted orange reads as the same soft warning band on light and dark. */
+    background: rgba(232, 130, 12, 0.12);
+    border: 1px solid rgba(232, 130, 12, 0.35);
     border-radius: 10px;
     padding: 1rem 1.1rem;
     font-size: 0.95rem;
-    color: rgba(0, 0, 0, 0.8);
+    color: rgba(var(--v-theme-on-surface), 0.8);
 }
 .evt-infobox-icon { color: #e8820c; flex-shrink: 0; }
 
 /* ── Schedule ───────────────────────────────────────────────────────────── */
 .evt-schedule {
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
     border-radius: 10px;
     overflow: hidden;
 }
@@ -449,14 +478,14 @@ async function reloadTiers() {
     gap: 1rem;
     padding: 0.65rem 1rem;
 }
-.evt-schedule-row:nth-child(odd) { background: rgba(0, 0, 0, 0.03); }
+.evt-schedule-row:nth-child(odd) { background: rgba(var(--v-theme-on-surface), 0.03); }
 .evt-schedule-time {
     width: 116px;
     flex-shrink: 0;
     font-weight: 700;
     color: rgb(var(--v-theme-primary));
 }
-.evt-schedule-label { color: rgba(0, 0, 0, 0.8); }
+.evt-schedule-label { color: rgba(var(--v-theme-on-surface), 0.8); }
 
 /* ── About + photo ──────────────────────────────────────────────────────── */
 .evt-link {

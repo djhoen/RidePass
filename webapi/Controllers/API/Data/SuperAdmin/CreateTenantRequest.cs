@@ -46,15 +46,17 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         [RegularExpression("^(external|ridepass)$")]
         public string EmbedEventTarget { get; set; } = "external";
 
-        // Feature toggles. Defaults mirror the DB defaults (season passes + waitlist on).
+        // Feature toggles. Defaults mirror the DB defaults (add-ons + season passes + waitlist on).
         public bool GiftCardsEnabled { get; set; }
         public bool RentalsEnabled { get; set; }
-        public bool ExtrasEnabled { get; set; }
+        public bool ExtrasEnabled { get; set; } = true;
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
         public bool BlogEnabled { get; set; }
         public bool MembershipEnabled { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public bool AllowSelfCancel { get; set; }
+        public bool DynamicPricingEnabled { get; set; }
+        public bool BundledCouponsEnabled { get; set; }
     }
 }

@@ -41,8 +41,13 @@ namespace webapi.Controllers
         private readonly ICouponRepository _couponShares;
         private readonly IPlatformSettingRepository _platformSettings;
         private readonly webapi.Staging.IStageMirrorService _stageMirror;
+        private readonly webapi.Seeding.ITenantSeeder _tenantSeeder;
+        private readonly IWebHostEnvironment _env;
         private readonly ILogger<SuperAdminController> _logger;
         private readonly IMemoryCache _cache;
+
+        // Demo/seed data may only ever be populated on stage or local — never production.
+        private bool CanSeedData => _env.IsStaging() || _env.IsDevelopment();
 
         public SuperAdminController(
             IUserRepository users,
@@ -63,6 +68,8 @@ namespace webapi.Controllers
             ICouponRepository couponShares,
             IPlatformSettingRepository platformSettings,
             webapi.Staging.IStageMirrorService stageMirror,
+            webapi.Seeding.ITenantSeeder tenantSeeder,
+            IWebHostEnvironment env,
             ILogger<SuperAdminController> logger,
             IMemoryCache cache)
         {
@@ -84,6 +91,8 @@ namespace webapi.Controllers
             _couponShares = couponShares;
             _platformSettings = platformSettings;
             _stageMirror = stageMirror;
+            _tenantSeeder = tenantSeeder;
+            _env = env;
             _logger = logger;
             _cache = cache;
         }
@@ -186,7 +195,13 @@ namespace webapi.Controllers
         public async Task<IActionResult> ListTenants()
         {
             var all = await GetAllTenants();
-            var items = all.Select(ToTenantListItem).OrderBy(t => t.Subdomain);
+            var canSeed = CanSeedData;
+            var items = all.Select(t =>
+            {
+                var item = ToTenantListItem(t);
+                item.CanSeedData = canSeed;
+                return item;
+            }).OrderBy(t => t.Subdomain);
             return new ApiResponses().OkResult(items);
         }
 
@@ -238,6 +253,8 @@ namespace webapi.Controllers
                 MembershipEnabled = request.MembershipEnabled,
                 WaitlistEnabled = request.WaitlistEnabled,
                 AllowSelfCancel = request.AllowSelfCancel,
+                DynamicPricingEnabled = request.DynamicPricingEnabled,
+                BundledCouponsEnabled = request.BundledCouponsEnabled,
             };
             tenant.Id = await _tenants.Create(tenant);
             // The DB triggers (seed_default_event_types, seed_initial_waiver,
@@ -733,6 +750,28 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { tenantId, concessionsEnabled = request.Enabled });
         }
 
+        // Populate demo/seed data for a tenant (users, events past/present/future, purchases, waivers,
+        // F&B + orders, gift cards, coupons, rewards, rentals, disputes, newsletter, blackouts, branding).
+        // STAGE + LOCAL ONLY — hard-refused on production so it can never touch real data. One-shot: it
+        // refuses if the tenant was already seeded (the button hides once seed_data_populated_at is set).
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("Tenants/{tenantId:guid}/PopulateSeedData")]
+        public async Task<IActionResult> PopulateSeedData(Guid tenantId, CancellationToken ct)
+        {
+            if (!CanSeedData)
+                return new ApiResponses().BadRequestResult("Seed data can only be populated on staging or local environments.");
+
+            var tenant = await _tenants.GetById(tenantId);
+            if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
+            if (tenant.SeedDataPopulatedAt != null)
+                return new ApiResponses().BadRequestResult("This tenant has already been seeded.");
+
+            var summary = await _tenantSeeder.PopulateAsync(tenantId, ct);
+            await _audit.Log("tenant.seed.populate", $"Populated demo seed data for {tenant.Subdomain}",
+                "tenant", tenantId, tenantId, summary);
+            return new ApiResponses().OkResult(summary);
+        }
+
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpPut("Tenants/{tenantId:guid}")]
         public async Task<IActionResult> UpdateTenant(Guid tenantId, [FromBody] SuperAdminUpdateTenantRequest request)
@@ -772,7 +811,8 @@ namespace webapi.Controllers
             await _tenants.UpdateFeatures(tenantId,
                 request.GiftCardsEnabled, request.RentalsEnabled, request.ExtrasEnabled, request.SeasonPassesEnabled,
                 request.ConcessionsEnabled, request.BlogEnabled, request.MembershipEnabled,
-                request.WaitlistEnabled, request.AllowSelfCancel);
+                request.WaitlistEnabled, request.AllowSelfCancel,
+                request.DynamicPricingEnabled, request.BundledCouponsEnabled);
 
             // Evict the cached tenant so changes (especially publish status) take
             // effect immediately instead of after the 5-minute resolution cache.
@@ -1139,6 +1179,8 @@ namespace webapi.Controllers
             MembershipEnabled = t.MembershipEnabled,
             WaitlistEnabled = t.WaitlistEnabled,
             AllowSelfCancel = t.AllowSelfCancel,
+            DynamicPricingEnabled = t.DynamicPricingEnabled,
+            BundledCouponsEnabled = t.BundledCouponsEnabled,
             AddressLine = t.AddressLine,
             City = t.City,
             Region = t.Region,
@@ -1158,6 +1200,8 @@ namespace webapi.Controllers
             ExternalEventsUrl = t.ExternalEventsUrl,
             EmbedEventTarget = t.EmbedEventTarget,
             CreatedAtUtc = DateTime.SpecifyKind(t.CreatedAt, DateTimeKind.Utc),
+            SeedDataPopulated = t.SeedDataPopulatedAt != null,
+            // CanSeedData (env flag) is stamped by the action after mapping.
         };
 
         private static string GenerateTemporaryPassword()

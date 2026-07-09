@@ -68,6 +68,9 @@ export interface BrandingState {
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
     blogEnabled: boolean
+    // Super-admin feature toggles gating the tier editor's advanced pricing sections.
+    dynamicPricingEnabled: boolean
+    bundledCouponsEnabled: boolean
     loampassMxEnabled: boolean
     embedEnabled: boolean
     embedAllowedOrigins: string[]
@@ -151,6 +154,8 @@ const defaults: BrandingState = {
     seasonPassesEnabled: true,
     concessionsEnabled: false,
     blogEnabled: false,
+    dynamicPricingEnabled: false,
+    bundledCouponsEnabled: false,
     loampassMxEnabled: false,
     embedEnabled: false,
     embedAllowedOrigins: [],
@@ -281,6 +286,8 @@ export async function loadBranding(): Promise<void> {
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
         branding.blogEnabled = !!data.blogEnabled
+        branding.dynamicPricingEnabled = !!data.dynamicPricingEnabled
+        branding.bundledCouponsEnabled = !!data.bundledCouponsEnabled
         branding.loampassMxEnabled = !!data.loampassMxEnabled
         branding.embedEnabled = !!data.embedEnabled
         branding.embedAllowedOrigins = Array.isArray(data.embedAllowedOrigins) ? data.embedAllowedOrigins : []

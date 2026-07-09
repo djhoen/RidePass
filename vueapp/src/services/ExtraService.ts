@@ -7,6 +7,10 @@ export const DEFAULT_EXTRA_KINDS = [
     { value: 'camping',     label: 'Camping',     icon: 'mdi-tent' },
     { value: 'parking',     label: 'Parking',     icon: 'mdi-parking' },
     { value: 'pit_vehicle', label: 'Pit Vehicle', icon: 'mdi-truck' },
+    // Apparel/merch sold as an event add-on (hats, shirts, etc.). Uses the size/color
+    // variant editor. This is a SEPARATE catalog from F&B/concessions "swag": merch added
+    // here shows only as an event add-on and never in the F&B store, and vice versa.
+    { value: 'merch',       label: 'Merch',       icon: 'mdi-tshirt-crew' },
 ] as const
 
 export function kindIcon(kind: string): string {

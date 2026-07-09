@@ -134,9 +134,13 @@
                     </v-window-item>
 
                     <v-window-item value="embed">
-                        <p class="text-caption text-medium-emphasis mb-3">
+                        <p class="text-caption text-medium-emphasis mb-1">
                             For tracks that keep their own website and embed RidePass widgets. You can also set this later.
                         </p>
+                        <v-btn variant="text" size="small" color="primary" class="px-0 mb-2"
+                            prepend-icon="mdi-book-open-variant" @click="salesGuideOpen = true">
+                            How to pitch &amp; install (sales guide)
+                        </v-btn>
                         <v-switch v-model="createForm.embedEnabled" color="primary" inset density="compact" hide-details
                             :label="createForm.embedEnabled ? 'Embed widgets enabled' : 'Embed widgets disabled'"></v-switch>
                         <v-combobox v-model="createForm.embedAllowedOrigins" label="Allowed embed origins"
@@ -343,10 +347,14 @@
                     </v-window-item>
 
                     <v-window-item value="embed">
-                        <p class="text-caption text-medium-emphasis mb-3">
+                        <p class="text-caption text-medium-emphasis mb-1">
                             For tracks that keep their own website and embed RidePass widgets. Enable embedding,
                             list the site origins allowed to frame the widgets, then share the snippet below.
                         </p>
+                        <v-btn variant="text" size="small" color="primary" class="px-0 mb-2"
+                            prepend-icon="mdi-book-open-variant" @click="salesGuideOpen = true">
+                            How to pitch &amp; install (sales guide)
+                        </v-btn>
                         <v-switch v-model="editForm.embedEnabled" color="primary" inset density="compact" hide-details
                             :label="editForm.embedEnabled ? 'Embed widgets enabled' : 'Embed widgets disabled'"></v-switch>
                         <v-combobox v-model="editForm.embedAllowedOrigins" label="Allowed embed origins"
@@ -409,6 +417,10 @@
                     <div v-if="editError" class="text-error text-caption mt-2">{{ editError }}</div>
                 </v-card-text>
                 <v-card-actions>
+                    <!-- Stage/local only: one-shot demo data. Disappears once the tenant is seeded. -->
+                    <v-btn v-if="editTenant?.canSeedData && !editTenant?.seedDataPopulated"
+                        variant="tonal" color="secondary" prepend-icon="mdi-database-plus"
+                        :loading="seeding" @click="populateSeed">Populate Seed Data</v-btn>
                     <v-spacer></v-spacer>
                     <v-btn @click="editDialog = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="savingEdit" @click="saveEdit">Save</v-btn>
@@ -488,6 +500,8 @@
             </v-card>
         </v-dialog>
 
+        <EmbedSalesGuideDialog v-model:open="salesGuideOpen" />
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -500,6 +514,7 @@ import { EMBED_WIDGETS, getEmbedWidget, buildEmbedSnippet, buildEmbedPath } from
 import tenantHelper from '@/helpers/TenantHelper'
 import { geocode } from '@/helpers/Geocode'
 import authHelper from '@/helpers/AuthHelper'
+import EmbedSalesGuideDialog from '@/components/EmbedSalesGuideDialog.vue'
 
 const service = new SuperAdminService()
 
@@ -538,6 +553,8 @@ function blankCreateForm() {
         membershipEnabled: true,
         waitlistEnabled: true,
         allowSelfCancel: false,
+        dynamicPricingEnabled: false,
+        bundledCouponsEnabled: false,
     }
 }
 const createForm = ref(blankCreateForm())
@@ -556,6 +573,8 @@ function applyTypeFeatureDefaults(type: 'motocross' | 'mountain_bike') {
     f.concessionsEnabled = false
     f.blogEnabled = false
     f.allowSelfCancel = false
+    f.dynamicPricingEnabled = false
+    f.bundledCouponsEnabled = false
     f.rentalsEnabled = type === 'mountain_bike'
 }
 watch(() => createForm.value.tenantType, (type) => {
@@ -571,6 +590,7 @@ watch(() => createForm.value.tenantType, (type) => {
 type FeatureKey =
     | 'giftCardsEnabled' | 'rentalsEnabled' | 'extrasEnabled' | 'seasonPassesEnabled'
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled' | 'waitlistEnabled' | 'allowSelfCancel'
+    | 'dynamicPricingEnabled' | 'bundledCouponsEnabled'
 const featureToggles: { key: FeatureKey; label: string; description: string }[] = [
     { key: 'giftCardsEnabled', label: 'Gift cards', description: 'Riders buy and redeem digital gift cards delivered by email.' },
     { key: 'rentalsEnabled', label: 'Rentals', description: 'Rent gear (bikes, helmets, pads) per session, with deposit and insurance support.' },
@@ -581,6 +601,8 @@ const featureToggles: { key: FeatureKey; label: string; description: string }[] 
     { key: 'membershipEnabled', label: 'Membership', description: 'Sell yearly or one-time memberships and gate selected purchases behind them.' },
     { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.' },
     { key: 'allowSelfCancel', label: 'Rider self-cancel', description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).' },
+    { key: 'dynamicPricingEnabled', label: 'Dynamic pricing', description: 'Event tickets can use stepped price ladders: the price rises automatically as tickets sell or the event date approaches (early-bird pricing).' },
+    { key: 'bundledCouponsEnabled', label: 'Bundled coupons', description: 'Race-entry tiers can include single-use discount codes, generated at purchase, that the buyer shares to discount tickets for that same event.' },
 ]
 
 const venueCategoryOptions = [
@@ -650,6 +672,8 @@ interface TenantEditForm {
     membershipEnabled: boolean
     waitlistEnabled: boolean
     allowSelfCancel: boolean
+    dynamicPricingEnabled: boolean
+    bundledCouponsEnabled: boolean
 }
 
 const clientTypeOptions = [
@@ -666,6 +690,7 @@ const eventTargetOptions = [
 const editDialog = ref(false)
 const editTenant = ref<TenantSummary | null>(null)
 const savingEdit = ref(false)
+const seeding = ref(false)
 const geocoding = ref(false)
 const editError = ref<string | null>(null)
 const editForm = ref<TenantEditForm>(emptyEditForm())
@@ -694,6 +719,9 @@ async function testStripeConnect() {
         testingConnect.value = false
     }
 }
+
+// Sales & install guide modal (linked from both Embedded Widgets tabs).
+const salesGuideOpen = ref(false)
 
 // Snippet builder: pick a widget + fill its options, get the paste-able tag.
 const embedWidgetItems = EMBED_WIDGETS.map(w => ({ title: w.label, value: w.key }))
@@ -864,6 +892,8 @@ async function submitCreateTenant() {
             membershipEnabled: createForm.value.membershipEnabled,
             waitlistEnabled: createForm.value.waitlistEnabled,
             allowSelfCancel: createForm.value.allowSelfCancel,
+            dynamicPricingEnabled: createForm.value.dynamicPricingEnabled,
+            bundledCouponsEnabled: createForm.value.bundledCouponsEnabled,
         }
         const r = await service.createTenant(body)
         createdResult.value = (r.data as any).data
@@ -889,6 +919,7 @@ function emptyEditForm(): TenantEditForm {
         giftCardsEnabled: false, rentalsEnabled: false, extrasEnabled: false, seasonPassesEnabled: true,
         concessionsEnabled: false, blogEnabled: false, membershipEnabled: false,
         waitlistEnabled: true, allowSelfCancel: false,
+        dynamicPricingEnabled: false, bundledCouponsEnabled: false,
     }
 }
 
@@ -931,6 +962,8 @@ function openEdit(t: TenantSummary) {
         membershipEnabled: t.membershipEnabled,
         waitlistEnabled: t.waitlistEnabled,
         allowSelfCancel: t.allowSelfCancel,
+        dynamicPricingEnabled: t.dynamicPricingEnabled,
+        bundledCouponsEnabled: t.bundledCouponsEnabled,
     }
     editTab.value = 'general'
     editDialog.value = true
@@ -1008,6 +1041,8 @@ async function saveEdit() {
             membershipEnabled: f.membershipEnabled,
             waitlistEnabled: f.waitlistEnabled,
             allowSelfCancel: f.allowSelfCancel,
+            dynamicPricingEnabled: f.dynamicPricingEnabled,
+            bundledCouponsEnabled: f.bundledCouponsEnabled,
         }
         await service.updateTenant(editTenant.value.id, body)
         flash('Tenant updated.', 'success')
@@ -1051,5 +1086,24 @@ function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text
     snackbarColor.value = color
     snackbar.value = true
+}
+
+async function populateSeed() {
+    if (!editTenant.value) return
+    seeding.value = true
+    try {
+        const r = await service.populateSeedData(editTenant.value.id)
+        const s = (r.data as any).data as Record<string, number>
+        const total = Object.values(s).reduce((a, b) => a + b, 0)
+        // Hide the button (also reflected server-side by seed_data_populated_at).
+        editTenant.value.seedDataPopulated = true
+        const match = tenants.value.find(t => t.id === editTenant.value!.id)
+        if (match) match.seedDataPopulated = true
+        flash(`Seeded ${total} demo records (${s.events} events, ${s.tickets} tickets, ${s.concessionOrders} F&B orders).`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not populate seed data. Check the server logs and try again.', 'error')
+    } finally {
+        seeding.value = false
+    }
 }
 </script>

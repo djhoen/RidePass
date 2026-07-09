@@ -64,7 +64,7 @@ namespace Services.Repositories.Interfaces
         // Super-admin feature toggles (boolean flags only).
         Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
             bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
-            bool waitlistEnabled, bool allowSelfCancel);
+            bool waitlistEnabled, bool allowSelfCancel, bool dynamicPricingEnabled, bool bundledCouponsEnabled);
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);
         Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,

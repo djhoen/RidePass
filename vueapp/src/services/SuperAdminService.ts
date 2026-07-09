@@ -20,6 +20,8 @@ export interface TenantSummary {
     membershipEnabled: boolean
     waitlistEnabled: boolean
     allowSelfCancel: boolean
+    dynamicPricingEnabled: boolean
+    bundledCouponsEnabled: boolean
     addressLine: string | null
     city: string | null
     region: string | null
@@ -39,6 +41,8 @@ export interface TenantSummary {
     externalEventsUrl: string | null
     embedEventTarget: 'external' | 'ridepass'
     createdAtUtc: string
+    seedDataPopulated: boolean
+    canSeedData: boolean
 }
 
 export interface UpdateTenantPayload {
@@ -76,6 +80,8 @@ export interface UpdateTenantPayload {
     membershipEnabled: boolean
     waitlistEnabled: boolean
     allowSelfCancel: boolean
+    dynamicPricingEnabled: boolean
+    bundledCouponsEnabled: boolean
 }
 
 export interface CreateTenantPayload {
@@ -104,6 +110,8 @@ export interface CreateTenantPayload {
     membershipEnabled: boolean
     waitlistEnabled: boolean
     allowSelfCancel: boolean
+    dynamicPricingEnabled: boolean
+    bundledCouponsEnabled: boolean
 }
 
 export interface CreateTenantResult {
@@ -254,6 +262,11 @@ export class SuperAdminService {
 
     createTenant(body: CreateTenantPayload) {
         return axios.post<{ data: CreateTenantResult }>(`${this.apiUrl}/SuperAdmin/Tenants`, body)
+    }
+
+    // Stage/local only: populate a tenant with demo data (users, events, purchases, F&B + orders, etc.).
+    populateSeedData(tenantId: string) {
+        return axios.post<{ data: Record<string, number> }>(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/PopulateSeedData`)
     }
 
     // With q set, the server searches all users (filters ignored). Otherwise it returns tenant users

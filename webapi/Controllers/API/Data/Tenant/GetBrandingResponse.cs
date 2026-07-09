@@ -64,6 +64,10 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
         public bool BlogEnabled { get; set; }
+        // Stepped price ladders / bundled share-coupons (super-admin toggles). The tenant
+        // admin UI hides the corresponding tier-editor sections when these are off.
+        public bool DynamicPricingEnabled { get; set; }
+        public bool BundledCouponsEnabled { get; set; }
         // True when this tenant is a LoamPassMx track (a destination id is configured).
         // The destination id itself stays server-side.
         public bool LoampassMxEnabled { get; set; }

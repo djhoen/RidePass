@@ -80,5 +80,7 @@ namespace webapi.Controllers.API.Data.SuperAdmin
         public bool MembershipEnabled { get; set; }
         public bool WaitlistEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
+        public bool DynamicPricingEnabled { get; set; }
+        public bool BundledCouponsEnabled { get; set; }
     }
 }

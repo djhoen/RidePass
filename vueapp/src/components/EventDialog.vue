@@ -588,6 +588,20 @@ async function save() {
         activeTab.value = 'entry'
         return
     }
+    // Soft confirm: a rider event with no required waiver. Some events genuinely don't need one, so
+    // this warns rather than blocks — save anyway, or jump back to the Waivers tab to add one.
+    if (form.value.allowsRiders && !form.value.requiresRiderWaiver) {
+        const proceed = await confirm({
+            title: 'No rider waiver selected',
+            message: 'This event allows riders but doesn’t require a signed rider waiver, so riders can check in without signing one. Save it this way, or go back and pick a waiver?',
+            confirmText: 'Save without a waiver',
+            cancelText: 'Go back',
+        })
+        if (!proceed) {
+            activeTab.value = 'waivers'
+            return
+        }
+    }
     try {
         saving.value = true
         const body = {
