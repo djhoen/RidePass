@@ -7,18 +7,16 @@
         <template v-else-if="event">
             <!-- ── HERO ──────────────────────────────────────────────────────
                  Dark band with the event image fading in from the right; title +
-                 date / location / type meta on the left. -->
-            <section class="evt-hero" :style="heroStyle">
+                 date / location / type meta on the left. Hosted site only — the
+                 embed gets the slim header below instead (a second full-bleed hero
+                 inside someone else's page reads as a site-within-a-site). -->
+            <section v-if="!isEmbed" class="evt-hero" :style="heroStyle">
                 <div class="evt-hero-overlay">
                     <v-container class="evt-hero-inner">
-                        <router-link v-if="!isEmbed" to="/Events" class="evt-back">
+                        <router-link to="/Events" class="evt-back">
                             <v-icon icon="mdi-arrow-left" size="18"></v-icon>
                             <span>Back to Events</span>
                         </router-link>
-                        <a v-else-if="embedCameFromWidget" class="evt-back" role="button" @click.prevent="router.back()">
-                            <v-icon icon="mdi-arrow-left" size="18"></v-icon>
-                            <span>Back to Events</span>
-                        </a>
                         <div class="evt-hero-bottom">
                             <h1 class="evt-title font-display text-white">{{ event.title }}</h1>
                         </div>
@@ -26,14 +24,32 @@
                 </div>
             </section>
 
-            <v-container class="py-8">
+            <!-- ── EMBED HEADER ──────────────────────────────────────────────
+                 Compact replacement for the hero when framed on a track's own
+                 site: back pill (only when a widget is behind us in the iframe
+                 history), title, one meta line. -->
+            <v-container v-else class="pt-3 pb-0">
+                <a v-if="embedCameFromWidget" class="evt-back evt-back-embed mb-2" role="button" @click.prevent="router.back()">
+                    <v-icon icon="mdi-arrow-left" size="16"></v-icon>
+                    <span>Back to Events</span>
+                </a>
+                <h1 class="text-h6 font-weight-bold font-display">{{ event.title }}</h1>
+                <div class="text-caption text-medium-emphasis">
+                    {{ dateLine }}<span v-if="locationText"> · {{ locationText }}</span>
+                </div>
+            </v-container>
+
+            <v-container :class="isEmbed ? 'py-4' : 'py-8'">
                 <v-alert v-if="event.status === 'cancelled'" type="error" variant="tonal" class="mb-6">
                     This event has been cancelled.
                 </v-alert>
 
+                <!-- In embed mode the checkout column leads (order 2/1 swap): when the
+                     iframe is narrow and the columns stack, buyers land on the buy box
+                     instead of scrolling past details to find it. -->
                 <v-row>
-                    <!-- ── LEFT: event content ─────────────────────────────── -->
-                    <v-col cols="12" md="6">
+                    <!-- ── Event content ───────────────────────────────────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 2 : undefined">
                         <section class="mb-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">Event Details</h2>
                             <ul v-if="detailLines.length > 0" class="evt-checklist mb-4">
@@ -64,8 +80,10 @@
                             </div>
                         </section>
 
-                        <!-- Pricing: everything purchasable for this event. -->
-                        <section v-if="pricingGroups.length" class="mb-8">
+                        <!-- Pricing: everything purchasable for this event. Hidden in embed —
+                             the checkout card already shows every tier with its price, so
+                             this static list is pure duplicate scroll there. -->
+                        <section v-if="!isEmbed && pricingGroups.length" class="mb-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">Pricing &amp; Passes</h2>
                             <p v-if="hasServiceFee" class="text-body-2 text-medium-emphasis mb-4">
                                 All items include a {{ serviceFeePercent }}% service fee.
@@ -81,8 +99,8 @@
                         </section>
                     </v-col>
 
-                    <!-- ── RIGHT: entry options + checkout, then about ─────── -->
-                    <v-col cols="12" md="6">
+                    <!-- ── Entry options + checkout, then about ────────────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 1 : undefined">
                         <v-card class="evt-entry-card" variant="flat">
                             <v-card-text class="pa-5">
                                 <!-- Unified inline checkout: select tiers, pay, then register.
@@ -107,10 +125,12 @@
                             </v-card-text>
                         </v-card>
 
-                        <section v-if="aboutHtml || aboutPhoto" class="mt-8">
+                        <!-- Hidden in embed: it would describe the very site the widget
+                             is sitting on. -->
+                        <section v-if="!isEmbed && (aboutHtml || aboutPhoto)" class="mt-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">About {{ branding.displayName }}</h2>
                             <div v-if="aboutHtml" class="rich-text-body mb-3" v-html="aboutHtml"></div>
-                            <a v-if="!isEmbed" class="evt-link" href="/">Visit track home &rarr;</a>
+                            <a class="evt-link" href="/">Visit track home &rarr;</a>
                             <div v-if="aboutPhoto" class="evt-about-photo mt-4"
                                 :style="{ backgroundImage: `url(${aboutPhoto})` }"></div>
                         </section>
@@ -389,6 +409,14 @@ async function reloadTiers() {
     cursor: pointer;
 }
 .evt-back:hover { background: rgba(255, 255, 255, 0.3); }
+/* Embed header variant: the base pill is white-on-hero; on the plain page it goes
+   primary-tinted so it's visible on light and dark themes alike. */
+.evt-back-embed {
+    color: rgb(var(--v-theme-primary));
+    background: rgba(var(--v-theme-primary), 0.08);
+    border-color: rgba(var(--v-theme-primary), 0.35);
+}
+.evt-back-embed:hover { background: rgba(var(--v-theme-primary), 0.16); }
 .evt-hero-bottom { margin-top: 1rem; }
 .evt-title {
     font-size: clamp(2rem, 5vw, 3.25rem);
