@@ -167,7 +167,7 @@
                 <v-btn variant="text" @click="step = 'select'">Back</v-btn>
                 <v-spacer></v-spacer>
                 <v-btn color="primary" :loading="creating" :disabled="!detailsValid" @click="createIntent">
-                    {{ estTotalCents > 0 ? 'Continue to payment' : 'Continue' }}
+                    {{ estTotalCents > 0 ? 'Pay Now' : 'Continue' }}
                 </v-btn>
             </div>
         </template>

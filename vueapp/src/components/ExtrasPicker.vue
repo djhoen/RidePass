@@ -3,11 +3,13 @@
         <div v-for="e in extras" :key="e.productId"
             class="d-flex align-start py-3 ga-3 extra-row text-left"
             style="border-bottom: 1px solid rgba(0,0,0,0.06)">
-            <!-- Image / placeholder. Clickable to enlarge when present. -->
+            <!-- Image / placeholder. Clickable to enlarge when present. Hidden on
+                 phones (.extra-media) — the thumbnail column squeezes the name +
+                 qty controls too hard there. -->
             <v-img v-if="primaryImage(e)" :src="absoluteUrl(primaryImage(e)!)"
-                width="80" height="80" cover class="rounded extra-thumb"
+                width="80" height="80" cover class="rounded extra-thumb extra-media"
                 style="flex: 0 0 auto" @click="openImagePreview(primaryImage(e)!)"></v-img>
-            <div v-else class="d-flex align-center justify-center rounded"
+            <div v-else class="d-flex align-center justify-center rounded extra-media"
                 style="width: 80px; height: 80px; background: rgba(0,0,0,0.05); flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.05)">
                 <v-icon color="grey">mdi-image-off-outline</v-icon>
             </div>
@@ -243,5 +245,13 @@ function openImagePreview(url: string) {
 }
 .extra-thumb:hover {
     opacity: 0.85;
+}
+/* Phones: drop the thumbnail column from the cart rows (kept in the variant-options
+   dialog). !important because Vuetify's .d-flex utility on the placeholder is
+   !important too. */
+@media (max-width: 599px) {
+    .extra-media {
+        display: none !important;
+    }
 }
 </style>
