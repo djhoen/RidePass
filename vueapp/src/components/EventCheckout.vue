@@ -37,7 +37,7 @@
 
             <div v-if="riderGateTiers.length" class="mb-4">
                 <div class="evt-group-label mb-2">
-                    Rider Gate <span v-if="requiredRiderGate" class="text-error">*</span>
+                    {{ riderGateLabel }} <span v-if="requiredRiderGate" class="text-error">*</span>
                 </div>
                 <div v-for="t in riderGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
@@ -54,7 +54,7 @@
             </div>
 
             <div v-if="spectatorGateTiers.length" class="mb-4">
-                <div class="evt-group-label mb-2">Spectator Gate</div>
+                <div class="evt-group-label mb-2">{{ spectatorGateLabel }}</div>
                 <div v-for="t in spectatorGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
@@ -535,13 +535,18 @@ const signupPrefill = computed(() => {
     }
 })
 
+// Tenant-customizable section headings (e.g. a track that sells rider admission as
+// "Passes" instead of "Rider Gate"); null/blank falls back to the platform default.
+const riderGateLabel = computed(() => branding.riderGateLabel || 'Rider Gate')
+const spectatorGateLabel = computed(() => branding.spectatorGateLabel || 'Spectator Gate')
+
 // Required-gate rule on the select step: when a race has a required rider gate fee,
 // the buyer must pick exactly one gate fee per rider.
 const riderGateHint = computed(() => {
     if (!isRaceEvent.value || !requiredRiderGate.value || totalRaceQty.value === 0) return ''
     const need = raceRiderCount.value
     if (riderGateQty.value === need) return ''
-    return `This race requires one rider gate fee per rider — choose ${need} (you have ${riderGateQty.value}).`
+    return `This race requires one ${riderGateLabel.value} selection per rider — choose ${need} (you have ${riderGateQty.value}).`
 })
 const canContinue = computed(() => hasSelection.value && !riderGateHint.value)
 

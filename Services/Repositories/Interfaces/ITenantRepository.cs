@@ -80,6 +80,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
         Task UpdateBlogEnabled(Guid tenantId, bool enabled);
         Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, bool waitlistEnabled, int waitlistConfirmWindowMinutes);
+        Task UpdateGateLabels(Guid tenantId, string? riderGateLabel, string? spectatorGateLabel);
         Task UpdateMembershipSettings(
             Guid tenantId, bool enabled, string name, int priceCents, string durationKind,
             bool requiredForRiders, bool requiredForSpectators);

@@ -116,6 +116,10 @@ namespace Services.Repositories.Data.TenantData
         // site) or 'ridepass' (the hosted {subdomain}.ridepass.io/Event/:id page).
         public string EmbedEventTarget { get; set; } = "external";
         public bool AllowSelfCancel { get; set; } = false;
+        // Rider-facing headings for the gate-fee sections at checkout / event pricing.
+        // NULL = platform defaults ("Rider Gate" / "Spectator Gate").
+        public string? RiderGateLabel { get; set; }
+        public string? SpectatorGateLabel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; } = 20;
         public bool MembershipEnabled { get; set; } = false;

@@ -270,6 +270,17 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("GateLabels")]
+        public async Task<IActionResult> UpdateGateLabels([FromBody] UpdateGateLabelsRequest request)
+        {
+            // Whitespace-only clears the override; NULL in the column = platform default.
+            static string? Normalize(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            await _tenants.UpdateGateLabels(_tenantContext.TenantId,
+                Normalize(request.RiderGateLabel), Normalize(request.SpectatorGateLabel));
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("Location")]
         public async Task<IActionResult> UpdateLocation([FromBody] UpdateTenantLocationRequest request)
         {
@@ -459,6 +470,8 @@ namespace webapi.Controllers
                 ExternalEventsUrl = tenant.ExternalEventsUrl,
                 EmbedEventTarget = tenant.EmbedEventTarget,
                 AllowSelfCancel = tenant.AllowSelfCancel,
+                RiderGateLabel = tenant.RiderGateLabel,
+                SpectatorGateLabel = tenant.SpectatorGateLabel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,
                 MembershipEnabled = tenant.MembershipEnabled,

@@ -47,6 +47,10 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/CancellationPolicy`, req)
     }
 
+    async updateGateLabels(req: { riderGateLabel: string | null; spectatorGateLabel: string | null }) {
+        return axios.put(`${this.apiUrl}/Tenant/GateLabels`, req)
+    }
+
     async updateLocation(req: {
         shippingName: string | null
         addressLine: string | null

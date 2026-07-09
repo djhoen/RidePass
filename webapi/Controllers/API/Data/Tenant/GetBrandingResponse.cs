@@ -91,6 +91,10 @@ namespace webapi.Controllers.API.Data.Tenant
         // /Event/:id when set to 'ridepass'.
         public string EmbedEventTarget { get; set; } = "external";
         public bool AllowSelfCancel { get; set; }
+        // Custom gate-fee section headings shown at checkout / event pricing;
+        // null = platform defaults ("Rider Gate" / "Spectator Gate").
+        public string? RiderGateLabel { get; set; }
+        public string? SpectatorGateLabel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;
         public int WaitlistConfirmWindowMinutes { get; set; }
         public bool MembershipEnabled { get; set; }

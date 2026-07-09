@@ -95,15 +95,25 @@ function originMatches(parent: string, pattern: string): boolean {
 function ancestorAllowed(): boolean {
     // Effective allow-list = this tenant's own origins ∪ first-party global origins.
     const allowed = [...branding.embedAllowedOrigins, ...branding.globalEmbedAllowedOrigins]
+
+    // Check the ENTIRE ancestor chain, not just the immediate parent. Site builders
+    // (Wix, Squarespace, GoDaddy, ...) wrap a custom-HTML embed in their OWN sandboxed
+    // iframe served from a platform origin (e.g. *.filesusr.com), so the immediate parent
+    // is that platform origin while the track's real site sits at the TOP of the chain.
+    // Matching any ancestor means a track only ever has to whitelist their own domain —
+    // no need to discover the platform's internal iframe origin.
+    const origins: string[] = []
     const ao = (window.location as any).ancestorOrigins as DOMStringList | undefined
-    let parentOrigin: string | null = ao && ao.length ? ao[0] : null
-    if (!parentOrigin && document.referrer) {
-        try { parentOrigin = new URL(document.referrer).origin } catch { parentOrigin = null }
+    if (ao && ao.length) {
+        for (let i = 0; i < ao.length; i++) origins.push(ao[i])
+    } else if (document.referrer) {
+        // Firefox has no ancestorOrigins; the referrer is the immediate parent only.
+        try { origins.push(new URL(document.referrer).origin) } catch { /* ignore */ }
     }
-    if (!parentOrigin) return true            // not framed (direct load) — allow
-    // Fail closed: framed but on no allowed origin is blocked. (The authoritative
-    // control is the server-stamped frame-ancestors CSP; this is the friendly fallback.)
-    return allowed.some(a => originMatches(parentOrigin as string, a))
+    if (origins.length === 0) return true     // not framed (direct load) — allow
+    // Allow if any ancestor origin is on the list. (The authoritative control is the
+    // server-stamped frame-ancestors CSP; this is the friendly in-app fallback.)
+    return origins.some(o => allowed.some(a => originMatches(o, a)))
 }
 
 const embedBlocked = computed(() => {

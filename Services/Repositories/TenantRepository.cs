@@ -67,6 +67,8 @@ namespace Services.Repositories
             external_events_url AS ExternalEventsUrl,
             embed_event_target AS EmbedEventTarget,
             allow_self_cancel AS AllowSelfCancel,
+            rider_gate_label AS RiderGateLabel,
+            spectator_gate_label AS SpectatorGateLabel,
             waitlist_enabled AS WaitlistEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
             membership_enabled AS MembershipEnabled,
@@ -454,6 +456,16 @@ namespace Services.Repositories
                     waitlist_confirm_window_minutes = @waitlistConfirmWindowMinutes
                 WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, allowSelfCancel, waitlistEnabled, waitlistConfirmWindowMinutes });
+        }
+
+        public async Task UpdateGateLabels(Guid tenantId, string? riderGateLabel, string? spectatorGateLabel)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET rider_gate_label = @riderGateLabel,
+                    spectator_gate_label = @spectatorGateLabel
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, riderGateLabel, spectatorGateLabel });
         }
 
         public async Task UpdateMembershipSettings(

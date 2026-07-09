@@ -82,6 +82,9 @@ export interface BrandingState {
     externalEventsUrl: string | null
     embedEventTarget: 'external' | 'ridepass'
     allowSelfCancel: boolean
+    // Custom gate-fee section headings (checkout / event pricing); null = defaults.
+    riderGateLabel: string | null
+    spectatorGateLabel: string | null
     waitlistEnabled: boolean
     waitlistConfirmWindowMinutes: number
     membershipEnabled: boolean
@@ -167,6 +170,8 @@ const defaults: BrandingState = {
     externalEventsUrl: null,
     embedEventTarget: 'external',
     allowSelfCancel: false,
+    riderGateLabel: null,
+    spectatorGateLabel: null,
     waitlistEnabled: true,
     waitlistConfirmWindowMinutes: 20,
     membershipEnabled: false,
@@ -299,6 +304,8 @@ export async function loadBranding(): Promise<void> {
         branding.externalEventsUrl = data.externalEventsUrl ?? null
         branding.embedEventTarget = data.embedEventTarget === 'ridepass' ? 'ridepass' : 'external'
         branding.allowSelfCancel = !!data.allowSelfCancel
+        branding.riderGateLabel = data.riderGateLabel ?? null
+        branding.spectatorGateLabel = data.spectatorGateLabel ?? null
         branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20
         branding.membershipEnabled = !!data.membershipEnabled

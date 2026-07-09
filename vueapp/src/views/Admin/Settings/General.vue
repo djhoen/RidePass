@@ -135,6 +135,28 @@
             </v-card-text>
         </v-card>
 
+        <!-- Checkout headings -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-format-title</v-icon></template>
+                <v-card-title>Checkout headings</v-card-title>
+                <v-card-subtitle>What riders see the gate-fee sections called at checkout and in event pricing.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
+                <v-row>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.riderGateLabel" label="Rider gate section" density="compact"
+                            placeholder="Rider Gate" maxlength="40" hint="e.g. 'Passes'. Leave blank for the default." persistent-hint></v-text-field>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.spectatorGateLabel" label="Spectator gate section" density="compact"
+                            placeholder="Spectator Gate" maxlength="40" hint="Leave blank for the default." persistent-hint></v-text-field>
+                    </v-col>
+                </v-row>
+            </v-card-text>
+        </v-card>
+
         <!-- Refund policy -->
         <v-card class="mb-4">
             <v-card-item>
@@ -188,6 +210,8 @@ const form = ref({
     socialInstagramUrl: '' as string | null,
     socialTiktokUrl: '' as string | null,
     socialYoutubeUrl: '' as string | null,
+    riderGateLabel: '' as string | null,
+    spectatorGateLabel: '' as string | null,
     refundPolicyHtml: '',
 })
 
@@ -248,6 +272,8 @@ function populateForm() {
     form.value.socialInstagramUrl = branding.socialInstagramUrl ?? ''
     form.value.socialTiktokUrl = branding.socialTiktokUrl ?? ''
     form.value.socialYoutubeUrl = branding.socialYoutubeUrl ?? ''
+    form.value.riderGateLabel = branding.riderGateLabel ?? ''
+    form.value.spectatorGateLabel = branding.spectatorGateLabel ?? ''
     form.value.refundPolicyHtml = branding.refundPolicyHtml ?? ''
 }
 
@@ -350,6 +376,11 @@ async function save() {
             socialTiktokUrl: normalizeString(form.value.socialTiktokUrl),
             socialYoutubeUrl: normalizeString(form.value.socialYoutubeUrl),
             refundPolicyHtml: normalizeString(form.value.refundPolicyHtml),
+        })
+        // Gate-fee section headings (blank = platform default).
+        await tenantService.updateGateLabels({
+            riderGateLabel: normalizeString(form.value.riderGateLabel),
+            spectatorGateLabel: normalizeString(form.value.spectatorGateLabel),
         })
         await loadBranding()
         snackbarText.value = 'General settings saved.'
