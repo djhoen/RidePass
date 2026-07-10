@@ -365,6 +365,11 @@ export class SuperAdminService {
             `${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/TestStripeConnect`, {})
     }
 
+    testPlatformStripe() {
+        return axios.post<{ data: { accountId: string; liveMode: boolean; chargesEnabled: boolean; payoutsEnabled: boolean; availableCents: number; pendingCents: number; currency: string } }>(
+            `${this.apiUrl}/SuperAdmin/Stripe/TestPlatform`, {})
+    }
+
     updateTenantConcessionsEnabled(tenantId: string, enabled: boolean) {
         return axios.put(`${this.apiUrl}/SuperAdmin/Tenants/${tenantId}/ConcessionsEnabled`, { enabled })
     }

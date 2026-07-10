@@ -68,6 +68,9 @@ export interface BrandingState {
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
     blogEnabled: boolean
+    // Published, nav-visible custom pages, in sort order. Rendered as top-level links
+    // (public top bar + drawer) alongside the built-in Blog link.
+    navPages: { slug: string; label: string }[]
     // Super-admin feature toggles gating the tier editor's advanced pricing sections.
     dynamicPricingEnabled: boolean
     bundledCouponsEnabled: boolean
@@ -157,6 +160,7 @@ const defaults: BrandingState = {
     seasonPassesEnabled: true,
     concessionsEnabled: false,
     blogEnabled: false,
+    navPages: [],
     dynamicPricingEnabled: false,
     bundledCouponsEnabled: false,
     loampassMxEnabled: false,
@@ -291,6 +295,7 @@ export async function loadBranding(): Promise<void> {
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
         branding.blogEnabled = !!data.blogEnabled
+        branding.navPages = Array.isArray(data.navPages) ? data.navPages : []
         branding.dynamicPricingEnabled = !!data.dynamicPricingEnabled
         branding.bundledCouponsEnabled = !!data.bundledCouponsEnabled
         branding.loampassMxEnabled = !!data.loampassMxEnabled

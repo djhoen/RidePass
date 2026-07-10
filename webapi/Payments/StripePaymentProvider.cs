@@ -198,6 +198,32 @@ namespace webapi.Payments
                 Currency: (available?.Currency ?? pending?.Currency ?? "usd").ToUpperInvariant());
         }
 
+        public async Task<PlatformTestResult> TestPlatformAccountAsync(CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey))
+                throw new InvalidOperationException("Stripe is not configured.");
+
+            // Two no-op reads with the platform key: GetSelf proves the key is valid and
+            // identifies the account; Balance carries the authoritative livemode flag, which
+            // is the whole point after a live-key cutover.
+            var accountService = new Stripe.AccountService();
+            var account = await accountService.GetSelfAsync(cancellationToken: ct);
+
+            var balanceService = new BalanceService();
+            var balance = await balanceService.GetAsync(cancellationToken: ct);
+
+            var available = balance.Available?.FirstOrDefault();
+            var pending = balance.Pending?.FirstOrDefault();
+            return new PlatformTestResult(
+                AccountId: account.Id,
+                LiveMode: balance.Livemode,
+                ChargesEnabled: account.ChargesEnabled,
+                PayoutsEnabled: account.PayoutsEnabled,
+                AvailableCents: available?.Amount ?? 0,
+                PendingCents: pending?.Amount ?? 0,
+                Currency: (available?.Currency ?? pending?.Currency ?? "usd").ToUpperInvariant());
+        }
+
         public async Task<BalanceSummary?> SummarizeBalanceTransactionsAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey)) return null;

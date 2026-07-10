@@ -216,6 +216,8 @@ namespace webapi.Controllers
                 SpectatorWaiverId = request.SpectatorWaiverId,
                 RacerWaiverId = request.RacerWaiverId,
                 ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl,
+                RiderGateLabel = NormalizeLabel(request.RiderGateLabel),
+                SpectatorGateLabel = NormalizeLabel(request.SpectatorGateLabel),
                 ScheduleJson = SerializeSchedule(request.Schedule),
             };
 
@@ -292,6 +294,8 @@ namespace webapi.Controllers
             existing.SpectatorWaiverId = request.SpectatorWaiverId;
             existing.RacerWaiverId = request.RacerWaiverId;
             existing.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl;
+            existing.RiderGateLabel = NormalizeLabel(request.RiderGateLabel);
+            existing.SpectatorGateLabel = NormalizeLabel(request.SpectatorGateLabel);
             existing.ScheduleJson = SerializeSchedule(request.Schedule);
 
             await _events.Update(existing);
@@ -487,9 +491,14 @@ namespace webapi.Controllers
                 SpectatorWaiverId = ev.SpectatorWaiverId,
                 RacerWaiverId = ev.RacerWaiverId,
                 ImageUrl = ev.ImageUrl,
+                RiderGateLabel = ev.RiderGateLabel,
+                SpectatorGateLabel = ev.SpectatorGateLabel,
                 Schedule = DeserializeSchedule(ev.ScheduleJson),
             };
         }
+
+        // Whitespace-only clears the per-event override back to "inherit tenant setting".
+        private static string? NormalizeLabel(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
         private static string SerializeSchedule(List<ScheduleItem>? items)
         {

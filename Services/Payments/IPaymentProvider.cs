@@ -72,6 +72,14 @@ namespace Services.Payments
         Task<ConnectTestResult> TestConnectAccountAsync(string accountId, CancellationToken ct = default);
 
         /// <summary>
+        /// Round-trips a no-op call to Stripe with the PLATFORM secret key (no connected
+        /// account involved), to prove the configured key is valid and show which mode it
+        /// is in (live vs test). Built for verifying a key cutover without making a charge.
+        /// Throws if Stripe is unconfigured or rejects the key.
+        /// </summary>
+        Task<PlatformTestResult> TestPlatformAccountAsync(CancellationToken ct = default);
+
+        /// <summary>
         /// Returns the actual processor fee (in cents) Stripe charged for the latest charge on this
         /// PaymentIntent. Returns null if the PI is not yet captured / settled, or if Stripe credentials
         /// are not configured.
@@ -174,6 +182,15 @@ namespace Services.Payments
 
     public record ConnectTestResult(
         string AccountId,
+        bool ChargesEnabled,
+        bool PayoutsEnabled,
+        long AvailableCents,
+        long PendingCents,
+        string Currency);
+
+    public record PlatformTestResult(
+        string AccountId,
+        bool LiveMode,
         bool ChargesEnabled,
         bool PayoutsEnabled,
         long AvailableCents,

@@ -28,6 +28,11 @@ namespace Services.Repositories.Data.EventData
         public Guid? SpectatorWaiverId { get; set; }
         public Guid? RacerWaiverId { get; set; }
         public string? ImageUrl { get; set; }
+        // Per-event override for the rider-facing gate-fee section headings.
+        // NULL = inherit the tenant setting, which itself falls back to the
+        // platform defaults ("Rider Gate" / "Spectator Gate").
+        public string? RiderGateLabel { get; set; }
+        public string? SpectatorGateLabel { get; set; }
         // jsonb array of {time, label} schedule rows, stored as text. '[]' = none.
         public string? ScheduleJson { get; set; }
         public DateTime CreatedAt { get; set; }

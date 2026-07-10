@@ -535,10 +535,13 @@ const signupPrefill = computed(() => {
     }
 })
 
-// Tenant-customizable section headings (e.g. a track that sells rider admission as
-// "Passes" instead of "Rider Gate"); null/blank falls back to the platform default.
-const riderGateLabel = computed(() => branding.riderGateLabel || 'Rider Gate')
-const spectatorGateLabel = computed(() => branding.spectatorGateLabel || 'Spectator Gate')
+// Customizable section headings (e.g. a track that sells rider admission as
+// "Passes" instead of "Rider Gate"). Resolution: this event's override (set in
+// the event editor) → tenant setting → platform default.
+const riderGateLabel = computed(() =>
+    props.event.riderGateLabel || branding.riderGateLabel || 'Rider Gate')
+const spectatorGateLabel = computed(() =>
+    props.event.spectatorGateLabel || branding.spectatorGateLabel || 'Spectator Gate')
 
 // Required-gate rule on the select step: when a race has a required rider gate fee,
 // the buyer must pick exactly one gate fee per rider.

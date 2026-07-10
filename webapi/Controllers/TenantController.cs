@@ -44,6 +44,7 @@ namespace webapi.Controllers
         private readonly IConfiguration _configuration;
         private readonly IPlatformSettingRepository _platformSettings;
         private readonly IMemoryCache _cache;
+        private readonly IPageRepository _pages;
 
         public TenantController(
             ITenantBrandingRepository branding,
@@ -54,7 +55,8 @@ namespace webapi.Controllers
             IHomePageRepository homePage,
             IConfiguration configuration,
             IPlatformSettingRepository platformSettings,
-            IMemoryCache cache)
+            IMemoryCache cache,
+            IPageRepository pages)
         {
             _branding = branding;
             _tenants = tenants;
@@ -65,6 +67,7 @@ namespace webapi.Controllers
             _configuration = configuration;
             _platformSettings = platformSettings;
             _cache = cache;
+            _pages = pages;
         }
 
         // Evict the middleware's cached tenant (tenant:{subdomain}) so a just-saved
@@ -396,6 +399,8 @@ namespace webapi.Controllers
 
             var globalEmbedOrigins = await ReadGlobalEmbedOrigins();
 
+            var navPages = await _pages.ListNavPages(_tenantContext.TenantId);
+
             var response = new GetBrandingResponse
             {
                 TenantId = row.TenantId,
@@ -480,6 +485,11 @@ namespace webapi.Controllers
                 MembershipDurationKind = tenant.MembershipDurationKind,
                 MembershipRequiredForRiders = tenant.MembershipRequiredForRiders,
                 MembershipRequiredForSpectators = tenant.MembershipRequiredForSpectators,
+                NavPages = navPages.Select(p => new NavPageItem
+                {
+                    Slug = p.Slug,
+                    Label = string.IsNullOrWhiteSpace(p.NavLabel) ? p.Title : p.NavLabel!,
+                }).ToList(),
             };
 
             return new ApiResponses().OkResult(response);

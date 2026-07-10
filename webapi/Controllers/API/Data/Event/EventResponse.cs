@@ -23,6 +23,10 @@
         public Guid? SpectatorWaiverId { get; set; }
         public Guid? RacerWaiverId { get; set; }
         public string? ImageUrl { get; set; }
+        // Per-event gate-fee heading overrides; null = inherit tenant setting,
+        // then the platform defaults ("Rider Gate" / "Spectator Gate").
+        public string? RiderGateLabel { get; set; }
+        public string? SpectatorGateLabel { get; set; }
         public bool HasActiveTiers { get; set; }
         // Per-kind flags so the rider UI can show separate "Buy Ticket" / "Buy Race Entry"
         // buttons when both are offered, or a single button when only one is.

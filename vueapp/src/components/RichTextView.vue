@@ -14,9 +14,9 @@ const sanitized = computed(() => {
         ALLOWED_TAGS: [
             'p', 'br', 'strong', 'em', 'u', 's',
             'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-            'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'hr', 'a',
+            'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'hr', 'a', 'img',
         ],
-        ALLOWED_ATTR: ['href', 'target', 'rel'],
+        ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'title'],
         ALLOW_DATA_ATTR: false,
     })
 })
@@ -38,5 +38,11 @@ const sanitized = computed(() => {
 .rich-text-view :deep(a) {
     color: rgb(var(--v-theme-primary));
     text-decoration: underline;
+}
+.rich-text-view :deep(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 0.4em 0;
 }
 </style>

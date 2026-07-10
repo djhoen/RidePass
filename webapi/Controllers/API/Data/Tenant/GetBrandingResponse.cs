@@ -103,5 +103,15 @@ namespace webapi.Controllers.API.Data.Tenant
         public string MembershipDurationKind { get; set; } = "yearly";
         public bool MembershipRequiredForRiders { get; set; } = true;
         public bool MembershipRequiredForSpectators { get; set; }
+        // Published, nav-visible custom pages for this tenant, in sort order. Rendered as
+        // top-level links (public top bar + drawer) alongside the built-in Blog link.
+        public List<NavPageItem> NavPages { get; set; } = new();
+    }
+
+    /// <summary>One entry in GetBrandingResponse.NavPages: a public custom-page nav link.</summary>
+    public class NavPageItem
+    {
+        public string Slug { get; set; } = null!;
+        public string Label { get; set; } = null!;
     }
 }

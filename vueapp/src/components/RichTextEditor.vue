@@ -56,21 +56,46 @@
                     <v-icon>mdi-format-clear</v-icon>
                 </v-btn>
             </v-btn-group>
+
+            <!-- Inline image insert — only rendered when the consumer opts in via the
+                 uploadImage prop (keeps the Blog editor unchanged unless it opts in). -->
+            <v-btn-group v-if="uploadImage" density="compact" variant="text" divided class="ml-2">
+                <v-btn size="small" :loading="uploadingImage" aria-label="Insert image" @click="imageFileInput?.click()">
+                    <v-icon>mdi-image</v-icon>
+                </v-btn>
+            </v-btn-group>
+            <input v-if="uploadImage" ref="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp"
+                class="d-none" @change="onImageFileChange" />
         </div>
 
         <editor-content :editor="editor" class="editor-surface" />
+
+        <v-snackbar v-model="snackbar" color="error" :timeout="4000" location="top">
+            {{ snackbarText }}
+        </v-snackbar>
     </div>
 </template>
 
 <script setup lang="ts">
-import { watch, onBeforeUnmount } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
+import Image from '@tiptap/extension-image'
 
-const props = defineProps<{ modelValue: string }>()
+const props = defineProps<{
+    modelValue: string
+    /** Optional: when provided, shows an image-insert toolbar button that uploads the
+     *  chosen file and inserts the returned URL inline. Omit to keep the editor image-free. */
+    uploadImage?: (file: File) => Promise<string>
+}>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+
+const imageFileInput = ref<HTMLInputElement | null>(null)
+const uploadingImage = ref(false)
+const snackbar = ref(false)
+const snackbarText = ref('')
 
 const editor = useEditor({
     content: props.modelValue,
@@ -78,6 +103,7 @@ const editor = useEditor({
         StarterKit,
         Underline,
         Link.configure({ openOnClick: false, autolink: true }),
+        Image,
     ],
     onUpdate: ({ editor }) => {
         emit('update:modelValue', editor.getHTML())
@@ -87,7 +113,7 @@ const editor = useEditor({
 watch(() => props.modelValue, (incoming) => {
     const current = editor.value?.getHTML()
     if (editor.value && incoming !== current) {
-        editor.value.commands.setContent(incoming || '', false)
+        editor.value.commands.setContent(incoming || '', { emitUpdate: false })
     }
 })
 
@@ -105,6 +131,22 @@ function toggleLink() {
         return
     }
     editor.value.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+}
+
+async function onImageFileChange(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file || !props.uploadImage || !editor.value) return
+    uploadingImage.value = true
+    try {
+        const url = await props.uploadImage(file)
+        editor.value.chain().focus().setImage({ src: url }).run()
+    } catch (err: any) {
+        snackbarText.value = err?.response?.data?.error || 'Image upload failed. Try again.'
+        snackbar.value = true
+    } finally {
+        uploadingImage.value = false
+        if (imageFileInput.value) imageFileInput.value.value = ''
+    }
 }
 </script>
 
@@ -164,5 +206,11 @@ function toggleLink() {
 .rich-text-editor .ProseMirror a {
     color: rgb(var(--v-theme-primary));
     text-decoration: underline;
+}
+.rich-text-editor .ProseMirror img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 0.4em 0;
 }
 </style>

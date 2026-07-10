@@ -826,6 +826,29 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { tenantId });
         }
 
+        // Round-trips a no-op call to Stripe with the PLATFORM secret key (the account all
+        // platform-mode charges land on). Proves the configured key is valid and, crucially,
+        // which mode it's in (live vs test) — so a key cutover can be verified in one click
+        // without making a real charge.
+        [Authorize(Policy = SuperAdminRequirement.PolicyName)]
+        [HttpPost("Stripe/TestPlatform")]
+        public async Task<IActionResult> TestPlatformStripe(CancellationToken ct)
+        {
+            try
+            {
+                var result = await _payments.TestPlatformAccountAsync(ct);
+                return new ApiResponses().OkResult(result);
+            }
+            catch (Stripe.StripeException ex)
+            {
+                return new ApiResponses().BadRequestResult($"Stripe rejected the call: {ex.StripeError?.Message ?? ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                return new ApiResponses().BadRequestResult($"Test failed: {ex.Message}");
+            }
+        }
+
         // Round-trips a no-op call to the tenant's connected Stripe account to confirm direct charges
         // will work (account exists, platform access not revoked, charges/payouts enabled). Lets a
         // super-admin verify a track's own-account setup before/after flipping it to 'direct' mode.

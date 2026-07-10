@@ -150,6 +150,22 @@
                         </p>
                         <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" :is-race="isRaceEvent" />
 
+                        <!-- What riders see these sections called at checkout for THIS event.
+                             Blank inherits the tenant-wide setting (Settings → General →
+                             Checkout headings), which defaults to Rider/Spectator Gate. -->
+                        <v-row class="mt-1">
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model="form.riderGateLabel" label="Rider gate heading" density="compact"
+                                    :placeholder="branding.riderGateLabel || 'Rider Gate'" maxlength="40"
+                                    hint="Checkout heading for this event, e.g. 'Passes'. Blank = tenant default." persistent-hint></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model="form.spectatorGateLabel" label="Spectator gate heading" density="compact"
+                                    :placeholder="branding.spectatorGateLabel || 'Spectator Gate'" maxlength="40"
+                                    hint="Blank = tenant default." persistent-hint></v-text-field>
+                            </v-col>
+                        </v-row>
+
                         <!-- General add-ons: camping, parking, merch, etc. Gate fees live above, not here. -->
                         <template v-if="branding.extrasEnabled">
                             <v-divider class="my-5"></v-divider>
@@ -318,6 +334,8 @@ const form = ref({
     spectatorWaiverId: null as string | null,
     racerWaiverId: null as string | null,
     imageUrl: null as string | null,
+    riderGateLabel: '' as string | null,
+    spectatorGateLabel: '' as string | null,
     eligibleExtras: [] as { productId: string; inventory: number | null }[],
     schedule: [] as { time: string; label: string }[],
 })
@@ -461,6 +479,8 @@ watch(() => props.open, (open) => {
             spectatorWaiverId: row.spectatorWaiverId ?? null,
             racerWaiverId: row.racerWaiverId ?? null,
             imageUrl: row.imageUrl,
+            riderGateLabel: row.riderGateLabel ?? '',
+            spectatorGateLabel: row.spectatorGateLabel ?? '',
             eligibleExtras: (row.eligibleExtras ?? []).map(e => ({
                 productId: e.productId,
                 inventory: e.inventory,
@@ -490,6 +510,8 @@ watch(() => props.open, (open) => {
             spectatorWaiverId: null,
             racerWaiverId: null,
             imageUrl: null,
+            riderGateLabel: '',
+            spectatorGateLabel: '',
             eligibleExtras: [],
             schedule: [],
         }
@@ -518,6 +540,8 @@ function seedFromDuplicate(src: EventDto) {
         requiresSpectatorWaiver: src.requiresSpectatorWaiver,
         spectatorWaiverId: src.spectatorWaiverId ?? null,
         racerWaiverId: src.racerWaiverId ?? null,
+        riderGateLabel: src.riderGateLabel ?? '',
+        spectatorGateLabel: src.spectatorGateLabel ?? '',
         eligibleExtras: (src.eligibleExtras ?? []).map(e => ({
             productId: e.productId,
             inventory: e.inventory,
@@ -622,6 +646,8 @@ async function save() {
             spectatorWaiverId: (form.value.allowsSpectators && form.value.requiresSpectatorWaiver) ? form.value.spectatorWaiverId : null,
             racerWaiverId: (form.value.allowsRiders && form.value.requiresRiderWaiver) ? form.value.racerWaiverId : null,
             imageUrl: form.value.imageUrl,
+            riderGateLabel: form.value.riderGateLabel?.trim() || null,
+            spectatorGateLabel: form.value.spectatorGateLabel?.trim() || null,
             eligibleExtras: form.value.eligibleExtras,
             schedule: form.value.schedule
                 .map(s => ({ time: s.time.trim(), label: s.label.trim() }))

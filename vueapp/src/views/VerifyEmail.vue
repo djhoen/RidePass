@@ -146,7 +146,8 @@ async function resend() {
 .login-page {
     display: flex;
     min-height: 100vh;
-    background: #f5f6f8;
+    /* Theme-aware so the panel background follows light/dark mode. */
+    background: rgb(var(--v-theme-background));
 }
 
 /* Brand panel */
@@ -210,7 +211,9 @@ async function resend() {
 .login-card {
     width: 100%;
     max-width: 400px;
-    background: #fff;
+    /* Surface (not hardcoded white) so text stays legible in dark mode. */
+    background: rgb(var(--v-theme-surface));
+    color: rgb(var(--v-theme-on-surface));
     border-radius: 16px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
     padding: 2.5rem 2.25rem;
@@ -233,6 +236,6 @@ async function resend() {
         background: transparent;
         padding: 1.5rem 0.5rem;
     }
-    .login-form-wrap { background: #fff; }
+    .login-form-wrap { background: rgb(var(--v-theme-surface)); }
 }
 </style>

@@ -17,6 +17,8 @@ namespace Services.Repositories
             spectator_waiver_id AS SpectatorWaiverId,
             racer_waiver_id AS RacerWaiverId,
             image_url AS ImageUrl,
+            rider_gate_label AS RiderGateLabel,
+            spectator_gate_label AS SpectatorGateLabel,
             schedule_json::text AS ScheduleJson,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
@@ -59,12 +61,14 @@ namespace Services.Repositories
                                    starts_at, ends_at, all_day, capacity, location_label, status,
                                    allows_riders, allows_spectators,
                                    requires_rider_waiver, requires_spectator_waiver,
-                                   spectator_waiver_id, racer_waiver_id, image_url, schedule_json)
+                                   spectator_waiver_id, racer_waiver_id, image_url,
+                                   rider_gate_label, spectator_gate_label, schedule_json)
                 VALUES (@TenantId, @EventTypeId, @Title, @Description,
                         @StartsAt, @EndsAt, @AllDay, @Capacity, @LocationLabel, @Status,
                         @AllowsRiders, @AllowsSpectators,
                         @RequiresRiderWaiver, @RequiresSpectatorWaiver,
                         @SpectatorWaiverId, @RacerWaiverId, @ImageUrl,
+                        @RiderGateLabel, @SpectatorGateLabel,
                         COALESCE(@ScheduleJson::jsonb, '[]'::jsonb))
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, ev);
@@ -91,6 +95,8 @@ namespace Services.Repositories
                     spectator_waiver_id = @SpectatorWaiverId,
                     racer_waiver_id     = @RacerWaiverId,
                     image_url           = @ImageUrl,
+                    rider_gate_label     = @RiderGateLabel,
+                    spectator_gate_label = @SpectatorGateLabel,
                     schedule_json       = COALESCE(@ScheduleJson::jsonb, '[]'::jsonb)
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, ev);

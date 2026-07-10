@@ -33,6 +33,44 @@
                 </v-card-text>
             </v-card>
 
+            <!-- Platform Stripe key check: no-op Stripe call with the configured platform
+                 secret key. One-click verification after a key cutover — proves the key is
+                 valid and shows whether it's LIVE or TEST, without making a charge. -->
+            <v-card class="mb-4">
+                <v-card-title>Platform Stripe</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">
+                        Round-trips a no-op call with the configured platform secret key (the account
+                        platform-mode charges land on). Use after rotating keys to confirm the key works
+                        and is in the mode you expect. Direct-charge tracks have their own per-tenant
+                        test in the tenant dialog.
+                    </p>
+                    <v-btn color="primary" prepend-icon="mdi-credit-card-check-outline"
+                        :loading="stripeTesting" @click="testPlatformStripe">
+                        Test platform Stripe
+                    </v-btn>
+
+                    <v-alert v-if="stripeTestError" type="error" variant="tonal" density="compact" class="mt-3">
+                        {{ stripeTestError }}
+                    </v-alert>
+                    <v-alert v-else-if="stripeTest" :type="stripeTest.chargesEnabled ? 'success' : 'warning'"
+                        variant="tonal" density="compact" class="mt-3">
+                        <div class="d-flex align-center ga-2 flex-wrap">
+                            <v-chip size="small" label :color="stripeTest.liveMode ? 'success' : 'warning'">
+                                {{ stripeTest.liveMode ? 'LIVE mode' : 'TEST mode' }}
+                            </v-chip>
+                            <span>{{ stripeTest.accountId }}</span>
+                        </div>
+                        <div class="text-body-2 mt-1">
+                            Charges {{ stripeTest.chargesEnabled ? 'enabled' : 'DISABLED' }} ·
+                            payouts {{ stripeTest.payoutsEnabled ? 'enabled' : 'DISABLED' }} ·
+                            balance {{ fmtCents(stripeTest.availableCents) }} available,
+                            {{ fmtCents(stripeTest.pendingCents) }} pending {{ stripeTest.currency }}
+                        </div>
+                    </v-alert>
+                </v-card-text>
+            </v-card>
+
             <!-- Staging-only: copy production down to staging. Rendered only when the
                  server reports it's the staging environment with the feature enabled. -->
             <v-card v-if="stageMirror?.available" class="mb-4">
@@ -97,6 +135,39 @@ function toLines(arr: string[]): string {
 }
 const origins = computed(() =>
     originsText.value.split(/[\s,]+/).map(s => s.trim()).filter(s => s.length > 0))
+
+// --- Platform Stripe key check --------------------------------------------------
+interface PlatformStripeTest {
+    accountId: string
+    liveMode: boolean
+    chargesEnabled: boolean
+    payoutsEnabled: boolean
+    availableCents: number
+    pendingCents: number
+    currency: string
+}
+const stripeTesting = ref(false)
+const stripeTest = ref<PlatformStripeTest | null>(null)
+const stripeTestError = ref('')
+
+function fmtCents(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`
+}
+
+async function testPlatformStripe() {
+    stripeTesting.value = true
+    stripeTestError.value = ''
+    stripeTest.value = null
+    try {
+        const r = await service.testPlatformStripe()
+        stripeTest.value = (r.data as any).data as PlatformStripeTest
+    } catch (err: any) {
+        stripeTestError.value = err.response?.data?.error
+            || 'Could not reach Stripe — check that Stripe__SecretKey is set and the API can reach stripe.com.'
+    } finally {
+        stripeTesting.value = false
+    }
+}
 
 // --- Staging mirror (copy prod down to stage) ---------------------------------
 const stageMirror = ref<StageMirrorStatus | null>(null)

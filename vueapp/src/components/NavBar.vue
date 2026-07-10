@@ -23,6 +23,7 @@
             <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
             <v-btn v-if="showOrderFood" to="/Order" variant="text" prepend-icon="mdi-silverware-fork-knife">Order Food</v-btn>
             <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
+            <v-btn v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" variant="text">{{ p.label }}</v-btn>
             <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
             <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
 
@@ -109,6 +110,8 @@
                     <v-list-item v-if="branding.rentalsEnabled" to="/Rentals" title="Rentals" prepend-icon="mdi-bike-fast"></v-list-item>
                     <v-list-item v-if="showOrderFood" to="/Order" title="Order Food" prepend-icon="mdi-silverware-fork-knife"></v-list-item>
                     <v-list-item v-if="branding.blogEnabled" to="/Blog" title="Blog" prepend-icon="mdi-post"></v-list-item>
+                    <v-list-item v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" :title="p.label"
+                        prepend-icon="mdi-file-document-outline"></v-list-item>
                     <v-divider></v-divider>
                 </template>
                 <v-list-item v-if="isApex" to="/ForTracks" title="For Tracks" prepend-icon="mdi-store-plus"></v-list-item>
@@ -310,6 +313,7 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-bullhorn',
         links: [
             { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage, feature: 'blogEnabled' },
+            { to: '/Admin/Pages',       icon: 'mdi-file-document-outline', title: 'Pages',    perm: Perm.SettingsManage },
             { to: '/Admin/Rewards',     icon: 'mdi-trophy',            title: 'Rewards',     perm: Perm.CatalogManage },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },

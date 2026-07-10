@@ -261,12 +261,12 @@ const pricingGroups = computed<PriceGroup[]>(() => {
         })
     }
 
-    // Gate headings honor the tenant's custom labels (Settings → General → Checkout
-    // headings); null = platform defaults.
+    // Gate headings resolve: this event's override (event editor) → tenant setting
+    // (Settings → General → Checkout headings) → platform defaults.
     const riderGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'rider')
     if (riderGate.length) {
         groups.push({
-            label: branding.riderGateLabel || 'Rider Gate',
+            label: event.value?.riderGateLabel || branding.riderGateLabel || 'Rider Gate',
             items: riderGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
@@ -274,7 +274,7 @@ const pricingGroups = computed<PriceGroup[]>(() => {
     const spectatorGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'spectator')
     if (spectatorGate.length) {
         groups.push({
-            label: branding.spectatorGateLabel || 'Spectator Gate',
+            label: event.value?.spectatorGateLabel || branding.spectatorGateLabel || 'Spectator Gate',
             items: spectatorGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }

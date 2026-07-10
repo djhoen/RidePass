@@ -47,6 +47,15 @@ namespace webapi.Controllers.API.Data.Event
         // type's default image, then to a flat color card on the public home page.
         public string? ImageUrl { get; set; }
 
+        // Per-event override for the rider-facing gate-fee section headings.
+        // Blank/null = inherit the tenant setting ("Checkout headings"), which
+        // falls back to "Rider Gate" / "Spectator Gate".
+        [MaxLength(40)]
+        public string? RiderGateLabel { get; set; }
+
+        [MaxLength(40)]
+        public string? SpectatorGateLabel { get; set; }
+
         // Allow-list of pass product ids that may be redeemed at this event.
         // Empty / null → no pass reservation option for this event.
         public List<Guid>? EligiblePassProductIds { get; set; }

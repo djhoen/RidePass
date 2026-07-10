@@ -22,6 +22,9 @@ export interface EventDto {
     spectatorWaiverId: string | null
     racerWaiverId: string | null
     imageUrl: string | null
+    // Per-event gate-fee heading overrides; null = inherit tenant setting.
+    riderGateLabel: string | null
+    spectatorGateLabel: string | null
     hasActiveTiers?: boolean
     hasSpectatorTiers?: boolean
     hasRaceEntryTiers?: boolean
@@ -94,6 +97,8 @@ export interface UpsertEventDto {
     spectatorWaiverId: string | null
     racerWaiverId: string | null
     imageUrl: string | null
+    riderGateLabel?: string | null
+    spectatorGateLabel?: string | null
     eligiblePassProductIds?: string[]
     eligibleExtras?: EligibleExtraInput[]
     schedule?: ScheduleItem[]

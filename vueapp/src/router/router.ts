@@ -409,6 +409,25 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'blog.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Pages',
+        name: 'AdminPages',
+        component: () => import('../views/Admin/Pages.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
+        // Literal "New" must precede the ":id" route so it isn't captured as an id.
+        path: '/Admin/Pages/New',
+        name: 'AdminPageNew',
+        component: () => import('../views/Admin/PageEditor.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/Pages/:id',
+        name: 'AdminPageEdit',
+        component: () => import('../views/Admin/PageEditor.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Suppression',
         name: 'AdminSuppression',
         component: () => import('../views/Admin/Suppression.vue'),
@@ -493,6 +512,17 @@ const routes = [
         name: 'ForTracks',
         component: () => import('../views/ForTracks.vue'),
         // Public apex marketing page — sells RidePass to prospective track operators.
+    },
+
+    // Public tenant custom pages: root-level clean URL ({subdomain}.ridepass.io/{slug}).
+    // Registered LAST among tenant routes, immediately before the 404 catch-all. Vue
+    // Router ranks static routes above a single dynamic segment, so every real route
+    // above still wins; the backend's reserved-slug guard is the backstop that keeps a
+    // tenant from ever creating a page that would collide with one of them.
+    {
+        path: '/:slug',
+        name: 'CustomPage',
+        component: () => import('../views/Page.vue'),
     },
 
     // Error pages
