@@ -41,6 +41,7 @@ namespace webapi.Workers
             using var scope = _services.CreateScope();
             var tickets = scope.ServiceProvider.GetRequiredService<IEventTicketPurchaseRepository>();
             var emailer = scope.ServiceProvider.GetRequiredService<ISmtpEmailer>();
+            var tenants = scope.ServiceProvider.GetRequiredService<ITenantRepository>();
             var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
 
             if (!emailer.IsConfigured) return;   // ships dark until SES creds are set
@@ -66,8 +67,11 @@ we still need rider details{(group.Count() > 1 ? " for each entry" : "")} and a 
 <p>See you at the track!</p>";
                 try
                 {
+                    // The nudge comes from the track the rider bought from, not from the platform.
+                    var tenant = await tenants.GetById(anchor.TenantId);
                     var sent = await emailer.Send(anchor.PurchaserEmail,
-                        $"Finish your registration for {anchor.EventTitle}", html);
+                        $"Finish your registration for {anchor.EventTitle}", html,
+                        null, Services.Email.TenantEmailIdentity.For(tenant));
                     // Only mark reminded on a successful send so a transient failure retries next sweep.
                     if (sent) await tickets.MarkRegistrationReminderSent(group.Select(x => x.TicketId));
                 }

@@ -1,7 +1,7 @@
 <template>
     <div>
         <div v-if="!loading && visibleRows.length === 0" class="text-medium-emphasis text-body-2 py-3">
-            No {{ kindLabelText.toLowerCase() }}s yet.
+            No {{ kindLabelPluralText.toLowerCase() }} yet.
         </div>
 
         <v-table v-if="visibleRows.length > 0" density="compact">
@@ -75,21 +75,21 @@
                     <template v-if="isGate">
                         <v-select v-model="form.audience" :items="audienceOptions" item-title="label" item-value="value"
                             label="Entrant Type" density="compact" class="mt-4"
-                            hint="Rider gate fees gate riders; spectator gate fees admit spectators."
+                            hint="Rider passes admit riders; spectator passes admit spectators."
                             persistent-hint></v-select>
                         <!-- "Required" is a race-only, rider-only concept: it couples a rider gate to a race
                              class. Spectator gates and non-race rider gates are the entry themselves, so the
                              flag is a no-op there and the toggle is hidden. -->
                         <v-switch v-if="form.audience === 'rider' && isRace"
                             v-model="form.required" color="primary" density="compact" hide-details class="mt-3"
-                            label="Required — riders must buy one (race class + one rider gate fee)"></v-switch>
+                            label="Required — riders must buy one (race class + one riding pass)"></v-switch>
                     </template>
 
                     <v-row class="mt-2">
                         <v-col cols="12" md="6">
                             <v-text-field v-model.number="form.priceDollars" type="number" step="0.5" :min="priceMin"
                                 label="Price (USD)" prefix="$" density="compact"
-                                :hint="isGate ? '0 allowed (free kids gate)' : ''" :persistent-hint="isGate"></v-text-field>
+                                :hint="isGate ? '0 allowed (free kids pass)' : ''" :persistent-hint="isGate"></v-text-field>
                         </v-col>
                         <v-col cols="12" md="6">
                             <v-text-field v-model.number="form.inventory" type="number" min="1"
@@ -276,10 +276,11 @@ const audienceOptions: { value: Audience; label: string }[] = [
     { value: 'rider', label: 'Rider' },
     { value: 'spectator', label: 'Spectator' },
 ]
-const kindLabelText = computed(() => props.kind === 'race_entry' ? 'Race Class' : 'Gate Fee')
+const kindLabelText = computed(() => props.kind === 'race_entry' ? 'Race Class' : 'Pass')
+const kindLabelPluralText = computed(() => props.kind === 'race_entry' ? 'Race Classes' : 'Passes')
 const namePlaceholder = computed(() =>
     props.kind === 'race_entry' ? 'e.g. Pro 250 class'
-        : 'e.g. Rider gate / Child gate (7 and under)')
+        : 'e.g. Riding pass / Child pass (7 and under)')
 const priceMin = computed(() => isGate.value ? 0 : 0.5)
 
 const form = ref({
@@ -322,7 +323,7 @@ async function load() {
         const r = await service.listTiersForAdmin(props.eventId)
         allTiers.value = (r.data as any).data
     } catch (err: any) {
-        flash(err.response?.data?.error || `Couldn’t load ${kindLabelText.value.toLowerCase()}s. Reopen this section to try again.`, 'error')
+        flash(err.response?.data?.error || `Couldn’t load ${kindLabelPluralText.value.toLowerCase()}. Reopen this section to try again.`, 'error')
     } finally {
         loading.value = false
     }

@@ -129,6 +129,9 @@ builder.Services.AddScoped<IEventNotifier, EventNotifier>();
 builder.Services.AddScoped<IAuditLogger, webapi.Helpers.HttpContextAuditLogger>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
+// One confirmation email per event order, from whichever path completed the sale (Stripe, $0
+// voucher, gift card, Loam Pass credit, counter cash). Scoped: it reads through the repositories.
+builder.Services.AddScoped<Services.Email.IEventOrderConfirmationEmailer, Services.Email.EventOrderConfirmationEmailer>();
 builder.Services.AddSingleton<IEmailLinkTokens, EmailLinkTokens>();
 // Scoped (not Singleton) because TwilioSmsSender now persists outbound
 // messages to tenant_message via ITenantConversationRepository, which is

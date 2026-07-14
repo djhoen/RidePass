@@ -123,9 +123,15 @@ namespace Services.Repositories
                        et.name AS EventTypeName, et.color AS EventTypeColor
                 FROM event e
                 JOIN tenant_event_type et ON et.id = e.event_type_id
+                JOIN tenant ten ON ten.id = e.tenant_id
+                CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(btrim(ten.timezone), ''), 'UTC') AS name) tz
                 WHERE e.tenant_id = @tenantId
                   AND e.status = 'scheduled'
-                  AND e.starts_at >= NOW()
+                  -- Listed until the day AFTER it ends, in the track's own timezone. Keying this on
+                  -- starts_at made a race vanish from the dashboard the moment it began, which is the
+                  -- exact hour staff need it most. An event that ended earlier today still shows; it
+                  -- drops at local midnight.
+                  AND e.ends_at >= (date_trunc('day', NOW() AT TIME ZONE tz.name) AT TIME ZONE tz.name)
                 ORDER BY e.starts_at
                 LIMIT @limit";
             var result = await _db.Query<EventWithTypeContext>(sql, new { tenantId, limit });

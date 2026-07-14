@@ -14,6 +14,8 @@ export interface UpcomingItem {
     registrationComplete: boolean
     waiverSigned: boolean
     occursAtUtc: string | null
+    // event_ticket: when the event ends. An event stays "upcoming" until the day after this.
+    endsAtUtc: string | null
     validToUtc: string | null
     amountCents: number
     redemptionToken: string | null

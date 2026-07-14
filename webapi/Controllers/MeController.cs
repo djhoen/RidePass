@@ -103,6 +103,8 @@ namespace webapi.Controllers
                 WaiverSigned = r.WaiverSigned,
                 OccursAtUtc = r.OccursAtUtc.HasValue
                     ? DateTime.SpecifyKind(r.OccursAtUtc.Value, DateTimeKind.Utc) : null,
+                EndsAtUtc = r.EndsAtUtc.HasValue
+                    ? DateTime.SpecifyKind(r.EndsAtUtc.Value, DateTimeKind.Utc) : null,
                 ValidToUtc = r.ValidToUtc.HasValue
                     ? DateTime.SpecifyKind(r.ValidToUtc.Value, DateTimeKind.Utc) : null,
                 AmountCents = r.AmountCents,
@@ -198,7 +200,9 @@ namespace webapi.Controllers
 <p>If your email client doesn't show the image, open <a href=""{qrUrl}"">this link</a> on your phone — it'll display the QR.</p>
 <p>You can also find this order on your account at <a href=""{profileUrl}"">{profileUrl}</a>.</p>";
 
-            var sent = await _emailer.Send(anchor.PurchaserEmail, subject, html);
+            // Resent order confirmation comes from the track the rider bought from.
+            var tenant = await _tenants.GetById(anchor.TenantId);
+            var sent = await _emailer.Send(anchor.PurchaserEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
             if (!sent)
             {
                 return new ApiResponses().BadRequestResult("We couldn't send the email just now. Please try again.");
@@ -466,7 +470,7 @@ namespace webapi.Controllers
 </p>
 {(coupon.ValidToUtc.HasValue ? $"<p style=\"color:#888\">Expires {coupon.ValidToUtc.Value:MMMM d, yyyy}.</p>" : "")}";
 
-                await _emailer.Send(share.RecipientEmail, subject, html);
+                await _emailer.Send(share.RecipientEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
             }
             catch (Exception ex)
             {

@@ -125,6 +125,14 @@
                             </v-card-text>
                         </v-card>
 
+                        <!-- Embed only: attribution under the checkout. Opens in a new tab
+                             so it never navigates the iframe out of the track's flow. -->
+                        <div v-if="isEmbed" class="text-center mt-2">
+                            <a class="rp-powered" href="https://ridepass.io" target="_blank" rel="noopener">
+                                Powered by <strong>RidePass</strong>
+                            </a>
+                        </div>
+
                         <!-- Hidden in embed: it would describe the very site the widget
                              is sitting on. -->
                         <section v-if="!isEmbed && (aboutHtml || aboutPhoto)" class="mt-8">
@@ -266,7 +274,7 @@ const pricingGroups = computed<PriceGroup[]>(() => {
     const riderGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'rider')
     if (riderGate.length) {
         groups.push({
-            label: event.value?.riderGateLabel || branding.riderGateLabel || 'Rider Gate',
+            label: event.value?.riderGateLabel || branding.riderGateLabel || 'Riding Pass',
             items: riderGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
@@ -274,7 +282,7 @@ const pricingGroups = computed<PriceGroup[]>(() => {
     const spectatorGate = activeTiers.filter(t => t.kind === 'gate_fee' && t.audience === 'spectator')
     if (spectatorGate.length) {
         groups.push({
-            label: event.value?.spectatorGateLabel || branding.spectatorGateLabel || 'Spectator Gate',
+            label: event.value?.spectatorGateLabel || branding.spectatorGateLabel || 'Spectator Pass',
             items: spectatorGate.map(t => ({ key: t.id, name: t.name, price: fmtPrice(t.priceCents) })),
         })
     }
@@ -417,6 +425,14 @@ async function reloadTiers() {
     border-color: rgba(var(--v-theme-primary), 0.35);
 }
 .evt-back-embed:hover { background: rgba(var(--v-theme-primary), 0.16); }
+
+/* Embed attribution under the checkout card. Quiet by default, readable on hover. */
+.rp-powered {
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), 0.5);
+    text-decoration: none;
+}
+.rp-powered:hover { color: rgba(var(--v-theme-on-surface), 0.8); text-decoration: underline; }
 .evt-hero-bottom { margin-top: 1rem; }
 .evt-title {
     font-size: clamp(2rem, 5vw, 3.25rem);

@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Services.Email;
 using Services.Helpers;
 using Services.Repositories.Data.EventData;
 using Services.Repositories.Data.UserData;
@@ -583,13 +584,18 @@ namespace webapi.Controllers
             {
                 var loginUrl = $"{Request.Scheme}://{Request.Host.Value}/Login";
                 var resetUrl = $"{Request.Scheme}://{Request.Host.Value}/ResetPassword";
-                var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
-<p>You've been added as a <strong>{System.Net.WebUtility.HtmlEncode(string.Join(", ", user.Roles))}</strong> on RidePass.</p>
+                // Staff are added BY a track, so the invite comes from that track.
+                var tenant = _tenantContext.IsResolved ? _tenantContext.Tenant : null;
+                var org = tenant is null ? "RidePass" : Html(tenant.DisplayName);
+                var html = $@"<p>Hi {Html(user.FirstName)},</p>
+<p>You've been added as a <strong>{Html(string.Join(", ", user.Roles))}</strong> at <strong>{org}</strong>.</p>
 <p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
-<strong>Email:</strong> {System.Net.WebUtility.HtmlEncode(user.Email)}<br/>
+<strong>Email:</strong> {Html(user.Email)}<br/>
 <strong>Temporary password:</strong> <code>{tempPassword}</code></p>
 <p>Please <a href=""{resetUrl}"">reset your password</a> after your first sign-in.</p>";
-                await _emailer.Send(user.Email, "Welcome to RidePass", html);
+                await _emailer.Send(user.Email,
+                    tenant is null ? "Welcome to RidePass" : $"Welcome to {tenant.DisplayName}",
+                    html, null, TenantEmailIdentity.For(tenant));
             }
 
             return new ApiResponses().OkResult(new CreateTenantUserResponse
@@ -661,12 +667,16 @@ namespace webapi.Controllers
             {
                 var loginUrl = $"{Request.Scheme}://{Request.Host.Value}/Login";
                 var resetUrl = $"{Request.Scheme}://{Request.Host.Value}/ResetPassword";
-                var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(target.FirstName)},</p>
-<p>An administrator has reset your RidePass password.</p>
+                var tenant = _tenantContext.IsResolved ? _tenantContext.Tenant : null;
+                var org = tenant is null ? "RidePass" : Html(tenant.DisplayName);
+                var html = $@"<p>Hi {Html(target.FirstName)},</p>
+<p>An administrator at <strong>{org}</strong> has reset your password.</p>
 <p><strong>Sign in:</strong> <a href=""{loginUrl}"">{loginUrl}</a><br/>
 <strong>Temporary password:</strong> <code>{tempPassword}</code></p>
 <p>Please <a href=""{resetUrl}"">change it</a> after your next sign-in.</p>";
-                await _emailer.Send(target.Email, "Your RidePass password was reset", html);
+                await _emailer.Send(target.Email,
+                    tenant is null ? "Your RidePass password was reset" : $"Your {tenant.DisplayName} password was reset",
+                    html, null, TenantEmailIdentity.For(tenant));
             }
 
             return new ApiResponses().OkResult(new ResetTenantUserPasswordResponse
@@ -709,11 +719,22 @@ namespace webapi.Controllers
                 var resetUrl = await BuildResetUrl(user, token);
                 if (_emailer.IsConfigured)
                 {
-                    var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
-<p>We received a request to reset the password for your RidePass account.</p>
+                    // Name the track the rider actually clicked "forgot password" on. They know
+                    // Motoland; a bare "RidePass" reset email is one they'd ignore or report as
+                    // phishing. The account itself is still their platform-wide login, which the
+                    // body says plainly so a rider isn't surprised it works at other tracks.
+                    var tenant = _tenantContext.IsResolved ? _tenantContext.Tenant : null;
+                    var who = tenant is null ? "your RidePass account" : Html(tenant.DisplayName);
+                    var scopeNote = tenant is null ? string.Empty
+                        : "<p style=\"color:#666; font-size:13px\">This is the same account you use at any track on RidePass.</p>";
+                    var html = $@"<p>Hi {Html(user.FirstName)},</p>
+<p>We received a request to reset the password for your account at <strong>{who}</strong>.</p>
 <p><a href=""{resetUrl}"">Click here to set a new password</a>. This link expires in 60 minutes and can only be used once.</p>
-<p>If you didn't request this, you can safely ignore this email.</p>";
-                    await _emailer.Send(user.Email, "Reset your RidePass password", html);
+<p>If you didn't request this, you can safely ignore this email.</p>
+{scopeNote}";
+                    await _emailer.Send(user.Email,
+                        tenant is null ? "Reset your RidePass password" : $"Reset your {tenant.DisplayName} password",
+                        html, null, TenantEmailIdentity.For(tenant));
                 }
                 else
                 {
@@ -794,16 +815,26 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { message = "If that account needs verification, we've sent a new link." });
         }
 
+        // HTML-escape any value interpolated into an email body.
+        private static string Html(string value) => System.Net.WebUtility.HtmlEncode(value);
+
         private async Task SendVerificationEmail(User user, string token)
         {
             if (!_emailer.IsConfigured) return;
             // Riders are global, so the link works on whichever host they signed up from.
             var url = $"{Request.Scheme}://{Request.Host.Value}/VerifyEmail?token={Uri.EscapeDataString(token)}";
-            var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(user.FirstName)},</p>
-<p>Welcome to RidePass! Please confirm your email to activate your account.</p>
+            // Signed up on a track's site, so the confirmation comes from that track.
+            var tenant = _tenantContext.IsResolved ? _tenantContext.Tenant : null;
+            var welcome = tenant is null
+                ? "Welcome to RidePass!"
+                : $"Welcome to {Html(tenant.DisplayName)}!";
+            var html = $@"<p>Hi {Html(user.FirstName)},</p>
+<p>{welcome} Please confirm your email to activate your account.</p>
 <p><a href=""{url}"">Verify my email</a>. This link expires in 7 days and can only be used once.</p>
 <p>If you didn't create an account, you can safely ignore this email.</p>";
-            await _emailer.Send(user.Email, "Verify your RidePass email", html);
+            await _emailer.Send(user.Email,
+                tenant is null ? "Verify your RidePass email" : $"Verify your email for {tenant.DisplayName}",
+                html, null, TenantEmailIdentity.For(tenant));
         }
 
         private async Task<string> BuildResetUrl(User user, string token)

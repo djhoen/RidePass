@@ -48,8 +48,14 @@ namespace Services.Repositories
                     COALESCE(e.image_url, et.image_url)     AS ImageUrl,
                     COALESCE(tb.logo_white_url, tb.logo_url) AS TenantLogoUrl,
                     bool_and(t.registration_complete)       AS RegistrationComplete,
-                    bool_or(t.waiver_signed_at IS NOT NULL)  AS WaiverSigned,
+                    -- Signed = the normalized signature link, or either legacy inline copy. Reading
+                    -- only waiver_signed_at made every ticket signed through the current registration
+                    -- flow (which sets waiver_signature_id) report back as UNSIGNED on the rider's card.
+                    bool_or(t.waiver_signature_id IS NOT NULL
+                            OR t.waiver_signed_at IS NOT NULL
+                            OR t.waiver_signature_data_url IS NOT NULL) AS WaiverSigned,
                     e.starts_at                             AS OccursAtUtc,
+                    e.ends_at                               AS EndsAtUtc,
                     NULL::timestamptz                       AS ValidToUtc,
                     SUM(t.amount_cents)::int                AS AmountCents,
                     MIN(t.redemption_token::text)           AS RedemptionToken,
@@ -61,7 +67,10 @@ namespace Services.Repositories
                 JOIN tenant ten           ON ten.id = t.tenant_id
                 LEFT JOIN tenant_branding tb ON tb.tenant_id = ten.id
                 WHERE t.purchaser_user_id = @userId
-                  AND t.status = 'paid'
+                  -- 'redeemed' = checked in at the gate, which is the one moment a rider is MOST
+                  -- likely to open this page. Filtering it out made the event vanish from their
+                  -- card the instant they were scanned in, and took the past-events history with it.
+                  AND t.status IN ('paid', 'redeemed')
                 GROUP BY e.id, e.title, e.starts_at, e.image_url, et.image_url,
                          tb.logo_white_url, tb.logo_url,
                          t.tenant_id, ten.subdomain, ten.display_name
@@ -81,6 +90,7 @@ namespace Services.Repositories
                     NULL::text,
                     true,
                     false,
+                    NULL::timestamptz,
                     NULL::timestamptz,
                     (s.valid_to_date + INTERVAL '1 day')::timestamptz AS ValidToUtc,
                     s.amount_cents,
@@ -109,6 +119,7 @@ namespace Services.Repositories
                     NULL::text,
                     true,
                     false,
+                    NULL::timestamptz,
                     NULL::timestamptz,
                     m.valid_to_utc,
                     m.amount_cents,

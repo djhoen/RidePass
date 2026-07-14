@@ -10,15 +10,38 @@ namespace webapi.Controllers.API.Data.Redemption
         // against PurchaserName before redeeming. Drives the attestation gate in the UI;
         // also enforced server-side on RedeemBulk.
         public bool RequireIdAtCheckin { get; set; }
+
+        // Everything paid for in this order, so the gate can hand over what was bought
+        // (add-ons included) and not just admit people.
+        public int TotalAmountCents { get; set; }
+
+        // ── Waivers ──────────────────────────────────────────────────────────
+        // One entry per attending PERSON (tickets grouped by registrant), with their waiver
+        // status. The counts drive the "not everyone has signed" alarm at the top of check-in;
+        // the gate still enforces the block server-side on redeem.
+        public List<OrderWaiverAttendee> Waivers { get; set; } = new();
+        public int WaiverRequiredCount { get; set; }
+        public int WaiverSignedCount { get; set; }
+        public int WaiverMissingCount { get; set; }
     }
 
     public class OrderItem
     {
         // 'pass' | 'event_ticket' | 'extras' | 'membership'
         public string Kind { get; set; } = null!;
+        // Event tickets only: what this admission actually is, so the gate doesn't label a
+        // spectator's gate fee "Race Entry". 'race_entry' | 'gate_fee' | 'spectator_pass' (legacy),
+        // paired with 'rider' | 'spectator'. NULL on add-ons.
+        public string? TicketKind { get; set; }
+        public string? Audience { get; set; }
         public Guid PurchaseId { get; set; }
         public Guid RedemptionToken { get; set; }
         public string ItemName { get; set; } = null!;
+        // Add-ons can be bought several at a time ("Camping × 3"); tickets are always 1.
+        public int Quantity { get; set; } = 1;
+        // Variant attributes frozen at purchase, e.g. "Large, Red" — so staff hand over the
+        // right shirt. NULL for tickets and for products with no variants.
+        public string? VariantLabel { get; set; }
         public int AmountCents { get; set; }
         public string Status { get; set; } = null!;        // 'paid' | 'redeemed' | 'cancelled' | ...
         public bool IsRedeemableToday { get; set; }

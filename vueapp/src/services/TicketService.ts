@@ -251,6 +251,32 @@ export class TicketService {
     redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[]; idVerified?: boolean }) {
         return axios.post<{ data: BulkRedeemResponse }>(`${this.apiUrl}/Redemption/Order/Redeem`, req)
     }
+
+    // The signature image behind one ticket in the scanned order. Fetched on demand: a drawn
+    // signature is up to ~1MB of base64, too much to ship for every attendee up front.
+    orderSignature(token: string, purchaseId: string) {
+        return axios.get<{ data: OrderSignature }>(
+            `${this.apiUrl}/Redemption/Order/${token}/Signature/${purchaseId}`)
+    }
+
+    // Gate lookup for the rider with no QR: search today's orders by buyer name, buyer email, or
+    // rider name. Server requires 3+ characters and only sees events open for check-in today.
+    gateSearch(q: string) {
+        return axios.get<{ data: GateSearchResult[] }>(
+            `${this.apiUrl}/Redemption/Search`, { params: { q } })
+    }
+}
+
+export interface GateSearchResult {
+    eventId: string
+    eventTitle: string
+    eventStartsAtUtc: string
+    purchaserName: string
+    purchaserEmail: string
+    anchorToken: string
+    itemCount: number
+    redeemedCount: number
+    riderNames: string | null
 }
 
 export interface OrderLookup {
@@ -259,13 +285,62 @@ export interface OrderLookup {
     purchaserEmail: string
     items: OrderItem[]
     requireIdAtCheckin: boolean
+    totalAmountCents: number
+    // One entry per attending person (tickets grouped by registrant), with waiver status.
+    waivers: OrderWaiverAttendee[]
+    waiverRequiredCount: number
+    waiverSignedCount: number
+    waiverMissingCount: number
+}
+
+// A person on the order and where they stand on the event's waiver requirement.
+export interface OrderWaiverAttendee {
+    attendeeKey: string
+    purchaseIds: string[]
+    name: string | null
+    audience: 'rider' | 'spectator' | string
+    birthdate: string | null
+    age: number | null
+    isMinor: boolean
+    items: string[]
+    registrationComplete: boolean
+    waiverRequired: boolean
+    waiverSigned: boolean
+    waiverName: string | null
+    signedAtUtc: string | null
+    signedByParent: boolean
+    guardianName: string | null
+    signerName: string | null
+    signerEmail: string | null
+    hasSignatureImage: boolean
+    signaturePurchaseId: string | null
+    blockReason: string | null
+}
+
+export interface OrderSignature {
+    purchaseId: string
+    attendeeName: string | null
+    waiverName: string | null
+    waiverTitle: string | null
+    signedAtUtc: string | null
+    signedByParent: boolean
+    guardianName: string | null
+    signerName: string | null
+    signerEmail: string | null
+    signatureDataUrl: string | null
 }
 
 export interface OrderItem {
     kind: 'pass' | 'event_ticket' | 'extras' | 'membership' | string
+    // Event tickets only: what the admission is, so a spectator's gate fee isn't labelled
+    // "Race Entry" at the gate. Null on add-ons.
+    ticketKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | string | null
+    audience: 'rider' | 'spectator' | string | null
     purchaseId: string
     redemptionToken: string
     itemName: string
+    quantity: number
+    variantLabel: string | null
     amountCents: number
     status: string
     isRedeemableToday: boolean

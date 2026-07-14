@@ -23,6 +23,9 @@ namespace Services.Repositories.Data.MeData
         public bool RegistrationComplete { get; set; } = true;  // event_ticket: all the rider's entries registered (waiver may or may not be required)
         public bool WaiverSigned { get; set; }                  // event_ticket: at least one entry has a signed waiver on file
         public DateTime? OccursAtUtc { get; set; }
+        // event_ticket: when the event ENDS. The card stays in "upcoming" until the day after this,
+        // so a rider standing at the gate on race day doesn't find their ticket filed under "past".
+        public DateTime? EndsAtUtc { get; set; }
         public DateTime? ValidToUtc { get; set; }
         public int AmountCents { get; set; }
         public string? RedemptionToken { get; set; }

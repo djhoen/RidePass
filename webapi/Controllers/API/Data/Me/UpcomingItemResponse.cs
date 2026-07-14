@@ -16,7 +16,10 @@ namespace webapi.Controllers.API.Data.Me
         public string? TenantLogoUrl { get; set; }       // track logo for the card band
         public bool RegistrationComplete { get; set; } = true; // event_ticket: all entries registered (waiver may not be required)
         public bool WaiverSigned { get; set; }           // event_ticket: a waiver signature is on file for the order
-        public DateTime? OccursAtUtc { get; set; }       // event tickets, day passes
+        public DateTime? OccursAtUtc { get; set; }
+        // event_ticket: when the event ends. The rider's card stays under "Upcoming" until the day
+        // after this, so a race in progress isn't filed under "Past" while they're at the gate.
+        public DateTime? EndsAtUtc { get; set; }       // event tickets, day passes
         public DateTime? ValidToUtc { get; set; }        // season passes, memberships
         public int AmountCents { get; set; }
         public string? RedemptionToken { get; set; }     // QR-able items only

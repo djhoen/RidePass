@@ -39,6 +39,7 @@ namespace webapi.Payments
         private readonly IConcessionRepository _concessions;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
+        private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly IConfiguration _config;
         private readonly ILogger<StripePurchaseFinalizer> _logger;
         private readonly int _largeSaleThresholdCents;
@@ -66,6 +67,7 @@ namespace webapi.Payments
             IConcessionRepository concessions,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
+            Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             IConfiguration configuration,
             ILogger<StripePurchaseFinalizer> logger)
         {
@@ -91,6 +93,7 @@ namespace webapi.Payments
             _concessions = concessions;
             _suppression = suppression;
             _emailer = emailer;
+            _orderConfirmations = orderConfirmations;
             _config = configuration;
             _logger = logger;
             _largeSaleThresholdCents = configuration.GetValue<int?>("Notifications:LargeSaleThresholdCents") ?? 50_000;  // $500 default
@@ -206,7 +209,7 @@ namespace webapi.Payments
                     // Gate Fee flow), they get the whole fee distributed across them.
                     var extrasOwnTheFee = tickets.Count == 0
                         && membership is null && seasonPass is null;
-                    await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee, isDirect);
+                    await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee, isDirect, ticketsOnPi: tickets.Count > 0);
                 }
                 else if (eventType == "payment_intent.payment_failed")
                 {
@@ -360,7 +363,11 @@ namespace webapi.Payments
         // only flipped status and never hit the ledger, so spectator/add-on income was lost
         // from payouts. Idempotent: the unique (tenant, source_kind, source_id) sale index
         // makes a duplicate webhook/reconciler pass a no-op.
-        private async Task OnExtrasPaid(string paymentIntentId, List<EventExtraPurchase> extras, bool extrasOwnTheFee, bool isDirect)
+        // ticketsOnPi: when the cart also holds event tickets, the ticket confirmation already lists
+        // these add-ons (it's built from the whole event order), so emailing here too would double up.
+        // An add-ons-only cart (a spectator gate fee, camping) has no other sender, so it confirms here.
+        private async Task OnExtrasPaid(string paymentIntentId, List<EventExtraPurchase> extras,
+            bool extrasOwnTheFee, bool isDirect, bool ticketsOnPi)
         {
             var pending = extras.Where(e => e.Status == "pending").ToList();
             if (pending.Count == 0) return;
@@ -404,6 +411,11 @@ namespace webapi.Payments
                 {
                     _logger.LogDebug("Ledger entry for extras {Id} already exists; skipping.", x.Id);
                 }
+            }
+
+            if (!ticketsOnPi)
+            {
+                await _orderConfirmations.SendForExtras(pending[0].TenantId, pending.Select(x => x.Id).ToList());
             }
         }
 
@@ -542,7 +554,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 <p>If your email client doesn't show the image, open <a href=""{qrUrl}"">this link</a> on your phone — it'll display the QR.</p>
 {accountLine}";
 
-                await _emailer.Send(toEmail, subject, html);
+                await _emailer.Send(toEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
             }
             catch (Exception ex)
             {
@@ -581,7 +593,7 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
 <table style=""border-collapse:collapse"">{rows}</table>
 <p>You can also find them on your <a href=""{profileUrl}"">My Passes</a> page, where you can email them directly to friends.</p>";
 
-                await _emailer.Send(ticket.PurchaserEmail, subject, html);
+                await _emailer.Send(ticket.PurchaserEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
             }
             catch (Exception ex)
             {
@@ -703,12 +715,15 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                 }
             }
 
-            // Per-purchase confirmation emails with the QR code so riders have it in their
-            // inbox even if they're not logged in (guest ticket purchases especially).
-            foreach (var t in tickets.Where(p => p.Status == "paid"))
+            // One confirmation per event order (not per ticket row): a rider who bought a gate fee
+            // plus three classes gets a single email listing all of it with one QR, and any add-ons
+            // on the same order ride along in that email. Riders who aren't logged in have no other
+            // way to get their QR, so this is the whole delivery path for a guest.
+            var paidTicketIds = tickets.Where(p => p.Status == "paid").Select(p => p.Id).ToList();
+            if (paidTicketIds.Count > 0)
             {
-                _ = SendPurchaseEmailAsync(t.TenantId, t.PurchaserEmail, t.PurchaserName, t.RedemptionToken,
-                    "event_ticket", t.AmountCents, null, isGuest: t.PurchaserUserId is null);
+                var emailTenantId = tickets.First(p => p.Status == "paid").TenantId;
+                await _orderConfirmations.SendForTickets(emailTenantId, paidTicketIds);
             }
 
             // Run loyalty rewards once per (tenant, rider). Guest ticket purchases (no user) are skipped.

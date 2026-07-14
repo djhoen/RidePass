@@ -115,6 +115,17 @@ namespace Services.Repositories
             return result.FirstOrDefault();
         }
 
+        public async Task<RiderWaiverSignature?> GetSignatureById(Guid id, Guid tenantId)
+        {
+            var sql = $@"
+                SELECT {SignatureColumns}
+                FROM rider_waiver_signature
+                WHERE id = @id AND tenant_id = @tenantId
+                LIMIT 1";
+            var result = await _db.Query<RiderWaiverSignature>(sql, new { id, tenantId });
+            return result.FirstOrDefault();
+        }
+
         public async Task<RiderWaiverSignature?> GetSignatureBySignerEmailForSelf(string email, Guid waiverId)
         {
             // Spectator email lookup: only counts a signature where the signer signed

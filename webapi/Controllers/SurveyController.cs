@@ -282,7 +282,7 @@ namespace webapi.Controllers
 
                 if (_emailer.IsConfigured)
                 {
-                    var ok = await _emailer.Send(email, subject, body);
+                    var ok = await _emailer.Send(email, subject, body, null, Services.Email.TenantEmailIdentity.For(tenant));
                     if (ok)
                     {
                         await _surveys.MarkInviteSent(inviteId, DateTime.UtcNow);

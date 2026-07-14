@@ -519,7 +519,7 @@ namespace webapi.Controllers
                         ? $"Update from {tenant.DisplayName}"
                         : req.Subject!.Trim();
                     var html = BuildRiderMessageHtml(req.Body, tenant.DisplayName, eventTitle);
-                    ok = await _emailer.Send(row.PurchaserEmail, subject, html);
+                    ok = await _emailer.Send(row.PurchaserEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
                 }
                 if (ok) sent++;
                 else skipped.Add(row.PurchaserName);

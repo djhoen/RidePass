@@ -35,6 +35,7 @@ namespace webapi.Controllers
         private readonly IChargeRouter _chargeRouter;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IRewardRepository _rewards;
+        private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly ITenantLedgerRepository _ledger;
         private readonly IEventExtraRepository _extras;
         private readonly IMembershipRepository _memberships;
@@ -55,6 +56,7 @@ namespace webapi.Controllers
             IChargeRouter chargeRouter,
             IPasswordHasher<User> passwordHasher,
             IRewardRepository rewards,
+            Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             ITenantLedgerRepository ledger,
             IEventExtraRepository extras,
             IMembershipRepository memberships,
@@ -74,6 +76,7 @@ namespace webapi.Controllers
             _chargeRouter = chargeRouter;
             _passwordHasher = passwordHasher;
             _rewards = rewards;
+            _orderConfirmations = orderConfirmations;
             _ledger = ledger;
             _extras = extras;
             _memberships = memberships;
@@ -758,6 +761,11 @@ namespace webapi.Controllers
                     var first = lineItems[0];
                     await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, first.Kind, first.PurchaseId);
                 }
+
+                // A cash sale at the counter never touches Stripe, so nothing else would email the
+                // rider. They still want the entry in their inbox and on their account.
+                await SendCounterConfirmations(lineItems);
+
                 return new ApiResponses().OkResult(new CounterSaleResponse
                 {
                     ClientSecret = string.Empty,
@@ -801,6 +809,10 @@ namespace webapi.Controllers
                     var first = lineItems[0];
                     await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, first.Kind, first.PurchaseId);
                 }
+
+                // Free at the counter (a 100%-off voucher) is still an admission: same email, same QR.
+                await SendCounterConfirmations(lineItems);
+
                 return new ApiResponses().OkResult(new CounterSaleResponse
                 {
                     ClientSecret = string.Empty,
@@ -1081,6 +1093,25 @@ namespace webapi.Controllers
             if (direct) await _tenants.SetStripeConnectedTerminalLocationId(_tenantContext.TenantId, locationId);
             else await _tenants.SetStripeTerminalLocationId(_tenantContext.TenantId, locationId);
             return locationId;
+        }
+
+        // Confirmation for the counter paths that settle without Stripe (cash, and a voucher that
+        // zeroes the cart). Card sales are confirmed off the webhook instead, so they don't come
+        // through here and can't double-send. Event tickets carry the order; a cart of only add-ons
+        // still confirms, so a walk-up spectator gate fee reaches the buyer's inbox.
+        private async Task SendCounterConfirmations(List<CounterSaleLineItem> lineItems)
+        {
+            var ticketIds = lineItems.Where(l => l.Kind == "event_ticket").Select(l => l.PurchaseId).ToList();
+            if (ticketIds.Count > 0)
+            {
+                await _orderConfirmations.SendForTickets(_tenantContext.TenantId, ticketIds);
+                return;
+            }
+            var extraIds = lineItems.Where(l => l.Kind == "extras").Select(l => l.PurchaseId).ToList();
+            if (extraIds.Count > 0)
+            {
+                await _orderConfirmations.SendForExtras(_tenantContext.TenantId, extraIds);
+            }
         }
     }
 

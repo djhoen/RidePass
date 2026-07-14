@@ -55,9 +55,14 @@ namespace Services.Repositories.Interfaces
         Task<List<EventExtraPurchase>> ListMine(Guid userId, Guid tenantId);
         Task<List<EventExtraPurchase>> ListForEvent(Guid eventId);
         // Gate redemption (event+purchaser scope): a purchaser's add-ons for one event,
-        // across orders. Matches by user id when present, else by lower(email).
-        Task<List<EventExtraPurchase>> ListByEventForPurchaser(
+        // across orders. Matches by user id when present, else by lower(email). Carries the
+        // catalog product name so the gate can show what was actually bought.
+        Task<List<EventExtraPurchaseWithProduct>> ListByEventForPurchaser(
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
+
+        /// <summary>Single add-on purchase joined to its catalog product (tenant-scoped), for the
+        /// no-event counter-merch path at the gate where only the scanned row is in scope.</summary>
+        Task<EventExtraPurchaseWithProduct?> GetPurchaseWithProduct(Guid id, Guid tenantId);
 
         /// <summary>
         /// Sum of paid quantity for an (event, product) combo. Used for the per-event

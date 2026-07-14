@@ -40,10 +40,14 @@ namespace Services.Repositories
                        ranked.HeroImageUrl,
                        ranked.ClientType, ranked.CustomDomain, ranked.CustomDomainVerified,
                        ranked.ExternalHomeUrl, ranked.ExternalEventsUrl,
+                       -- Counts what a rider can still show up to: anything not yet past, including
+                       -- an event running right now. Ends the day after it ends, in the track's tz.
                        (SELECT COUNT(*) FROM event e
+                          JOIN tenant ten ON ten.id = e.tenant_id
+                          CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(btrim(ten.timezone), ''), 'UTC') AS name) tz
                          WHERE e.tenant_id = ranked.TenantId
                            AND e.status = 'scheduled'
-                           AND e.starts_at > NOW())::int AS UpcomingEventsCount
+                           AND e.ends_at >= (date_trunc('day', NOW() AT TIME ZONE tz.name) AT TIME ZONE tz.name))::int AS UpcomingEventsCount
                 FROM ranked
                 WHERE ranked.status = 'active'
                   AND ranked.is_published
@@ -84,6 +88,7 @@ namespace Services.Repositories
                            t.custom_domain_verified AS TenantCustomDomainVerified,
                            t.external_home_url AS TenantExternalHomeUrl, t.external_events_url AS TenantExternalEventsUrl,
                            t.embed_event_target AS TenantEmbedEventTarget,
+                           t.timezone AS TenantTimezone,
                            et.code AS EventTypeCode, et.name AS EventTypeName, et.color AS EventTypeColor,
                            et.image_url AS EventTypeImageUrl,
                            CASE WHEN @lat::double precision IS NOT NULL
@@ -114,7 +119,12 @@ namespace Services.Repositories
                 FROM ranked
                 WHERE tenant_status = 'active'
                   AND tenant_is_published
-                  AND StartsAtUtc >= COALESCE(@fromUtc::timestamptz, NOW())
+                  -- An event stays listed until the day AFTER it ends (in the track's timezone),
+                  -- so a race in progress is still discoverable by someone deciding to drive out.
+                  -- Callers passing an explicit fromUtc (a calendar month) still get their window.
+                  AND EndsAtUtc >= COALESCE(@fromUtc::timestamptz,
+                        (date_trunc('day', NOW() AT TIME ZONE COALESCE(NULLIF(btrim(TenantTimezone), ''), 'UTC'))
+                            AT TIME ZONE COALESCE(NULLIF(btrim(TenantTimezone), ''), 'UTC')))
                   AND (@toUtc::timestamptz IS NULL OR EndsAtUtc <= @toUtc::timestamptz)
                   AND (@qLike::text IS NULL
                        OR Title ILIKE @qLike
@@ -151,7 +161,10 @@ namespace Services.Repositories
                       SELECT 1 FROM event e
                       WHERE e.event_type_id = et.id
                         AND e.status = 'scheduled'
-                        AND e.starts_at > NOW())
+                        -- Same rule as the lists this filters: a type whose only event is running
+                        -- right now must not drop out of the filter while that event is on.
+                        AND e.ends_at >= (date_trunc('day', NOW() AT TIME ZONE COALESCE(NULLIF(btrim(t.timezone), ''), 'UTC'))
+                                              AT TIME ZONE COALESCE(NULLIF(btrim(t.timezone), ''), 'UTC')))
                 GROUP BY et.code
                 ORDER BY MIN(et.sort_order), Code";
             var r = await _db.Query<EventTypeOptionRow>(sql, new { codes, excl });

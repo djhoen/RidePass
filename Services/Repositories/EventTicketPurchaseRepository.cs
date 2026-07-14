@@ -122,7 +122,7 @@ namespace Services.Repositories
                        p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
                        COALESCE(sig.signed_by_parent, false) AS SignedByParent,
                        COALESCE(sig.parent_name, p.parent_guardian_name) AS GuardianName,
-                       t.name AS TierName,
+                       t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience,
                        e.id AS EventId, e.title AS EventTitle, e.description AS EventDescription,
                        e.location_label AS EventLocationLabel,
                        e.starts_at AS EventStartsAt, e.ends_at AS EventEndsAt, e.all_day AS EventAllDay
@@ -142,6 +142,135 @@ namespace Services.Repositories
             var result = await _db.Query<EventTicketPurchaseWithContext>(sql,
                 new { eventId, tenantId, purchaserUserId, purchaserEmail });
             return result.ToList();
+        }
+
+        // Gate lookup by name or email, for the rider who turns up with a dead phone and no QR.
+        //
+        // Deliberately narrow: only events whose check-in window overlaps today (the caller passes the
+        // tenant-local day as a UTC interval) and only paid/redeemed rows. That keeps the query fast and,
+        // more importantly, means a gate-staff login can't be used to page through the tenant's whole
+        // customer list — it can only see who is actually coming through the gate today.
+        //
+        // Matching is case-insensitive (Postgres = and LIKE are not) across the buyer's name, the buyer's
+        // email, and the RIDER's name: a parent often buys under their own name for a kid with a different
+        // surname, and staff at the gate know the rider.
+        //
+        // One row per (event, purchaser); purchaser identity is the user id when the buyer had an account,
+        // else their lowercased email, which mirrors how the redemption scope resolves a scanned token.
+        public async Task<List<GateSearchRow>> SearchForGate(
+            Guid tenantId, string query, DateTime todayStartUtc, DateTime todayEndUtc, int limit)
+        {
+            const string sql = @"
+                SELECT e.id AS EventId,
+                       MIN(e.title) AS EventTitle,
+                       MIN(e.starts_at) AS EventStartsAt,
+                       MIN(p.purchaser_name) AS PurchaserName,
+                       MIN(p.purchaser_email) AS PurchaserEmail,
+                       (MIN(p.redemption_token::text))::uuid AS AnchorToken,
+                       COUNT(*)::int AS ItemCount,
+                       COUNT(*) FILTER (WHERE p.status = 'redeemed')::int AS RedeemedCount,
+                       string_agg(DISTINCT NULLIF(trim(COALESCE(p.rider_first_name, '') || ' ' ||
+                                                        COALESCE(p.rider_last_name, '')), ''), ', ') AS RiderNames
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                JOIN event e ON e.id = t.event_id
+                WHERE p.tenant_id = @tenantId
+                  AND p.status IN ('paid', 'redeemed')
+                  AND e.starts_at <= @todayEndUtc
+                  AND e.ends_at   >= @todayStartUtc
+                  -- EVERY word the operator typed has to appear somewhere in this row's searchable
+                  -- text (buyer name + buyer email + rider name), in any order. So 'reed jake',
+                  -- 'jake reed', and plain 'jake' all find Jake Reed, and 'sarah reed' finds the
+                  -- order Sarah bought for rider Reed. A single substring match can't do that, and
+                  -- at a gate people type names in whatever order they hear them.
+                  AND lower(
+                        COALESCE(p.purchaser_name, '') || ' ' ||
+                        COALESCE(p.purchaser_email, '') || ' ' ||
+                        COALESCE(p.rider_first_name, '') || ' ' ||
+                        COALESCE(p.rider_last_name, '')
+                      ) LIKE ALL (@likes)
+                GROUP BY e.id, COALESCE(p.purchaser_user_id::text, lower(trim(p.purchaser_email)))
+                ORDER BY MIN(e.starts_at), MIN(p.purchaser_name)
+                LIMIT @limit";
+            var rows = await _db.Query<GateSearchRow>(sql, new
+            {
+                tenantId,
+                likes = BuildLikeTerms(query),
+                todayStartUtc,
+                todayEndUtc,
+                limit,
+            });
+            return rows.ToList();
+        }
+
+        // One '%term%' pattern per word typed, lowercased to match the lowered haystack (Postgres
+        // LIKE is case-sensitive). Capped at 5 words so a pasted paragraph can't build a huge
+        // conjunction. Falls back to the whole trimmed string if it somehow splits to nothing.
+        private static string[] BuildLikeTerms(string query)
+        {
+            var words = query
+                .Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Take(5)
+                .Select(w => $"%{EscapeLike(w.ToLowerInvariant())}%")
+                .ToArray();
+            return words.Length > 0
+                ? words
+                : new[] { $"%{EscapeLike(query.Trim().ToLowerInvariant())}%" };
+        }
+
+        // A rider named "100%" or an email with an underscore must not turn into a wildcard.
+        private static string EscapeLike(string value) =>
+            value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+
+        // Gate check-in waiver panel: the purchaser's ticket set for one event, denormalized with
+        // the tier's audience (which decides whether the rider or the spectator waiver applies) and
+        // the linked signature row (who signed, when, on whose behalf, which document). Same tenant +
+        // event + purchaser scope as ListByEventForPurchaser, but only paid/redeemed rows: a failed or
+        // pending payment is not a person walking through the gate, and listing one would raise a
+        // false "somebody hasn't signed" alarm for a purchase that never completed.
+        public async Task<List<OrderAttendeeWaiverRow>> ListWaiverStatusForPurchaser(
+            Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail)
+        {
+            const string sql = @"
+                SELECT p.id AS PurchaseId,
+                       p.registrant_id AS RegistrantId,
+                       t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience,
+                       p.status,
+                       p.registration_complete AS RegistrationComplete,
+                       p.purchaser_name AS PurchaserName,
+                       p.rider_first_name AS RiderFirstName,
+                       p.rider_last_name AS RiderLastName,
+                       p.rider_birthdate AS RiderBirthdate,
+                       p.waiver_signature_id AS WaiverSignatureId,
+                       p.waiver_signed_at AS WaiverSignedAt,
+                       (p.waiver_signature_data_url IS NOT NULL) AS HasInlineSignatureImage,
+                       sig.signed_at AS SignatureSignedAt,
+                       (sig.signature_data_url IS NOT NULL) AS SignatureHasImage,
+                       COALESCE(sig.signed_by_parent, false) AS SignedByParent,
+                       COALESCE(sig.parent_name, p.parent_guardian_name) AS ParentName,
+                       sig.signer_name AS SignerName,
+                       sig.signer_email AS SignerEmail,
+                       sig.spectator_birthdate AS SignatureBirthdate,
+                       COALESCE(sig.waiver_id, p.waiver_id) AS SignedWaiverId,
+                       w.name AS SignedWaiverName,
+                       w.title AS SignedWaiverTitle
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                LEFT JOIN rider_waiver_signature sig
+                       ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
+                LEFT JOIN tenant_waiver w
+                       ON w.id = COALESCE(sig.waiver_id, p.waiver_id) AND w.tenant_id = p.tenant_id
+                WHERE p.tenant_id = @tenantId
+                  AND t.event_id = @eventId
+                  AND p.status IN ('paid', 'redeemed')
+                  AND (
+                        (@purchaserUserId IS NOT NULL AND p.purchaser_user_id = @purchaserUserId)
+                     OR (@purchaserUserId IS NULL AND lower(trim(p.purchaser_email)) = lower(trim(@purchaserEmail)))
+                      )
+                ORDER BY t.kind, t.name";
+            var rows = await _db.Query<OrderAttendeeWaiverRow>(sql,
+                new { eventId, tenantId, purchaserUserId, purchaserEmail });
+            return rows.ToList();
         }
 
         // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /

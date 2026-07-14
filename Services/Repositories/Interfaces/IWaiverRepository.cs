@@ -14,6 +14,10 @@ namespace Services.Repositories.Interfaces
             bool isActive, DateTime? expiresAt);
         Task<TenantWaiver> PublishNewVersion(Guid tenantId, string title, string body);
         Task<RiderWaiverSignature?> GetSignature(Guid userId, Guid waiverId);
+
+        /// <summary>Tenant-scoped fetch of one signature row (with its image), for showing gate
+        /// staff the signature a given ticket is backed by.</summary>
+        Task<RiderWaiverSignature?> GetSignatureById(Guid id, Guid tenantId);
         Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
             bool signedByParent, string? parentName, string? parentPhone);
 

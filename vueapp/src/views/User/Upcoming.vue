@@ -212,10 +212,18 @@ const eventLikeItems = computed(() =>
 const passLikeItems = computed(() =>
     items.value.filter(i => i.kind === 'season_pass' || i.kind === 'membership'))
 
-const upcomingEvents = computed(() =>
-    eventLikeItems.value.filter(i => !i.occursAtUtc || !dayjs.utc(i.occursAtUtc).isBefore(dayjs())))
+// An event counts as upcoming until the day AFTER it ends. Splitting on the START time filed a
+// rider's ticket under "Past events" the moment the gates opened, which is precisely when they
+// need to pull up their QR. Fall back to the start time for rows with no end (day passes).
+function stillUpcoming(item: { occursAtUtc: string | null; endsAtUtc?: string | null }): boolean {
+    const boundary = item.endsAtUtc ?? item.occursAtUtc
+    if (!boundary) return true
+    return !dayjs.utc(boundary).isBefore(dayjs().startOf('day'))
+}
+
+const upcomingEvents = computed(() => eventLikeItems.value.filter(stillUpcoming))
 const pastEvents = computed(() =>
-    eventLikeItems.value.filter(i => i.occursAtUtc && dayjs.utc(i.occursAtUtc).isBefore(dayjs()))
+    eventLikeItems.value.filter(i => !stillUpcoming(i))
         .sort((a, b) => dayjs.utc(b.occursAtUtc!).valueOf() - dayjs.utc(a.occursAtUtc!).valueOf()))
 
 onMounted(load)

@@ -24,7 +24,7 @@
         public Guid? RacerWaiverId { get; set; }
         public string? ImageUrl { get; set; }
         // Per-event gate-fee heading overrides; null = inherit tenant setting,
-        // then the platform defaults ("Rider Gate" / "Spectator Gate").
+        // then the platform defaults ("Riding Pass" / "Spectator Pass").
         public string? RiderGateLabel { get; set; }
         public string? SpectatorGateLabel { get; set; }
         public bool HasActiveTiers { get; set; }

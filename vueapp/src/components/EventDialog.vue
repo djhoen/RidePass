@@ -19,7 +19,7 @@
                     <v-window-item value="info">
                         <p class="text-caption text-medium-emphasis mt-2 mb-0">
                             Set the basics here. Use the <strong>Entry &amp; Add-ons</strong> tab to choose who can attend and
-                            set up rider entry, gate fees, and add-ons, and the <strong>Waivers</strong> tab for required signatures.
+                            set up rider entry, passes, and add-ons, and the <strong>Waivers</strong> tab for required signatures.
                         </p>
                         <v-row class="mt-1">
                             <v-col cols="12" md="8">
@@ -140,28 +140,28 @@
                              types the rider gate is the entry itself (no "required" flag); a required spectator
                              gate fee is how spectators are admitted. $0 allowed for free kids gates. -->
                         <v-divider class="my-5"></v-divider>
-                        <label class="text-subtitle-2 d-block mb-1">Gate fees</label>
+                        <label class="text-subtitle-2 d-block mb-1">Passes</label>
                         <p class="text-caption text-medium-emphasis mb-2">
-                            Facility gate fees for riders and spectators.
+                            Admission passes for riders and spectators.
                             {{ isRaceEvent
-                                ? 'Mark a rider gate required to make riders pay a race class plus one rider gate fee.'
-                                : 'Riders pay a rider gate fee to enter.' }}
-                            Add a spectator gate fee if spectators pay to get in. Use $0 for a free kids gate.
+                                ? 'Mark a rider pass required to make riders pay a race class plus one riding pass.'
+                                : 'Riders buy a riding pass to enter.' }}
+                            Add a spectator pass if spectators pay to get in. Use $0 for a free kids pass.
                         </p>
                         <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" :is-race="isRaceEvent" />
 
                         <!-- What riders see these sections called at checkout for THIS event.
                              Blank inherits the tenant-wide setting (Settings → General →
-                             Checkout headings), which defaults to Rider/Spectator Gate. -->
+                             Checkout headings), which defaults to Riding Pass/Spectator Pass. -->
                         <v-row class="mt-1">
                             <v-col cols="12" md="6">
-                                <v-text-field v-model="form.riderGateLabel" label="Rider gate heading" density="compact"
-                                    :placeholder="branding.riderGateLabel || 'Rider Gate'" maxlength="40"
+                                <v-text-field v-model="form.riderGateLabel" label="Riding pass heading" density="compact"
+                                    :placeholder="branding.riderGateLabel || 'Riding Pass'" maxlength="40"
                                     hint="Checkout heading for this event, e.g. 'Passes'. Blank = tenant default." persistent-hint></v-text-field>
                             </v-col>
                             <v-col cols="12" md="6">
-                                <v-text-field v-model="form.spectatorGateLabel" label="Spectator gate heading" density="compact"
-                                    :placeholder="branding.spectatorGateLabel || 'Spectator Gate'" maxlength="40"
+                                <v-text-field v-model="form.spectatorGateLabel" label="Spectator pass heading" density="compact"
+                                    :placeholder="branding.spectatorGateLabel || 'Spectator Pass'" maxlength="40"
                                     hint="Blank = tenant default." persistent-hint></v-text-field>
                             </v-col>
                         </v-row>
@@ -227,7 +227,7 @@
                             <v-select v-model="form.spectatorWaiverId"
                                 :items="spectatorWaiverOptions" item-title="title" item-value="value"
                                 label="Spectator waiver" density="compact" clearable hide-details
-                                hint="Signed by Gate Fee buyers and other non-racer admissions. Leave blank for tenant default."
+                                hint="Signed by pass buyers and other non-racer admissions. Leave blank for tenant default."
                                 persistent-hint class="mb-3 mt-4"></v-select>
                             <v-alert v-if="spectatorWaiverInvalid"
                                 type="warning" variant="tonal" density="compact" class="mb-3">
@@ -608,7 +608,7 @@ async function save() {
         + (gateFeesList.value?.getBuffered().filter(t => t.isActive).length ?? 0)
         + form.value.eligibleExtras.length
     if (purchasableItemCount === 0 && !editing.value?.hasActiveTiers) {
-        emit('flash', 'Add at least one purchasable item (a race class, gate fee, or add-on) before saving.', 'error')
+        emit('flash', 'Add at least one purchasable item (a race class, pass, or add-on) before saving.', 'error')
         activeTab.value = 'entry'
         return
     }

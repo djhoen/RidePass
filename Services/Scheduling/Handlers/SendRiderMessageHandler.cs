@@ -142,7 +142,7 @@ namespace Services.Scheduling.Handlers
                     };
                     var html = BuildEmailBody(payload.Body, tenant.DisplayName, ev.Title,
                         $"{baseUrl}/EmailUnsubscribe?token={enc}");
-                    ok = await _emailer.Send(row.PurchaserEmail, subject, html, headers);
+                    ok = await _emailer.Send(row.PurchaserEmail, subject, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
                 }
                 if (ok) sent++;
                 else skipped.Add(row.PurchaserName);

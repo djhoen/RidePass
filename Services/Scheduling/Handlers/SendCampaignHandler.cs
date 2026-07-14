@@ -113,7 +113,7 @@ namespace Services.Scheduling.Handlers
                 };
                 var html = campaign.BodyHtml + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName);
 
-                var ok = await _emailer.Send(s.Email, campaign.Subject, html, headers);
+                var ok = await _emailer.Send(s.Email, campaign.Subject, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
                 await _campaigns.UpdateSendStatus(s.Id, ok ? "sent" : "failed", ok ? null : "SMTP send failed");
                 s.Status = ok ? "sent" : "failed";
                 if (ok) sent++; else failed++;

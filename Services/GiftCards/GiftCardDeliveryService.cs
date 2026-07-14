@@ -69,7 +69,7 @@ namespace Services.GiftCards
   {System.Net.WebUtility.HtmlEncode(card.Code)}
 </p>";
 
-                await _emailer.Send(card.RecipientEmail, subject, html);
+                await _emailer.Send(card.RecipientEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
                 await _giftCards.MarkDelivered(card.Id);
                 return true;
             }

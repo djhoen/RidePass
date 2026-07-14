@@ -99,7 +99,8 @@ namespace Services.Rewards
             var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(firstName)},</p>
 <p>You just earned a reward from <strong>{System.Net.WebUtility.HtmlEncode(program.Name)}</strong>: <strong>{rewardLine}</strong>.</p>
 <p>It's waiting on your account — show it at the gate or apply it on your next purchase.</p>";
-            await _emailer.Send(toEmail, $"You earned a reward — {program.Name}", html);
+            var tenant = await _tenants.GetById(tenantId);
+            await _emailer.Send(toEmail, $"You earned a reward — {program.Name}", html, null, Services.Email.TenantEmailIdentity.For(tenant));
         }
 
         private async Task SendProximityEmail(Guid tenantId, string toEmail, string firstName, RewardProgram program, int remaining)
@@ -116,7 +117,8 @@ namespace Services.Rewards
             var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(firstName)},</p>
 <p>You're <strong>{remaining} {nounPlural} away</strong> from earning {rewardLine} in <strong>{System.Net.WebUtility.HtmlEncode(program.Name)}</strong>.</p>
 <p>See you at the track soon!</p>";
-            await _emailer.Send(toEmail, $"You're {remaining} away from a reward!", html);
+            var tenant = await _tenants.GetById(tenantId);
+            await _emailer.Send(toEmail, $"You're {remaining} away from a reward!", html, null, Services.Email.TenantEmailIdentity.For(tenant));
         }
 
         private static string KindLabel(string kind) => kind switch

@@ -46,7 +46,7 @@ const typeCode = (() => {
 
 onMounted(async () => {
     try {
-        const from = dayjs().utc().toISOString()
+        const from = dayjs().startOf('day').utc().toISOString()
         const to = dayjs().add(120, 'day').utc().toISOString()
         const r = await eventService.list(from, to)
         let list = ((r.data as any).data as EventDto[]).filter(e => e.status === 'scheduled')

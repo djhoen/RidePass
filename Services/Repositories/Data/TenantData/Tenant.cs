@@ -117,7 +117,7 @@ namespace Services.Repositories.Data.TenantData
         public string EmbedEventTarget { get; set; } = "external";
         public bool AllowSelfCancel { get; set; } = false;
         // Rider-facing headings for the gate-fee sections at checkout / event pricing.
-        // NULL = platform defaults ("Rider Gate" / "Spectator Gate").
+        // NULL = platform defaults ("Riding Pass" / "Spectator Pass").
         public string? RiderGateLabel { get; set; }
         public string? SpectatorGateLabel { get; set; }
         public bool WaitlistEnabled { get; set; } = true;

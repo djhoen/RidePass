@@ -46,6 +46,7 @@ namespace webapi.Controllers
         private readonly IRiderLoampassLinkRepository _loampassLinks;
         private readonly ILoamPassMxService _loampass;
         private readonly ILoampassRedemptionRepository _loampassRedemptions;
+        private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly ISeasonPassRepository _seasonPasses;
         private readonly ITenantTaxRepository _tax;
         private readonly Services.Payments.IFeeCalculator _feeCalculator;
@@ -74,6 +75,7 @@ namespace webapi.Controllers
             IRiderLoampassLinkRepository loampassLinks,
             ILoamPassMxService loampass,
             ILoampassRedemptionRepository loampassRedemptions,
+            Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             IChargeRouter chargeRouter,
             ISeasonPassRepository seasonPasses,
             ITenantTaxRepository tax,
@@ -102,6 +104,7 @@ namespace webapi.Controllers
             _loampassLinks = loampassLinks;
             _loampass = loampass;
             _loampassRedemptions = loampassRedemptions;
+            _orderConfirmations = orderConfirmations;
             _chargeRouter = chargeRouter;
             _seasonPasses = seasonPasses;
             _tax = tax;
@@ -799,6 +802,17 @@ namespace webapi.Controllers
                 {
                     await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, "event_ticket", first.Id);
                 }
+
+                // A free entry is still an entry: it needs the same confirmation + QR as a paid one.
+                // This path never reaches the Stripe webhook (there's no PaymentIntent), so the email
+                // has to be sent here or the rider gets nothing at all. The ticket email already lists
+                // any add-ons on the order; a cart that somehow has only add-ons confirms on its own.
+                if (createdTickets.Count > 0)
+                    await _orderConfirmations.SendForTickets(_tenantContext.TenantId,
+                        createdTickets.Select(t => t.purchase.Id).ToList());
+                else if (extraPurchaseIds.Count > 0)
+                    await _orderConfirmations.SendForExtras(_tenantContext.TenantId, extraPurchaseIds);
+
                 return new ApiResponses().OkResult(new CreatePurchaseResponse
                 {
                     PurchaseId = first.Id,
@@ -1358,6 +1372,10 @@ namespace webapi.Controllers
             {
                 // Idempotent — duplicate sale row for this source.
             }
+
+            // Paid with a Loam Pass credit rather than money, but it's the same admission and the
+            // rider still needs their QR. No PaymentIntent here either, so confirm inline.
+            await _orderConfirmations.SendForTickets(_tenantContext.TenantId, new[] { purchaseId });
 
             return new ApiResponses().OkResult(new CreatePurchaseResponse
             {

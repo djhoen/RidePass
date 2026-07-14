@@ -16,6 +16,8 @@ namespace webapi.Controllers
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IEventExtraRepository _extras;
         private readonly IUserRepository _users;
+        private readonly IEventRepository _events;
+        private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
 
@@ -23,12 +25,16 @@ namespace webapi.Controllers
             IEventTicketPurchaseRepository tickets,
             IEventExtraRepository extras,
             IUserRepository users,
+            IEventRepository events,
+            IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext)
         {
             _tickets = tickets;
             _extras = extras;
             _users = users;
+            _events = events;
+            _waivers = waivers;
             _waiverGate = waiverGate;
             _tenantContext = tenantContext;
         }
@@ -221,6 +227,50 @@ namespace webapi.Controllers
             return t;
         }
 
+        // Gate lookup by name or email, for the rider who shows up with a dead phone, a lost email, or
+        // a ticket someone else bought for them. Returns the orders coming through the gate TODAY that
+        // match; picking one feeds its token straight into Order below, so the rest of check-in
+        // (items, waivers, bulk redeem) is identical to a QR scan.
+        //
+        // Two guards make this safe to hand to gate staff: it only sees events whose check-in window is
+        // open today, and it requires a real search term (a 3-char minimum, so it can't be used to walk
+        // the customer list). SalesRedeem (class-level) still gates it.
+        [HttpGet("Search")]
+        public async Task<IActionResult> Search([FromQuery] string q)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var query = (q ?? string.Empty).Trim();
+            if (query.Length < 3)
+            {
+                return new ApiResponses().BadRequestResult("Type at least 3 characters of a name or email.");
+            }
+
+            // Today in the tenant's timezone, expressed as a UTC interval so the SQL stays timezone-free.
+            var tz = ResolveTenantTimeZone();
+            var todayLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
+            var todayStartUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal, tz);
+            var todayEndUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal.AddDays(1).AddTicks(-1), tz);
+
+            var rows = await _tickets.SearchForGate(
+                _tenantContext.TenantId, query, todayStartUtc, todayEndUtc, limit: 25);
+
+            var results = rows.Select(r => new webapi.Controllers.API.Data.Redemption.GateSearchResult
+            {
+                EventId = r.EventId,
+                EventTitle = r.EventTitle,
+                EventStartsAtUtc = DateTime.SpecifyKind(r.EventStartsAt, DateTimeKind.Utc),
+                PurchaserName = r.PurchaserName,
+                PurchaserEmail = r.PurchaserEmail,
+                AnchorToken = r.AnchorToken,
+                ItemCount = r.ItemCount,
+                RedeemedCount = r.RedeemedCount,
+                RiderNames = r.RiderNames,
+            }).ToList();
+
+            return new ApiResponses().OkResult(results);
+        }
+
         // Scan-once-redeem-many: given any token the rider owns for an event, surface
         // every ticket + add-on that SAME purchaser holds for that SAME event, across
         // however many orders they placed, so the gate worker can check them all in from
@@ -269,6 +319,8 @@ namespace webapi.Controllers
                     resp.Items.Add(new webapi.Controllers.API.Data.Redemption.OrderItem
                     {
                         Kind = "event_ticket",
+                        TicketKind = t.TierKind,
+                        Audience = t.TierAudience,
                         PurchaseId = t.Id,
                         RedemptionToken = t.RedemptionToken,
                         ItemName = $"{t.EventTitle} — {t.TierName}",
@@ -292,13 +344,23 @@ namespace webapi.Controllers
                     resp.Items.Add(BuildExtraItem(x));
                     if (x.RedeemedByUserId.HasValue) redeemerIds.Add(x.RedeemedByUserId.Value);
                 }
+
+                // Per-person waiver status for the whole order. This is what makes an unsigned
+                // attendee impossible to miss at the gate; redeem is blocked server-side regardless.
+                resp.Waivers = await BuildWaiverPanel(tenantId, anchor.EventId.Value, anchor);
+                resp.WaiverRequiredCount = resp.Waivers.Count(w => w.WaiverRequired);
+                resp.WaiverSignedCount = resp.Waivers.Count(w => w.WaiverRequired && w.WaiverSigned);
+                resp.WaiverMissingCount = resp.Waivers.Count(w => w.WaiverRequired && !w.WaiverSigned);
             }
             else if (anchor.SoloExtra is not null)
             {
                 // No-event add-on (counter merch): only the scanned row is in scope.
-                resp.Items.Add(BuildExtraItem(anchor.SoloExtra));
+                var named = await _extras.GetPurchaseWithProduct(anchor.SoloExtra.Id, tenantId);
+                resp.Items.Add(named is not null ? BuildExtraItem(named) : BuildExtraItem(anchor.SoloExtra));
                 if (anchor.SoloExtra.RedeemedByUserId.HasValue) redeemerIds.Add(anchor.SoloExtra.RedeemedByUserId.Value);
             }
+
+            resp.TotalAmountCents = resp.Items.Sum(i => i.AmountCents);
 
             // Resolve redeemer names, then stamp them onto already-redeemed items.
             var staffById = new Dictionary<Guid, string>();
@@ -426,20 +488,214 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(resp);
         }
 
+        // An add-on line for the gate. Named from the catalog when the caller has the joined row
+        // (so staff know what to hand over), falling back to a bare "Add-on" for the rare row whose
+        // product is gone.
         private static webapi.Controllers.API.Data.Redemption.OrderItem BuildExtraItem(
-            Services.Repositories.Data.ExtrasData.EventExtraPurchase x) =>
-            new webapi.Controllers.API.Data.Redemption.OrderItem
+            Services.Repositories.Data.ExtrasData.EventExtraPurchase x)
+        {
+            var named = x as Services.Repositories.Data.ExtrasData.EventExtraPurchaseWithProduct;
+            var variant = BuildVariantLabel(x.SizeAtPurchase, x.ColorAtPurchase, x.GenderAtPurchase);
+            return new webapi.Controllers.API.Data.Redemption.OrderItem
             {
                 Kind = "extras",
                 PurchaseId = x.Id,
                 RedemptionToken = x.RedemptionToken,
-                ItemName = "Add-on",
+                ItemName = string.IsNullOrWhiteSpace(named?.ProductName) ? "Add-on" : named!.ProductName,
+                Quantity = x.Quantity,
+                VariantLabel = variant,
                 AmountCents = x.AmountCents,
                 Status = x.Status,
                 IsRedeemableToday = x.Status == "paid",
                 NotRedeemableReason = x.Status != "paid" ? $"Status is '{x.Status}'." : null,
                 RedeemedAtUtc = x.RedeemedAtUtc.HasValue ? DateTime.SpecifyKind(x.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
             };
+        }
+
+        private static string? BuildVariantLabel(string? size, string? color, string? gender)
+        {
+            var parts = new[] { size, color, gender }.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+            return parts.Count == 0 ? null : string.Join(", ", parts);
+        }
+
+        // The order's waiver panel: one entry per attending PERSON, not per line item. A rider with a
+        // gate fee plus three race classes is one person here (tickets grouped by registrant), so the
+        // gate can answer "who is walking in, and has each of them signed what this event requires".
+        //
+        // Required-ness mirrors WaiverCheckInGate exactly: race entries and rider gate fees are
+        // rider-audience (the event's rider waiver applies), everything else spectator-audience; the
+        // document is the event's pinned waiver, falling back to the tenant's active one; and when no
+        // document is configured at all there is nothing to enforce. Anything the gate would block,
+        // this panel flags. The panel never grants admission, it only makes the block visible early.
+        private async Task<List<webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee>> BuildWaiverPanel(
+            Guid tenantId, Guid eventId, AnchorInfo anchor)
+        {
+            var rows = await _tickets.ListWaiverStatusForPurchaser(
+                eventId, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+            var attendees = new List<webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee>();
+            if (rows.Count == 0) return attendees;
+
+            var ev = await _events.GetById(eventId, tenantId);
+            if (ev is null) return attendees;
+
+            // Effective document per audience: the event's pinned waiver, else the tenant's active one.
+            var active = (ev.RacerWaiverId is null || ev.SpectatorWaiverId is null)
+                ? await _waivers.GetActive(tenantId)
+                : null;
+            var riderDocId = ev.RacerWaiverId ?? active?.Id;
+            var spectatorDocId = ev.SpectatorWaiverId ?? active?.Id;
+            var riderDocName = await ResolveWaiverName(riderDocId, tenantId, active);
+            var spectatorDocName = await ResolveWaiverName(spectatorDocId, tenantId, active);
+
+            foreach (var group in rows.GroupBy(r => r.RegistrantId?.ToString() ?? r.PurchaseId.ToString()))
+            {
+                var tickets = group.ToList();
+                var riderAudience = tickets.Any(r =>
+                    r.TierKind == "race_entry" || (r.TierKind == "gate_fee" && r.TierAudience == "rider"));
+
+                // Signed only when EVERY ticket this person holds carries a signature: the gate checks
+                // each ticket, so a partially-linked registrant must read as unsigned, not as done.
+                var signed = tickets.All(r =>
+                    r.WaiverSignatureId is not null || r.WaiverSignedAt is not null || r.HasInlineSignatureImage);
+                var signatureRow = tickets.FirstOrDefault(r => r.SignatureHasImage || r.HasInlineSignatureImage);
+                var signedRow = tickets.FirstOrDefault(r =>
+                    r.WaiverSignatureId is not null || r.WaiverSignedAt is not null || r.HasInlineSignatureImage);
+
+                var docId = riderAudience ? riderDocId : spectatorDocId;
+                var docName = riderAudience ? riderDocName : spectatorDocName;
+                var required = (riderAudience ? ev.RequiresRiderWaiver : ev.RequiresSpectatorWaiver) && docId is not null;
+
+                var first = tickets[0];
+                var name = BuildAttendeeName(first.RiderFirstName, first.RiderLastName)
+                           ?? signedRow?.SignerName;
+                var birthdate = first.RiderBirthdate ?? signedRow?.SignatureBirthdate;
+                var registrationComplete = tickets.All(r => r.RegistrationComplete);
+
+                var signedDocName = signedRow?.SignedWaiverName ?? signedRow?.SignedWaiverTitle;
+
+                string? block = null;
+                if (riderAudience && !registrationComplete)
+                {
+                    block = "Registration not finished — rider details and waiver still needed.";
+                }
+                else if (required && !signed)
+                {
+                    block = $"Has NOT signed the required {(riderAudience ? "rider" : "spectator")} waiver"
+                          + (string.IsNullOrWhiteSpace(docName) ? "." : $" ({docName}).");
+                }
+
+                attendees.Add(new webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee
+                {
+                    AttendeeKey = group.Key,
+                    PurchaseIds = tickets.Select(r => r.PurchaseId).ToList(),
+                    Name = name,
+                    Audience = riderAudience ? "rider" : "spectator",
+                    Birthdate = birthdate.HasValue ? DateTime.SpecifyKind(birthdate.Value, DateTimeKind.Utc) : null,
+                    Age = AgeFrom(birthdate),
+                    IsMinor = webapi.Helpers.WaiverPolicy.IsMinor(birthdate),
+                    Items = tickets.Select(r => r.TierName).ToList(),
+                    RegistrationComplete = registrationComplete,
+                    WaiverRequired = required,
+                    WaiverSigned = signed,
+                    WaiverName = signed ? (signedDocName ?? docName) : docName,
+                    SignedAtUtc = ToUtc(signedRow?.SignatureSignedAt ?? signedRow?.WaiverSignedAt),
+                    SignedByParent = signedRow?.SignedByParent ?? false,
+                    GuardianName = (signedRow?.SignedByParent ?? false) ? signedRow?.ParentName : null,
+                    SignerName = signedRow?.SignerName,
+                    SignerEmail = signedRow?.SignerEmail,
+                    HasSignatureImage = signatureRow is not null,
+                    SignaturePurchaseId = signatureRow?.PurchaseId,
+                    BlockReason = block,
+                });
+            }
+
+            // Anyone who can't walk in yet sorts to the top, then unsigned, then by name, so the
+            // gate reads the problems first.
+            return attendees
+                .OrderByDescending(a => a.BlockReason is not null)
+                .ThenByDescending(a => a.WaiverRequired && !a.WaiverSigned)
+                .ThenBy(a => string.IsNullOrWhiteSpace(a.Name))
+                .ThenBy(a => a.Name)
+                .ToList();
+        }
+
+        private async Task<string?> ResolveWaiverName(Guid? waiverId, Guid tenantId,
+            Services.Repositories.Data.PaymentData.TenantWaiver? active)
+        {
+            if (waiverId is null) return null;
+            if (active is not null && active.Id == waiverId.Value) return WaiverLabel(active);
+            var doc = await _waivers.GetById(waiverId.Value, tenantId);
+            return doc is null ? null : WaiverLabel(doc);
+        }
+
+        private static string WaiverLabel(Services.Repositories.Data.PaymentData.TenantWaiver w) =>
+            string.IsNullOrWhiteSpace(w.Name) ? w.Title : w.Name;
+
+        private static DateTime? ToUtc(DateTime? value) =>
+            value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : null;
+
+        private static int? AgeFrom(DateTime? birthdate)
+        {
+            if (!birthdate.HasValue) return null;
+            var today = DateTime.UtcNow.Date;
+            var age = today.Year - birthdate.Value.Year;
+            if (birthdate.Value.Date > today.AddYears(-age)) age--;
+            return age < 0 ? null : age;
+        }
+
+        // The signature image behind one ticket in the scanned order, on demand. Kept out of the
+        // order payload because a drawn PNG can run to a megabyte of base64 per attendee and the
+        // gate is usually on a phone. Scope: the ticket must be in the scanned token's
+        // event+purchaser set, so a leaked purchase id can't pull another rider's signature.
+        [HttpGet("Order/{token:guid}/Signature/{purchaseId:guid}")]
+        public async Task<IActionResult> OrderSignature(Guid token, Guid purchaseId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+
+            var anchor = await ResolveAnchor(token, tenantId);
+            if (anchor?.EventId is null)
+            {
+                return new ApiResponses().NotFoundResult("No purchase found for this token in your tenant.");
+            }
+
+            var rows = await _tickets.ListWaiverStatusForPurchaser(
+                anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+            if (!rows.Any(r => r.PurchaseId == purchaseId))
+            {
+                return new ApiResponses().NotFoundResult("That ticket isn't part of this order.");
+            }
+
+            var ticket = await _tickets.GetById(purchaseId, tenantId);
+            if (ticket is null) return new ApiResponses().NotFoundResult("Ticket not found.");
+
+            var sig = ticket.WaiverSignatureId.HasValue
+                ? await _waivers.GetSignatureById(ticket.WaiverSignatureId.Value, tenantId)
+                : null;
+            var dataUrl = sig?.SignatureDataUrl ?? ticket.WaiverSignatureDataUrl;
+            if (sig is null && ticket.WaiverSignedAt is null && string.IsNullOrWhiteSpace(dataUrl))
+            {
+                return new ApiResponses().NotFoundResult("No signature on file for this attendee.");
+            }
+
+            var docId = sig?.WaiverId ?? ticket.WaiverId;
+            var doc = docId.HasValue ? await _waivers.GetById(docId.Value, tenantId) : null;
+            var signedByParent = sig?.SignedByParent ?? false;
+
+            return new ApiResponses().OkResult(new webapi.Controllers.API.Data.Redemption.OrderSignatureResponse
+            {
+                PurchaseId = purchaseId,
+                AttendeeName = BuildAttendeeName(ticket.RiderFirstName, ticket.RiderLastName) ?? sig?.SignerName,
+                WaiverName = doc?.Name,
+                WaiverTitle = doc?.Title,
+                SignedAtUtc = ToUtc(sig?.SignedAt ?? ticket.WaiverSignedAt),
+                SignedByParent = signedByParent,
+                GuardianName = signedByParent ? (sig?.ParentName ?? ticket.ParentGuardianName) : null,
+                SignerName = sig?.SignerName,
+                SignerEmail = sig?.SignerEmail,
+                SignatureDataUrl = dataUrl,
+            });
+        }
 
         // Resolves a scanned token to the event + purchaser it belongs to (the gate scope).
         // A token can be a ticket or an add-on; an add-on with no event (counter merch) has

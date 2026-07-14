@@ -37,6 +37,29 @@ namespace Services.Repositories
             gender_at_purchase AS GenderAtPurchase,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
+        // Same columns, aliased for the queries that join the catalog product (purchase alias p).
+        private const string PrefixedPurchaseColumns = @"
+            p.id, p.tenant_id AS TenantId, p.event_id AS EventId, p.product_id AS ProductId,
+            p.purchaser_user_id AS PurchaserUserId,
+            p.purchaser_email AS PurchaserEmail, p.purchaser_name AS PurchaserName,
+            p.waiver_signature_id AS WaiverSignatureId,
+            p.quantity, p.unit_price_cents_frozen AS UnitPriceCentsFrozen,
+            p.amount_cents AS AmountCents, p.service_charge_cents AS ServiceChargeCents,
+            p.stripe_payment_intent_id AS StripePaymentIntentId,
+            p.stripe_connected_account_id AS StripeConnectedAccountId,
+            p.redemption_token AS RedemptionToken,
+            p.status,
+            p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
+            p.cancelled_reason AS CancelledReason, p.cancelled_by_user_id AS CancelledByUserId,
+            p.cancelled_at AS CancelledAt, p.refund_note AS RefundNote,
+            p.payment_method AS PaymentMethod,
+            p.sold_by_user_id AS SoldByUserId,
+            p.variant_id AS VariantId,
+            p.size_at_purchase AS SizeAtPurchase,
+            p.color_at_purchase AS ColorAtPurchase,
+            p.gender_at_purchase AS GenderAtPurchase,
+            p.created_at AS CreatedAt, p.updated_at AS UpdatedAt";
+
         private const string VariantColumns = @"
             id, product_id AS ProductId,
             size, color, gender, sku,
@@ -305,22 +328,38 @@ namespace Services.Repositories
 
         // Gate redemption, event+purchaser scope: a purchaser's add-ons for one event,
         // across orders. Tenant + event scoped; purchaser matched by user id else
-        // case-insensitive email. Cancelled rows excluded.
-        public async Task<List<EventExtraPurchase>> ListByEventForPurchaser(
+        // case-insensitive email. Cancelled rows excluded. Joined to the catalog product so the
+        // gate can name each add-on ("Camping, 2 nights") instead of a bare "Add-on".
+        public async Task<List<EventExtraPurchaseWithProduct>> ListByEventForPurchaser(
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail)
         {
             var sql = $@"
-                SELECT {PurchaseColumns} FROM event_extra_purchase
-                WHERE tenant_id = @tenantId
-                  AND event_id = @eventId
-                  AND status <> 'cancelled'
+                SELECT {PrefixedPurchaseColumns},
+                       prod.name AS ProductName, prod.kind AS ProductKind
+                FROM event_extra_purchase p
+                JOIN event_extra_product prod ON prod.id = p.product_id AND prod.tenant_id = p.tenant_id
+                WHERE p.tenant_id = @tenantId
+                  AND p.event_id = @eventId
+                  AND p.status <> 'cancelled'
                   AND (
-                        (@purchaserUserId IS NOT NULL AND purchaser_user_id = @purchaserUserId)
-                     OR (@purchaserUserId IS NULL AND lower(purchaser_email) = lower(@purchaserEmail))
+                        (@purchaserUserId IS NOT NULL AND p.purchaser_user_id = @purchaserUserId)
+                     OR (@purchaserUserId IS NULL AND lower(p.purchaser_email) = lower(@purchaserEmail))
                       )
-                ORDER BY created_at DESC";
-            return (await _db.Query<EventExtraPurchase>(sql,
+                ORDER BY p.created_at DESC";
+            return (await _db.Query<EventExtraPurchaseWithProduct>(sql,
                 new { eventId, tenantId, purchaserUserId, purchaserEmail })).ToList();
+        }
+
+        public async Task<EventExtraPurchaseWithProduct?> GetPurchaseWithProduct(Guid id, Guid tenantId)
+        {
+            var sql = $@"
+                SELECT {PrefixedPurchaseColumns},
+                       prod.name AS ProductName, prod.kind AS ProductKind
+                FROM event_extra_purchase p
+                JOIN event_extra_product prod ON prod.id = p.product_id AND prod.tenant_id = p.tenant_id
+                WHERE p.id = @id AND p.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<EventExtraPurchaseWithProduct>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
         public async Task<int> SumSold(Guid eventId, Guid productId)

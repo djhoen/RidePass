@@ -543,7 +543,9 @@ async function loadApex() {
     try {
         const [trackResp, eventResp] = await Promise.all([
             discoverService.searchTracks({}),
-            discoverService.searchEvents({ fromUtc: new Date().toISOString() }),
+            // Start of today, not this instant: an event in progress (or one that ended earlier
+            // today) must stay listed until the day after it ends.
+            discoverService.searchEvents({ fromUtc: dayjs().startOf('day').utc().toISOString() }),
         ])
         apexTracks.value = (trackResp.data as any).data
         apexEvents.value = (eventResp.data as any).data.slice(0, APEX_EVENT_LIMIT)

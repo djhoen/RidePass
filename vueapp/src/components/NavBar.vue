@@ -313,7 +313,6 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-bullhorn',
         links: [
             { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage, feature: 'blogEnabled' },
-            { to: '/Admin/Pages',       icon: 'mdi-file-document-outline', title: 'Pages',    perm: Perm.SettingsManage },
             { to: '/Admin/Rewards',     icon: 'mdi-trophy',            title: 'Rewards',     perm: Perm.CatalogManage },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
@@ -331,6 +330,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Settings/General',  icon: 'mdi-tune',          title: 'General',   perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Features', icon: 'mdi-toggle-switch', title: 'Features',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/HomePage', icon: 'mdi-home-edit',     title: 'Home Page', perm: Perm.SettingsManage },
+            { to: '/Admin/Pages',             icon: 'mdi-file-document-outline', title: 'Pages', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage, feature: 'membershipEnabled' },

@@ -30,7 +30,7 @@ namespace Services.Repositories.Data.EventData
         public string? ImageUrl { get; set; }
         // Per-event override for the rider-facing gate-fee section headings.
         // NULL = inherit the tenant setting, which itself falls back to the
-        // platform defaults ("Rider Gate" / "Spectator Gate").
+        // platform defaults ("Riding Pass" / "Spectator Pass").
         public string? RiderGateLabel { get; set; }
         public string? SpectatorGateLabel { get; set; }
         // jsonb array of {time, label} schedule rows, stored as text. '[]' = none.

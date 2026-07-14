@@ -69,9 +69,11 @@ const tz = computed(() => branding.timezone || 'UTC')
 // Carousel = future events only, soonest first, capped by the optional limit. The
 // calendar gets the full set so the month grid is complete.
 const upcoming = computed(() => {
-    const nowIso = dayjs().utc().toISOString()
+    // An event stays in the strip until the day after it ends, so a race running right now is still
+    // shown to someone deciding whether to head out.
+    const floorIso = dayjs().startOf('day').utc().toISOString()
     const list = events.value
-        .filter(e => e.startsAtUtc >= nowIso)
+        .filter(e => (e.endsAtUtc ?? e.startsAtUtc) >= floorIso)
         .sort((a, b) => a.startsAtUtc.localeCompare(b.startsAtUtc))
     return limit ? list.slice(0, limit) : list
 })

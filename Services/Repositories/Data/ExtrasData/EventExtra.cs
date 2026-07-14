@@ -94,4 +94,13 @@ namespace Services.Repositories.Data.ExtrasData
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
+
+    // Purchase joined to its catalog product, so a reader (the gate check-in screen) can name
+    // what was bought instead of showing a bare "Add-on". Product name/kind are read live from
+    // the catalog; the variant attributes stay frozen on the purchase row.
+    public class EventExtraPurchaseWithProduct : EventExtraPurchase
+    {
+        public string ProductName { get; set; } = null!;
+        public string ProductKind { get; set; } = null!;
+    }
 }

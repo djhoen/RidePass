@@ -67,7 +67,7 @@ namespace Services.Notifications
 You're receiving this because you subscribed to event updates from {System.Net.WebUtility.HtmlEncode(tenant.DisplayName)}.
 <a href=""{unsubUrl}"">Unsubscribe</a>.
 </p>";
-                        await _emailer.Send(sub.Email, $"New event from {tenant.DisplayName}: {ev.Title}", html);
+                        await _emailer.Send(sub.Email, $"New event from {tenant.DisplayName}: {ev.Title}", html, null, Services.Email.TenantEmailIdentity.For(tenant));
                     }
                     if (sub.NotifySms && _sms.IsConfiguredFor(tenant) && !string.IsNullOrWhiteSpace(sub.Phone))
                     {

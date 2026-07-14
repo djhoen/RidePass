@@ -1842,7 +1842,7 @@ namespace webapi.Controllers
                 if (!_emailer.IsConfigured)
                     return new ApiResponses().BadRequestResult("Email receipts aren't set up.");
                 var subject = $"{tenant.DisplayName} receipt — Order #{sale.OrderNumber}";
-                if (!await _emailer.Send(dest, subject, BuildReceiptHtml(tenant.DisplayName, sale, lines)))
+                if (!await _emailer.Send(dest, subject, BuildReceiptHtml(tenant.DisplayName, sale, lines), null, Services.Email.TenantEmailIdentity.For(tenant)))
                     return new ApiResponses().BadRequestResult("Could not send the email receipt.");
             }
             return new ApiResponses().OkResult();

@@ -2,27 +2,30 @@
     <v-container style="max-width: 920px">
         <div class="d-flex align-center mb-4 ga-2">
             <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/Admin/Pages">Back</v-btn>
-            <v-spacer></v-spacer>
-            <v-btn variant="tonal" prepend-icon="mdi-eye" @click="showPreview = true">Preview</v-btn>
-            <v-chip v-if="!isNew" size="small" :color="form.status === 'published' ? 'success' : 'grey'" variant="tonal">
+            <v-chip size="small" :color="form.status === 'published' ? 'success' : 'grey'" variant="tonal">
                 {{ form.status === 'published' ? 'Published' : 'Draft' }}
             </v-chip>
+            <v-spacer></v-spacer>
+            <v-btn variant="tonal" prepend-icon="mdi-eye" @click="showPreview = true">Preview</v-btn>
+            <v-btn v-if="form.status !== 'published'" color="success" prepend-icon="mdi-publish"
+                :loading="saving" :disabled="!!titleError" @click="save('published')">Publish</v-btn>
+            <v-btn v-else variant="tonal" prepend-icon="mdi-publish-off"
+                :loading="saving" @click="save('draft')">Unpublish</v-btn>
         </div>
 
         <h1 class="text-h4 mb-6">{{ isNew ? 'New page' : 'Edit page' }}</h1>
 
         <v-card class="mb-6">
             <v-card-text>
-                <v-text-field v-model="form.title" label="Title" :error-messages="titleError ? [titleError] : []"
-                    counter="200" maxlength="200" density="compact"></v-text-field>
+                <v-text-field v-model="form.title" label="Page title" :error-messages="titleError ? [titleError] : []"
+                    counter="200" maxlength="200" density="compact"
+                    hint="The heading shown at the top of the page." persistent-hint></v-text-field>
 
-                <v-text-field v-model="form.slug" label="URL slug" class="mt-4" density="compact"
-                    :placeholder="derivedSlug" persistent-placeholder
-                    :prefix="slugPrefix"
-                    hint="Leave blank to generate it from the title." persistent-hint></v-text-field>
-
-                <v-select v-model="form.status" label="Status" class="mt-4" density="compact"
-                    :items="[{ title: 'Draft (hidden)', value: 'draft' }, { title: 'Published', value: 'published' }]"></v-select>
+                <v-text-field v-model="form.slug" label="URL path" class="mt-4" density="compact"
+                    :prefix="slugPrefix" @update:model-value="slugTouched = true"
+                    :hint="isNew ? 'Fills from the title until you edit it. Set it to anything — it does not have to match the title.'
+                        : 'Independent of the title. Changing it changes the page\'s web address and breaks old links.'"
+                    persistent-hint></v-text-field>
 
                 <v-switch v-model="form.showInNav" class="mt-4" density="compact" color="primary" hide-details
                     label="Show in navigation"></v-switch>
@@ -67,11 +70,18 @@
             </v-card-text>
         </v-card>
 
-        <div class="d-flex ga-3">
-            <v-btn color="primary" size="large" :loading="saving" :disabled="!!titleError" @click="save">
+        <div class="d-flex align-center ga-3">
+            <v-btn color="primary" size="large" :loading="saving" :disabled="!!titleError" @click="save()">
                 {{ isNew ? 'Create page' : 'Save changes' }}
             </v-btn>
+            <v-btn v-if="form.status !== 'published'" color="success" size="large" variant="tonal"
+                prepend-icon="mdi-publish" :loading="saving" :disabled="!!titleError" @click="save('published')">
+                {{ isNew ? 'Create & publish' : 'Publish' }}
+            </v-btn>
             <v-btn variant="text" to="/Admin/Pages">Cancel</v-btn>
+            <span v-if="form.status !== 'published'" class="text-caption text-medium-emphasis">
+                Drafts are hidden from the public until published.
+            </span>
         </div>
 
         <!-- Live preview of the current (unsaved) content, rendered exactly as the public
@@ -113,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PageService } from '@/services/PageService'
 import { branding } from '@/stores/branding'
@@ -161,12 +171,18 @@ const slugPrefix = computed(() => `${branding.subdomain ? branding.subdomain + '
 
 const titleError = computed(() => (form.value.title.trim() ? '' : 'Title is required.'))
 
-// Live preview of the slug that would be generated when the field is left blank.
-const derivedSlug = computed(() => slugify(form.value.title) || 'page')
 function slugify(input: string): string {
     return (input || '').trim().toLowerCase()
         .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
+
+// Title and URL path are independent values. As a convenience the path auto-fills
+// from the title on a NEW page, but only until the admin types in the path field —
+// from then on (and always on an existing page) the title never touches the path.
+const slugTouched = ref(false)
+watch(() => form.value.title, (title) => {
+    if (isNew.value && !slugTouched.value) form.value.slug = slugify(title)
+})
 
 async function uploadInlineImage(file: File): Promise<string> {
     const resp = await pageService.uploadImage(file)
@@ -206,22 +222,26 @@ function requestBody() {
     }
 }
 
-async function save() {
+// Publish/unpublish are just saves with a status override, so hitting Publish
+// also persists any pending edits — no separate "save first" step.
+async function save(statusOverride?: 'draft' | 'published') {
     if (titleError.value) return
+    if (statusOverride) form.value.status = statusOverride
     saving.value = true
     try {
         if (isNew.value) {
             const resp = await pageService.create(requestBody())
             pageId.value = resp.data.data.id
-            flash('Page created.', 'success')
             // Move to the edit URL so a refresh lands back on this page.
             router.replace(`/Admin/Pages/${pageId.value}`)
             await loadForEdit()
         } else {
             await pageService.update(pageId.value!, requestBody())
-            flash('Saved.', 'success')
             await loadForEdit()
         }
+        flash(statusOverride === 'published' ? `Published — live at /${form.value.slug}.`
+            : statusOverride === 'draft' ? 'Unpublished — back to draft.'
+            : 'Saved.', 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Save failed.', 'error')
     } finally {

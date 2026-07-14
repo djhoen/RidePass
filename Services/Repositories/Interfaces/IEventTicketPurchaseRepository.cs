@@ -13,6 +13,16 @@ namespace Services.Repositories.Interfaces
         // event, across orders. Matches by user id when present, else by lower(email).
         Task<List<EventTicketPurchaseWithContext>> ListByEventForPurchaser(
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
+        // Gate lookup by name/email for the rider with no QR. Restricted to events whose check-in
+        // window overlaps today (passed as a UTC interval) and to paid/redeemed rows, so it can't be
+        // used to browse the tenant's customer list. Matches buyer name, buyer email, or rider name.
+        Task<List<GateSearchRow>> SearchForGate(
+            Guid tenantId, string query, DateTime todayStartUtc, DateTime todayEndUtc, int limit);
+        // Gate check-in waiver panel (event+purchaser scope): the same ticket set as
+        // ListByEventForPurchaser, denormalized with tier audience + the linked signature row
+        // so the gate can show, per attendee, who signed which waiver and who still owes one.
+        Task<List<OrderAttendeeWaiverRow>> ListWaiverStatusForPurchaser(
+            Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
         // Operator-app check-in roster: every paid/redeemed attendee for one event with the
         // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
         Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId);

@@ -49,7 +49,7 @@ namespace webapi.Controllers.API.Data.Event
 
         // Per-event override for the rider-facing gate-fee section headings.
         // Blank/null = inherit the tenant setting ("Checkout headings"), which
-        // falls back to "Rider Gate" / "Spectator Gate".
+        // falls back to "Riding Pass" / "Spectator Pass".
         [MaxLength(40)]
         public string? RiderGateLabel { get; set; }
 

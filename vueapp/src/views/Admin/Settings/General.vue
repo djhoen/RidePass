@@ -147,11 +147,11 @@
                 <v-row>
                     <v-col cols="12" md="6">
                         <v-text-field v-model="form.riderGateLabel" label="Rider gate section" density="compact"
-                            placeholder="Rider Gate" maxlength="40" hint="e.g. 'Passes'. Leave blank for the default." persistent-hint></v-text-field>
+                            placeholder="Riding Pass" maxlength="40" hint="e.g. 'Passes'. Leave blank for the default." persistent-hint></v-text-field>
                     </v-col>
                     <v-col cols="12" md="6">
                         <v-text-field v-model="form.spectatorGateLabel" label="Spectator gate section" density="compact"
-                            placeholder="Spectator Gate" maxlength="40" hint="Leave blank for the default." persistent-hint></v-text-field>
+                            placeholder="Spectator Pass" maxlength="40" hint="Leave blank for the default." persistent-hint></v-text-field>
                     </v-col>
                 </v-row>
             </v-card-text>
