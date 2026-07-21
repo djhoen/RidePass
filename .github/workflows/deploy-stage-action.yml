@@ -42,6 +42,22 @@ jobs:
           npm install --no-fund --no-audit
           npm run build -- --mode staging
 
+      # Build the .NET projects HERE too, for the same reason as the SPA: the 1-vCPU/1GB staging
+      # droplet OOMs compiling in Release. Framework-dependent + portable output (no RID) runs on
+      # the droplet's installed ASP.NET Core 10 runtime via `dotnet X.dll`; the droplet never needs
+      # the SDK and never spikes. The compiled publish dirs are shipped below.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish .NET on the runner
+        run: |
+          for proj in webapi/webapi.csproj TaskRunner/TaskRunner.csproj RidePass.Migrator/RidePass.Migrator.csproj; do
+            out="$(dirname "$proj")/publish"
+            dotnet publish "$proj" -c Release -o "$out" --nologo -v minimal
+          done
+
       - name: Set up SSH
         env:
           STAGE_DEPLOY_SSH_KEY: ${{ secrets.STAGE_DEPLOY_SSH_KEY }}
@@ -99,17 +115,18 @@ jobs:
             npm install --omit=dev --no-fund --no-audit
           '
 
-      - name: Publish .NET projects
+      - name: Ship .NET publish output to droplet
         env:
           STAGE_DEPLOY_HOST: ${{ secrets.STAGE_DEPLOY_HOST }}
         run: |
+          # Ship the runner-built publish dirs. tar-over-ssh extracts by MERGING into the existing
+          # dirs, so the uploaded images preserved under webapi/publish/wwwroot (backed up + restored
+          # by the "Transfer source" step) survive -- exactly what the old on-droplet publish did.
+          tar -czf - webapi/publish TaskRunner/publish RidePass.Migrator/publish | \
           ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
             set -e
             cd /var/www/staging
-            for proj in webapi/webapi.csproj TaskRunner/TaskRunner.csproj RidePass.Migrator/RidePass.Migrator.csproj; do
-              out="$(dirname $proj)/publish"
-              dotnet publish "$proj" -c Release -o "$out" --nologo -v minimal | tail -2
-            done
+            tar -xzf -
           '
 
       - name: Run database migrations
