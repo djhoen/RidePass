@@ -119,15 +119,24 @@ jobs:
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
             set -e
             cd /var/www/staging
-            # Load env WITHOUT sourcing (source executes the file, so a value could run as a
-            # command). Only KEY=value lines are exported; blanks, comments, and anything not
-            # starting with a valid identifier are skipped. Quoting the whole line keeps values
-            # with spaces/dashes/special chars intact and never executes them.
+            # Load env WITHOUT sourcing it (source executes the file, so a value could run as a
+            # command). Export only KEY=value lines; strip a surrounding pair of double quotes and
+            # a trailing CR so values with spaces/semicolons (e.g. the Npgsql connection string)
+            # load intact -- matching what source used to do, but without ever executing a value.
+            cr=$(printf "\r")
             while IFS= read -r line || [ -n "$line" ]; do
+              line=${line%"$cr"}
               case "$line" in
                 ""|\#*) continue ;;
-                [A-Za-z_]*=*) export "$line" ;;
+                [A-Za-z_]*=*) : ;;
+                *) continue ;;
               esac
+              key=${line%%=*}
+              val=${line#*=}
+              case "$val" in
+                \"*\") val=${val#\"}; val=${val%\"} ;;
+              esac
+              export "$key=$val"
             done < /etc/ridepass/staging.env
             dotnet RidePass.Migrator/publish/RidePass.Migrator.dll
           '
@@ -139,15 +148,24 @@ jobs:
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$STAGE_DEPLOY_HOST" '
             set -e
             cd /var/www/staging
-            # Load env WITHOUT sourcing (source executes the file, so a value could run as a
-            # command). Only KEY=value lines are exported; blanks, comments, and anything not
-            # starting with a valid identifier are skipped. Quoting the whole line keeps values
-            # with spaces/dashes/special chars intact and never executes them.
+            # Load env WITHOUT sourcing it (source executes the file, so a value could run as a
+            # command). Export only KEY=value lines; strip a surrounding pair of double quotes and
+            # a trailing CR so values with spaces/semicolons (e.g. the Npgsql connection string)
+            # load intact -- matching what source used to do, but without ever executing a value.
+            cr=$(printf "\r")
             while IFS= read -r line || [ -n "$line" ]; do
+              line=${line%"$cr"}
               case "$line" in
                 ""|\#*) continue ;;
-                [A-Za-z_]*=*) export "$line" ;;
+                [A-Za-z_]*=*) : ;;
+                *) continue ;;
               esac
+              key=${line%%=*}
+              val=${line#*=}
+              case "$val" in
+                \"*\") val=${val#\"}; val=${val%\"} ;;
+              esac
+              export "$key=$val"
             done < /etc/ridepass/staging.env
             pm2 startOrRestart ecosystem.stage.config.js --update-env
             pm2 save --silent
