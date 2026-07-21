@@ -9,6 +9,9 @@ namespace webapi.Controllers.API.Data.Concession
         public int TotalCents { get; set; }
         // Total discount/comp applied (cents), for the POS to show on the confirmation.
         public int DiscountCents { get; set; }
+        // Store credit applied as a tender and the remainder actually collected.
+        public int CreditAppliedCents { get; set; }
+        public int DueCents { get; set; }
         public string Status { get; set; } = "pending";   // 'paid' immediately for cash
         public int? OrderNumber { get; set; }              // assigned now for cash; after payment for card
     }

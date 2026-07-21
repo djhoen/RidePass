@@ -20,7 +20,7 @@ namespace webapi.Controllers
     /// <summary>
     /// Concessions / store: a standalone in-person storefront (food, drink, swag) the
     /// cashier rings up via the mobile tap-to-pay app. Admin endpoints (CatalogManage)
-    /// manage the catalog; the SalesCounter endpoints back the cashier app: list items and
+    /// manage the catalog; the ConcessionsCounter endpoints back the cashier app: list items and
     /// take a card-present sale to an anonymous buyer. Card-present payment reuses the same
     /// Stripe Terminal flow as the counter, and the existing payment webhook finalizes the sale.
     /// </summary>
@@ -45,6 +45,8 @@ namespace webapi.Controllers
         private readonly INotificationService _notifications;
         private readonly IEventRepository _events;
         private readonly webapi.Security.IManagerPinService _managerPin;
+        private readonly ITenantCreditRepository _credit;
+        private readonly Services.Rewards.IRewardEngine _rewardEngine;
         private readonly ITenantContext _tenantContext;
 
         public ConcessionController(
@@ -65,8 +67,12 @@ namespace webapi.Controllers
             INotificationService notifications,
             IEventRepository events,
             webapi.Security.IManagerPinService managerPin,
+            ITenantCreditRepository credit,
+            Services.Rewards.IRewardEngine rewardEngine,
             ITenantContext tenantContext)
         {
+            _credit = credit;
+            _rewardEngine = rewardEngine;
             _concessions = concessions;
             _payments = payments;
             _imageStorage = imageStorage;
@@ -698,7 +704,7 @@ namespace webapi.Controllers
         // The POS confirms a PIN authorizes a gated action and shows whose approval it is. A bad PIN is a
         // 400 with a generic message so the digits never reveal which (if any) manager they hit; repeated
         // wrong guesses lock the entering user out (rate-limited + DB lockout).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPost("VerifyManagerPin")]
         public async Task<IActionResult> VerifyManagerPin([FromBody] ConcessionVerifyManagerPinRequest req)
@@ -719,7 +725,7 @@ namespace webapi.Controllers
         // ── Member discount lookup ─────────────────────────────────────────────────────
         // Cashier enters an email/phone; we report whether the customer holds an active Season Pass and/or
         // a linked LoamPass account, plus the discount each enabled perk would apply.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("MemberLookup")]
         public async Task<IActionResult> MemberLookup([FromQuery] string query)
         {
@@ -1269,7 +1275,7 @@ namespace webapi.Controllers
         }
 
         // Manual online-ordering pause/resume from the cook or cashier screen.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Ordering/Pause")]
         public async Task<IActionResult> SetOnlinePaused([FromBody] ConcessionPauseRequest req)
         {
@@ -1621,9 +1627,9 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
-        // ── Cashier app (SalesCounter) ──────────────────────────────────────────
+        // ── Cashier app (ConcessionsCounter) ────────────────────────────────────
         // Active items + variants for the cashier to ring up.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Items")]
         public async Task<IActionResult> Items()
         {
@@ -1634,9 +1640,9 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await Hydrate(products, activeOnly: true));
         }
 
-        // Quick 86 / un-86 from the POS or cook screen (SalesCounter, not admin). Marks the item sold out
+        // Quick 86 / un-86 from the POS or cook screen (ConcessionsCounter, not admin). Marks the item sold out
         // for today only; it becomes available again automatically tomorrow.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Products/{id:guid}/SoldOut")]
         public async Task<IActionResult> SetProductSoldOut(Guid id, [FromBody] ConcessionSoldOutRequest req)
         {
@@ -1648,8 +1654,8 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { soldOut = req.SoldOut });
         }
 
-        // Active stations for the cashier + cook screens (filter tabs). SalesCounter, not admin.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        // Active stations for the cashier + cook screens (filter tabs). ConcessionsCounter, not admin.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Stations/Active")]
         public async Task<IActionResult> ListActiveStations()
         {
@@ -1662,7 +1668,7 @@ namespace webapi.Controllers
         // a client amount), applies modifiers + tip, and either takes cash (paid immediately, order
         // number now) or creates a card-present PaymentIntent the cashier confirms on the reader (the
         // payment webhook then flips it paid, assigns the order number, and writes the ledger entry).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale")]
         public async Task<IActionResult> CreateSale([FromBody] ConcessionSaleRequest req, CancellationToken ct)
         {
@@ -1697,14 +1703,41 @@ namespace webapi.Controllers
             var total = subtotal - disc.DiscountCents + (pricesIncludeTax ? 0 : taxCents) + tipCents;
             var customerName = disc.PurchaserName ?? Blank(req.CustomerName);   // member name wins over a typed one
 
-            // ── Paid immediately at the counter: cash, OR a fully-comped $0 order (no card to run). Order
-            //    number now, ledger as 'cash' only when money actually changed hands. ──────────────────
-            if (paymentMethod == "cash" || total <= 0)
+            // ── Store credit tender (Script0194): verify the account and cap at balance + total;
+            // the money path (cash or card-present PI) collects only the remainder. The sale id is
+            // pre-generated so the redeem entry can reference it BEFORE the row exists — a redeem
+            // failure then aborts cleanly with nothing created.
+            Services.Repositories.Data.CreditData.TenantCreditAccount? creditAccount = null;
+            var creditApplied = 0;
+            if (req.CreditAccountId is not null && req.CreditCents > 0 && total > 0)
+            {
+                creditAccount = await _credit.GetAccount(req.CreditAccountId.Value, tenantId);
+                if (creditAccount is null)
+                    return new ApiResponses().BadRequestResult("That store credit account no longer exists. Look it up again.");
+                creditApplied = Math.Min(Math.Min(req.CreditCents, creditAccount.BalanceCents), Math.Max(0, total));
+            }
+            var due = total - creditApplied;
+            var saleId = Guid.NewGuid();
+
+            async Task<bool> RedeemCredit()
+            {
+                if (creditApplied <= 0) return true;
+                return await _credit.TryAdjust(creditAccount!.Id, tenantId, -creditApplied, "redeem",
+                    "concession_sale", saleId, null, soldBy);
+            }
+
+            // ── Paid immediately at the counter: cash, fully-comped $0, or credit covering it all.
+            //    Order number now; ledger as 'cash' only when money actually changed hands. ─────────
+            if (paymentMethod == "cash" || due <= 0)
             {
                 if (subtotal <= 0) return new ApiResponses().BadRequestResult("Sale total must be greater than zero.");
+                if (!await RedeemCredit())
+                    return new ApiResponses().BadRequestResult(
+                        "The store credit balance changed while ringing up. Look the customer up again.");
                 var orderNumber = await _concessions.NextOrderNumber(tenantId);
                 var cashSale = new ConcessionSale
                 {
+                    Id = saleId,
                     TenantId = tenantId,
                     Status = "paid",
                     FulfillmentStatus = "active",
@@ -1721,6 +1754,8 @@ namespace webapi.Controllers
                     AuthorizedByUserId = disc.AuthorizedByUserId,
                     AuthorizedByName = disc.AuthorizedByName,
                     TotalCents = Math.Max(0, total),
+                    CreditAppliedCents = creditApplied,
+                    CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                     PaymentMethod = "cash",
                     SoldByUserId = soldBy,
                     PurchaserUserId = disc.PurchaserUserId,
@@ -1728,23 +1763,42 @@ namespace webapi.Controllers
                     PurchaserName = customerName,
                     PaidAt = DateTime.UtcNow,
                 };
-                cashSale.Id = await _concessions.CreateSale(cashSale);
-                await _concessions.CreateSaleLines(cashSale.Id, lines);
-                if (cashSale.TotalCents > 0) await WriteCashLedger(cashSale);   // skip a $0 (fully comped) ledger entry
+                try
+                {
+                    cashSale.Id = await _concessions.CreateSale(cashSale);
+                    await _concessions.CreateSaleLines(cashSale.Id, lines);
+                }
+                catch
+                {
+                    // The sale never landed; hand the credit straight back.
+                    await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "sale could not be created");
+                    throw;
+                }
+                if (cashSale.TotalCents - creditApplied > 0) await WriteCashLedger(cashSale);   // skip when no money changed hands
                 try { await _concessions.DepleteInventoryForSale(cashSale.Id, tenantId); } catch { /* inventory is best-effort */ }
                 await NotifyLowStock(tenantId);
+                try
+                {
+                    await _rewardEngine.AwardCreditBack(tenantId, cashSale.PurchaserUserId, cashSale.PurchaserEmail,
+                        cashSale.PurchaserName, "concession", cashSale.Id, cashSale.TotalCents - creditApplied);
+                }
+                catch { /* loyalty is best-effort; the sale already settled */ }
                 return new ApiResponses().OkResult(new ConcessionSaleResponse
                 {
                     SaleId = cashSale.Id,
                     TotalCents = cashSale.TotalCents,
                     DiscountCents = disc.DiscountCents,
+                    CreditAppliedCents = creditApplied,
+                    DueCents = Math.Max(0, due),
                     Status = "paid",
                     OrderNumber = orderNumber,
                 });
             }
 
             // ── Card-present (WisePOS E / Terminal). Order number assigned by the finalizer on paid. ─
-            if (total < 50) return new ApiResponses().BadRequestResult("Card sale total must be at least 50 cents.");
+            if (due < 50) return new ApiResponses().BadRequestResult(
+                creditApplied > 0 ? "Less than 50 cents is due after credit. Take cash for the remainder."
+                                  : "Card sale total must be at least 50 cents.");
 
             // Direct mode: the Location + card-present charge run on the tenant's connected account.
             // Concessions are all-in priced (no rider service charge), so there is no application fee.
@@ -1757,8 +1811,13 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(
                     "Cannot take card-present payments until the track's address is filled in (Settings -> General).");
 
+            if (!await RedeemCredit())
+                return new ApiResponses().BadRequestResult(
+                    "The store credit balance changed while ringing up. Look the customer up again.");
+
             var sale = new ConcessionSale
             {
+                Id = saleId,
                 TenantId = tenantId,
                 Status = "pending",
                 FulfillmentStatus = "active",
@@ -1774,6 +1833,8 @@ namespace webapi.Controllers
                 AuthorizedByUserId = disc.AuthorizedByUserId,
                 AuthorizedByName = disc.AuthorizedByName,
                 TotalCents = total,
+                CreditAppliedCents = creditApplied,
+                CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                 PaymentMethod = string.IsNullOrEmpty(connectedAccountId) ? "stripe" : "stripe_direct",
                 StripeConnectedAccountId = connectedAccountId,
                 SoldByUserId = soldBy,
@@ -1781,8 +1842,16 @@ namespace webapi.Controllers
                 PurchaserEmail = disc.PurchaserEmail,
                 PurchaserName = customerName,
             };
-            sale.Id = await _concessions.CreateSale(sale);
-            await _concessions.CreateSaleLines(sale.Id, lines);
+            try
+            {
+                sale.Id = await _concessions.CreateSale(sale);
+                await _concessions.CreateSaleLines(sale.Id, lines);
+            }
+            catch
+            {
+                await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "sale could not be created");
+                throw;
+            }
 
             var metadata = new Dictionary<string, string>
             {
@@ -1793,12 +1862,13 @@ namespace webapi.Controllers
             PaymentIntentCreated intent;
             try
             {
-                intent = await _payments.CreateCardPresentPaymentIntentAsync(total, "usd", locationId, metadata, null,
+                intent = await _payments.CreateCardPresentPaymentIntentAsync(due, "usd", locationId, metadata, null,
                     connectedAccountId: connectedAccountId, ct: ct);
             }
             catch (InvalidOperationException ex)
             {
                 await _concessions.MarkSaleFailed(sale.Id);
+                await _credit.ReverseRedeem(tenantId, "concession_sale", sale.Id, "payment could not start");
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
             await _concessions.SetSalePaymentIntentId(sale.Id, intent.IntentId);
@@ -1810,6 +1880,8 @@ namespace webapi.Controllers
                 PaymentIntentId = intent.IntentId,
                 TotalCents = total,
                 DiscountCents = disc.DiscountCents,
+                CreditAppliedCents = creditApplied,
+                DueCents = due,
                 Status = "pending",
             });
         }
@@ -1817,7 +1889,7 @@ namespace webapi.Controllers
         // Deliver a receipt for a sale to the customer's phone (text) or email. The customer picks the
         // method + enters the destination on the POS confirmation screen; print is handled client-side
         // via the ePOS printer, so only sms/email come through here.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale/{id:guid}/Receipt")]
         public async Task<IActionResult> SendReceipt(Guid id, [FromBody] ConcessionReceiptRequest req)
         {
@@ -1903,7 +1975,7 @@ namespace webapi.Controllers
         // ── Refund / void ───────────────────────────────────────────────────────
         // Reverses a paid sale: card via Stripe (on the connected account for direct sales), cash as
         // a recorded reversal. Writes a negative ledger entry so balances stay correct.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPost("Sale/{id:guid}/Refund")]
         public async Task<IActionResult> RefundSale(Guid id, [FromBody] ConcessionRefundRequest req, CancellationToken ct)
@@ -1926,7 +1998,9 @@ namespace webapi.Controllers
                 var isDirect = sale.PaymentMethod == "stripe_direct";
                 try
                 {
-                    await _payments.RefundAsync(sale.StripePaymentIntentId!, sale.TotalCents,
+                    // The PI only charged the money portion; any store credit goes back to its
+                    // account below.
+                    await _payments.RefundAsync(sale.StripePaymentIntentId!, sale.TotalCents - sale.CreditAppliedCents,
                         idempotencyKey: $"refund-concession-{sale.Id}",
                         connectedAccountId: isDirect ? sale.StripeConnectedAccountId : null,
                         refundApplicationFee: isDirect, ct: ct);
@@ -1940,12 +2014,14 @@ namespace webapi.Controllers
 
             await _concessions.MarkSaleRefunded(sale.Id, _tenantContext.TenantId);
             await _concessions.MarkSaleCompleted(sale.Id, _tenantContext.TenantId);
+            if (sale.CreditAppliedCents > 0)
+                await _credit.ReverseRedeem(_tenantContext.TenantId, "concession_sale", sale.Id, "sale refunded");
             await WriteRefundLedger(sale, actingUserId, pinResult.AuthorizedName);
             return new ApiResponses().OkResult();
         }
 
         // ── Kitchen / cook screen ─────────────────────────────────────────────────
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Kitchen")]
         public async Task<IActionResult> Kitchen([FromQuery] Guid? stationId)
         {
@@ -2021,7 +2097,7 @@ namespace webapi.Controllers
 
         // Advance one line's prep state (queued -> in_progress -> ready); recompute the order's
         // overall fulfillment so it flips to 'ready' once every line is ready.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Kitchen/Line/{lineId:guid}/{prepStatus}")]
         public async Task<IActionResult> AdvanceLine(Guid lineId, string prepStatus)
         {
@@ -2062,7 +2138,7 @@ namespace webapi.Controllers
         }
 
         // Mark an order picked up (drops it off the cook screen + open-orders list).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale/{id:guid}/Complete")]
         public async Task<IActionResult> CompleteSale(Guid id)
         {
@@ -2072,7 +2148,7 @@ namespace webapi.Controllers
         }
 
         // Recall: bring a just-completed order back onto the cook screen (mistake recovery).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale/{id:guid}/Recall")]
         public async Task<IActionResult> RecallSale(Guid id)
         {
@@ -2082,7 +2158,7 @@ namespace webapi.Controllers
         }
 
         // Recently completed orders for the recall picker.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Kitchen/Completed")]
         public async Task<IActionResult> RecentlyCompleted()
         {
@@ -2098,7 +2174,7 @@ namespace webapi.Controllers
 
         // ── Order history (cashiers + cooks) ─────────────────────────────────────────
         // Searchable list of real orders (paid/refunded), newest first. q matches order number / name / email.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Orders")]
         public async Task<IActionResult> ListOrders([FromQuery] string? q, [FromQuery] string? from, [FromQuery] string? to)
         {
@@ -2115,7 +2191,7 @@ namespace webapi.Controllers
         }
 
         // One order with its line items (for the history detail view).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Orders/{id:guid}")]
         public async Task<IActionResult> GetOrder(Guid id)
         {
@@ -2187,7 +2263,7 @@ namespace webapi.Controllers
         };
 
         // Toggle the rush/priority flag on an order (cook screen sorts rush first + flags it).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale/{id:guid}/Rush")]
         public async Task<IActionResult> SetRush(Guid id, [FromBody] ConcessionRushRequest req)
         {
@@ -2198,7 +2274,7 @@ namespace webapi.Controllers
 
         // Sale status, polled by the POS after a card-present payment to pick up the order number the
         // webhook assigns on success (cash sales already have theirs).
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpGet("Sale/{id:guid}")]
         public async Task<IActionResult> GetSaleStatus(Guid id)
         {
@@ -2217,7 +2293,7 @@ namespace webapi.Controllers
         // webhook (which can lag, or never reach a local/dev box). Verifies the PaymentIntent actually
         // succeeded at Stripe first, then runs the shared finalizer (idempotent with the webhook), so the
         // order number is assigned immediately. Returns the order number for the POS confirmation screen.
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Sale/{id:guid}/Finalize")]
         public async Task<IActionResult> FinalizeCardSale(Guid id, CancellationToken ct)
         {
@@ -2289,8 +2365,30 @@ namespace webapi.Controllers
                     "This track is set to charge on its own Stripe account but hasn't connected one yet.");
             var connectedAccountId = DirectConnectedAccountId();
 
+            // ── Store credit: the signed-in rider burns their own balance (server-resolved by
+            // user id, capped at the total). Same pre-generated-id/redeem-first shape as the POS.
+            Services.Repositories.Data.CreditData.TenantCreditAccount? creditAccount = null;
+            var creditApplied = 0;
+            if (req.CreditCents > 0)
+            {
+                creditAccount = await _credit.GetAccountForUser(tenantId, userId);
+                if (creditAccount is not null && creditAccount.BalanceCents > 0)
+                    creditApplied = Math.Min(Math.Min(req.CreditCents, creditAccount.BalanceCents), total);
+            }
+            var due = total - creditApplied;
+            if (due > 0 && due < 50)
+                return new ApiResponses().BadRequestResult(
+                    "Less than 50 cents would be left to charge after credit. Adjust the order or keep the credit for next time.");
+            var saleId = Guid.NewGuid();
+            if (creditApplied > 0 &&
+                !await _credit.TryAdjust(creditAccount!.Id, tenantId, -creditApplied, "redeem", "concession_sale", saleId, null, userId))
+            {
+                return new ApiResponses().BadRequestResult("Your credit balance just changed. Reload and try again.");
+            }
+
             var sale = new ConcessionSale
             {
+                Id = saleId,
                 TenantId = tenantId,
                 Status = "pending",
                 FulfillmentStatus = "active",
@@ -2299,6 +2397,8 @@ namespace webapi.Controllers
                 TaxCents = taxCents,
                 PricesIncludeTax = pricesIncludeTax,
                 TotalCents = total,
+                CreditAppliedCents = creditApplied,
+                CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                 PaymentMethod = string.IsNullOrEmpty(connectedAccountId) ? "stripe" : "stripe_direct",
                 StripeConnectedAccountId = connectedAccountId,
                 OrderChannel = "online",
@@ -2306,8 +2406,36 @@ namespace webapi.Controllers
                 PurchaserEmail = user.Email,
                 PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
             };
-            sale.Id = await _concessions.CreateSale(sale);
-            await _concessions.CreateSaleLines(sale.Id, lines);
+            try
+            {
+                sale.Id = await _concessions.CreateSale(sale);
+                await _concessions.CreateSaleLines(sale.Id, lines);
+            }
+            catch
+            {
+                await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "order could not be created");
+                throw;
+            }
+
+            // Fully covered by credit: nothing to charge; settle it straight onto the cook screen
+            // (no ledger entry: no money moved, and the credit's value was booked when funded).
+            if (due == 0)
+            {
+                await _concessions.MarkSalePaid(sale.Id);
+                var orderNumber = await _concessions.NextOrderNumber(tenantId);
+                await _concessions.SetOrderNumber(sale.Id, orderNumber);
+                try { await _concessions.DepleteInventoryForSale(sale.Id, tenantId); } catch { /* inventory is best-effort */ }
+                await NotifyLowStock(tenantId);
+                return new ApiResponses().OkResult(new ConcessionSaleResponse
+                {
+                    SaleId = sale.Id,
+                    TotalCents = total,
+                    CreditAppliedCents = creditApplied,
+                    DueCents = 0,
+                    Status = "paid",
+                    OrderNumber = orderNumber,
+                });
+            }
 
             var metadata = new Dictionary<string, string>
             {
@@ -2318,12 +2446,13 @@ namespace webapi.Controllers
             PaymentIntentCreated intent;
             try
             {
-                intent = await _payments.CreatePaymentIntentAsync(total, "usd", metadata, user.Email,
+                intent = await _payments.CreatePaymentIntentAsync(due, "usd", metadata, user.Email,
                     connectedAccountId: connectedAccountId, ct: ct);
             }
             catch (InvalidOperationException ex)
             {
                 await _concessions.MarkSaleFailed(sale.Id);
+                await _credit.ReverseRedeem(tenantId, "concession_sale", sale.Id, "payment could not start");
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
             await _concessions.SetSalePaymentIntentId(sale.Id, intent.IntentId);
@@ -2334,6 +2463,8 @@ namespace webapi.Controllers
                 ClientSecret = intent.ClientSecret,
                 PaymentIntentId = intent.IntentId,
                 TotalCents = total,
+                CreditAppliedCents = creditApplied,
+                DueCents = due,
                 Status = "pending",
             });
         }
@@ -2929,7 +3060,10 @@ namespace webapi.Controllers
         {
             try
             {
-                var calc = await _feeCalculator.Calculate(sale.TenantId, sale.TotalCents, 0, 0, DateTime.UtcNow);
+                // Store credit never moves money (its value was booked when funded), so the entry
+                // records only the cash the drawer actually took.
+                var collected = sale.TotalCents - sale.CreditAppliedCents;
+                var calc = await _feeCalculator.Calculate(sale.TenantId, collected, 0, 0, DateTime.UtcNow);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = sale.TenantId,
@@ -2937,7 +3071,7 @@ namespace webapi.Controllers
                     SourceKind = "concession",
                     SourceId = sale.Id,
                     OccurredAtUtc = DateTime.UtcNow,
-                    GrossCents = sale.TotalCents,
+                    GrossCents = collected,
                     StripeFeeCents = 0,
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = -calc.RidepassCutCents,

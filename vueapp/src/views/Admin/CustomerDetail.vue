@@ -170,6 +170,15 @@
                     </v-window-item>
                 </v-window>
             </v-card>
+
+            <!-- Bike shop footprint (sales, rentals, service, credit). Hidden when the tenant
+                 doesn't run the shop. -->
+            <v-card v-if="branding.bikeShopEnabled" class="mt-4">
+                <v-card-title>Bike Shop</v-card-title>
+                <v-card-text>
+                    <ShopHistoryPanel :user-id="customerId" />
+                </v-card-text>
+            </v-card>
         </template>
 
         <!-- Signature image preview -->
@@ -197,12 +206,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { CustomerService, type CustomerDetailDto, type CustomerWaiverDto } from '@/services/CustomerService'
+import ShopHistoryPanel from '@/components/ShopHistoryPanel.vue'
 import { branding } from '@/stores/branding'
 
 const route = useRoute()
 const router = useRouter()
 const service = new CustomerService()
 
+const customerId = route.params.userId as string
 const detail = ref<CustomerDetailDto | null>(null)
 const loading = ref(true)
 const loadError = ref<string | null>(null)
@@ -217,7 +228,7 @@ const totalPurchases = computed(() => detail.value?.totalPurchases ?? 0)
 const totalSpent = computed(() => detail.value?.totalSpentCents ?? 0)
 
 onMounted(async () => {
-    const userId = route.params.userId as string
+    const userId = customerId
     try {
         const r = await service.getDetail(userId)
         detail.value = (r.data as any).data

@@ -77,6 +77,8 @@ namespace Services.Coupons
             "pass" => "passes",
             "event_ticket" => "event tickets",
             "season_pass" => "season passes",
+            "rental" => "rentals",
+            "shop" => "the bike shop",
             _ => "this purchase",
         };
     }

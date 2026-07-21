@@ -51,5 +51,24 @@ namespace webapi.Controllers.API.Data.EventTicketTier
         [RegularExpression("^(all|pass|event_ticket|season_pass)$")]
         public string? BundledCouponScope { get; set; }
         [Range(1, 3650)] public int? BundledCouponExpiresInDays { get; set; }
+
+        // ── Training group (docs/lessons.md) ─────────────────────────────────────────
+        // A coached group is a tier with a coach attached. All optional; an ordinary tier
+        // leaves them null and behaves exactly as before.
+        public Guid? InstructorId { get; set; }
+        // Ability + equipment bands. Free text on purpose: MX segments by skill plus
+        // displacement, MTB by trail-difficulty ability zone. The UI supplies a picklist.
+        [MaxLength(60)] public string? SkillLevel { get; set; }
+        [MaxLength(60)] public string? EquipmentLabel { get; set; }
+        // The group's own window inside the event. Both null = inherit the event's window.
+        public DateTime? StartsAt { get; set; }
+        public DateTime? EndsAt { get; set; }
+
+        // ── Party pricing ("up to N riders, one price") ──────────────────────────────
+        // Defaults are ordinary per-person pricing. Each rider still gets their own ticket;
+        // only the price varies by position (Services.Pricing.PartyPricing).
+        [Range(1, 50)] public int PartySizeIncluded { get; set; } = 1;
+        [Range(0, 1_000_000)] public int? PartyPriceCents { get; set; }
+        [Range(1, 50)] public int? PartySizeMax { get; set; }
     }
 }

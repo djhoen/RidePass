@@ -96,14 +96,47 @@
                         label="Total credits" density="compact" class="mt-4"></v-text-field>
 
                     <v-divider class="my-3"></v-divider>
-                    <div class="text-subtitle-2 mb-1">Valid for event types</div>
+                    <div class="text-subtitle-2 mb-1">What this pass includes</div>
                     <p class="text-caption text-medium-emphasis mb-2">
-                        Pick the event types this pass can be used at.
+                        Tick an event type to include it, then choose whether holders get in free or
+                        at a discount. This is what riders see on the Season Passes page, and it's
+                        applied automatically at checkout.
                     </p>
-                    <div v-for="t in eventTypes" :key="t.id" class="d-flex align-center ga-2 mb-1">
-                        <v-checkbox :model-value="!!perkFor(t.id)" hide-details density="compact"
-                            :label="t.name" @update:model-value="togglePerk(t.id, $event)"></v-checkbox>
+                    <div v-for="t in eventTypes" :key="t.id" class="d-flex align-center ga-3 mb-1">
+                        <v-checkbox :model-value="!!benefitFor(t.id)" hide-details density="compact"
+                            :label="t.name" class="flex-grow-1"
+                            @update:model-value="toggleEventBenefit(t.id, $event)"></v-checkbox>
+                        <template v-if="benefitFor(t.id)">
+                            <v-select :model-value="benefitFor(t.id)!.discountValue === 10000 ? 'free' : 'discount'"
+                                :items="[{ title: 'Included free', value: 'free' }, { title: 'Discount', value: 'discount' }]"
+                                density="compact" hide-details variant="outlined" style="max-width: 150px"
+                                @update:model-value="setEventBenefitMode(t.id, $event)"></v-select>
+                            <v-text-field v-if="benefitFor(t.id)!.discountValue !== 10000"
+                                :model-value="benefitFor(t.id)!.discountValue / 100"
+                                type="number" min="1" max="99" suffix="% off"
+                                density="compact" hide-details variant="outlined" style="max-width: 120px"
+                                @update:model-value="setEventBenefitPercent(t.id, $event)"></v-text-field>
+                        </template>
                     </div>
+                    <p v-if="eventTypes.length === 0" class="text-caption text-medium-emphasis">
+                        No event types yet — add them under Settings before setting up pass benefits.
+                    </p>
+
+                    <template v-if="branding.bikeShopEnabled">
+                        <div class="text-subtitle-2 mt-3 mb-1">Bike shop perks</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Percent off for pass holders, applied automatically at the shop register and
+                            rental counter when their account email is on the sale. 0 = no perk.
+                        </p>
+                        <div class="d-flex ga-3">
+                            <v-text-field :model-value="surfacePercent('rental')" type="number" min="0" max="100"
+                                label="Rentals" suffix="% off" density="compact" hide-details style="max-width: 150px"
+                                @update:model-value="setSurfacePercent('rental', $event)"></v-text-field>
+                            <v-text-field :model-value="surfacePercent('retail')" type="number" min="0" max="100"
+                                label="Shop purchases" suffix="% off" density="compact" hide-details style="max-width: 170px"
+                                @update:model-value="setSurfacePercent('retail', $event)"></v-text-field>
+                        </div>
+                    </template>
 
                     <v-divider class="my-3"></v-divider>
                     <v-row>
@@ -134,9 +167,10 @@ import { ref, onMounted } from 'vue'
 import draggable from 'vuedraggable'
 import dayjs from 'dayjs'
 import { useDragReorder } from '@/composables/useDragReorder'
-import { SeasonPassService, type SeasonPassProduct, type UpsertSeasonPassProduct, type SeasonPassPerk } from '@/services/SeasonPassService'
+import { SeasonPassService, type SeasonPassProduct, type UpsertSeasonPassProduct, type SeasonPassBenefit } from '@/services/SeasonPassService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { useConfirm } from '@/composables/useConfirm'
+import { branding } from '@/stores/branding'
 
 const service = new SeasonPassService()
 const eventTypeService = new EventTypeService()
@@ -177,7 +211,7 @@ const form = ref({
     requiresWaiver: true,
     riderPaidServiceChargePct: 100,
     isActive: true,
-    perks: [] as SeasonPassPerk[],
+    benefits: [] as SeasonPassBenefit[],
 })
 
 const snackbar = ref(false)
@@ -190,15 +224,57 @@ function daysLabel(days: number[] | null): string {
     const names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
     return days.sort().map(d => names[d]).join(', ')
 }
-function perkFor(eventTypeId: string): SeasonPassPerk | undefined {
-    return form.value.perks.find(p => p.eventTypeId === eventTypeId)
+// Benefits are stored generically (events today, F&B / rentals / buddy passes as those
+// surfaces get wired), so the event editor filters to its own slice.
+function benefitFor(eventTypeId: string): SeasonPassBenefit | undefined {
+    return form.value.benefits.find(b => b.benefitType === 'event' && b.scopeId === eventTypeId)
 }
-function togglePerk(eventTypeId: string, on: boolean | null) {
+function toggleEventBenefit(eventTypeId: string, on: boolean | null) {
     if (on) {
-        if (!perkFor(eventTypeId)) form.value.perks.push({ eventTypeId, discountPercent: 100 })
+        // Default to included-free: that's what the old checkbox meant, so ticking a box keeps
+        // behaving the way tenants already expect.
+        if (!benefitFor(eventTypeId)) {
+            form.value.benefits.push({
+                benefitType: 'event', scopeId: eventTypeId,
+                discountKind: 'percent', discountValue: 10000, quantity: null,
+            })
+        }
     } else {
-        form.value.perks = form.value.perks.filter(p => p.eventTypeId !== eventTypeId)
+        form.value.benefits = form.value.benefits.filter(
+            b => !(b.benefitType === 'event' && b.scopeId === eventTypeId))
     }
+}
+function setEventBenefitMode(eventTypeId: string, mode: unknown) {
+    const b = benefitFor(eventTypeId)
+    if (!b) return
+    // 10000 bps = 100% = free. Switching to Discount seeds 50% rather than 0, which the
+    // server rejects as a half-filled row.
+    b.discountValue = mode === 'free' ? 10000 : 5000
+}
+// Whole-surface perks (rentals / bike shop retail): at most one benefit per surface, percent only.
+function surfacePercent(type: 'rental' | 'retail'): number {
+    const b = form.value.benefits.find(x => x.benefitType === type)
+    return b ? b.discountValue / 100 : 0
+}
+function setSurfacePercent(type: 'rental' | 'retail', percent: string | number) {
+    const n = Math.round(Number(percent))
+    form.value.benefits = form.value.benefits.filter(x => x.benefitType !== type)
+    if (Number.isFinite(n) && n > 0) {
+        form.value.benefits.push({
+            benefitType: type, scopeId: null, discountKind: 'percent',
+            discountValue: Math.min(100, n) * 100, quantity: null,
+        })
+    }
+}
+
+function setEventBenefitPercent(eventTypeId: string, percent: string | number) {
+    const b = benefitFor(eventTypeId)
+    if (!b) return
+    const n = Math.round(Number(percent))
+    if (!Number.isFinite(n)) return
+    // Clamp to 1-99: 100 is "Included free" (a separate mode) and 0 would be a benefit that
+    // grants nothing.
+    b.discountValue = Math.min(99, Math.max(1, n)) * 100
 }
 onMounted(async () => {
     loadError.value = null
@@ -239,7 +315,7 @@ function openCreate() {
         requiresWaiver: true,
         riderPaidServiceChargePct: 100,
         isActive: true,
-        perks: [],
+        benefits: [],
     }
     dialog.value = true
 }
@@ -258,7 +334,10 @@ function openEdit(p: SeasonPassProduct) {
         requiresWaiver: p.requiresWaiver,
         riderPaidServiceChargePct: p.riderPaidServiceChargeBps / 100,
         isActive: p.isActive,
-        perks: [...(p.perks ?? [])],
+        // Copy each benefit, not just the array: the editor mutates discountValue in place, and
+        // sharing the objects with the loaded product would edit the list behind the dialog
+        // (leaving stale values on screen after a Cancel).
+        benefits: (p.benefits ?? []).map(b => ({ ...b })),
     }
     dialog.value = true
 }
@@ -289,7 +368,7 @@ async function save() {
             riderPaidServiceChargeBps: Math.round((form.value.riderPaidServiceChargePct || 0) * 100),
             isActive: form.value.isActive,
             sortOrder: 100,
-            perks: form.value.perks,
+            benefits: form.value.benefits,
         }
         if (editing.value) await service.update(editing.value.id, body)
         else await service.create(body)

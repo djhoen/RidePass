@@ -33,9 +33,20 @@ namespace webapi.Controllers.API.Data.Purchase
         [MaxLength(40)]
         public string? GiftCardCode { get; set; }
 
+        // Burn the signed-in rider's store credit balance as the last tender (server resolves
+        // the account and caps at the remaining charge; ignored for guests).
+        public bool UseStoreCredit { get; set; }
+
         // Optional event extras (camping/parking/...) bundled with the tickets.
         // Same Stripe PI covers both. Guest checkout supported.
         public List<BuyExtrasItem>? Extras { get; set; }
+
+        // Optional bike rental added while booking a lesson. The rental FEE rides the same
+        // PaymentIntent as the lesson ticket (one charge, two line items); the refundable
+        // deposit is a separate manual-capture hold returned as DepositHoldClientSecret. The
+        // reservation is time-scoped to the lesson's window. Requires a signed-in rider (a
+        // rental needs an owning user), so it's ignored for guest checkout.
+        public LessonRentalCartItem? LessonRental { get; set; }
 
         // When true and this signed-in rider doesn't already have an active membership,
         // a membership purchase row is created and bundled into the same PaymentIntent
@@ -47,6 +58,12 @@ namespace webapi.Controllers.API.Data.Purchase
         // of gating the purchase on an up-front signed waiver. Lets guests buy race entries
         // for riders who aren't accounts; tickets are created registration_complete = false.
         public bool DeferRegistration { get; set; }
+    }
+
+    public class LessonRentalCartItem
+    {
+        [Required] public Guid VariantId { get; set; }
+        [Range(1, 50)] public int Quantity { get; set; } = 1;
     }
 
     public class TicketCartItem

@@ -64,6 +64,19 @@ namespace Services.Repositories
             return result.ToList();
         }
 
+        // Sessions NOT tied to an event: a bike shop or F&B shift is a shift, not an event day.
+        // Windowed by opened_at so the manager's view stays bounded.
+        public async Task<List<CashSession>> ListSessionsWithoutEvent(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            var sql = $@"
+                SELECT {SelectSessionColumns}
+                FROM cash_session
+                WHERE tenant_id = @tenantId AND event_id IS NULL
+                  AND opened_at >= @fromUtc AND opened_at < @toUtc
+                ORDER BY opened_at";
+            return (await _db.Query<CashSession>(sql, new { tenantId, fromUtc, toUtc })).ToList();
+        }
+
         public async Task<Guid> CreateSession(CashSession session)
         {
             const string sql = @"
@@ -138,6 +151,17 @@ namespace Services.Repositories
                 ORDER BY submitted_at";
             var result = await _db.Query<CashTurnIn>(sql, new { tenantId, eventId });
             return result.ToList();
+        }
+
+        public async Task<List<CashTurnIn>> ListTurnInsWithoutEvent(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            var sql = $@"
+                SELECT {SelectTurnInColumns}
+                FROM cash_turn_in
+                WHERE tenant_id = @tenantId AND event_id IS NULL
+                  AND submitted_at >= @fromUtc AND submitted_at < @toUtc
+                ORDER BY submitted_at DESC";
+            return (await _db.Query<CashTurnIn>(sql, new { tenantId, fromUtc, toUtc })).ToList();
         }
 
         public async Task<List<CashTurnIn>> ListTurnInsByEvent(Guid tenantId, Guid eventId)

@@ -199,6 +199,11 @@ function formatInTenant(utc: string): string {
 }
 
 async function load() {
+    if (rangeFrom.value > rangeTo.value) {
+        loadError.value = 'The start date is after the end date.'
+        flash('The start date is after the end date.', 'error')
+        return
+    }
     loading.value = true
     loadError.value = null
     try {

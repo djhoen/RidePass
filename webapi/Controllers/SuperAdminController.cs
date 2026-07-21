@@ -245,13 +245,14 @@ namespace webapi.Controllers
                 ExternalEventsUrl = string.IsNullOrWhiteSpace(request.ExternalEventsUrl) ? null : request.ExternalEventsUrl.Trim(),
                 EmbedEventTarget = request.EmbedEventTarget,
                 GiftCardsEnabled = request.GiftCardsEnabled,
-                RentalsEnabled = request.RentalsEnabled,
                 ExtrasEnabled = request.ExtrasEnabled,
                 SeasonPassesEnabled = request.SeasonPassesEnabled,
                 ConcessionsEnabled = request.ConcessionsEnabled,
+                BikeShopEnabled = request.BikeShopEnabled,
                 BlogEnabled = request.BlogEnabled,
                 MembershipEnabled = request.MembershipEnabled,
                 WaitlistEnabled = request.WaitlistEnabled,
+                WaitlistPrepayEnabled = request.WaitlistPrepayEnabled,
                 AllowSelfCancel = request.AllowSelfCancel,
                 DynamicPricingEnabled = request.DynamicPricingEnabled,
                 BundledCouponsEnabled = request.BundledCouponsEnabled,
@@ -751,9 +752,11 @@ namespace webapi.Controllers
         }
 
         // Populate demo/seed data for a tenant (users, events past/present/future, purchases, waivers,
-        // F&B + orders, gift cards, coupons, rewards, rentals, disputes, newsletter, blackouts, branding).
-        // STAGE + LOCAL ONLY — hard-refused on production so it can never touch real data. One-shot: it
-        // refuses if the tenant was already seeded (the button hides once seed_data_populated_at is set).
+        // F&B + orders, gift cards, coupons, rewards, rentals, disputes, newsletter, blackouts, branding,
+        // bike shop, lesson instructors, customer bikes + inspections). STAGE + LOCAL ONLY: hard-refused
+        // on production so it can never touch real data.
+        // Safe to re-run: the seeder skips sections that already have data, so a re-run on a seeded
+        // tenant only fills in sections added since the last run.
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpPost("Tenants/{tenantId:guid}/PopulateSeedData")]
         public async Task<IActionResult> PopulateSeedData(Guid tenantId, CancellationToken ct)
@@ -763,8 +766,6 @@ namespace webapi.Controllers
 
             var tenant = await _tenants.GetById(tenantId);
             if (tenant is null) return new ApiResponses().NotFoundResult("Tenant not found.");
-            if (tenant.SeedDataPopulatedAt != null)
-                return new ApiResponses().BadRequestResult("This tenant has already been seeded.");
 
             var summary = await _tenantSeeder.PopulateAsync(tenantId, ct);
             await _audit.Log("tenant.seed.populate", $"Populated demo seed data for {tenant.Subdomain}",
@@ -809,10 +810,10 @@ namespace webapi.Controllers
             await _tenants.UpdateServiceCharge(tenantId, request.ServiceChargeBps, request.MonthlyServiceChargeCapCents);
             await _tenants.SetStripeChargeMode(tenantId, request.StripeChargeMode);
             await _tenants.UpdateFeatures(tenantId,
-                request.GiftCardsEnabled, request.RentalsEnabled, request.ExtrasEnabled, request.SeasonPassesEnabled,
+                request.GiftCardsEnabled, request.ExtrasEnabled, request.SeasonPassesEnabled,
                 request.ConcessionsEnabled, request.BlogEnabled, request.MembershipEnabled,
-                request.WaitlistEnabled, request.AllowSelfCancel,
-                request.DynamicPricingEnabled, request.BundledCouponsEnabled);
+                request.WaitlistEnabled, request.WaitlistPrepayEnabled, request.AllowSelfCancel,
+                request.DynamicPricingEnabled, request.BundledCouponsEnabled, request.BikeShopEnabled);
 
             // Evict the cached tenant so changes (especially publish status) take
             // effect immediately instead of after the 5-minute resolution cache.
@@ -1194,13 +1195,14 @@ namespace webapi.Controllers
             StripeConnectStatus = t.StripeConnectStatus,
             IsPublished = t.IsPublished,
             GiftCardsEnabled = t.GiftCardsEnabled,
-            RentalsEnabled = t.RentalsEnabled,
             ExtrasEnabled = t.ExtrasEnabled,
             SeasonPassesEnabled = t.SeasonPassesEnabled,
             ConcessionsEnabled = t.ConcessionsEnabled,
+            BikeShopEnabled = t.BikeShopEnabled,
             BlogEnabled = t.BlogEnabled,
             MembershipEnabled = t.MembershipEnabled,
             WaitlistEnabled = t.WaitlistEnabled,
+            WaitlistPrepayEnabled = t.WaitlistPrepayEnabled,
             AllowSelfCancel = t.AllowSelfCancel,
             DynamicPricingEnabled = t.DynamicPricingEnabled,
             BundledCouponsEnabled = t.BundledCouponsEnabled,

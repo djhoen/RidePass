@@ -167,17 +167,6 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
-        key: 'rentals',
-        title: 'Rentals',
-        description: 'Rent gear (bikes, helmets, pads) per session with deposit + insurance support.',
-        icon: 'mdi-bike-fast',
-        enabled: branding.rentalsEnabled,
-        configureTo: '/Admin/Rentals',
-        apply: async (next) => {
-            await tenantService.updateRentalsEnabled({ enabled: next })
-        },
-    },
-    {
         key: 'seasonPasses',
         title: 'Season Passes',
         description: 'Sell season-long passes that cover entry to qualifying events.',
@@ -200,6 +189,30 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
+        key: 'bikeShop',
+        title: 'Bike Shop',
+        description: 'Sell and rent bikes, gear, and parts, and take in repairs, with full inventory and a retail register.',
+        icon: 'mdi-bike',
+        enabled: branding.bikeShopEnabled,
+        configureTo: '/Admin/BikeShop',
+        apply: async (next) => {
+            await tenantService.updateBikeShopEnabled({ enabled: next })
+        },
+    },
+    {
+        // Tenant-controlled (not platform-gated): any track that buys serialized bands can turn
+        // this on themselves. Adds wristband link/lookup to the gate check-in screens.
+        key: 'wristbands',
+        title: 'Wristbands',
+        description: 'Link serialized QR or numbered wristbands to entrants at check-in, then look riders up by band.',
+        icon: 'mdi-watch',
+        enabled: branding.wristbandsEnabled,
+        configureTo: '/Admin/RedeemTickets',
+        apply: async (next) => {
+            await tenantService.updateWristbandsEnabled({ enabled: next })
+        },
+    },
+    {
         key: 'blog',
         title: 'Blog',
         description: 'Publish posts with photos and feature one on your home page. Adds a Blog link to your public nav.',
@@ -219,7 +232,6 @@ const features = computed<Feature[]>(() => [
         apply: async (next) => {
             await tenantService.updateCancellationPolicy({
                 allowSelfCancel: next,
-                waitlistEnabled: branding.waitlistEnabled,
                 waitlistConfirmWindowMinutes: branding.waitlistConfirmWindowMinutes,
             })
         },
@@ -230,13 +242,10 @@ const features = computed<Feature[]>(() => [
         description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.',
         icon: 'mdi-account-clock',
         enabled: branding.waitlistEnabled,
-        apply: async (next) => {
-            await tenantService.updateCancellationPolicy({
-                allowSelfCancel: branding.allowSelfCancel,
-                waitlistEnabled: next,
-                waitlistConfirmWindowMinutes: branding.waitlistConfirmWindowMinutes,
-            })
-        },
+        // Super-admin-gated (PLATFORM_FEATURE_KEYS below), so this never renders a toggle and the
+        // tenant can't flip it. The API rejects it too: UpdateCancellationPolicyRequest no longer
+        // carries the flag. Only the inline confirm-window below is tenant-editable.
+        apply: async () => { /* platform feature: switched on in Super Admin, not here */ },
     },
     {
         key: 'requireReservationForPasses',
@@ -309,8 +318,8 @@ const features = computed<Feature[]>(() => [
 // enabled, as a read-only "Included" badge plus any inline config. The remaining
 // entries are tenant-controlled policies that keep their toggles.
 const PLATFORM_FEATURE_KEYS = new Set([
-    'extras', 'membership', 'giftCards', 'rentals', 'seasonPasses',
-    'concessions', 'blog', 'allowSelfCancel', 'waitlist',
+    'extras', 'membership', 'giftCards', 'seasonPasses',
+    'concessions', 'bikeShop', 'blog', 'allowSelfCancel', 'waitlist',
 ])
 function isPlatformFeature(key: string): boolean {
     return PLATFORM_FEATURE_KEYS.has(key)
@@ -336,7 +345,6 @@ async function saveWaitlistWindow() {
     try {
         await tenantService.updateCancellationPolicy({
             allowSelfCancel: branding.allowSelfCancel,
-            waitlistEnabled: branding.waitlistEnabled,
             waitlistConfirmWindowMinutes: waitlistConfirmMinutes.value,
         })
         await loadBranding()

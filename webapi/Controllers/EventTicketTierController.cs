@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
+using Services.Repositories.Data.EventData;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
@@ -15,17 +16,20 @@ namespace webapi.Controllers
     {
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventRepository _events;
+        private readonly IInstructorRepository _instructors;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantRepository _tenants;
 
         public EventTicketTierController(
             IEventTicketTierRepository tiers,
             IEventRepository events,
+            IInstructorRepository instructors,
             ITenantContext tenantContext,
             ITenantRepository tenants)
         {
             _tiers = tiers;
             _events = events;
+            _instructors = instructors;
             _tenantContext = tenantContext;
             _tenants = tenants;
         }
@@ -40,13 +44,32 @@ namespace webapi.Controllers
 
             var rows = await _tiers.GetForEvent(eventId, _tenantContext.TenantId, activeOnly: true);
 
+            // Coaches referenced by this event's groups, loaded once (not per tier) so the buy
+            // page can show who is teaching each group.
+            var coaches = await LoadCoachesFor(rows);
+
+            // Event-wide rider capacity remaining, which is what checkout actually enforces
+            // (PurchaseController / CounterController use EventSoldCount). Displayed on every
+            // RIDER tier, ladder step or not, so "N spots left" can never promise more than the
+            // buy path will accept. Spectator tiers don't consume rider capacity, so they are
+            // left alone. Loaded once here rather than per tier.
+            var eventForCapacity = await _events.GetById(eventId, _tenantContext.TenantId);
+            int? riderCapacityRemaining = null;
+            if (eventForCapacity?.Capacity is int cap)
+            {
+                var riderSold = await _tiers.EventSoldCount(eventId, _tenantContext.TenantId);
+                riderCapacityRemaining = Math.Max(0, cap - riderSold);
+            }
+
             // Standalone tiers pass through unchanged. Each price ladder collapses to its
             // ACTIVE step, augmented with capacity-remaining + next-change for buy-page copy,
             // so the buyer only ever sees (and can only add) the current price.
             var result = new List<EventTicketTierResponse>();
             foreach (var r in rows.Where(t => t.LadderGroup is null))
             {
-                result.Add(ToResponse(r, sold: null));
+                var standalone = ToResponse(r, sold: null, coaches);
+                if (r.Audience == "rider") standalone.RemainingToCapacity = riderCapacityRemaining;
+                result.Add(standalone);
             }
 
             var ladderGroups = rows.Where(t => t.LadderGroup is not null)
@@ -54,7 +77,7 @@ namespace webapi.Controllers
                                    .ToList();
             if (ladderGroups.Count > 0)
             {
-                var ev = await _events.GetById(eventId, _tenantContext.TenantId);
+                var ev = eventForCapacity;
                 var now = DateTime.UtcNow;
                 foreach (var grp in ladderGroups)
                 {
@@ -67,15 +90,15 @@ namespace webapi.Controllers
                     {
                         // Misconfigured (no fired step) or event missing: surface the cheapest
                         // step so the ladder isn't invisible.
-                        var fallback = ToResponse(steps.OrderBy(s => s.PriceCents).First(), sold: null);
+                        var fallback = ToResponse(steps.OrderBy(s => s.PriceCents).First(), sold: null, coaches);
                         result.Add(fallback);
                         continue;
                     }
 
-                    var resp = ToResponse(state.Active, sold: null);
-                    resp.RemainingToCapacity = ev!.Capacity.HasValue
-                        ? Math.Max(0, ev.Capacity.Value - groupSold)
-                        : null;
+                    var resp = ToResponse(state.Active, sold: null, coaches);
+                    // Event-wide, not group-scoped: a rider sale on any other tier eats into the
+                    // same capacity, and checkout enforces the event-wide number.
+                    resp.RemainingToCapacity = state.Active.Audience == "rider" ? riderCapacityRemaining : null;
                     if (state.Next is not null)
                     {
                         resp.NextPriceCents = state.Next.PriceCents;
@@ -108,11 +131,12 @@ namespace webapi.Controllers
         public async Task<IActionResult> GetAllForAdmin(Guid eventId)
         {
             var rows = await _tiers.GetForEvent(eventId, _tenantContext.TenantId, activeOnly: false);
+            var adminCoaches = await LoadCoachesFor(rows);
             var responses = new List<EventTicketTierResponse>();
             foreach (var r in rows)
             {
                 var sold = await _tiers.SoldCount(r.Id);
-                responses.Add(ToResponse(r, sold));
+                responses.Add(ToResponse(r, sold, adminCoaches));
             }
             return new ApiResponses().OkResult(responses);
         }
@@ -136,6 +160,9 @@ namespace webapi.Controllers
 
             NormalizeAudience(request);
 
+            var groupErr = await ValidateGroup(request, ev);
+            if (groupErr is not null) return new ApiResponses().BadRequestResult(groupErr);
+
             var tier = new EventTicketTier
             {
                 TenantId = _tenantContext.TenantId,
@@ -158,9 +185,17 @@ namespace webapi.Controllers
                 BundledCouponDiscountValue = request.BundledCouponDiscountValue,
                 BundledCouponScope = request.BundledCouponScope,
                 BundledCouponExpiresInDays = request.BundledCouponExpiresInDays,
+                InstructorId = request.InstructorId,
+                SkillLevel = Trimmed(request.SkillLevel),
+                EquipmentLabel = Trimmed(request.EquipmentLabel),
+                StartsAt = request.StartsAt?.ToUniversalTime(),
+                EndsAt = request.EndsAt?.ToUniversalTime(),
+                PartySizeIncluded = Math.Max(1, request.PartySizeIncluded),
+                PartyPriceCents = request.PartyPriceCents,
+                PartySizeMax = request.PartySizeMax,
             };
             tier.Id = await _tiers.Create(tier);
-            return new ApiResponses().OkResult(ToResponse(tier, sold: 0));
+            return new ApiResponses().OkResult(await ToResponseAsync(tier, sold: 0));
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -182,6 +217,11 @@ namespace webapi.Controllers
 
             NormalizeAudience(request);
 
+            var evForGroup = await _events.GetById(eventId, _tenantContext.TenantId);
+            if (evForGroup is null) return new ApiResponses().NotFoundResult("Event not found.");
+            var groupErr = await ValidateGroup(request, evForGroup);
+            if (groupErr is not null) return new ApiResponses().BadRequestResult(groupErr);
+
             existing.Kind = request.Kind;
             existing.Audience = request.Audience;
             existing.Required = request.Required;
@@ -200,10 +240,18 @@ namespace webapi.Controllers
             existing.BundledCouponDiscountValue = request.BundledCouponDiscountValue;
             existing.BundledCouponScope = request.BundledCouponScope;
             existing.BundledCouponExpiresInDays = request.BundledCouponExpiresInDays;
+            existing.InstructorId = request.InstructorId;
+            existing.SkillLevel = Trimmed(request.SkillLevel);
+            existing.EquipmentLabel = Trimmed(request.EquipmentLabel);
+            existing.StartsAt = request.StartsAt?.ToUniversalTime();
+            existing.EndsAt = request.EndsAt?.ToUniversalTime();
+            existing.PartySizeIncluded = Math.Max(1, request.PartySizeIncluded);
+            existing.PartyPriceCents = request.PartyPriceCents;
+            existing.PartySizeMax = request.PartySizeMax;
 
             await _tiers.Update(existing);
             var sold = await _tiers.SoldCount(id);
-            return new ApiResponses().OkResult(ToResponse(existing, sold));
+            return new ApiResponses().OkResult(await ToResponseAsync(existing, sold));
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -240,7 +288,20 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
-        private static EventTicketTierResponse ToResponse(EventTicketTier t, int? sold) => new()
+        private static EventTicketTierResponse ToResponse(
+            EventTicketTier t, int? sold,
+            IReadOnlyDictionary<Guid, Services.Repositories.Data.InstructorData.Instructor>? coaches = null)
+        {
+            var r = ToResponseCore(t, sold);
+            if (t.InstructorId is Guid cid && coaches is not null && coaches.TryGetValue(cid, out var coach))
+            {
+                r.InstructorName = coach.Name;
+                r.InstructorImageUrl = coach.ImageUrl;
+            }
+            return r;
+        }
+
+        private static EventTicketTierResponse ToResponseCore(EventTicketTier t, int? sold) => new()
         {
             Id = t.Id,
             EventId = t.EventId,
@@ -263,7 +324,69 @@ namespace webapi.Controllers
             BundledCouponDiscountValue = t.BundledCouponDiscountValue,
             BundledCouponScope = t.BundledCouponScope,
             BundledCouponExpiresInDays = t.BundledCouponExpiresInDays,
+            InstructorId = t.InstructorId,
+            SkillLevel = t.SkillLevel,
+            EquipmentLabel = t.EquipmentLabel,
+            StartsAt = t.StartsAt,
+            EndsAt = t.EndsAt,
+            PartySizeIncluded = t.PartySizeIncluded,
+            PartyPriceCents = t.PartyPriceCents,
+            PartySizeMax = t.PartySizeMax,
         };
+
+        // Same projection plus the coach's display fields, resolved from the instructor row so
+        // the buy page and admin editor can render "who is teaching" without a second call.
+        private async Task<EventTicketTierResponse> ToResponseAsync(EventTicketTier t, int? sold)
+        {
+            var resp = ToResponseCore(t, sold);
+            if (t.InstructorId is Guid coachId)
+            {
+                var coach = await _instructors.Get(coachId, _tenantContext.TenantId);
+                resp.InstructorName = coach?.Name;
+                resp.InstructorImageUrl = coach?.ImageUrl;
+            }
+            return resp;
+        }
+
+        private static string? Trimmed(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+        // One query for every coach referenced by a set of tiers; empty when none are groups.
+        private async Task<Dictionary<Guid, Services.Repositories.Data.InstructorData.Instructor>> LoadCoachesFor(
+            IEnumerable<EventTicketTier> tiers)
+        {
+            var ids = tiers.Where(t => t.InstructorId.HasValue).Select(t => t.InstructorId!.Value).ToHashSet();
+            if (ids.Count == 0) return new();
+            return (await _instructors.List(_tenantContext.TenantId, activeOnly: false))
+                .Where(i => ids.Contains(i.Id))
+                .ToDictionary(i => i.Id);
+        }
+
+        // A training group's coach must belong to this tenant and be active, and the group's
+        // own window (when set) must sit inside the event. Returns an error string, else null.
+        private async Task<string?> ValidateGroup(UpsertEventTicketTierRequest r, Event ev)
+        {
+            if (r.InstructorId is Guid coachId)
+            {
+                var coach = await _instructors.Get(coachId, _tenantContext.TenantId);
+                if (coach is null) return "That coach isn't available at this track.";
+                if (!coach.IsActive) return $"\"{coach.Name}\" is no longer active.";
+            }
+            if (r.PartySizeMax is int pmax && pmax < Math.Max(1, r.PartySizeIncluded))
+                return "The rider cap can't be smaller than the number the base price covers.";
+            if (r.StartsAt.HasValue != r.EndsAt.HasValue)
+                return "A group time needs both a start and an end, or neither.";
+            if (r.StartsAt.HasValue && r.EndsAt.HasValue)
+            {
+                var s = r.StartsAt.Value.ToUniversalTime();
+                var e = r.EndsAt.Value.ToUniversalTime();
+                if (e <= s) return "The group's end time must be after its start time.";
+                var evStart = DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc);
+                var evEnd = DateTime.SpecifyKind(ev.EndsAt, DateTimeKind.Utc);
+                if (s < evStart || e > evEnd)
+                    return "A group's time has to fall inside the event's own start and end.";
+            }
+            return null;
+        }
 
         // Race classes are always rider-audience and never themselves "required" (the
         // gate fee carries the required-purchase rule, not the class). Force those so a

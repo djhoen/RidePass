@@ -1,8 +1,9 @@
 namespace webapi.Seeding
 {
     /// <summary>
-    /// Populates a tenant with realistic demo data (STAGE + LOCAL only). Idempotency is enforced by
-    /// the caller via tenant.seed_data_populated_at; the seeder stamps it at the end.
+    /// Populates a tenant with realistic demo data (STAGE + LOCAL only). Idempotent: each section
+    /// skips itself when its data already exists, so re-running fills in newly-added sections
+    /// without duplicating anything. Stamps tenant.seed_data_populated_at at the end.
     /// </summary>
     public interface ITenantSeeder
     {
@@ -22,10 +23,15 @@ namespace webapi.Seeding
         public int ConcessionOrders { get; set; }
         public int GiftCards { get; set; }
         public int Coupons { get; set; }
-        public int Rentals { get; set; }
         public int Disputes { get; set; }
         public int NewsletterSubscribers { get; set; }
         public int Campaigns { get; set; }
         public int Blackouts { get; set; }
+        public int ShopProducts { get; set; }
+        public int ShopSales { get; set; }
+        public int ShopWorkOrders { get; set; }
+        public int CustomerBikes { get; set; }
+        public int Inspections { get; set; }
+        public int Instructors { get; set; }
     }
 }

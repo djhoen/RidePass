@@ -118,7 +118,7 @@
                 </v-card-title>
                 <v-card-text>
                     <div class="text-body-2 text-medium-emphasis mb-2">Current on hand: {{ receiveItem.onHand }} {{ receiveItem.unit }}</div>
-                    <v-text-field v-model.number="receiveQty" type="number" step="0.001" :suffix="receiveItem.unit"
+                    <v-text-field v-model.number="receiveQty" type="number" min="0" step="0.001" :suffix="receiveItem.unit"
                         label="Quantity received" density="compact" autofocus hide-details></v-text-field>
                 </v-card-text>
                 <v-card-actions>
@@ -287,7 +287,7 @@ const receiveItem = ref<ConcessionInventoryItem | null>(null)
 const receiveQty = ref<number | null>(null)
 function openReceive(i: ConcessionInventoryItem) { receiveItem.value = i; receiveQty.value = null; receiveDialog.value = true }
 async function saveReceive() {
-    if (!receiveItem.value || !receiveQty.value) { flash('Enter a quantity.'); return }
+    if (!receiveItem.value || !receiveQty.value || Number(receiveQty.value) <= 0) { flash('Enter a quantity greater than zero.'); return }
     saving.value = true
     try {
         await svc.receiveStock(receiveItem.value.id, Number(receiveQty.value))

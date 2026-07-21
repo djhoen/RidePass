@@ -3,7 +3,6 @@ using Services.Notifications;
 using Services.Payments;
 using Services.Repositories.Data.ExtrasData;
 using Services.Repositories.Data.PaymentData;
-using Services.Repositories.Data.RentalData;
 using Services.Repositories.Interfaces;
 using Services.Rewards;
 
@@ -32,11 +31,12 @@ namespace webapi.Payments
         private readonly IGiftCardRepository _giftCards;
         private readonly ICouponRepository _coupons;
         private readonly Services.GiftCards.IGiftCardDeliveryService _giftCardDelivery;
-        private readonly IRentalRepository _rentals;
         private readonly IEventWaitlistRepository _waitlist;
         private readonly IEventExtraRepository _extras;
         private readonly IMembershipRepository _memberships;
         private readonly IConcessionRepository _concessions;
+        private readonly IBikeShopRepository _shop;
+        private readonly ITenantCreditRepository _credit;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
@@ -60,11 +60,12 @@ namespace webapi.Payments
             IGiftCardRepository giftCards,
             ICouponRepository coupons,
             Services.GiftCards.IGiftCardDeliveryService giftCardDelivery,
-            IRentalRepository rentals,
             IEventWaitlistRepository waitlist,
             IEventExtraRepository extras,
             IMembershipRepository memberships,
             IConcessionRepository concessions,
+            IBikeShopRepository shop,
+            ITenantCreditRepository credit,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
@@ -86,11 +87,12 @@ namespace webapi.Payments
             _giftCards = giftCards;
             _coupons = coupons;
             _giftCardDelivery = giftCardDelivery;
-            _rentals = rentals;
             _waitlist = waitlist;
             _extras = extras;
             _memberships = memberships;
             _concessions = concessions;
+            _shop = shop;
+            _credit = credit;
             _suppression = suppression;
             _emailer = emailer;
             _orderConfirmations = orderConfirmations;
@@ -104,15 +106,31 @@ namespace webapi.Payments
             // A counter sale can attach multiple purchase rows (mixed kinds) to one PaymentIntent,
             // so iterate everything that points at this PI rather than stopping after the first match.
             var tickets = await _ticketPurchases.ListByStripePaymentIntentId(paymentIntentId);
-            var seasonPass = await _seasonPasses.GetPurchaseByStripePaymentIntentId(paymentIntentId);
+            // One checkout can buy several passes (a parent buying for their kids), all sharing
+            // this PaymentIntent — so every row must be finalized, not just the first.
+            var seasonPasses = await _seasonPasses.ListPurchasesByStripePaymentIntentId(paymentIntentId);
             var giftCard = await _giftCards.GetByPaymentIntentId(paymentIntentId);
-            var rental = await _rentals.GetPurchaseByRentalPaymentIntentId(paymentIntentId);
             var waitlistPrepay = await _waitlist.GetByPrepayPaymentIntentId(paymentIntentId);
             var extras = await _extras.ListByPaymentIntentId(paymentIntentId);
             var membership = await _memberships.GetByPaymentIntentId(paymentIntentId);
             var concessionSale = await _concessions.GetSaleByPaymentIntentId(paymentIntentId);
+            var shopSale = await _shop.GetSaleByPaymentIntentId(paymentIntentId);
+            var shopRental = await _shop.GetRentalByFeePaymentIntentId(paymentIntentId);
+            var shopWoDeposit = await _shop.GetWorkOrderByDepositPaymentIntentId(paymentIntentId);
 
-            if (tickets.Count == 0 && seasonPass is null && giftCard is null && rental is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null)
+            // A rental security-deposit HOLD is a manual-capture PI on deposit_pi_id. Its whole
+            // lifecycle (authorize at booking, capture-for-damage or cancel at return) is driven
+            // by BikeShopRentalController, not by this webhook: the authorization fires
+            // amount_capturable_updated and a later damage capture fires succeeded, but neither is a
+            // sale to book here. Recognise it and return quietly so it doesn't fall through to the
+            // "unknown payment_intent" warning (or, worse, get treated as a bookable charge).
+            var shopDepositHold = await _shop.GetRentalByDepositPaymentIntentId(paymentIntentId);
+            if (shopDepositHold is not null)
+            {
+                return;
+            }
+
+            if (tickets.Count == 0 && seasonPasses.Count == 0 && giftCard is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null && shopSale is null && shopRental is null && shopWoDeposit is null)
             {
                 _logger.LogWarning("Received Stripe event {EventType} for unknown payment_intent {IntentId}",
                     eventType, paymentIntentId);
@@ -129,8 +147,8 @@ namespace webapi.Payments
                     .FirstOrDefault(t => !string.IsNullOrEmpty(t.StripeConnectedAccountId))?.StripeConnectedAccountId
                 ?? extras.FirstOrDefault(e => !string.IsNullOrEmpty(e.StripeConnectedAccountId))?.StripeConnectedAccountId
                 ?? membership?.StripeConnectedAccountId
-                ?? seasonPass?.StripeConnectedAccountId
-                ?? rental?.StripeConnectedAccountId;
+                ?? seasonPasses.FirstOrDefault(sp => !string.IsNullOrEmpty(sp.StripeConnectedAccountId))?.StripeConnectedAccountId
+                ?? shopRental?.StripeConnectedAccountId;
             var isDirect = !string.IsNullOrEmpty(connectedAccountId);
 
             // Gift-card purchase: the card is minted 'pending' (not spendable/deliverable). On
@@ -189,7 +207,7 @@ namespace webapi.Payments
                 {
                     await _memberships.UpdateStatus(membership.Id, "failed");
                 }
-                if (tickets.Count == 0 && seasonPass is null && extras.Count == 0)
+                if (tickets.Count == 0 && seasonPasses.Count == 0 && extras.Count == 0)
                 {
                     return;
                 }
@@ -208,7 +226,7 @@ namespace webapi.Payments
                     // fee is counted exactly once). When extras are alone on the PI (the spectator
                     // Gate Fee flow), they get the whole fee distributed across them.
                     var extrasOwnTheFee = tickets.Count == 0
-                        && membership is null && seasonPass is null;
+                        && membership is null && seasonPasses.Count == 0;
                     await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee, isDirect, ticketsOnPi: tickets.Count > 0);
                 }
                 else if (eventType == "payment_intent.payment_failed")
@@ -216,25 +234,10 @@ namespace webapi.Payments
                     foreach (var x in extras.Where(e => e.Status == "pending"))
                         await _extras.UpdateStatus(x.Id, "failed");
                 }
-                if (tickets.Count == 0 && seasonPass is null)
+                if (tickets.Count == 0 && seasonPasses.Count == 0)
                 {
                     return;
                 }
-            }
-
-            // Rental: flip pending → paid (reservation now firmly holds capacity).
-            if (rental is not null)
-            {
-                if (eventType == "payment_intent.succeeded" && rental.Status == "pending")
-                {
-                    await OnRentalPaid(rental, isDirect);
-                }
-                else if (eventType == "payment_intent.payment_failed" && rental.Status == "pending")
-                {
-                    await _rentals.UpdateStatus(rental.Id, "failed");
-                    await RestoreDiscountsFor("rental", new[] { rental.Id });
-                }
-                return;
             }
 
             // Concession sale (cashier tap-to-pay, anonymous buyer): always standalone on its
@@ -248,6 +251,67 @@ namespace webapi.Payments
                 else if (eventType == "payment_intent.payment_failed" && concessionSale.Status == "pending")
                 {
                     await _concessions.MarkSaleFailed(concessionSale.Id);
+                    // Hand back any store credit the POS redeemed as a tender.
+                    if (concessionSale.CreditAppliedCents > 0)
+                        await _credit.ReverseRedeem(concessionSale.TenantId, "concession_sale", concessionSale.Id, "payment failed");
+                }
+                return;
+            }
+
+            // Bike shop retail sale: standalone on its own PaymentIntent, same shape as concessions.
+            if (shopSale is not null)
+            {
+                if (eventType == "payment_intent.succeeded" && shopSale.Status == "pending")
+                {
+                    await OnShopSalePaid(shopSale);
+                }
+                else if (eventType == "payment_intent.payment_failed" && shopSale.Status == "pending")
+                {
+                    await _shop.MarkSaleFailed(shopSale.Id);
+                    // Hand back any coupon use the register recorded at ring-up.
+                    await RestoreDiscountsFor("shop_sale", new[] { shopSale.Id });
+                    // And any store credit it redeemed as a tender.
+                    if (shopSale.CreditAppliedCents > 0)
+                        await _credit.ReverseRedeem(shopSale.TenantId, "shop_sale", shopSale.Id, "payment failed");
+                }
+                return;
+            }
+
+            // Bike shop rental fee (the deposit hold was already recognized and skipped above).
+            // A lesson bike rides the same PaymentIntent as the lesson tickets, so mirror the
+            // extras rule: when tickets share the PI, keep going (they finalize below) and don't
+            // double-count the Stripe fee (the tickets absorb it).
+            if (shopRental is not null)
+            {
+                if (eventType == "payment_intent.succeeded" && shopRental.Status == "pending")
+                {
+                    var rentalOwnsTheFee = tickets.Count == 0 && extras.Count == 0
+                        && seasonPasses.Count == 0 && membership is null;
+                    await OnShopRentalPaid(shopRental, rentalOwnsTheFee);
+                }
+                else if (eventType == "payment_intent.payment_failed" && shopRental.Status == "pending")
+                {
+                    await _shop.MarkRentalFailed(shopRental.Id);
+                }
+                if (tickets.Count == 0 && seasonPasses.Count == 0)
+                {
+                    return;
+                }
+            }
+
+            // Bike shop repair deposit paid via the emailed payment link. Immediate capture (a
+            // prepayment, not a hold): book its own ledger entry now; bill-out later credits it
+            // against the sale and records only the remainder.
+            if (shopWoDeposit is not null)
+            {
+                if (eventType == "payment_intent.succeeded" && shopWoDeposit.DepositPaidAt is null)
+                {
+                    await OnShopWoDepositPaid(shopWoDeposit);
+                }
+                else if (eventType == "payment_intent.payment_failed" && shopWoDeposit.DepositPaidAt is null)
+                {
+                    // Drop the dead PI so the customer's next visit to the link can start fresh.
+                    await _shop.ClearWorkOrderDepositIntent(shopWoDeposit.Id, shopWoDeposit.TenantId);
                 }
                 return;
             }
@@ -256,10 +320,20 @@ namespace webapi.Payments
             {
                 case "payment_intent.succeeded":
                     await OnPaymentSucceeded(paymentIntentId, tickets, isDirect);
-                    if (seasonPass is not null && seasonPass.Status == "pending")
+                    var pendingPasses = seasonPasses.Where(sp => sp.Status == "pending").ToList();
+                    if (pendingPasses.Count > 0)
                     {
-                        await OnSeasonPassPaid(seasonPass, isDirect);
+                        // Tickets on the same PI already absorbed the PI's Stripe fee in their own
+                        // ledger rows, so the passes must not count it a second time.
+                        await OnSeasonPassesPaid(paymentIntentId, pendingPasses, isDirect,
+                            passesOwnTheFee: tickets.Count == 0);
                     }
+                    // Store credit applied to this checkout: the per-row entries above booked their
+                    // full grosses, so one balancing entry nets the books down to what the PI
+                    // actually collected (Script0195). Direct-mode rows already carry net 0
+                    // (the tenant holds the funds), so only platform-held money reduces net.
+                    var paidTender = await _credit.GetCheckoutTenderByPaymentIntentId(paymentIntentId);
+                    if (paidTender is not null) await BookCreditTenderEntry(paidTender, reduceNet: !isDirect);
                     break;
                 case "payment_intent.payment_failed":
                     var failedTickets = tickets.Where(p => p.Status == "pending").ToList();
@@ -267,9 +341,49 @@ namespace webapi.Payments
                         await _ticketPurchases.UpdateStatus(t.Id, "failed");
                     if (failedTickets.Count > 0)
                         await RestoreDiscountsFor("event_ticket", failedTickets.Select(t => t.Id).ToList());
-                    if (seasonPass is not null && seasonPass.Status == "pending")
-                        await _seasonPasses.UpdatePurchaseStatus(seasonPass.Id, "failed");
+                    foreach (var sp in seasonPasses.Where(p => p.Status == "pending"))
+                        await _seasonPasses.UpdatePurchaseStatus(sp.Id, "failed");
+                    // Hand back any store credit this checkout debited.
+                    var failedTender = await _credit.GetCheckoutTenderByPaymentIntentId(paymentIntentId);
+                    if (failedTender is not null)
+                        await _credit.ReverseRedeem(failedTender.TenantId, "credit_tender", failedTender.Id, "payment failed");
                     break;
+            }
+        }
+
+        /// <summary>
+        /// The tender's balancing ledger entry: gross -credit so revenue sums match money in
+        /// (the per-row entries booked full grosses). The platform cut stays charged in full,
+        /// matching the cash convention: credit-covered value is tenant-funded. reduceNet is
+        /// true only when the rows booked platform-held money (a platform-mode Stripe checkout,
+        /// where the PI collected credit-less); cash-convention rows and direct-mode rows
+        /// already reflect reality, so their tender only corrects gross.
+        /// Idempotent via the one-sale-entry-per-source ledger index.
+        /// </summary>
+        public async Task BookCreditTenderEntry(
+            Services.Repositories.Data.CreditData.CheckoutCreditTender tender, bool reduceNet)
+        {
+            try
+            {
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = tender.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "credit_tender",
+                    SourceId = tender.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = -tender.CreditAppliedCents,
+                    StripeFeeCents = 0,
+                    RidepassCutCents = 0,
+                    NetToTenantCents = reduceNet ? -tender.CreditAppliedCents : 0,
+                    StripePaymentIntentId = tender.StripePaymentIntentId,
+                    PaymentMethod = "credit",
+                    Memo = "Store credit applied at checkout",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                _logger.LogDebug("Credit tender entry {Id} already booked; skipping.", tender.Id);
             }
         }
 
@@ -325,37 +439,66 @@ namespace webapi.Payments
             }
         }
 
-        private async Task OnSeasonPassPaid(SeasonPassPurchase pass, bool isDirect)
+        /// <summary>
+        /// Finalizes every season pass on one PaymentIntent. A single checkout can buy several
+        /// passes, so the intent's one Stripe fee is pro-rata distributed across them by gross
+        /// (last pass takes the rounding remainder) — charging each pass the whole intent fee
+        /// would multiply it by the pass count and understate what the tenant is owed.
+        /// </summary>
+        private async Task OnSeasonPassesPaid(string paymentIntentId, List<SeasonPassPurchase> passes,
+            bool isDirect, bool passesOwnTheFee)
         {
-            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
-            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(pass.StripePaymentIntentId!) ?? 0);
-            await _seasonPasses.UpdatePurchaseStatus(pass.Id, "paid");
-            try
+            // Direct charge: the tenant's account bore the Stripe fee, so we record none (and skip
+            // the lookup, which targets the platform account anyway). Same when tickets share this
+            // intent — they've already booked the fee.
+            var totalStripeFee = isDirect || !passesOwnTheFee
+                ? 0
+                : (await _payments.GetActualStripeFeeCentsAsync(paymentIntentId) ?? 0);
+
+            var totalGross = passes.Sum(p => (long)p.AmountCents);
+            var feeDistributed = 0;
+            var occurredAt = DateTime.UtcNow;
+
+            for (var i = 0; i < passes.Count; i++)
             {
-                var calc = await _feeCalculator.Calculate(pass.TenantId, pass.AmountCents, stripeFee, pass.ServiceChargeCents, DateTime.UtcNow, isDirect);
-                await _ledger.Insert(new TenantLedgerEntry
+                var pass = passes[i];
+                var stripeFeeForPass = i == passes.Count - 1
+                    ? totalStripeFee - feeDistributed
+                    : totalGross > 0 ? (int)(totalStripeFee * pass.AmountCents / totalGross) : 0;
+                feeDistributed += stripeFeeForPass;
+
+                await _seasonPasses.UpdatePurchaseStatus(pass.Id, "paid");
+                pass.Status = "paid";
+                try
                 {
-                    TenantId = pass.TenantId,
-                    EntryKind = "sale",
-                    SourceKind = "season_pass",
-                    SourceId = pass.Id,
-                    OccurredAtUtc = DateTime.UtcNow,
-                    GrossCents = pass.AmountCents,
-                    StripeFeeCents = stripeFee,
-                    RidepassCutCents = calc.RidepassCutCents,
-                    NetToTenantCents = calc.NetToTenantCents,
-                    StripePaymentIntentId = pass.StripePaymentIntentId,
-                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
-                });
+                    var calc = await _feeCalculator.Calculate(pass.TenantId, pass.AmountCents, stripeFeeForPass,
+                        pass.ServiceChargeCents, occurredAt, isDirect);
+                    await _ledger.Insert(new TenantLedgerEntry
+                    {
+                        TenantId = pass.TenantId,
+                        EntryKind = "sale",
+                        SourceKind = "season_pass",
+                        SourceId = pass.Id,
+                        OccurredAtUtc = occurredAt,
+                        GrossCents = pass.AmountCents,
+                        StripeFeeCents = stripeFeeForPass,
+                        RidepassCutCents = calc.RidepassCutCents,
+                        NetToTenantCents = calc.NetToTenantCents,
+                        StripePaymentIntentId = pass.StripePaymentIntentId,
+                        PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    });
+                }
+                catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+                {
+                    _logger.LogDebug("Ledger entry for season_pass {Id} already exists; skipping.", pass.Id);
+                }
+
+                // One email per pass: each carries its own QR token, so a buyer who bought passes
+                // for their family gets one forwardable message per holder. Season passes are always
+                // bought by a logged-in rider (PurchaserUserId is non-nullable), so no guest case.
+                _ = SendPurchaseEmailAsync(pass.TenantId, pass.PurchaserEmail, pass.PurchaserName, pass.RedemptionToken,
+                    "season_pass", pass.AmountCents, null, isGuest: false);
             }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
-            {
-                _logger.LogDebug("Ledger entry for season_pass {Id} already exists; skipping.", pass.Id);
-            }
-            // Season passes are always bought by a logged-in rider (PurchaserUserId is non-nullable),
-            // so there's no guest case here.
-            _ = SendPurchaseEmailAsync(pass.TenantId, pass.PurchaserEmail, pass.PurchaserName, pass.RedemptionToken,
-                "season_pass", pass.AmountCents, null, isGuest: false);
         }
 
         // Gate fees and other add-ons: flip pending rows to paid AND write a sale ledger
@@ -419,37 +562,6 @@ namespace webapi.Payments
             }
         }
 
-        // Rental: flip to paid AND write a sale ledger entry. A rental is the only sale on
-        // its PaymentIntent (the security deposit is a separate hold on its own PI), so it
-        // carries the full Stripe fee.
-        private async Task OnRentalPaid(RentalPurchase r, bool isDirect)
-        {
-            // Direct charge: the tenant's account bore the Stripe fee, so we record none.
-            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(r.RentalPiId!) ?? 0);
-            await _rentals.UpdateStatus(r.Id, "paid");
-            try
-            {
-                var calc = await _feeCalculator.Calculate(r.TenantId, r.AmountCents, stripeFee, r.ServiceChargeCents, DateTime.UtcNow, isDirect);
-                await _ledger.Insert(new TenantLedgerEntry
-                {
-                    TenantId = r.TenantId,
-                    EntryKind = "sale",
-                    SourceKind = "rental",
-                    SourceId = r.Id,
-                    OccurredAtUtc = DateTime.UtcNow,
-                    GrossCents = r.AmountCents,
-                    StripeFeeCents = stripeFee,
-                    RidepassCutCents = calc.RidepassCutCents,
-                    NetToTenantCents = calc.NetToTenantCents,
-                    StripePaymentIntentId = r.RentalPiId,
-                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
-                });
-            }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
-            {
-                _logger.LogDebug("Ledger entry for rental {Id} already exists; skipping.", r.Id);
-            }
-        }
 
         // Concession sale: standalone on its own PI, so it owns the whole Stripe fee.
         // All-in pricing means no rider service charge (serviceChargeCents = 0); the RidePass
@@ -487,7 +599,10 @@ namespace webapi.Payments
             }
             try
             {
-                var calc = await _feeCalculator.Calculate(sale.TenantId, sale.TotalCents, stripeFee, 0, DateTime.UtcNow, isDirect);
+                // Store credit never moves money (booked when funded), so the entry records only
+                // what the PI actually collected.
+                var collected = sale.TotalCents - sale.CreditAppliedCents;
+                var calc = await _feeCalculator.Calculate(sale.TenantId, collected, stripeFee, 0, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = sale.TenantId,
@@ -495,7 +610,7 @@ namespace webapi.Payments
                     SourceKind = "concession",
                     SourceId = sale.Id,
                     OccurredAtUtc = DateTime.UtcNow,
-                    GrossCents = sale.TotalCents,
+                    GrossCents = collected,
                     StripeFeeCents = stripeFee,
                     RidepassCutCents = calc.RidepassCutCents,
                     NetToTenantCents = calc.NetToTenantCents,
@@ -508,7 +623,188 @@ namespace webapi.Payments
             {
                 _logger.LogDebug("Ledger entry for concession sale {Id} already exists; skipping.", sale.Id);
             }
+
+            try
+            {
+                await _rewardEngine.AwardCreditBack(sale.TenantId, sale.PurchaserUserId, sale.PurchaserEmail,
+                    sale.PurchaserName, "concession", sale.Id, sale.TotalCents - sale.CreditAppliedCents);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Credit-back failed for concession sale {Id}", sale.Id);
+            }
         }
+
+        private async Task OnShopSalePaid(Services.Repositories.Data.BikeShopData.ShopSale sale)
+        {
+            // Gate on the paid flip so the order number, depletion, and ledger run exactly once even
+            // if the webhook and the reconciler both fire.
+            if (!await _shop.TryMarkSalePaid(sale.Id, sale.TenantId)) return;
+
+            var orderNumber = await _shop.NextOrderNumber(sale.TenantId);
+            await _shop.SetSaleOrderNumber(sale.Id, orderNumber);
+            try { await _shop.DepleteForSale(sale.Id, sale.TenantId, sale.SoldByUserId); }
+            catch { /* inventory depletion is best-effort; the sale is paid regardless */ }
+            // A bill-out sale settles its work order (no-op for ordinary register sales).
+            try { await _shop.MarkWorkOrderPickedUpBySale(sale.Id); }
+            catch { /* status roll is best-effort */ }
+
+            // An online order's confirmation IS the pickup claim: nothing else emails the buyer.
+            if (sale.OrderChannel == "online" && !string.IsNullOrWhiteSpace(sale.BuyerEmail))
+            {
+                try
+                {
+                    var tenant = await _tenants.GetById(sale.TenantId);
+                    if (tenant is not null && _emailer.IsConfigured
+                        && !await _suppression.IsSuppressed(sale.BuyerEmail!, sale.TenantId, marketing: false))
+                    {
+                        static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
+                        var firstName = sale.BuyerName?.Split(' ').FirstOrDefault() ?? "rider";
+                        var html = $@"<div style=""font-family:Arial,Helvetica,sans-serif;max-width:480px"">
+<h2 style=""margin:0 0 8px"">{Enc(tenant.DisplayName)}</h2>
+<p>Hi {Enc(firstName)}, your shop order is confirmed.</p>
+<p style=""font-size:22px;font-weight:bold;margin:8px 0"">Order #{orderNumber}</p>
+<p>Show this number at the counter to pick it up. Total paid: <strong>{"$" + ((sale.TotalCents - sale.CreditAppliedCents) / 100m).ToString("0.00")}</strong>{(sale.CreditAppliedCents > 0 ? $" (plus {"$" + (sale.CreditAppliedCents / 100m).ToString("0.00")} store credit)" : "")}.</p></div>";
+                        await _emailer.Send(sale.BuyerEmail!, $"{tenant.DisplayName}: shop order #{orderNumber} confirmed",
+                            html, null, Services.Email.TenantEmailIdentity.For(tenant));
+                    }
+                }
+                catch { /* the order stands; email is best-effort */ }
+            }
+
+            // Low-stock sweep (same pattern as concessions; de-duped per episode, best-effort).
+            try
+            {
+                var low = await _shop.MarkAndGetNewlyLowShopStock(sale.TenantId);
+                if (low.Count > 0)
+                {
+                    var names = string.Join(", ", low.Select(i =>
+                        $"{i.ProductName}{(i.VariantLabel is null ? "" : $" ({i.VariantLabel})")} — {i.Available} left"));
+                    var title = low.Count == 1 ? "1 shop item low on stock" : $"{low.Count} shop items low on stock";
+                    await _notifications.EmitToTenantRoles(sale.TenantId, new[] { "tenant_manager", "tenant_admin" },
+                        NotificationKinds.LowStock, title, $"Running low: {names}.", "/Admin/BikeShop");
+                }
+            }
+            catch { /* alerting is best-effort */ }
+
+            // Direct mode: the tenant's account bore the Stripe fee, so we record none.
+            var isDirect = !string.IsNullOrEmpty(sale.StripeConnectedAccountId);
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0);
+            try
+            {
+                // A work-order deposit already booked its own 'shop_wo_deposit' entry when it was
+                // paid, and store credit never moves money at all (its value was booked when it
+                // was funded), so both stay out of gross. A gift-card-funded portion stays IN:
+                // gift purchases book nothing, so its revenue is recognized here at redemption
+                // (the PI itself charged gross minus the gift amount).
+                var collected = sale.TotalCents - sale.DepositAppliedCents - sale.CreditAppliedCents;
+                var calc = await _feeCalculator.Calculate(sale.TenantId, collected, stripeFee, 0, DateTime.UtcNow, isDirect);
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = sale.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "shop_sale",
+                    SourceId = sale.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = collected,
+                    StripeFeeCents = stripeFee,
+                    RidepassCutCents = calc.RidepassCutCents,
+                    NetToTenantCents = calc.NetToTenantCents,
+                    StripePaymentIntentId = sale.StripePaymentIntentId,
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    SoldByUserId = sale.SoldByUserId,
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                _logger.LogDebug("Ledger entry for shop sale {Id} already exists; skipping.", sale.Id);
+            }
+
+            try
+            {
+                await _rewardEngine.AwardCreditBack(sale.TenantId, sale.BuyerUserId, sale.BuyerEmail, sale.BuyerName,
+                    "shop_sale", sale.Id, sale.TotalCents - sale.DepositAppliedCents - sale.CreditAppliedCents);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Credit-back failed for shop sale {Id}", sale.Id);
+            }
+        }
+
+        private async Task OnShopWoDepositPaid(Services.Repositories.Data.BikeShopData.ShopWorkOrder wo)
+        {
+            // Gate on the paid flip so the ledger entry books exactly once even if the webhook and
+            // the reconciler both fire (mirrors TryMarkSalePaid).
+            var isDirect = !string.IsNullOrEmpty(wo.DepositStripeAccountId);
+            if (!await _shop.TryMarkWorkOrderDepositPaid(wo.Id, wo.TenantId, isDirect ? "stripe_direct" : "stripe")) return;
+
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(wo.DepositPiId!) ?? 0);
+            try
+            {
+                var calc = await _feeCalculator.Calculate(wo.TenantId, wo.DepositCents, stripeFee, 0, DateTime.UtcNow, isDirect);
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = wo.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "shop_wo_deposit",
+                    SourceId = wo.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = wo.DepositCents,
+                    StripeFeeCents = stripeFee,
+                    RidepassCutCents = calc.RidepassCutCents,
+                    NetToTenantCents = calc.NetToTenantCents,
+                    StripePaymentIntentId = wo.DepositPiId,
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    Memo = "Bike shop repair deposit",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                _logger.LogDebug("Ledger entry for work-order deposit {Id} already exists; skipping.", wo.Id);
+            }
+        }
+
+        private async Task OnShopRentalPaid(Services.Repositories.Data.BikeShopData.ShopRental rental, bool ownsFee = true)
+        {
+            if (!await _shop.TryMarkRentalPaid(rental.Id, rental.TenantId)) return;
+
+            var orderNumber = await _shop.NextOrderNumber(rental.TenantId);
+            await _shop.SetRentalOrderNumber(rental.Id, orderNumber);
+
+            // Gross is the rental FEE only. The deposit hold is not revenue — it's the rider's
+            // money under authorization; only a damage capture (booked as shop_rental_deposit at
+            // return time) ever becomes a ledger entry. When the rental shares its PI with lesson
+            // tickets (ownsFee = false) the tickets absorb the Stripe fee, so book zero here.
+            var isDirect = !string.IsNullOrEmpty(rental.StripeConnectedAccountId);
+            var stripeFee = (isDirect || !ownsFee) ? 0
+                : (await _payments.GetActualStripeFeeCentsAsync(rental.StripePaymentIntentId!) ?? 0);
+            try
+            {
+                // Pass the rental's frozen service charge so RidePass's cut is booked. It is what the
+                // track owes regardless of whether they passed it to the renter or absorbed it.
+                var calc = await _feeCalculator.Calculate(rental.TenantId, rental.TotalCents, stripeFee, rental.ServiceChargeCents, DateTime.UtcNow, isDirect);
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = rental.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "shop_rental",
+                    SourceId = rental.Id,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    GrossCents = rental.TotalCents,
+                    StripeFeeCents = stripeFee,
+                    RidepassCutCents = calc.RidepassCutCents,
+                    NetToTenantCents = calc.NetToTenantCents,
+                    StripePaymentIntentId = rental.StripePaymentIntentId,
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    SoldByUserId = rental.SoldByUserId,
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                _logger.LogDebug("Ledger entry for shop rental {Id} already exists; skipping.", rental.Id);
+            }
+        }
+
 
         private async Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
             string kind, int amountCents, DateTime? validOnDate, bool isGuest)
@@ -743,6 +1039,26 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Reward engine failed for tenant {TenantId} user {UserId}", actor.TenantId, actor.UserId);
+                }
+            }
+
+            // Credit-back loyalty: once per (tenant, rider) on this checkout's ticket spend, keyed
+            // to the rider's lowest ticket id so webhook + reconciler re-fires stay idempotent.
+            var creditBackActors = tickets
+                .Where(t => t.Status == "paid" && t.PurchaserUserId.HasValue)
+                .GroupBy(t => (t.TenantId, UserId: t.PurchaserUserId!.Value));
+            foreach (var g in creditBackActors)
+            {
+                try
+                {
+                    var first = g.OrderBy(t => t.Id).First();
+                    await _rewardEngine.AwardCreditBack(g.Key.TenantId, g.Key.UserId,
+                        first.PurchaserEmail, first.PurchaserName,
+                        "event_ticket", first.Id, g.Sum(t => t.AmountCents));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Credit-back failed for tenant {TenantId} user {UserId}", g.Key.TenantId, g.Key.UserId);
                 }
             }
         }

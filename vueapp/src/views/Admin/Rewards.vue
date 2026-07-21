@@ -25,8 +25,14 @@
                             <strong>{{ p.name }}</strong>
                             <div v-if="p.description" class="text-caption text-medium-emphasis">{{ p.description }}</div>
                         </td>
-                        <td>Buy {{ p.requirementCount }} {{ kindLabel(p.requirementKind) }}{{ p.requirementCount === 1 ? '' : 's' }}</td>
-                        <td>{{ p.rewardPercentOff === 100 ? 'Free' : `${p.rewardPercentOff}% off` }}</td>
+                        <td>
+                            <template v-if="p.rewardKind === 'credit_rate'">{{ creditKindLabel(p.creditQualifyingKind) }}</template>
+                            <template v-else>Buy {{ p.requirementCount }} {{ kindLabel(p.requirementKind) }}{{ p.requirementCount === 1 ? '' : 's' }}</template>
+                        </td>
+                        <td>
+                            <template v-if="p.rewardKind === 'credit_rate'">{{ ((p.creditRateBps ?? 0) / 100) }}% back in credit</template>
+                            <template v-else>{{ p.rewardPercentOff === 100 ? 'Free' : `${p.rewardPercentOff}% off` }}</template>
+                        </td>
                         <td>{{ p.enrollmentMode === 'auto' ? 'Automatic' : 'Opt-in' }}</td>
                         <td>
                             <span v-if="p.proximityEmailThreshold !== null">
@@ -60,31 +66,63 @@
                 <v-card-text>
                     <v-text-field v-model="form.name" label="Name" density="compact"></v-text-field>
                     <v-textarea v-model="form.description" label="Description (optional)" rows="2" density="compact" class="mt-4"></v-textarea>
-                    <v-row>
-                        <v-col cols="12" md="6">
-                            <v-select v-model="form.requirementKind"
-                                :items="[{ title: 'Any purchase', value: 'any' }, { title: 'Day passes only', value: 'pass' }, { title: 'Event tickets only', value: 'event_ticket' }]"
-                                item-title="title" item-value="value" label="Counts toward reward" density="compact"></v-select>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model.number="form.requirementCount" type="number" min="1"
-                                label="How many to earn one reward" density="compact"></v-text-field>
-                        </v-col>
-                    </v-row>
-                    <v-row>
-                        <v-col cols="12" md="6">
-                            <v-text-field v-model.number="form.rewardPercentOff" type="number" min="1" max="100"
-                                label="Reward (% off next purchase)" suffix="%" density="compact"
-                                hint="100% = free" persistent-hint></v-text-field>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-select v-model="form.enrollmentMode"
-                                :items="[{ title: 'Automatic (every rider)', value: 'auto' }, { title: 'Opt-in', value: 'opt_in' }]"
-                                item-title="title" item-value="value" label="Enrollment" density="compact"></v-select>
-                        </v-col>
-                    </v-row>
-                    <v-text-field v-model.number="form.proximityEmailThreshold" type="number" min="1"
-                        label="Email when rider is X away (blank to disable)" density="compact" clearable class="mt-4"></v-text-field>
+                    <v-select v-model="form.rewardKind" class="mt-4"
+                        :items="[{ title: 'Voucher: % off after N purchases', value: 'percent_off' },
+                                 { title: 'Store credit back on every purchase', value: 'credit_rate' }]"
+                        item-title="title" item-value="value" label="Reward type" density="compact" hide-details></v-select>
+
+                    <template v-if="form.rewardKind === 'percent_off'">
+                        <v-row class="mt-1">
+                            <v-col cols="12" md="6">
+                                <v-select v-model="form.requirementKind"
+                                    :items="[{ title: 'Any purchase', value: 'any' }, { title: 'Day passes only', value: 'pass' }, { title: 'Event tickets only', value: 'event_ticket' }]"
+                                    item-title="title" item-value="value" label="Counts toward reward" density="compact"></v-select>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model.number="form.requirementCount" type="number" min="1"
+                                    label="How many to earn one reward" density="compact"></v-text-field>
+                            </v-col>
+                        </v-row>
+                        <v-row>
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model.number="form.rewardPercentOff" type="number" min="1" max="100"
+                                    label="Reward (% off next purchase)" suffix="%" density="compact"
+                                    hint="100% = free" persistent-hint></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-select v-model="form.enrollmentMode"
+                                    :items="[{ title: 'Automatic (every rider)', value: 'auto' }, { title: 'Opt-in', value: 'opt_in' }]"
+                                    item-title="title" item-value="value" label="Enrollment" density="compact"></v-select>
+                            </v-col>
+                        </v-row>
+                        <v-text-field v-model.number="form.proximityEmailThreshold" type="number" min="1"
+                            label="Email when rider is X away (blank to disable)" density="compact" clearable class="mt-4"></v-text-field>
+                    </template>
+
+                    <template v-else>
+                        <v-row class="mt-1">
+                            <v-col cols="12" md="6">
+                                <v-text-field v-model.number="creditRatePercent" type="number" min="0.1" max="100" step="0.5"
+                                    label="Earn rate (% of spend back)" suffix="%" density="compact"
+                                    hint="e.g. 5 = $5 credit per $100 spent" persistent-hint></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-select v-model="form.creditQualifyingKind"
+                                    :items="[{ title: 'Every purchase', value: 'any' }, { title: 'Event tickets & gate', value: 'event_ticket' },
+                                             { title: 'Food & beverage', value: 'concession' }, { title: 'Bike shop', value: 'shop_sale' }]"
+                                    item-title="title" item-value="value" label="Qualifying spend" density="compact"></v-select>
+                            </v-col>
+                        </v-row>
+                        <v-select v-model="form.enrollmentMode" class="mt-1"
+                            :items="[{ title: 'Automatic (every customer, walk-ins included)', value: 'auto' }, { title: 'Opt-in (signed-in riders who join)', value: 'opt_in' }]"
+                            item-title="title" item-value="value" label="Enrollment" density="compact"></v-select>
+                        <p class="text-caption text-medium-emphasis mt-1">
+                            Credit lands on the customer's store credit account after each qualifying
+                            purchase, based on the money they actually paid. They spend it at any
+                            register or online checkout.
+                        </p>
+                    </template>
+
                     <v-switch v-model="form.isActive" label="Active" hide-details color="primary"></v-switch>
                 </v-card-text>
                 <v-card-actions>
@@ -121,9 +159,14 @@ const form = ref<UpsertRewardProgram>({
     requirementKind: 'any',
     requirementCount: 5,
     rewardPercentOff: 100,
+    rewardKind: 'percent_off',
+    creditRateBps: null,
+    creditQualifyingKind: 'any',
     proximityEmailThreshold: 1,
     isActive: true,
 })
+// The rate edits in percent (5 = 5%) and stores in basis points (500).
+const creditRatePercent = ref<number | null>(null)
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -133,6 +176,12 @@ function kindLabel(k: string): string {
     if (k === 'pass') return 'pass'
     if (k === 'event_ticket') return 'event ticket'
     return 'purchase'
+}
+function creditKindLabel(k: string | null | undefined): string {
+    if (k === 'event_ticket') return 'Event & gate spend'
+    if (k === 'concession') return 'Food & beverage spend'
+    if (k === 'shop_sale') return 'Bike shop spend'
+    return 'Every purchase'
 }
 
 onMounted(load)
@@ -155,7 +204,9 @@ async function load() {
 function openCreate() {
     editing.value = null
     form.value = { name: '', description: '', enrollmentMode: 'auto', requirementKind: 'any',
-        requirementCount: 5, rewardPercentOff: 100, proximityEmailThreshold: 1, isActive: true }
+        requirementCount: 5, rewardPercentOff: 100, rewardKind: 'percent_off',
+        creditRateBps: null, creditQualifyingKind: 'any', proximityEmailThreshold: 1, isActive: true }
+    creditRatePercent.value = 5
     dialog.value = true
 }
 
@@ -168,17 +219,28 @@ function openEdit(p: RewardProgram) {
         requirementKind: p.requirementKind,
         requirementCount: p.requirementCount,
         rewardPercentOff: p.rewardPercentOff,
+        rewardKind: p.rewardKind ?? 'percent_off',
+        creditRateBps: p.creditRateBps ?? null,
+        creditQualifyingKind: p.creditQualifyingKind ?? 'any',
         proximityEmailThreshold: p.proximityEmailThreshold,
         isActive: p.isActive,
     }
+    creditRatePercent.value = p.creditRateBps != null ? p.creditRateBps / 100 : 5
     dialog.value = true
 }
 
 async function save() {
     try {
         saving.value = true
+        if (form.value.rewardKind === 'credit_rate'
+            && (creditRatePercent.value == null || isNaN(creditRatePercent.value) || creditRatePercent.value <= 0)) {
+            flash('Enter the earn rate (percent of spend that comes back as credit).', 'error')
+            return
+        }
         const body: UpsertRewardProgram = {
             ...form.value,
+            creditRateBps: form.value.rewardKind === 'credit_rate'
+                ? Math.round((creditRatePercent.value ?? 0) * 100) : null,
             description: form.value.description && form.value.description.trim().length > 0 ? form.value.description : null,
             proximityEmailThreshold: form.value.proximityEmailThreshold && form.value.proximityEmailThreshold > 0 ? form.value.proximityEmailThreshold : null,
         }

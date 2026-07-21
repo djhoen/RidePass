@@ -11,12 +11,17 @@ namespace webapi.Controllers
 {
     // Cash reconciliation for the operator (gate) app.
     //
-    // Workers (SalesCounter) open a cash session and submit a BLIND-count turn-in: they
+    // Workers (CashTurnIn) open a cash session and submit a BLIND-count turn-in: they
     // count without seeing the system's expected total. Managers (CashReconcile) confirm
     // receipt FROM THEIR OWN login and enter their count. A worker can never confirm their
     // own turn-in (segregation of duties), and CashReconcile is deliberately not in the
     // cashier permission set. The expected-vs-counted variance is produced by the
     // reconciliation report, not here.
+    //
+    // cash.turnin is its own permission rather than riding on sales.counter because a BIKE SHOP
+    // cashier handles cash too but deliberately has no gate/F&B counter access. Their shop cash
+    // already counts toward expected cash (attributed by sold_by_user_id), so without a turn-in
+    // path they would accrue cash they could never hand in.
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
@@ -39,7 +44,7 @@ namespace webapi.Controllers
         // ── Worker: sessions ─────────────────────────────────────────────────────
 
         [HttpPost("Session/Open")]
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.CashTurnIn)]
         public async Task<IActionResult> OpenSession([FromBody] OpenCashSessionRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
@@ -67,7 +72,7 @@ namespace webapi.Controllers
         }
 
         [HttpGet("Session/Current")]
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.CashTurnIn)]
         public async Task<IActionResult> CurrentSession([FromQuery] Guid? eventId)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
@@ -81,7 +86,7 @@ namespace webapi.Controllers
         // ── Worker: turn-in ──────────────────────────────────────────────────────
 
         [HttpPost("TurnIn")]
-        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [Authorize(Policy = TenantPermissions.Policy.CashTurnIn)]
         public async Task<IActionResult> SubmitTurnIn([FromBody] SubmitTurnInRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
@@ -163,6 +168,39 @@ namespace webapi.Controllers
 
             var sessions = await _cash.ListSessionsByEvent(tenantId, eventId);
             var turnIns = await _cash.ListTurnInsByEvent(tenantId, eventId);
+            return new ApiResponses().OkResult(await BuildReconciliation(tenantId, sessions, turnIns, nowUtc));
+        }
+
+        // Shift reconciliation for cash taken OUTSIDE an event: the bike shop counter and any
+        // F&B shift open a session with no event_id, so the event-scoped report above would never
+        // show them. Without this a shop cashier could turn in cash a manager never sees.
+        // Defaults to the last 7 days.
+        [HttpGet("Reconciliation")]
+        [Authorize(Policy = TenantPermissions.Policy.CashReconcile)]
+        public async Task<IActionResult> ReconciliationForShifts(
+            [FromQuery] DateTime? fromUtc = null, [FromQuery] DateTime? toUtc = null)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            var nowUtc = DateTime.UtcNow;
+            var to = (toUtc ?? nowUtc).ToUniversalTime();
+            var from = (fromUtc ?? to.AddDays(-7)).ToUniversalTime();
+            if (to <= from) return new ApiResponses().BadRequestResult("The end of the range must be after the start.");
+            if ((to - from).TotalDays > 92) return new ApiResponses().BadRequestResult("Pick a range of 92 days or less.");
+
+            var sessions = await _cash.ListSessionsWithoutEvent(tenantId, from, to);
+            var turnIns = await _cash.ListTurnInsWithoutEvent(tenantId, from, to);
+            return new ApiResponses().OkResult(await BuildReconciliation(tenantId, sessions, turnIns, nowUtc));
+        }
+
+        // Shared row builder for both reconciliation views. Expected cash is derived from the
+        // ledger by worker and is source-kind agnostic, so bike shop and F&B cash both count.
+        private async Task<ReconciliationResponse> BuildReconciliation(
+            Guid tenantId,
+            List<Services.Repositories.Data.CashData.CashSession> sessions,
+            List<Services.Repositories.Data.CashData.CashTurnIn> turnIns,
+            DateTime nowUtc)
+        {
             var sessionsById = sessions.ToDictionary(s => s.Id);
 
             var rows = new List<ReconciliationRow>();
@@ -241,7 +279,7 @@ namespace webapi.Controllers
                 CardRefundCents = t.CardCents,
             }).ToList();
 
-            return new ApiResponses().OkResult(new ReconciliationResponse { Rows = rows, RefundsByWorker = refundRows });
+            return new ReconciliationResponse { Rows = rows, RefundsByWorker = refundRows };
         }
 
         private Guid? CurrentUserId() =>

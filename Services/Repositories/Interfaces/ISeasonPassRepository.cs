@@ -14,19 +14,52 @@ namespace Services.Repositories.Interfaces
         /// <summary>Atomic bulk update of sort_order for many season pass products at once.</summary>
         Task UpdateProductSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
 
-        // Perks
+        // Perks (legacy — superseded by Benefits; kept until season_pass_event_type_perk is dropped)
         Task<List<SeasonPassEventTypePerk>> ListPerks(Guid passProductId);
         Task ReplacePerks(Guid passProductId, IEnumerable<SeasonPassEventTypePerk> perks);
+
+        // Benefits
+        Task<List<SeasonPassBenefit>> ListBenefits(Guid passProductId, Guid tenantId);
+
+        /// <summary>Benefits for many products at once, keyed by pass_product_id. Keeps the public
+        /// product list and checkout off an N+1 when several products are in play.</summary>
+        Task<Dictionary<Guid, List<SeasonPassBenefit>>> ListBenefitsForProducts(
+            IEnumerable<Guid> passProductIds, Guid tenantId);
+        Task ReplaceBenefits(Guid passProductId, Guid tenantId, IEnumerable<SeasonPassBenefit> benefits);
+
+        /// <summary>
+        /// The benefits a user's ACTIVE passes grant on one surface, newest pass first. One entry
+        /// per pass (not per product), because a buyer holding three passes gets three grants.
+        /// Only passes that are paid, registered, and valid on <paramref name="onDateUtc"/>
+        /// (including the product's day-of-week rule and any remaining credits) are returned.
+        /// </summary>
+        Task<List<SeasonPassBenefitGrant>> ListActiveBenefitGrantsForUser(
+            Guid userId, Guid tenantId, string benefitType, Guid? scopeId, DateTime onDateUtc);
 
         // Purchases
         Task<(Guid Id, Guid RedemptionToken)> CreatePurchase(SeasonPassPurchase p);
         Task<SeasonPassPurchase?> GetPurchase(Guid id);
         Task<SeasonPassPurchase?> GetPurchaseByStripePaymentIntentId(string paymentIntentId);
+
+        /// <summary>Every pass on one PaymentIntent. A single checkout can buy several passes
+        /// (one buyer, several holders), so finalization and refunds must see them all rather
+        /// than stopping at the first match.</summary>
+        Task<List<SeasonPassPurchase>> ListPurchasesByStripePaymentIntentId(string paymentIntentId);
         Task<SeasonPassPurchase?> GetPurchaseByRedemptionToken(Guid token);
         Task<List<SeasonPassPurchaseWithContext>> ListMine(Guid userId, Guid tenantId);
         Task SetPurchaseStripePaymentIntentId(Guid id, string paymentIntentId);
         Task MarkPurchaseDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdatePurchaseStatus(Guid id, string status);
+
+        /// <summary>
+        /// Writes the post-payment registration onto one paid pass: who it admits, their photo,
+        /// and their waiver signature. Scoped by tenant AND purchaser so a rider can only register
+        /// passes from their own order. Returns rows affected — 0 means the pass isn't theirs,
+        /// isn't in this tenant, or isn't paid.
+        /// </summary>
+        Task<int> CompleteRegistration(Guid id, Guid tenantId, Guid purchaserUserId,
+            string holderFirstName, string holderLastName, DateTime? holderBirthdate,
+            string photoDataUrl, Guid? waiverSignatureId);
         Task DecrementCredits(Guid purchaseId);
 
         // Reservations

@@ -217,10 +217,16 @@ const KIND_LABELS: Record<string, string> = {
     season_pass: 'Season passes',
     membership: 'Memberships',
     extras: 'Add-ons',
-    rental: 'Rentals',
     concession: 'Food & Beverage',
     pass: 'Day passes',
     day_pass: 'Day passes',
+    shop_sale: 'Bike shop sales',
+    shop_rental: 'Bike shop rentals',
+    shop_rental_deposit: 'Rental damage charges (shop)',
+    shop_wo_deposit: 'Repair deposits',
+    // Balancing rows for store credit spent at checkout: negative, so credit-funded value
+    // nets out of total revenue instead of counting twice.
+    credit_tender: 'Store credit applied',
 }
 function kindLabel(kind: string): string {
     return KIND_LABELS[kind] || kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())

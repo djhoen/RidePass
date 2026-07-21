@@ -66,7 +66,9 @@ namespace Services.Repositories
             stripe_connected_account_id AS StripeConnectedAccountId,
             sold_by_user_id AS SoldByUserId, order_channel AS OrderChannel,
             purchaser_user_id AS PurchaserUserId, purchaser_email AS PurchaserEmail,
-            purchaser_name AS PurchaserName, is_rush AS IsRush, created_at AS CreatedAt, paid_at AS PaidAt";
+            purchaser_name AS PurchaserName, is_rush AS IsRush,
+            credit_applied_cents AS CreditAppliedCents, credit_account_id AS CreditAccountId,
+            created_at AS CreatedAt, paid_at AS PaidAt";
 
         private const string SaleLineCols = @"
             id, sale_id AS SaleId, product_id AS ProductId, variant_id AS VariantId,
@@ -547,18 +549,24 @@ namespace Services.Repositories
         // ── Sales ─────────────────────────────────────────────────────────────────
         public async Task<Guid> CreateSale(ConcessionSale sale)
         {
+            // A caller may pre-generate the id (Id set on the entity) so side effects that must
+            // land BEFORE the row exists (a store-credit redeem entry referencing this sale) have
+            // something stable to reference; an empty Id keeps the DB default.
             const string sql = @"
                 INSERT INTO concession_sale
-                    (tenant_id, status, fulfillment_status, order_number, subtotal_cents, tip_cents, tax_cents,
+                    (id, tenant_id, status, fulfillment_status, order_number, subtotal_cents, tip_cents, tax_cents,
                      prices_include_tax, discount_cents, discount_kind, discount_label,
                      comp_reason_id, comp_reason_label, authorized_by_user_id, authorized_by_name, total_cents,
                      payment_method, stripe_payment_intent_id, stripe_connected_account_id, sold_by_user_id, paid_at,
-                     order_channel, purchaser_user_id, purchaser_email, purchaser_name)
-                VALUES (@TenantId, @Status, @FulfillmentStatus, @OrderNumber, @SubtotalCents, @TipCents, @TaxCents,
+                     order_channel, purchaser_user_id, purchaser_email, purchaser_name,
+                     credit_applied_cents, credit_account_id)
+                VALUES (CASE WHEN @Id = '00000000-0000-0000-0000-000000000000'::uuid THEN gen_random_uuid() ELSE @Id END,
+                     @TenantId, @Status, @FulfillmentStatus, @OrderNumber, @SubtotalCents, @TipCents, @TaxCents,
                      @PricesIncludeTax, @DiscountCents, @DiscountKind, @DiscountLabel,
                      @CompReasonId, @CompReasonLabel, @AuthorizedByUserId, @AuthorizedByName, @TotalCents,
                      @PaymentMethod, @StripePaymentIntentId, @StripeConnectedAccountId, @SoldByUserId, @PaidAt,
-                     @OrderChannel, @PurchaserUserId, @PurchaserEmail, @PurchaserName)
+                     @OrderChannel, @PurchaserUserId, @PurchaserEmail, @PurchaserName,
+                     @CreditAppliedCents, @CreditAccountId)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, sale)).First();
         }

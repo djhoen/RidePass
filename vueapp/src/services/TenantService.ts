@@ -19,8 +19,26 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/GiftCardSettings`, req)
     }
 
-    async updateRentalsEnabled(req: { enabled: boolean }) {
-        return axios.put(`${this.apiUrl}/Tenant/RentalsEnabled`, req)
+
+    async updateShopNotifications(req: {
+        readyNotifyEmail: boolean; readyNotifySms: boolean; serviceReminderDays: number
+    }) {
+        return axios.put(`${this.apiUrl}/Tenant/ShopNotifications`, req)
+    }
+
+    // Rentals -> Settings: who funds the service fee. riderPaidBps 10000 = renter pays all,
+    // 0 = the track absorbs it. The RATE is the tenant service charge and is not set here.
+    async updateRentalSettings(req: { riderPaidBps: number; taxBps: number | null; serviceChargeTaxable: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/RentalSettings`, req)
+    }
+
+    async updateShopSupplyFee(req: { bps: number; capCents: number | null; label: string }) {
+        return axios.put(`${this.apiUrl}/Tenant/ShopSupplyFee`, req)
+    }
+
+    // Default shop labor rate in cents/hour; null clears it.
+    async updateShopLaborRate(req: { rateCents: number | null }) {
+        return axios.put(`${this.apiUrl}/Tenant/ShopLaborRate`, req)
     }
 
     async updateExtrasEnabled(req: { enabled: boolean }) {
@@ -31,6 +49,14 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/SeasonPassesEnabled`, req)
     }
 
+    async updateBikeShopEnabled(req: { enabled: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/BikeShopEnabled`, req)
+    }
+
+    async updateWristbandsEnabled(req: { enabled: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/WristbandsEnabled`, req)
+    }
+
     async updateConcessionsEnabled(req: { enabled: boolean }) {
         return axios.put(`${this.apiUrl}/Tenant/ConcessionsEnabled`, req)
     }
@@ -39,9 +65,10 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/BlogEnabled`, req)
     }
 
+    // waitlistEnabled is deliberately not here: the waitlist is switched on in Super Admin, and the
+    // API rejects the flag on this endpoint.
     async updateCancellationPolicy(req: {
         allowSelfCancel: boolean
-        waitlistEnabled: boolean
         waitlistConfirmWindowMinutes: number
     }) {
         return axios.put(`${this.apiUrl}/Tenant/CancellationPolicy`, req)

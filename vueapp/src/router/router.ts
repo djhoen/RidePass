@@ -15,7 +15,6 @@ const routes = [
     { path: '/EventUnsubscribe/:token', name: 'EventUnsubscribe', component: () => import('../views/EventUnsubscribe.vue') },
     { path: '/SeasonPasses', name: 'SeasonPasses', component: () => import('../views/BuySeasonPass.vue') },
     { path: '/GiftCard', name: 'BuyGiftCard', component: () => import('../views/BuyGiftCard.vue'), meta: { requiresAuth: true } },
-    { path: '/Rentals', name: 'Rentals', component: () => import('../views/Rentals.vue'), meta: { requiresAuth: true } },
     { path: '/Order', name: 'OrderFood', component: () => import('../views/OrderFood.vue'), meta: { requiresAuth: true } },
     {
         path: '/Waitlist/Confirm/:token',
@@ -192,6 +191,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Settings/QuickBooks',
+        name: 'AdminSettingsQuickBooks',
+        component: () => import('../views/Admin/Settings/QuickBooks.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'accounting.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Settings/HomePage',
         name: 'AdminSettingsHomePage',
         component: () => import('../views/Admin/Settings/HomePage.vue'),
@@ -237,31 +242,31 @@ const routes = [
         path: '/Admin/ConcessionPos',
         name: 'AdminConcessionPos',
         component: () => import('../views/Admin/ConcessionPos.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
         path: '/Admin/ConcessionKitchen',
         name: 'AdminConcessionKitchen',
         component: () => import('../views/Admin/ConcessionKitchen.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
         path: '/Admin/ConcessionMenu',
         name: 'AdminConcessionMenu',
         component: () => import('../views/Admin/ConcessionMenuBoard.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
         path: '/Admin/ConcessionPickupBoard',
         name: 'AdminConcessionPickupBoard',
         component: () => import('../views/Admin/ConcessionPickupBoard.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
         path: '/Admin/ConcessionOrders',
         name: 'AdminConcessionOrders',
         component: () => import('../views/Admin/ConcessionOrders.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
         // Void / Comp report. Also surfaced as a pane in the Reporting hub
@@ -274,16 +279,10 @@ const routes = [
     // Inventory moved into a tab on the Food & Beverage page; keep the old path working.
     { path: '/Admin/ConcessionInventory', redirect: '/Admin/Concessions' },
     {
-        path: '/Admin/Rentals',
-        name: 'AdminRentals',
-        component: () => import('../views/Admin/Rentals.vue'),
+        path: '/Admin/Instructors',
+        name: 'AdminInstructors',
+        component: () => import('../views/Admin/Instructors.vue'),
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
-    },
-    {
-        path: '/Admin/RentalCounter',
-        name: 'AdminRentalCounter',
-        component: () => import('../views/Admin/RentalCounter.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
     },
     // Old single-page Branding lives under Settings/Branding now; preserve bookmarks.
     { path: '/Admin/Branding', redirect: '/Admin/Settings/Branding' },
@@ -310,6 +309,77 @@ const routes = [
         name: 'AdminSeasonPasses',
         component: () => import('../views/Admin/SeasonPasses.vue'),
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/StoreCredit',
+        name: 'AdminStoreCredit',
+        component: () => import('../views/Admin/StoreCredit.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'customers.view', hideFooter: true }
+    },
+    {
+        // Public storefront: browse anonymously; checkout requires sign-in (enforced server-side).
+        path: '/Shop',
+        name: 'Shop',
+        component: () => import('../views/Shop.vue'),
+    },
+    {
+        // Public: emailed work-order deposit payment link (token is the credential).
+        // Public rental signing, reached from the emailed link. No auth: the token is the
+        // credential, same posture as /PayDeposit.
+        path: '/SignRental/:token',
+        name: 'SignRental',
+        component: () => import('../views/SignRental.vue'),
+    },
+    {
+        path: '/PayDeposit/:token',
+        name: 'PayDeposit',
+        component: () => import('../views/PayDeposit.vue'),
+        meta: { hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop',
+        name: 'AdminBikeShop',
+        component: () => import('../views/Admin/BikeShop.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop/Settings',
+        name: 'AdminBikeShopSettings',
+        component: () => import('../views/Admin/BikeShopSettings.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop/Register',
+        name: 'AdminBikeShopRegister',
+        component: () => import('../views/Admin/BikeShopRegister.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
+        // Phone photo capture, reached by scanning the QR on the counter screen. Ordinary
+        // authenticated admin route: the router sends an unauthenticated phone to Login with
+        // ?next= and returns it here after one sign-in.
+        path: '/Admin/BikeShop/Photos/:kind(work-order|rental)/:id',
+        name: 'AdminBikeShopPhotoCapture',
+        component: () => import('../views/Admin/BikeShopPhotoCapture.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop/Rentals',
+        name: 'AdminBikeShopRentals',
+        component: () => import('../views/Admin/BikeShopRentals.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop/Sales',
+        name: 'AdminBikeShopSales',
+        component: () => import('../views/Admin/BikeShopSales.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/BikeShop/WorkOrders',
+        name: 'AdminBikeShopWorkOrders',
+        component: () => import('../views/Admin/BikeShopWorkOrders.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
     },
     {
         path: '/Admin/Rewards',
@@ -479,6 +549,20 @@ const routes = [
         path: '/embed/event/:id',
         name: 'EmbedEvent',
         component: () => import('../views/Event.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    // The whole season pass lineup, and a single pass. Both render the same landing page —
+    // the :id variant filters to that one product and titles itself after it.
+    {
+        path: '/embed/seasonpasses',
+        name: 'EmbedSeasonPasses',
+        component: () => import('../views/BuySeasonPass.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/seasonpass/:id',
+        name: 'EmbedSeasonPass',
+        component: () => import('../views/BuySeasonPass.vue'),
         meta: { hideNav: true, hideFooter: true, embed: true },
     },
     {

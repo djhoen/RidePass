@@ -339,10 +339,15 @@ export interface ConcessionSaleRequest {
     // Optional order-level discount/comp + the manager PIN authorizing any gated discount/comp.
     discount?: ConcessionDiscountInput | null
     managerPin?: string | null
+    // Store credit as a tender (server re-verifies the balance and caps at the total).
+    creditAccountId?: string
+    creditCents?: number
 }
 
 export interface ConcessionSaleResult {
     saleId: string
+    creditAppliedCents?: number
+    dueCents?: number
     clientSecret: string | null
     paymentIntentId: string | null
     totalCents: number

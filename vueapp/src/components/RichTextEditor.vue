@@ -68,6 +68,27 @@
                 class="d-none" @change="onImageFileChange" />
         </div>
 
+        <!-- Link dialog: replaces the browser-native window.prompt (banned in this project). -->
+        <v-dialog v-model="linkDialog" max-width="440">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ linkExisting ? 'Edit link' : 'Insert link' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="linkDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-text-field v-model="linkUrl" label="Link URL" density="compact" autofocus hide-details
+                        placeholder="https://example.com" @keyup.enter="applyLink"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-btn v-if="linkExisting" color="error" variant="text" @click="removeLink">Remove link</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn @click="linkDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :disabled="!linkUrl.trim()" @click="applyLink">Apply</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <editor-content :editor="editor" class="editor-surface" />
 
         <v-snackbar v-model="snackbar" color="error" :timeout="4000" location="top">
@@ -95,6 +116,9 @@ const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const uploadingImage = ref(false)
 const snackbar = ref(false)
+const linkDialog = ref(false)
+const linkUrl = ref('')
+const linkExisting = ref(false)
 const snackbarText = ref('')
 
 const editor = useEditor({
@@ -124,13 +148,19 @@ onBeforeUnmount(() => {
 function toggleLink() {
     if (!editor.value) return
     const existing = editor.value.getAttributes('link').href as string | undefined
-    const url = window.prompt('Link URL', existing ?? 'https://')
-    if (url === null) return
-    if (url === '') {
-        editor.value.chain().focus().extendMarkRange('link').unsetLink().run()
-        return
-    }
+    linkExisting.value = !!existing
+    linkUrl.value = existing ?? 'https://'
+    linkDialog.value = true
+}
+function applyLink() {
+    const url = linkUrl.value.trim()
+    if (!editor.value || !url) return
     editor.value.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+    linkDialog.value = false
+}
+function removeLink() {
+    editor.value?.chain().focus().extendMarkRange('link').unsetLink().run()
+    linkDialog.value = false
 }
 
 async function onImageFileChange(e: Event) {

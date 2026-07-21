@@ -48,13 +48,15 @@ namespace webapi.Controllers.API.Data.SuperAdmin
 
         // Feature toggles. Defaults mirror the DB defaults (add-ons + season passes + waitlist on).
         public bool GiftCardsEnabled { get; set; }
-        public bool RentalsEnabled { get; set; }
         public bool ExtrasEnabled { get; set; } = true;
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
+        public bool BikeShopEnabled { get; set; }
         public bool BlogEnabled { get; set; }
         public bool MembershipEnabled { get; set; }
-        public bool WaitlistEnabled { get; set; } = true;
+        // Off by default: most tracks don't want a waitlist (Script0180).
+        public bool WaitlistEnabled { get; set; } = false;
+        public bool WaitlistPrepayEnabled { get; set; } = false;
         public bool AllowSelfCancel { get; set; }
         public bool DynamicPricingEnabled { get; set; }
         public bool BundledCouponsEnabled { get; set; }

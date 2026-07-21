@@ -15,6 +15,10 @@ namespace Services.Repositories.Interfaces
         /// <summary>Cumulative active sales across every step of one event's price ladder.</summary>
         Task<int> GroupSoldCount(Guid eventId, string ladderGroup, Guid tenantId);
 
+        /// <summary>Active RIDER admissions sold across the whole event (every tier), for the
+        /// event.capacity check. Spectator gate fees are excluded.</summary>
+        Task<int> EventSoldCount(Guid eventId, Guid tenantId);
+
         /// <summary>Atomic bulk update of sort_order for many tiers within one event.</summary>
         Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
     }

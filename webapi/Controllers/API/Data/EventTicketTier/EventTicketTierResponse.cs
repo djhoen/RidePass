@@ -37,5 +37,22 @@ namespace webapi.Controllers.API.Data.EventTicketTier
         public int? BundledCouponDiscountValue { get; set; }
         public string? BundledCouponScope { get; set; }
         public int? BundledCouponExpiresInDays { get; set; }
+
+        // Training group: the coach running it plus the ability/equipment bands riders
+        // self-select on. InstructorName is resolved for display so the buy page can show
+        // who is teaching without a second call.
+        public Guid? InstructorId { get; set; }
+        public string? InstructorName { get; set; }
+        public string? InstructorImageUrl { get; set; }
+        public string? SkillLevel { get; set; }
+        public string? EquipmentLabel { get; set; }
+        public DateTime? StartsAt { get; set; }
+        public DateTime? EndsAt { get; set; }
+
+        // Party pricing, echoed for the admin editor and so the buy page can say
+        // "covers up to N riders" instead of implying a per-person price.
+        public int PartySizeIncluded { get; set; } = 1;
+        public int? PartyPriceCents { get; set; }
+        public int? PartySizeMax { get; set; }
     }
 }

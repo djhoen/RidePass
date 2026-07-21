@@ -62,9 +62,10 @@ namespace Services.Repositories.Interfaces
             string clientType, string? customDomain, bool customDomainVerified, bool embedEnabled,
             string[]? embedAllowedOrigins, string? externalHomeUrl, string? externalEventsUrl, string embedEventTarget);
         // Super-admin feature toggles (boolean flags only).
-        Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
+        Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool extrasEnabled,
             bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
-            bool waitlistEnabled, bool allowSelfCancel, bool dynamicPricingEnabled, bool bundledCouponsEnabled);
+            bool waitlistEnabled, bool waitlistPrepayEnabled, bool allowSelfCancel, bool dynamicPricingEnabled,
+            bool bundledCouponsEnabled, bool bikeShopEnabled);
         Task UpdateLocation(Guid tenantId, string? shippingName, string? addressLine, string? city, string? region,
             string? postalCode, string? country, double? latitude, double? longitude);
         Task UpdateHomeContent(Guid tenantId, string? aboutHtml, string? hoursJson,
@@ -74,12 +75,25 @@ namespace Services.Repositories.Interfaces
         Task UpdateFooter(Guid tenantId, string? contactEmail, string? phone,
             string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml);
         Task UpdateGiftCardSettings(Guid tenantId, bool enabled, int minCents, int maxCents);
-        Task UpdateRentalsEnabled(Guid tenantId, bool enabled);
+        /// <summary>The bike shop's customer-notification policy: whether a ready repair emails
+        /// and/or texts the customer, and how many days after pickup to send a service reminder
+        /// (0 = off).</summary>
+        Task UpdateShopNotificationSettings(Guid tenantId, bool readyEmail, bool readySms, int reminderDays);
+
+        /// <summary>Shop supply fee on repair bills: basis points of labor, an optional cap, and
+        /// the label the customer reads. bps = 0 turns it off.</summary>
+        /// <summary>Rentals -> Settings: fee split, tax rate (null = unset), and whether the fee is taxed.</summary>
+        Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable);
+
+        Task UpdateShopSupplyFee(Guid tenantId, int bps, int? capCents, string label);
+        Task UpdateShopLaborRate(Guid tenantId, int? rateCents);
         Task UpdateExtrasEnabled(Guid tenantId, bool enabled);
         Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled);
+        Task UpdateBikeShopEnabled(Guid tenantId, bool enabled);
+        Task UpdateWristbandsEnabled(Guid tenantId, bool enabled);
         Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
         Task UpdateBlogEnabled(Guid tenantId, bool enabled);
-        Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, bool waitlistEnabled, int waitlistConfirmWindowMinutes);
+        Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, int waitlistConfirmWindowMinutes);
         Task UpdateGateLabels(Guid tenantId, string? riderGateLabel, string? spectatorGateLabel);
         Task UpdateMembershipSettings(
             Guid tenantId, bool enabled, string name, int priceCents, string durationKind,

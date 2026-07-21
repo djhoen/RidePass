@@ -35,7 +35,7 @@
                     Send message ({{ selectedRows.length }})
                 </v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-export"
-                    :href="tracksideUrl" :disabled="!tracksideUrl">
+                    :loading="exportingCsv" :disabled="!selectedEventId" @click="exportTracksideCsv">
                     Export Trackside CSV
                 </v-btn>
             </div>
@@ -249,8 +249,23 @@ const filteredRows = computed<EventRiderRow[]>(() => {
     })
 })
 
-const tracksideUrl = computed(() =>
-    selectedEventId.value ? reportsService.tracksideExportUrl(selectedEventId.value) : '')
+const exportingCsv = ref(false)
+async function exportTracksideCsv() {
+    if (!selectedEventId.value) return
+    exportingCsv.value = true
+    try {
+        const { blob, filename } = await reportsService.downloadTracksideCsv(selectedEventId.value)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = filename
+        document.body.appendChild(a); a.click()
+        a.remove(); URL.revokeObjectURL(url)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not export the CSV. Try again.', 'error')
+    } finally {
+        exportingCsv.value = false
+    }
+}
 
 function tz() { return branding.timezone || 'UTC' }
 function formatShort(iso: string) { return dayjs.utc(iso).tz(tz()).format('YYYY-MM-DD ddd') }

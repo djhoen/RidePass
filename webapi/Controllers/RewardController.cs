@@ -36,6 +36,8 @@ namespace webapi.Controllers
         [HttpPost("Programs")]
         public async Task<IActionResult> CreateProgram([FromBody] UpsertRewardProgramRequest request)
         {
+            if (request.RewardKind == "credit_rate" && request.CreditRateBps is not > 0)
+                return new ApiResponses().BadRequestResult("A credit-back program needs an earn rate (e.g. 5% back).");
             var program = new RewardProgram
             {
                 TenantId = _tenantContext.TenantId,
@@ -45,6 +47,9 @@ namespace webapi.Controllers
                 RequirementKind = request.RequirementKind,
                 RequirementCount = request.RequirementCount,
                 RewardPercentOff = request.RewardPercentOff,
+                RewardKind = request.RewardKind,
+                CreditRateBps = request.RewardKind == "credit_rate" ? request.CreditRateBps : null,
+                CreditQualifyingKind = request.CreditQualifyingKind,
                 ProximityEmailThreshold = request.ProximityEmailThreshold,
                 IsActive = request.IsActive,
             };
@@ -61,12 +66,17 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().NotFoundResult("Program not found.");
             }
+            if (request.RewardKind == "credit_rate" && request.CreditRateBps is not > 0)
+                return new ApiResponses().BadRequestResult("A credit-back program needs an earn rate (e.g. 5% back).");
             existing.Name = request.Name.Trim();
             existing.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
             existing.EnrollmentMode = request.EnrollmentMode;
             existing.RequirementKind = request.RequirementKind;
             existing.RequirementCount = request.RequirementCount;
             existing.RewardPercentOff = request.RewardPercentOff;
+            existing.RewardKind = request.RewardKind;
+            existing.CreditRateBps = request.RewardKind == "credit_rate" ? request.CreditRateBps : null;
+            existing.CreditQualifyingKind = request.CreditQualifyingKind;
             existing.ProximityEmailThreshold = request.ProximityEmailThreshold;
             existing.IsActive = request.IsActive;
             await _rewards.UpdateProgram(existing);
@@ -127,6 +137,9 @@ namespace webapi.Controllers
                     RequirementKind = p.RequirementKind,
                     RequirementCount = p.RequirementCount,
                     RewardPercentOff = p.RewardPercentOff,
+                    RewardKind = p.RewardKind,
+                    CreditRateBps = p.CreditRateBps,
+                    CreditQualifyingKind = p.CreditQualifyingKind,
                     IsEnrolled = enrolled,
                     Progress = progressTowardNext,
                     RemainingForReward = Math.Max(0, p.RequirementCount - progressTowardNext),
@@ -215,6 +228,9 @@ namespace webapi.Controllers
             RequirementKind = p.RequirementKind,
             RequirementCount = p.RequirementCount,
             RewardPercentOff = p.RewardPercentOff,
+            RewardKind = p.RewardKind,
+            CreditRateBps = p.CreditRateBps,
+            CreditQualifyingKind = p.CreditQualifyingKind,
             ProximityEmailThreshold = p.ProximityEmailThreshold,
             IsActive = p.IsActive,
             CreatedAtUtc = DateTime.SpecifyKind(p.CreatedAt, DateTimeKind.Utc),

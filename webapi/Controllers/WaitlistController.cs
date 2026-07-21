@@ -73,39 +73,60 @@ namespace webapi.Controllers
             if (tier is null || tier.EventId != req.EventId || !tier.IsActive)
                 return new ApiResponses().BadRequestResult("Selected admission isn't available.");
 
-            // Work out remaining capacity and the tier a future promotion would charge.
-            // A price-ladder step carries no per-step inventory: the whole class (every step
-            // sharing the ladder group) sells against event.capacity, so we count group sales
-            // and resolve the active step (today's price) to charge on promotion. A standalone
-            // tier just uses its own inventory.
+            // Work out whether the rider is actually shut out, and the tier a future promotion
+            // would charge. Two independent caps can apply: the tier's own inventory, and the
+            // event's rider capacity (enforced event-wide at checkout, so a sale on ANY rider
+            // tier consumes it). The waitlist opens as soon as EITHER is exhausted; the "buy
+            // directly" rejection must agree with what checkout would actually accept, or the
+            // rider gets bounced from both.
+            // A price-ladder step carries no per-step inventory, so it is gated by event capacity
+            // alone; group sales still drive which step a promotion would charge.
             var chargeTier = tier;
-            int sold;
+            var isFull = false;
+            var hasAnyCap = false;
+
             if (tier.LadderGroup is not null)
             {
-                if (!ev.Capacity.HasValue)
-                    return new ApiResponses().BadRequestResult("This event has unlimited capacity, so no waitlist is needed.");
                 var steps = (await _tiers.GetForEvent(req.EventId, _tenantContext.TenantId, activeOnly: true))
                     .Where(t => t.LadderGroup == tier.LadderGroup).ToList();
-                sold = await _tiers.GroupSoldCount(req.EventId, tier.LadderGroup, _tenantContext.TenantId);
-                var state = Services.Pricing.PriceStepResolver.Resolve(steps, sold, ev.StartsAt, DateTime.UtcNow);
+                var groupSold = await _tiers.GroupSoldCount(req.EventId, tier.LadderGroup, _tenantContext.TenantId);
+                var state = Services.Pricing.PriceStepResolver.Resolve(steps, groupSold, ev.StartsAt, DateTime.UtcNow);
                 chargeTier = state?.Active ?? tier;
-                if (sold < ev.Capacity.Value)
-                    return new ApiResponses().BadRequestResult("Spots are still available, so buy directly instead.");
             }
-            else
+            else if (tier.Inventory.HasValue)
             {
-                if (!tier.Inventory.HasValue)
-                    return new ApiResponses().BadRequestResult("This admission has unlimited capacity, so no waitlist is needed.");
-                sold = await _tiers.SoldCount(tier.Id);
-                if (sold < tier.Inventory.Value)
-                    return new ApiResponses().BadRequestResult("Spots are still available, so buy directly instead.");
+                hasAnyCap = true;
+                var tierSold = await _tiers.SoldCount(tier.Id);
+                if (tierSold >= tier.Inventory.Value) isFull = true;
             }
+
+            if (ev.Capacity.HasValue && tier.Audience == "rider")
+            {
+                hasAnyCap = true;
+                var riderSold = await _tiers.EventSoldCount(req.EventId, _tenantContext.TenantId);
+                if (riderSold >= ev.Capacity.Value) isFull = true;
+            }
+
+            if (!hasAnyCap)
+                return new ApiResponses().BadRequestResult("This admission has unlimited capacity, so no waitlist is needed.");
+            if (!isFull)
+                return new ApiResponses().BadRequestResult("Spots are still available, so buy directly instead.");
 
             // Make sure the rider isn't already queued for this class. For a ladder the
             // bucket is the ladder group (spanning every step); otherwise it's the tier.
             var existing = await _waitlist.GetActiveForUser(req.EventId, chargeTier.Id, tier.LadderGroup, userId);
             if (existing is not null)
                 return new ApiResponses().BadRequestResult("You're already on this waitlist.");
+
+            // Pre-pay is a separate super-admin decision from the waitlist itself (Script0180): it
+            // takes a rider's money for a spot that may never open. Reject rather than silently
+            // downgrade to a non-prepaid join, so a client that asked to be charged never ends up
+            // queued on different terms than the rider agreed to.
+            if (req.Prepay && !_tenantContext.Tenant.WaitlistPrepayEnabled)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track's waitlist doesn't take payment up front. Join the waitlist and you'll be notified when a spot opens.");
+            }
 
             int prepayAmountCents = 0;
             int prepayServiceChargeCents = 0;   // full RidePass cut for the tier (our application fee in direct mode)

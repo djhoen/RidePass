@@ -25,6 +25,9 @@ namespace Services.Repositories
             sms_enabled AS SmsEnabled,
             sms_enabled_at_utc AS SmsEnabledAtUtc,
             service_charge_bps AS ServiceChargeBps,
+            rental_rider_paid_service_charge_bps AS RentalRiderPaidServiceChargeBps,
+            rental_tax_bps AS RentalTaxBps,
+            rental_tax_service_charge_taxable AS RentalTaxServiceChargeTaxable,
             monthly_service_charge_cap_cents AS MonthlyServiceChargeCapCents,
             shipping_name AS ShippingName,
             about_html AS AboutHtml,
@@ -54,6 +57,15 @@ namespace Services.Repositories
             extras_enabled AS ExtrasEnabled,
             season_passes_enabled AS SeasonPassesEnabled,
             concessions_enabled AS ConcessionsEnabled,
+            bike_shop_enabled AS BikeShopEnabled,
+            shop_service_reminder_days AS ShopServiceReminderDays,
+            shop_ready_notify_email AS ShopReadyNotifyEmail,
+            shop_ready_notify_sms AS ShopReadyNotifySms,
+            shop_supply_fee_bps AS ShopSupplyFeeBps,
+            shop_supply_fee_cap_cents AS ShopSupplyFeeCapCents,
+            shop_supply_fee_label AS ShopSupplyFeeLabel,
+            shop_labor_rate_cents AS ShopLaborRateCents,
+            wristbands_enabled AS WristbandsEnabled,
             blog_enabled AS BlogEnabled,
             dynamic_pricing_enabled AS DynamicPricingEnabled,
             bundled_coupons_enabled AS BundledCouponsEnabled,
@@ -70,6 +82,7 @@ namespace Services.Repositories
             rider_gate_label AS RiderGateLabel,
             spectator_gate_label AS SpectatorGateLabel,
             waitlist_enabled AS WaitlistEnabled,
+            waitlist_prepay_enabled AS WaitlistPrepayEnabled,
             waitlist_confirm_window_minutes AS WaitlistConfirmWindowMinutes,
             membership_enabled AS MembershipEnabled,
             membership_name AS MembershipName,
@@ -108,14 +121,14 @@ namespace Services.Repositories
                     client_type, custom_domain, custom_domain_verified, embed_enabled, embed_allowed_origins,
                     external_home_url, external_events_url, embed_event_target,
                     gift_cards_enabled, rentals_enabled, extras_enabled, season_passes_enabled,
-                    concessions_enabled, blog_enabled, dynamic_pricing_enabled, bundled_coupons_enabled,
-                    membership_enabled, waitlist_enabled, allow_self_cancel)
+                    concessions_enabled, bike_shop_enabled, blog_enabled, dynamic_pricing_enabled, bundled_coupons_enabled,
+                    membership_enabled, waitlist_enabled, waitlist_prepay_enabled, allow_self_cancel)
                 VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @VenueCategory, @Timezone,
                     @ClientType, @CustomDomain, @CustomDomainVerified, @EmbedEnabled, @EmbedAllowedOrigins,
                     @ExternalHomeUrl, @ExternalEventsUrl, @EmbedEventTarget,
                     @GiftCardsEnabled, @RentalsEnabled, @ExtrasEnabled, @SeasonPassesEnabled,
-                    @ConcessionsEnabled, @BlogEnabled, @DynamicPricingEnabled, @BundledCouponsEnabled,
-                    @MembershipEnabled, @WaitlistEnabled, @AllowSelfCancel)
+                    @ConcessionsEnabled, @BikeShopEnabled, @BlogEnabled, @DynamicPricingEnabled, @BundledCouponsEnabled,
+                    @MembershipEnabled, @WaitlistEnabled, @WaitlistPrepayEnabled, @AllowSelfCancel)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, tenant);
             return result.First();
@@ -316,29 +329,31 @@ namespace Services.Repositories
         // Super-admin feature toggles. Narrow to just the boolean flags so it never
         // touches the dependent config (gift-card min/max, membership price, etc.),
         // which the tenant manages on their own Settings -> Features page.
-        public async Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool rentalsEnabled, bool extrasEnabled,
+        public async Task UpdateFeatures(Guid tenantId, bool giftCardsEnabled, bool extrasEnabled,
             bool seasonPassesEnabled, bool concessionsEnabled, bool blogEnabled, bool membershipEnabled,
-            bool waitlistEnabled, bool allowSelfCancel, bool dynamicPricingEnabled, bool bundledCouponsEnabled)
+            bool waitlistEnabled, bool waitlistPrepayEnabled, bool allowSelfCancel, bool dynamicPricingEnabled,
+            bool bundledCouponsEnabled, bool bikeShopEnabled)
         {
             const string sql = @"
                 UPDATE tenant
                 SET gift_cards_enabled = @giftCardsEnabled,
-                    rentals_enabled = @rentalsEnabled,
                     extras_enabled = @extrasEnabled,
                     season_passes_enabled = @seasonPassesEnabled,
                     concessions_enabled = @concessionsEnabled,
                     blog_enabled = @blogEnabled,
                     membership_enabled = @membershipEnabled,
                     waitlist_enabled = @waitlistEnabled,
+                    waitlist_prepay_enabled = @waitlistPrepayEnabled,
                     allow_self_cancel = @allowSelfCancel,
                     dynamic_pricing_enabled = @dynamicPricingEnabled,
-                    bundled_coupons_enabled = @bundledCouponsEnabled
+                    bundled_coupons_enabled = @bundledCouponsEnabled,
+                    bike_shop_enabled = @bikeShopEnabled
                 WHERE id = @tenantId";
             await _db.Execute(sql, new
             {
-                tenantId, giftCardsEnabled, rentalsEnabled, extrasEnabled, seasonPassesEnabled,
-                concessionsEnabled, blogEnabled, membershipEnabled, waitlistEnabled, allowSelfCancel,
-                dynamicPricingEnabled, bundledCouponsEnabled,
+                tenantId, giftCardsEnabled, extrasEnabled, seasonPassesEnabled,
+                concessionsEnabled, blogEnabled, membershipEnabled, waitlistEnabled, waitlistPrepayEnabled, allowSelfCancel,
+                dynamicPricingEnabled, bundledCouponsEnabled, bikeShopEnabled,
             });
         }
 
@@ -416,10 +431,70 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, enabled, minCents, maxCents });
         }
 
-        public async Task UpdateRentalsEnabled(Guid tenantId, bool enabled)
+        // One setter for the shop's customer-notification policy: the three settings are edited
+        // together on the same screen, so saving them together keeps the screen and the row honest.
+        public async Task UpdateShopNotificationSettings(
+            Guid tenantId, bool readyEmail, bool readySms, int reminderDays)
         {
-            const string sql = "UPDATE tenant SET rentals_enabled = @enabled WHERE id = @tenantId";
-            await _db.Execute(sql, new { tenantId, enabled });
+            const string sql = @"
+                UPDATE tenant
+                SET shop_ready_notify_email = @readyEmail,
+                    shop_ready_notify_sms = @readySms,
+                    shop_service_reminder_days = @reminderDays
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId, readyEmail, readySms, reminderDays = Math.Clamp(reminderDays, 0, 730),
+            });
+        }
+
+        // Only the split moves here. The rate is service_charge_bps, shared with events, and is not
+        // editable from the rentals screen.
+        public async Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET rental_rider_paid_service_charge_bps = @riderPaidBps,
+                    rental_tax_bps = @taxBps,
+                    rental_tax_service_charge_taxable = @serviceChargeTaxable
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId,
+                riderPaidBps = Math.Clamp(riderPaidBps, 0, 10000),
+                // Null stays null: it is what distinguishes "never set" from "deliberately 0%".
+                taxBps = taxBps.HasValue ? Math.Clamp(taxBps.Value, 0, 10000) : (int?)null,
+                serviceChargeTaxable,
+            });
+        }
+
+        public async Task UpdateShopSupplyFee(Guid tenantId, int bps, int? capCents, string label)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET shop_supply_fee_bps = @bps,
+                    shop_supply_fee_cap_cents = @capCents,
+                    shop_supply_fee_label = @label
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId,
+                bps = Math.Clamp(bps, 0, 5000),
+                capCents = capCents.HasValue ? Math.Max(0, capCents.Value) : (int?)null,
+                label = string.IsNullOrWhiteSpace(label) ? "Shop supplies" : label.Trim(),
+            });
+        }
+
+        public async Task UpdateShopLaborRate(Guid tenantId, int? rateCents)
+        {
+            const string sql = "UPDATE tenant SET shop_labor_rate_cents = @rateCents WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId,
+                // Null stays null (no rate set). A sent value is floored at 0 and capped at a sane
+                // ceiling so a fat-fingered rate can't bill thousands per hour.
+                rateCents = rateCents.HasValue ? Math.Clamp(rateCents.Value, 0, 100_000) : (int?)null,
+            });
         }
 
         public async Task UpdateExtrasEnabled(Guid tenantId, bool enabled)
@@ -431,6 +506,18 @@ namespace Services.Repositories
         public async Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled)
         {
             const string sql = "UPDATE tenant SET season_passes_enabled = @enabled WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateBikeShopEnabled(Guid tenantId, bool enabled)
+        {
+            const string sql = "UPDATE tenant SET bike_shop_enabled = @enabled WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateWristbandsEnabled(Guid tenantId, bool enabled)
+        {
+            const string sql = "UPDATE tenant SET wristbands_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
         }
 
@@ -446,16 +533,17 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, enabled });
         }
 
+        // Tenant-facing. Deliberately does NOT touch waitlist_enabled: that's super-admin-only and is
+        // set by UpdateFeatureFlags. See Script0180.
         public async Task UpdateCancellationPolicy(
-            Guid tenantId, bool allowSelfCancel, bool waitlistEnabled, int waitlistConfirmWindowMinutes)
+            Guid tenantId, bool allowSelfCancel, int waitlistConfirmWindowMinutes)
         {
             const string sql = @"
                 UPDATE tenant
                 SET allow_self_cancel = @allowSelfCancel,
-                    waitlist_enabled = @waitlistEnabled,
                     waitlist_confirm_window_minutes = @waitlistConfirmWindowMinutes
                 WHERE id = @tenantId";
-            await _db.Execute(sql, new { tenantId, allowSelfCancel, waitlistEnabled, waitlistConfirmWindowMinutes });
+            await _db.Execute(sql, new { tenantId, allowSelfCancel, waitlistConfirmWindowMinutes });
         }
 
         public async Task UpdateGateLabels(Guid tenantId, string? riderGateLabel, string? spectatorGateLabel)

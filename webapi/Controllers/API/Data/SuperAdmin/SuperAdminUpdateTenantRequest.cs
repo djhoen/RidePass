@@ -72,13 +72,15 @@ namespace webapi.Controllers.API.Data.SuperAdmin
 
         // Tenant-level feature toggles (Feature Toggles tab).
         public bool GiftCardsEnabled { get; set; }
-        public bool RentalsEnabled { get; set; }
         public bool ExtrasEnabled { get; set; }
         public bool SeasonPassesEnabled { get; set; }
         public bool ConcessionsEnabled { get; set; }
+        public bool BikeShopEnabled { get; set; }
         public bool BlogEnabled { get; set; }
         public bool MembershipEnabled { get; set; }
         public bool WaitlistEnabled { get; set; }
+        /// <summary>Charge the rider at waitlist-join time. Inert unless WaitlistEnabled is true.</summary>
+        public bool WaitlistPrepayEnabled { get; set; }
         public bool AllowSelfCancel { get; set; }
         public bool DynamicPricingEnabled { get; set; }
         public bool BundledCouponsEnabled { get; set; }

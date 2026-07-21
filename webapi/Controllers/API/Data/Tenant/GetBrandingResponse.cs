@@ -31,6 +31,12 @@ namespace webapi.Controllers.API.Data.Tenant
         // on the tenant's own connected account.
         public string StripeChargeMode { get; set; } = "platform";
         public int ServiceChargeBps { get; set; }
+        /// <summary>Renter's share of the service charge on rentals (bps). Lets the booking screen
+        /// show the same fee the server will charge.</summary>
+        public int RentalRiderPaidServiceChargeBps { get; set; }
+        /// <summary>Rental sales tax rate (bps). NULL = never configured; the admin UI warns.</summary>
+        public int? RentalTaxBps { get; set; }
+        public bool RentalTaxServiceChargeTaxable { get; set; } = true;
         public string? ShippingName { get; set; }
         public string? AboutHtml { get; set; }
         public string? HoursJson { get; set; }
@@ -59,10 +65,23 @@ namespace webapi.Controllers.API.Data.Tenant
         public int GiftCardMinCents { get; set; }
         public int GiftCardMaxCents { get; set; }
         public string? Phone { get; set; }
-        public bool RentalsEnabled { get; set; }
         public bool ExtrasEnabled { get; set; }
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; }
+        public bool BikeShopEnabled { get; set; }
+        /// <summary>Days after pickup to email a shop service reminder; 0 = off.</summary>
+        public int ShopServiceReminderDays { get; set; }
+        /// <summary>Email the customer when a repair is marked ready.</summary>
+        public bool ShopReadyNotifyEmail { get; set; }
+        /// <summary>Text the customer when a repair is marked ready (costs per send).</summary>
+        public bool ShopReadyNotifySms { get; set; }
+        /// <summary>Shop supply fee as bps of labor on a repair bill; 0 = off.</summary>
+        public int ShopSupplyFeeBps { get; set; }
+        public int? ShopSupplyFeeCapCents { get; set; }
+        public string ShopSupplyFeeLabel { get; set; } = "Shop supplies";
+        /// <summary>Default shop labor rate in cents/hour; null = no rate set.</summary>
+        public int? ShopLaborRateCents { get; set; }
+        public bool WristbandsEnabled { get; set; }
         public bool BlogEnabled { get; set; }
         // Stepped price ladders / bundled share-coupons (super-admin toggles). The tenant
         // admin UI hides the corresponding tier-editor sections when these are off.
@@ -95,7 +114,8 @@ namespace webapi.Controllers.API.Data.Tenant
         // null = platform defaults ("Riding Pass" / "Spectator Pass").
         public string? RiderGateLabel { get; set; }
         public string? SpectatorGateLabel { get; set; }
-        public bool WaitlistEnabled { get; set; } = true;
+        public bool WaitlistEnabled { get; set; } = false;
+        public bool WaitlistPrepayEnabled { get; set; } = false;
         public int WaitlistConfirmWindowMinutes { get; set; }
         public bool MembershipEnabled { get; set; }
         public string MembershipName { get; set; } = "Track Membership";

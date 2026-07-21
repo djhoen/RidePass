@@ -16,6 +16,11 @@ namespace webapi.Controllers.API.Data.Concession
         // server verifies it and stamps the authorizing manager on the sale. Ignored when nothing needs it.
         public string? ManagerPin { get; set; }
 
+        // Store credit as a tender: the account the cashier looked up and how much of its balance
+        // to apply. The server re-verifies the balance and caps at the order total.
+        public Guid? CreditAccountId { get; set; }
+        public int CreditCents { get; set; }
+
         public class SaleLine
         {
             public Guid ProductId { get; set; }

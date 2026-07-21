@@ -54,6 +54,11 @@ namespace Services.Repositories
                     bool_or(t.waiver_signature_id IS NOT NULL
                             OR t.waiver_signed_at IS NOT NULL
                             OR t.waiver_signature_data_url IS NOT NULL) AS WaiverSigned,
+                    -- Whether a waiver is actually REQUIRED here, per the audience of the tiers
+                    -- this rider holds. Without it the card cannot tell an unsigned waiver from
+                    -- one that was never needed, and every no-waiver event would nag.
+                    bool_or(CASE WHEN tt.audience = 'rider' THEN e.requires_rider_waiver
+                                 ELSE e.requires_spectator_waiver END) AS WaiverRequired,
                     e.starts_at                             AS OccursAtUtc,
                     e.ends_at                               AS EndsAtUtc,
                     NULL::timestamptz                       AS ValidToUtc,

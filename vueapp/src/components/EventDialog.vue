@@ -148,7 +148,8 @@
                                 : 'Riders buy a riding pass to enter.' }}
                             Add a spectator pass if spectators pay to get in. Use $0 for a free kids pass.
                         </p>
-                        <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" :is-race="isRaceEvent" />
+                        <TicketTiersList ref="gateFeesList" :event-id="editing?.id ?? null" kind="gate_fee" :is-race="isRaceEvent"
+                            :is-lesson="isLessonEvent" :event-starts-local="form.startsLocal" :event-ends-local="form.endsLocal" />
 
                         <!-- What riders see these sections called at checkout for THIS event.
                              Blank inherits the tenant-wide setting (Settings → General →
@@ -192,6 +193,54 @@
                                         label="Inventory" placeholder="Unlimited"
                                         density="compact" hide-details
                                         style="max-width: 130px"></v-text-field>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Lessons: assign instructors and offer bikes. Bikes are reserved for the
+                             lesson's exact time frame at checkout, so a bike stays free for other
+                             lessons and walk-up rentals outside that window. -->
+                        <template v-if="isLessonEvent">
+                            <v-divider class="my-5"></v-divider>
+                            <label class="text-subtitle-2 d-block mb-1">Instructors</label>
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                Assign the coach(es) running this lesson. An instructor can’t be booked on
+                                two overlapping lessons — the save is rejected if it would double-book one.
+                            </p>
+                            <div v-if="instructors.length === 0" class="text-medium-emphasis text-caption mb-2">
+                                No instructors yet.
+                                <router-link to="/Admin/Instructors">Add some first.</router-link>
+                            </div>
+                            <v-select v-else v-model="form.instructorIds" :items="instructors"
+                                item-title="name" item-value="id" label="Assigned instructors"
+                                multiple chips closable-chips density="compact" hide-details></v-select>
+
+                            <v-divider class="my-5"></v-divider>
+                            <label class="text-subtitle-2 d-block mb-1">Bikes for this lesson</label>
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                Bikes a rider can add when booking this lesson. Each is reserved for the lesson’s
+                                time window only. Set a price for the lesson block, or leave blank to use the
+                                bike’s daily rate.
+                            </p>
+                            <div v-if="!branding.bikeShopEnabled" class="text-medium-emphasis text-caption">
+                                The Bike Shop is turned off, so there are no rentable bikes to offer.
+                            </div>
+                            <div v-else-if="rentableBikes.length === 0" class="text-medium-emphasis text-caption">
+                                No rentable bikes in the shop catalog yet.
+                                <router-link to="/Admin/BikeShop">Add a rentable product with a daily rate first.</router-link>
+                            </div>
+                            <div v-else>
+                                <div v-for="b in rentableBikes" :key="b.id" class="d-flex align-center ga-2 py-1">
+                                    <v-checkbox :model-value="rentalEnabled(b.id)"
+                                        @update:model-value="toggleRental(b.id, $event)"
+                                        :label="`${b.title} ($${(b.dailyRateCents / 100).toFixed(2)}/day)`"
+                                        density="compact" hide-details style="flex: 1"></v-checkbox>
+                                    <v-text-field v-if="rentalEnabled(b.id)"
+                                        :model-value="rentalOverrideDollars(b.id)"
+                                        @update:model-value="setRentalOverride(b.id, $event)"
+                                        type="number" min="0" step="0.01" prefix="$"
+                                        label="Lesson price" :placeholder="`${(b.dailyRateCents / 100).toFixed(2)}`"
+                                        density="compact" hide-details style="max-width: 150px"></v-text-field>
                                 </div>
                             </div>
                         </template>
@@ -263,6 +312,8 @@ import dayjs from 'dayjs'
 import { EventService, type EventDto } from '@/services/EventService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { ExtraService, type ExtraProduct } from '@/services/ExtraService'
+import { InstructorService, type Instructor } from '@/services/InstructorService'
+import { BikeShopService, type ShopProduct } from '@/services/BikeShopService'
 import { WaiverService, type WaiverDto } from '@/services/WaiverService'
 import { branding } from '@/stores/branding'
 import TicketTiersList from '@/components/TicketTiersList.vue'
@@ -338,6 +389,8 @@ const form = ref({
     spectatorGateLabel: '' as string | null,
     eligibleExtras: [] as { productId: string; inventory: number | null }[],
     schedule: [] as { time: string; label: string }[],
+    instructorIds: [] as string[],
+    eligibleRentals: [] as { variantId: string; priceCentsOverride: number | null }[],
 })
 
 // Tenant waiver list — used by both spectator and racer dropdowns. Only active
@@ -380,6 +433,46 @@ const racerWaiverInvalid = computed(() => {
     return !!w && !waiverCoversEventEnd(w)
 })
 
+
+// Lessons: a lesson event can carry assigned instructors and a set of bikes riders
+// may add at checkout. Both editors show only when the selected event type is 'lesson'.
+const isLessonEvent = computed(() =>
+    typeOptions.value.find(t => t.id === form.value.eventTypeId)?.code === 'lesson'
+)
+const instructorService = new InstructorService()
+const instructors = ref<Instructor[]>([])
+const bikeShopService = new BikeShopService()
+const shopProducts = ref<ShopProduct[]>([])
+
+// Rentable shop variants (bikes) offerable with a lesson: active + rentable + priced.
+const rentableBikes = computed(() =>
+    shopProducts.value.filter(p => p.isActive && p.isRentable).flatMap(p =>
+        p.variants.filter(v => v.isActive && v.dailyRateCents != null).map(v => ({
+            id: v.id,
+            title: `${p.name}${[v.size, v.color].filter(Boolean).length ? ' (' + [v.size, v.color].filter(Boolean).join('/') + ')' : ''}`,
+            dailyRateCents: v.dailyRateCents!,
+        }))))
+
+function rentalEnabled(variantId: string): boolean {
+    return form.value.eligibleRentals.some(r => r.variantId === variantId)
+}
+function rentalOverrideDollars(variantId: string): string {
+    const cents = form.value.eligibleRentals.find(r => r.variantId === variantId)?.priceCentsOverride
+    return cents == null ? '' : (cents / 100).toFixed(2)
+}
+function toggleRental(variantId: string, on: boolean | null) {
+    if (on) {
+        if (!rentalEnabled(variantId)) form.value.eligibleRentals.push({ variantId, priceCentsOverride: null })
+    } else {
+        form.value.eligibleRentals = form.value.eligibleRentals.filter(r => r.variantId !== variantId)
+    }
+}
+function setRentalOverride(variantId: string, val: string | number) {
+    const target = form.value.eligibleRentals.find(r => r.variantId === variantId)
+    if (!target) return
+    const dollars = typeof val === 'number' ? val : parseFloat(val)
+    target.priceCentsOverride = Number.isFinite(dollars) && dollars >= 0 ? Math.round(dollars * 100) : null
+}
 
 const extraService = new ExtraService()
 const extraProducts = ref<ExtraProduct[]>([])
@@ -438,6 +531,24 @@ onMounted(async () => {
         waivers.value = []
         emit('flash', err.response?.data?.error || 'Couldn’t load waivers. Reopen the dialog to try again.', 'error')
     }
+    // Instructors (for lesson assignment) — cheap, always load so the picker is ready
+    // the moment the admin switches an event to the Lesson type.
+    try {
+        const r = await instructorService.listForAdmin()
+        instructors.value = ((r.data as any).data as Instructor[]).filter(i => i.isActive)
+    } catch (err: any) {
+        instructors.value = []
+        emit('flash', err.response?.data?.error || 'Couldn’t load instructors. Reopen the dialog to try again.', 'error')
+    }
+    if (branding.bikeShopEnabled) {
+        try {
+            const r = await bikeShopService.listProducts(true)
+            shopProducts.value = (r.data as any).data as ShopProduct[]
+        } catch (err: any) {
+            shopProducts.value = []
+            emit('flash', err.response?.data?.error || 'Couldn’t load the shop catalog for lesson bikes. Reopen the dialog to try again.', 'error')
+        }
+    }
     if (branding.extrasEnabled) {
         try {
             const r = await extraService.listForAdmin()
@@ -486,6 +597,11 @@ watch(() => props.open, (open) => {
                 inventory: e.inventory,
             })),
             schedule: (row.schedule ?? []).map(s => ({ time: s.time, label: s.label })),
+            instructorIds: (row.instructors ?? []).map(i => i.id),
+            eligibleRentals: (row.eligibleRentals ?? []).map(r => ({
+                variantId: r.variantId,
+                priceCentsOverride: r.priceCentsOverride,
+            })),
         }
     } else if (props.duplicateFrom) {
         seedFromDuplicate(props.duplicateFrom)
@@ -514,6 +630,8 @@ watch(() => props.open, (open) => {
             spectatorGateLabel: '',
             eligibleExtras: [],
             schedule: [],
+            instructorIds: [],
+            eligibleRentals: [],
         }
     }
     imageFile.value = null
@@ -548,6 +666,11 @@ function seedFromDuplicate(src: EventDto) {
         })),
         schedule: (src.schedule ?? []).map(s => ({ time: s.time, label: s.label })),
         imageUrl: src.imageUrl,
+        instructorIds: (src.instructors ?? []).map(i => i.id),
+        eligibleRentals: (src.eligibleRentals ?? []).map(r => ({
+            variantId: r.variantId,
+            priceCentsOverride: r.priceCentsOverride,
+        })),
     }
     imageFile.value = null
 }
@@ -652,6 +775,10 @@ async function save() {
             schedule: form.value.schedule
                 .map(s => ({ time: s.time.trim(), label: s.label.trim() }))
                 .filter(s => s.time.length > 0 || s.label.length > 0),
+            // Lessons only. Sent for every event (empty for non-lessons, which clears
+            // nothing) so switching a lesson back to another type also drops its coaches.
+            instructorIds: isLessonEvent.value ? form.value.instructorIds : [],
+            eligibleRentals: isLessonEvent.value ? form.value.eligibleRentals : [],
         }
         if (editing.value) {
             await eventService.update(editing.value.id, body)

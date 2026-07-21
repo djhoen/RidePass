@@ -276,7 +276,9 @@ namespace Services.Repositories
         // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /
         // failed / cancelled never enter the gate). Tenant-scoped on the purchase; the event
         // filter rides the tier join. Sorted spectators-after-riders, then by class then name.
-        public async Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId)
+        // onDate is supplied for a MULTI-DAY event (a camp), where "checked in" is a per-day
+        // question the one-shot redeemed flag can't answer. Null keeps the single-day meaning.
+        public async Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId, DateOnly? onDate = null)
         {
             const string sql = @"
                 SELECT p.id AS PurchaseId,
@@ -292,14 +294,18 @@ namespace Services.Repositories
                         OR p.waiver_signature_data_url IS NOT NULL) AS WaiverSigned,
                        p.redeemed_at_utc AS RedeemedAtUtc,
                        p.redeemed_by_user_id AS RedeemedByUserId,
-                       t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience
+                       t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience,
+                       CASE WHEN @onDate::date IS NULL THEN (p.status = 'redeemed')
+                            ELSE (a.id IS NOT NULL) END AS CheckedInOnDate
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id
+                LEFT JOIN event_ticket_attendance a
+                       ON a.ticket_id = p.id AND a.on_date = @onDate::date
                 WHERE p.tenant_id = @tenantId
                   AND t.event_id = @eventId
                   AND p.status IN ('paid', 'redeemed')
                 ORDER BY t.audience, t.kind, t.name, lower(coalesce(p.purchaser_name, ''))";
-            var result = await _db.Query<EventRosterRow>(sql, new { eventId, tenantId });
+            var result = await _db.Query<EventRosterRow>(sql, new { eventId, tenantId, onDate });
             return result.ToList();
         }
 
@@ -360,6 +366,36 @@ namespace Services.Repositories
                 SET status = 'paid', redeemed_at_utc = NULL, redeemed_by_user_id = NULL
                 WHERE id = @id AND tenant_id = @tenantId AND status = 'redeemed'";
             await _db.Execute(sql, new { id, tenantId });
+        }
+
+        // ── Multi-day attendance ──────────────────────────────────────────────────────
+        // A camp spans several days on one ticket, so "did this rider check in" is a per-day
+        // question the one-shot redeemed flag can't answer. Single-day events never touch this.
+
+        /// <summary>Records this ticket's check-in for one local date. Returns false when the
+        /// ticket was already checked in that day (unique index), which the gate reports rather
+        /// than double-counting. The insert is tenant-guarded through the ticket row.</summary>
+        public async Task<bool> TryRecordAttendance(Guid ticketId, Guid tenantId, DateOnly onDate, Guid? byUserId)
+        {
+            const string sql = @"
+                INSERT INTO event_ticket_attendance (tenant_id, ticket_id, on_date, by_user_id)
+                SELECT p.tenant_id, p.id, @onDate, @byUserId
+                FROM event_ticket_purchase p
+                WHERE p.id = @ticketId AND p.tenant_id = @tenantId
+                ON CONFLICT (ticket_id, on_date) DO NOTHING";
+            var affected = await _db.Execute(sql, new { ticketId, tenantId, onDate, byUserId });
+            return affected > 0;
+        }
+
+        /// <summary>Local dates this ticket has been checked in on, oldest first.</summary>
+        public async Task<List<DateOnly>> ListAttendanceDates(Guid ticketId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT a.on_date
+                FROM event_ticket_attendance a
+                WHERE a.ticket_id = @ticketId AND a.tenant_id = @tenantId
+                ORDER BY a.on_date";
+            return (await _db.Query<DateOnly>(sql, new { ticketId, tenantId })).ToList();
         }
 
         public async Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber)

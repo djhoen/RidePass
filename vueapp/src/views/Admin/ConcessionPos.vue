@@ -286,6 +286,10 @@
                             placeholder="e.g. Alex" prepend-inner-icon="mdi-account" style="max-width: 320px" class="mb-4" />
                         <v-divider class="mb-4" />
 
+                        <div class="text-subtitle-1 font-weight-bold mb-2">Store credit</div>
+                        <CreditLookupField v-model="creditAccount" class="mb-4" style="max-width: 420px" />
+                        <v-divider class="mb-4" />
+
                         <div class="text-subtitle-1 font-weight-bold mb-2">Receipt</div>
                         <v-btn-toggle v-model="receiptMethod" mandatory divided class="flex-wrap">
                             <v-btn value="print" prepend-icon="mdi-printer">Print</v-btn>
@@ -306,18 +310,22 @@
                         <div v-if="taxCents" class="d-flex justify-space-between mt-1"><span class="text-medium-emphasis">Tax{{ pricesIncludeTax ? ' (incl.)' : '' }}</span><span>{{ money(taxCents) }}</span></div>
                         <div v-if="discountCents" class="d-flex justify-space-between mt-1" style="color: rgb(var(--v-theme-success))"><span>{{ orderDiscountLabel || 'Discount' }}</span><span>-{{ money(discountCents) }}</span></div>
                         <div v-if="tipCents" class="d-flex justify-space-between mt-1"><span class="text-medium-emphasis">Tip</span><span>{{ money(tipCents) }}</span></div>
+                        <div v-if="creditAppliedEstimate" class="d-flex justify-space-between mt-1" style="color: rgb(var(--v-theme-success))">
+                            <span>Store credit</span><span>-{{ money(creditAppliedEstimate) }}</span>
+                        </div>
                         <div class="d-flex justify-space-between align-center my-2">
-                            <span class="text-h6 font-weight-bold">Total</span><span class="text-h4 font-weight-bold">{{ money(total) }}</span>
+                            <span class="text-h6 font-weight-bold">{{ creditAppliedEstimate ? 'Due' : 'Total' }}</span>
+                            <span class="text-h4 font-weight-bold">{{ money(dueEstimate) }}</span>
                         </div>
                         <v-btn block size="large" height="56" :loading="paying"
                             :color="tender === 'cash' ? 'success' : 'primary'"
-                            :disabled="tender === 'card' && readerState !== 'connected'"
+                            :disabled="tender === 'card' && dueEstimate > 0 && readerState !== 'connected'"
                             :prepend-icon="tender === 'cash' ? 'mdi-cash' : 'mdi-credit-card'"
                             @click="confirmPay">
-                            {{ tender === 'cash' ? 'Continue to cash' : `Charge card · ${money(total)}` }}
+                            {{ tender === 'cash' ? 'Continue to cash' : `Charge card · ${money(dueEstimate)}` }}
                         </v-btn>
                         <div v-if="paying && tender === 'card'" class="text-center text-medium-emphasis mt-2">Processing payment on the reader…</div>
-                        <div v-else-if="tender === 'card' && readerState !== 'connected'" class="text-caption text-medium-emphasis text-center mt-2">Connect a reader to take card payments.</div>
+                        <div v-else-if="tender === 'card' && dueEstimate > 0 && readerState !== 'connected'" class="text-caption text-medium-emphasis text-center mt-2">Connect a reader to take card payments.</div>
                     </div>
                 </div>
             </v-card>
@@ -332,7 +340,9 @@
                     <v-btn icon="mdi-close" variant="text" size="small" @click="cashDialog = false" />
                 </v-card-title>
                 <v-card-text>
-                    <div class="d-flex justify-space-between text-h6 mb-3"><span>Total</span><span>{{ money(total) }}</span></div>
+                    <div class="d-flex justify-space-between text-h6 mb-3">
+                        <span>{{ creditAppliedEstimate ? 'Due after credit' : 'Total' }}</span><span>{{ money(dueEstimate) }}</span>
+                    </div>
                     <v-text-field v-model.number="cashTenderedDollars" label="Cash received" type="number" prefix="$"
                         density="compact" autofocus hide-details />
                     <div class="d-flex justify-space-between mt-3 text-h6">
@@ -500,6 +510,8 @@ import {
     type ConcessionCompReason, type ConcessionMemberLookup, type ConcessionMemberPerk,
 } from '@/services/ConcessionService'
 import { getTerminal, discoverAndConnect, collectAndProcess } from '@/helpers/TerminalHelper'
+import CreditLookupField from '@/components/CreditLookupField.vue'
+import { type CreditLookupResult } from '@/services/CreditService'
 import { printReceipt, type Receipt } from '@/helpers/ReceiptPrinter'
 import { branding } from '@/stores/branding'
 import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
@@ -1138,10 +1150,17 @@ function clearOrder() {
 }
 
 // ── Payment ──────────────────────────────────────────────────────────
+// Store credit tender: applied up to the total (client estimate; the server re-verifies and
+// caps). The money paths (reader charge, cash drawer, change math) all work off the remainder.
+const creditAccount = ref<CreditLookupResult | null>(null)
+const creditAppliedEstimate = computed(() =>
+    creditAccount.value ? Math.min(creditAccount.value.balanceCents, total.value) : 0)
+const dueEstimate = computed(() => total.value - creditAppliedEstimate.value)
+
 const cashDialog = ref(false)
 const cashTenderedDollars = ref<number | null>(null)
 const changeCents = computed(() =>
-    cashTenderedDollars.value == null ? 0 : Math.round(cashTenderedDollars.value * 100) - total.value)
+    cashTenderedDollars.value == null ? 0 : Math.round(cashTenderedDollars.value * 100) - dueEstimate.value)
 const doneDialog = ref(false)
 const lastOrderNumber = ref<number | null>(null)
 const lastReceipt = ref<{ orderNumber: number | null; lines: CartLine[]; subtotal: number; tax: number; pricesIncludeTax: boolean; tip: number; discount: number; total: number; method: string } | null>(null)
@@ -1163,6 +1182,7 @@ function startCheckout(t: 'cash' | 'card') {
     receiptMethod.value = printerUrl.value ? 'print' : 'none'
     receiptDest.value = ''
     customerName.value = ''
+    creditAccount.value = null
     confirmDialog.value = true
 }
 function validateReceipt(): boolean {
@@ -1189,6 +1209,8 @@ function buildRequest(method: 'cash' | 'card') {
         customerName: customerName.value.trim() || undefined,
         discount: orderDiscount.value ?? undefined,
         managerPin: managerPin.value || undefined,
+        creditAccountId: creditAccount.value?.id ?? undefined,
+        creditCents: creditAccount.value?.balanceCents ?? 0,
     }
 }
 
@@ -1198,7 +1220,8 @@ async function payCash() {
         const r = await svc.createSale(buildRequest('cash'))
         const res = (r.data as any).data
         cashDialog.value = false
-        finishOrder(res.saleId, res.orderNumber, 'Cash', res.totalCents, res.discountCents)
+        finishOrder(res.saleId, res.orderNumber,
+            (res.creditAppliedCents ?? 0) > 0 ? 'Cash + credit' : 'Cash', res.totalCents, res.discountCents)
     } catch (err: any) {
         flash(err.response?.data?.error || 'Cash sale failed. Nothing was charged.')
     } finally {
@@ -1207,17 +1230,18 @@ async function payCash() {
 }
 
 async function payCard() {
-    // A fully-comped order rings up to $0: there is no card to run, so the reader isn't required.
-    const isZero = total.value <= 0
+    // Nothing due on the reader when the order is fully comped OR fully covered by store credit.
+    const isZero = dueEstimate.value <= 0
     if (!isZero && readerState.value !== 'connected') { flash('Connect the card reader first.'); return }
     paying.value = true
     try {
         const r = await svc.createSale(buildRequest('card'))
         const res = (r.data as any).data
-        // No client secret means the server recorded it paid immediately (a $0 / fully-comped order):
-        // skip the reader collection and finish with the order number the server already assigned.
+        // No client secret means the server recorded it paid immediately (a $0 / fully-comped /
+        // fully-credit order): skip the reader and finish with the order number it assigned.
         if (!res.clientSecret) {
-            finishOrder(res.saleId, res.orderNumber ?? null, 'Comp', res.totalCents, res.discountCents)
+            finishOrder(res.saleId, res.orderNumber ?? null,
+                (res.creditAppliedCents ?? 0) > 0 ? 'Store credit' : 'Comp', res.totalCents, res.discountCents)
             return
         }
         const terminal = await getTerminal(async () => (await svc.terminalConnectionToken() as any).data.data.secret)
@@ -1228,7 +1252,8 @@ async function payCard() {
         try { orderNumber = (await svc.finalizeCard(res.saleId) as any).data.data?.orderNumber ?? null }
         catch { /* fall back to the webhook/poll */ }
         if (orderNumber == null) orderNumber = await pollOrderNumber(res.saleId)
-        finishOrder(res.saleId, orderNumber, 'Card', res.totalCents, res.discountCents)
+        finishOrder(res.saleId, orderNumber,
+            (res.creditAppliedCents ?? 0) > 0 ? 'Card + credit' : 'Card', res.totalCents, res.discountCents)
     } catch (err: any) {
         flash(err.message || err.response?.data?.error || 'Card payment failed. Try again or use cash.')
     } finally {

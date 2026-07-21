@@ -221,11 +221,66 @@ namespace webapi.Controllers
             return await GetBranding();
         }
 
+        /// <summary>The bike shop's customer-notification policy: whether a repair marked ready
+        /// emails and/or texts the customer, and how many days after pickup to send a service
+        /// reminder (0 = off). Saved together because they're edited on one screen.</summary>
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
-        [HttpPut("RentalsEnabled")]
-        public async Task<IActionResult> UpdateRentalsEnabled([FromBody] webapi.Controllers.API.Data.Rental.UpdateRentalsEnabledRequest request)
+        [HttpPut("ShopNotifications")]
+        public async Task<IActionResult> UpdateShopNotifications([FromBody] UpdateShopNotificationsRequest request)
         {
-            await _tenants.UpdateRentalsEnabled(_tenantContext.TenantId, request.Enabled);
+            if (request.ServiceReminderDays < 0 || request.ServiceReminderDays > 730)
+                return new ApiResponses().BadRequestResult("Pick between 0 and 730 days (0 turns reminders off).");
+            await _tenants.UpdateShopNotificationSettings(
+                _tenantContext.TenantId, request.ReadyNotifyEmail, request.ReadyNotifySms,
+                request.ServiceReminderDays);
+            return await GetBranding();
+        }
+
+        /// <summary>Shop supply fee on repair bills: basis points of LABOR, an optional cap, and
+        /// the label the customer reads. 0 bps turns it off.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("ShopSupplyFee")]
+        public async Task<IActionResult> UpdateShopSupplyFee([FromBody] UpdateShopSupplyFeeRequest request)
+        {
+            if (request.Bps < 0 || request.Bps > 5000)
+                return new ApiResponses().BadRequestResult("The fee must be between 0% and 50%.");
+            if (request.CapCents is < 0)
+                return new ApiResponses().BadRequestResult("The cap can't be negative.");
+            await _tenants.UpdateShopSupplyFee(
+                _tenantContext.TenantId, request.Bps, request.CapCents, request.Label);
+            return await GetBranding();
+        }
+
+        /// <summary>Default shop labor rate in cents per hour. Null clears it (labor lines then take
+        /// a typed price). When set, a labor line entered by hours bills hours * this rate.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("ShopLaborRate")]
+        public async Task<IActionResult> UpdateShopLaborRate([FromBody] UpdateShopLaborRateRequest request)
+        {
+            if (request.RateCents is < 0)
+                return new ApiResponses().BadRequestResult("The labor rate can't be negative.");
+            if (request.RateCents is > 100_000)
+                return new ApiResponses().BadRequestResult("That labor rate looks too high — enter dollars per hour.");
+            await _tenants.UpdateShopLaborRate(_tenantContext.TenantId, request.RateCents);
+            return await GetBranding();
+        }
+
+        /// <summary>
+        /// How much of the tenant service charge the RENTER pays on a rental, in basis points.
+        /// 10000 = the renter pays all of it, 0 = the track absorbs it. The RATE is not settable
+        /// here: it is tenant.service_charge_bps, the same percentage events use.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("RentalSettings")]
+        public async Task<IActionResult> UpdateRentalSettings([FromBody] UpdateRentalSettingsRequest request)
+        {
+            if (request.RiderPaidBps < 0 || request.RiderPaidBps > 10000)
+                return new ApiResponses().BadRequestResult("The renter's share must be between 0% and 100%.");
+            if (request.TaxBps is < 0 or > 10000)
+                return new ApiResponses().BadRequestResult("The rental tax rate must be between 0% and 100%.");
+            await _tenants.UpdateRentalSettings(
+                _tenantContext.TenantId, request.RiderPaidBps, request.TaxBps, request.ServiceChargeTaxable);
+            InvalidateTenantCache();
             return await GetBranding();
         }
 
@@ -242,6 +297,22 @@ namespace webapi.Controllers
         public async Task<IActionResult> UpdateSeasonPassesEnabled([FromBody] UpdateSeasonPassesEnabledRequest request)
         {
             await _tenants.UpdateSeasonPassesEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("BikeShopEnabled")]
+        public async Task<IActionResult> UpdateBikeShopEnabled([FromBody] UpdateBikeShopEnabledRequest request)
+        {
+            await _tenants.UpdateBikeShopEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("WristbandsEnabled")]
+        public async Task<IActionResult> UpdateWristbandsEnabled([FromBody] UpdateWristbandsEnabledRequest request)
+        {
+            await _tenants.UpdateWristbandsEnabled(_tenantContext.TenantId, request.Enabled);
             return await GetBranding();
         }
 
@@ -268,7 +339,7 @@ namespace webapi.Controllers
         public async Task<IActionResult> UpdateCancellationPolicy([FromBody] UpdateCancellationPolicyRequest request)
         {
             await _tenants.UpdateCancellationPolicy(_tenantContext.TenantId, request.AllowSelfCancel,
-                request.WaitlistEnabled, request.WaitlistConfirmWindowMinutes);
+                request.WaitlistConfirmWindowMinutes);
             return await GetBranding();
         }
 
@@ -430,6 +501,9 @@ namespace webapi.Controllers
                 StripeConnectStatus = tenant.StripeConnectStatus,
                 StripeChargeMode = tenant.StripeChargeMode,
                 ServiceChargeBps = tenant.ServiceChargeBps,
+                RentalRiderPaidServiceChargeBps = tenant.RentalRiderPaidServiceChargeBps,
+                RentalTaxBps = tenant.RentalTaxBps,
+                RentalTaxServiceChargeTaxable = tenant.RentalTaxServiceChargeTaxable,
                 ShippingName = tenant.ShippingName,
                 AboutHtml = tenant.AboutHtml,
                 HoursJson = tenant.HoursJson,
@@ -457,10 +531,18 @@ namespace webapi.Controllers
                 GiftCardMinCents = tenant.GiftCardMinCents,
                 GiftCardMaxCents = tenant.GiftCardMaxCents,
                 Phone = tenant.Phone,
-                RentalsEnabled = tenant.RentalsEnabled,
                 ExtrasEnabled = tenant.ExtrasEnabled,
+                ShopServiceReminderDays = tenant.ShopServiceReminderDays,
+                ShopReadyNotifyEmail = tenant.ShopReadyNotifyEmail,
+                ShopReadyNotifySms = tenant.ShopReadyNotifySms,
+                ShopSupplyFeeBps = tenant.ShopSupplyFeeBps,
+                ShopSupplyFeeCapCents = tenant.ShopSupplyFeeCapCents,
+                ShopSupplyFeeLabel = tenant.ShopSupplyFeeLabel,
+                ShopLaborRateCents = tenant.ShopLaborRateCents,
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
+                BikeShopEnabled = tenant.BikeShopEnabled,
+                WristbandsEnabled = tenant.WristbandsEnabled,
                 BlogEnabled = tenant.BlogEnabled,
                 DynamicPricingEnabled = tenant.DynamicPricingEnabled,
                 BundledCouponsEnabled = tenant.BundledCouponsEnabled,
@@ -478,6 +560,7 @@ namespace webapi.Controllers
                 RiderGateLabel = tenant.RiderGateLabel,
                 SpectatorGateLabel = tenant.SpectatorGateLabel,
                 WaitlistEnabled = tenant.WaitlistEnabled,
+                WaitlistPrepayEnabled = tenant.WaitlistPrepayEnabled,
                 WaitlistConfirmWindowMinutes = tenant.WaitlistConfirmWindowMinutes,
                 MembershipEnabled = tenant.MembershipEnabled,
                 MembershipName = tenant.MembershipName,

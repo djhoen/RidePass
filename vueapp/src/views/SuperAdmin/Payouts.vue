@@ -277,6 +277,9 @@ function openCreatePayout() {
 
 async function submitCreatePayout() {
     if (!detailTenant.value) return
+    if (payoutPeriodStart.value >= payoutPeriodEnd.value) {
+        flash('The period end must be after the period start.', 'error'); return
+    }
     creatingPayout.value = true
     try {
         const r = await service.createPayout(detailTenant.value.tenantId, {

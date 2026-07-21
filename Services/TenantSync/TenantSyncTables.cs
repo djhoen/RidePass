@@ -28,8 +28,6 @@ namespace Services.TenantSync
             ("event_extra_eligibility",     "product_id IN (SELECT id FROM event_extra_product WHERE tenant_id = @tenantId)"),
             ("season_pass_product",         "tenant_id = @tenantId"),
             ("season_pass_event_type_perk", "pass_product_id IN (SELECT id FROM season_pass_product WHERE tenant_id = @tenantId)"),
-            ("rental_product",              "tenant_id = @tenantId"),
-            ("rental_item",                 "tenant_id = @tenantId"),
             ("concession_product",          "tenant_id = @tenantId"),
             ("concession_variant",          "product_id IN (SELECT id FROM concession_product WHERE tenant_id = @tenantId)"),
             ("coupon",                      "tenant_id = @tenantId"),
@@ -51,7 +49,6 @@ namespace Services.TenantSync
             "event_extra_purchase",
             "season_pass_purchase",
             "membership_purchase",
-            "rental_purchase",
             "concession_sale",
             "gift_card",
         };

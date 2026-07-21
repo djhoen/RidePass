@@ -2,7 +2,7 @@
     <div class="evt-checkout">
         <!-- ── 1. Select entries ─────────────────────────────────────────── -->
         <template v-if="step === 'select'">
-            <h2 class="text-h5 font-weight-bold font-display mb-1">Buy Entry</h2>
+            <h2 class="text-h5 font-weight-bold font-display mb-1">{{ checkoutHeading }}</h2>
 
             <div v-if="raceTiers.length" class="mb-4">
                 <div class="evt-group-label mb-2">Race Classes</div>
@@ -42,6 +42,20 @@
                 <div v-for="t in riderGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
+                        <!-- Training group detail. Ability and bike bands help a rider pick the
+                             right group; the coach is shown but never chosen (assigned by staff). -->
+                        <div v-if="groupBands(t)" class="text-caption text-medium-emphasis">{{ groupBands(t) }}</div>
+                        <div v-if="partyLabel(t)" class="text-caption text-medium-emphasis">{{ partyLabel(t) }}</div>
+                        <div v-if="t.startsAt && t.endsAt" class="text-caption text-medium-emphasis">
+                            {{ groupTimeLabel(t) }}
+                        </div>
+                        <div v-if="t.instructorName" class="d-flex align-center ga-1 mt-1">
+                            <v-avatar v-if="t.instructorImageUrl" size="20">
+                                <v-img :src="t.instructorImageUrl" :alt="t.instructorName" />
+                            </v-avatar>
+                            <v-icon v-else size="14" class="text-medium-emphasis">mdi-account-school-outline</v-icon>
+                            <span class="text-caption text-medium-emphasis">with {{ t.instructorName }}</span>
+                        </div>
                         <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
@@ -109,6 +123,34 @@
                 <ExtrasPicker :extras="addonExtras" v-model="extrasSelection" class="mb-5" />
             </template>
 
+            <!-- Section 1b: Bike rental for this lesson. Reserved for the lesson's exact time
+                 window; charged on the same card as the lesson, with the deposit held (not charged)
+                 and released at return. -->
+            <template v-if="lessonBikes.length">
+                <div class="evt-group-label mb-2">Add a bike (optional)</div>
+                <v-radio-group v-model="selectedBikeId" hide-details density="compact" class="mb-5">
+                    <v-radio :value="null" label="No bike, thanks"></v-radio>
+                    <v-radio v-for="b in lessonBikes" :key="b.variantId" :value="b.variantId"
+                        :disabled="b.available <= 0">
+                        <template #label>
+                            <div class="d-flex align-center flex-wrap ga-2" style="width: 100%">
+                                <span>{{ b.name }}</span>
+                                <span class="text-medium-emphasis">— {{ priceLabel(b.priceCents) }}</span>
+                                <span v-if="b.depositCents > 0" class="text-caption text-medium-emphasis">
+                                    + {{ priceLabel(b.depositCents) }} refundable hold
+                                </span>
+                                <v-chip v-if="b.available <= 0" size="x-small" color="error" variant="tonal">
+                                    Fully booked for this lesson
+                                </v-chip>
+                                <v-chip v-else-if="b.available <= 3" size="x-small" color="warning" variant="tonal">
+                                    {{ b.available }} left
+                                </v-chip>
+                            </div>
+                        </template>
+                    </v-radio>
+                </v-radio-group>
+            </template>
+
             <!-- Section 2: Your info (+ inline login) -->
             <div class="evt-group-label mb-2">Your info</div>
             <v-text-field v-model="name" label="Full name" density="compact" class="mb-3 mt-4"
@@ -138,6 +180,9 @@
             <div class="evt-group-label mt-5 mb-2">Promo or gift code</div>
             <v-text-field v-model="couponCode" label="Promo code" density="compact" hide-details class="mb-3 mt-4"></v-text-field>
             <v-text-field v-model="giftCardCode" label="Gift card code" density="compact" hide-details class="mt-4"></v-text-field>
+            <v-checkbox v-if="isAuthed && myCreditCents > 0" v-model="useStoreCredit" color="primary"
+                density="compact" hide-details class="mt-1"
+                :label="`Use my store credit (${priceLabel(myCreditCents)} available)`"></v-checkbox>
 
             <!-- Order summary -->
             <template v-if="orderLines.length">
@@ -219,7 +264,7 @@
                     <div class="text-caption text-medium-emphasis mt-3 mb-1">Race classes for this rider</div>
                     <div v-for="ca in classesForRider(ri)" :key="ca.ticketId" class="d-flex align-center ga-2 mb-1">
                         <div class="flex-grow-1">{{ ca.tierName }}</div>
-                        <v-text-field v-model="ca.raceNumber" label="Race #" density="compact" hide-details style="max-width: 110px"></v-text-field>
+                        <v-text-field v-if="isTrueRace" v-model="ca.raceNumber" label="Race #" density="compact" hide-details style="max-width: 110px"></v-text-field>
                         <v-select v-if="riders.length > 1" :model-value="ca.riderIndex"
                             @update:model-value="ca.riderIndex = $event"
                             :items="riderIndexOptions" item-title="label" item-value="value"
@@ -284,6 +329,7 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { TicketService, type TicketTier, type TicketRedemption } from '@/services/TicketService'
 import { UserService } from '@/services/UserService'
+import { CreditService } from '@/services/CreditService'
 import { UpcomingService } from '@/services/UpcomingService'
 import { useConfirm } from '@/composables/useConfirm'
 import { branding } from '@/stores/branding'
@@ -293,7 +339,7 @@ import SignaturePad from '@/components/SignaturePad.vue'
 import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue'
 import AccountSignupForm from '@/components/AccountSignupForm.vue'
 import { TaxService } from '@/services/TaxService'
-import type { EventDto, EligibleExtra } from '@/services/EventService'
+import type { EventDto, EligibleExtra, EligibleRental } from '@/services/EventService'
 
 const props = defineProps<{ event: EventDto; tiers: TicketTier[] }>()
 // Asks the parent to re-fetch tiers (e.g. after a 409 price_changed) so the buyer
@@ -332,6 +378,10 @@ const qty = reactive<Record<string, number>>({})
 const riderCount = ref(1)
 const couponCode = ref('')
 const giftCardCode = ref('')
+// Store credit: balance loaded for signed-in riders; the server re-resolves and caps at the
+// charge, so this is only the offer + display.
+const myCreditCents = ref(0)
+const useStoreCredit = ref(false)
 
 const name = ref('')
 const email = ref('')
@@ -414,6 +464,16 @@ const addonExtras = computed<EligibleExtra[]>(() =>
     (props.event.eligibleExtras ?? []).filter(e =>
         e.kind !== 'gate_fee' && e.name.trim().toLowerCase() !== 'gate fee'))
 const extrasSelection = ref<ExtraSelection[]>([])
+
+// Lesson bike: an optional single bike reserved for the lesson window. Its fee rides the
+// lesson's PaymentIntent; the deposit is a separate hold confirmed after the main charge.
+const lessonBikes = computed<EligibleRental[]>(() => props.event.eligibleRentals ?? [])
+const selectedBikeId = ref<string | null>(null)
+const selectedBike = computed<EligibleRental | null>(() =>
+    lessonBikes.value.find(b => b.variantId === selectedBikeId.value) ?? null)
+const bikeFeeCents = computed(() => selectedBike.value?.priceCents ?? 0)
+// Second PaymentIntent (the refundable deposit hold) to authorize after the main charge.
+const depositHoldSecret = ref<string | null>(null)
 // Resolve each selection's unit price (variant override or product base) for the running total.
 const extrasTotalCents = computed(() => extrasSelection.value.reduce((sum, s) => {
     const prod = addonExtras.value.find(e => e.productId === s.productId)
@@ -430,7 +490,7 @@ const orderLines = computed<OrderLine[]>(() => {
     const lines: OrderLine[] = []
     for (const t of props.tiers) {
         const q = qty[t.id] || 0
-        if (q > 0) lines.push({ label: t.name, qty: q, lineCents: t.priceCents * q })
+        if (q > 0) lines.push({ label: t.name, qty: q, lineCents: tierTotalCents(t, q) })
     }
     for (const s of extrasSelection.value) {
         if (s.quantity <= 0) continue
@@ -447,6 +507,9 @@ const orderLines = computed<OrderLine[]>(() => {
             }
         }
         lines.push({ label: p.name + suffix, qty: s.quantity, lineCents: unit * s.quantity })
+    }
+    if (selectedBike.value) {
+        lines.push({ label: `${selectedBike.value.name} (bike)`, qty: 1, lineCents: selectedBike.value.priceCents })
     }
     return lines
 })
@@ -473,7 +536,8 @@ const raceRiderCount = computed(() => {
 const hasSelection = computed(() =>
     Object.values(qty).some(q => q > 0) || extrasSelection.value.some(s => s.quantity > 0))
 const estTotalCents = computed(() =>
-    props.tiers.reduce((sum, t) => sum + t.priceCents * (qty[t.id] || 0), 0) + extrasTotalCents.value)
+    props.tiers.reduce((sum, t) => sum + tierTotalCents(t, qty[t.id] || 0), 0)
+    + extrasTotalCents.value + bikeFeeCents.value)
 
 // Rider-paid service fee, mirroring the server's per-unit integer math
 // (ComputeWithServiceCharge): floor(price * tenantBps) then floor(× riderBps).
@@ -498,6 +562,7 @@ const serviceFeeCents = computed(() => {
             : p.priceCents
         fee += riderFeePerUnit(unit, p.riderPaidServiceChargeBps ?? 10000) * s.quantity
     }
+    // Lesson bikes are all-in priced on the shop catalog: no rider service charge.
     return fee
 })
 // Estimated admission tax for the pre-pay summary. Tickets only (admission tax doesn't apply to
@@ -538,8 +603,14 @@ const signupPrefill = computed(() => {
 // Customizable section headings (e.g. a track that sells rider admission as
 // "Passes"). Resolution: this event's override (set in
 // the event editor) → tenant setting → platform default.
+const isLessonEvent = computed(() => props.event.eventTypeCode === 'lesson')
+// A lesson's admissions ARE its training groups, so the section reads as such unless the
+// tenant set their own label. Ordinary events keep the existing wording exactly.
 const riderGateLabel = computed(() =>
-    props.event.riderGateLabel || branding.riderGateLabel || 'Riding Pass')
+    props.event.riderGateLabel
+    || branding.riderGateLabel
+    || (isLessonEvent.value ? 'Choose your group' : 'Riding Pass'))
+const checkoutHeading = computed(() => isLessonEvent.value ? 'Book a Lesson' : 'Buy Entry')
 const spectatorGateLabel = computed(() =>
     props.event.spectatorGateLabel || branding.spectatorGateLabel || 'Spectator Pass')
 
@@ -564,11 +635,50 @@ function soldOut(t: TicketTier): boolean {
     return rem != null && rem <= 0
 }
 function remaining(t: TicketTier): number | null {
-    // Price-ladder steps cap at the event capacity (remainingToCapacity); standalone tiers
-    // cap at their own inventory; null means unlimited.
-    if (t.remainingToCapacity != null) return t.remainingToCapacity
-    return t.inventory == null ? null : Math.max(0, t.inventory - (t.sold ?? 0))
+    // Two independent caps, either or both of which may apply: the event's rider capacity
+    // (remainingToCapacity, set on every rider tier) and the tier's own inventory. The real
+    // limit is whichever runs out first, matching what checkout enforces. Null means unlimited.
+    const caps: number[] = []
+    if (t.remainingToCapacity != null) caps.push(t.remainingToCapacity)
+    if (t.inventory != null) caps.push(Math.max(0, t.inventory - (t.sold ?? 0)))
+    return caps.length === 0 ? null : Math.min(...caps)
 }
+// Client mirror of Services.Pricing.PartyPricing: the base covers partySizeIncluded riders and
+// each rider beyond costs partyPriceCents (null = the base). Defaults give price x qty exactly.
+function tierTotalCents(t: TicketTier, quantity: number): number {
+    const included = Math.max(1, t.partySizeIncluded ?? 1)
+    const extra = t.partyPriceCents ?? t.priceCents
+    let total = 0
+    for (let i = 0; i < quantity; i++) {
+        total += i === 0 ? t.priceCents : (i < included ? 0 : extra)
+    }
+    return total
+}
+
+// What one price actually buys, when it isn't simply per-person. Mirrors the server rule in
+// Services.Pricing.PartyPricing so the buy page never implies a different total.
+function partyLabel(t: TicketTier): string {
+    const included = t.partySizeIncluded ?? 1
+    const extra = t.partyPriceCents
+    if (included <= 1 && (extra == null || extra === t.priceCents)) return ''
+    if (included > 1) {
+        return extra && extra > 0
+            ? `Covers up to ${included} riders, then ${priceLabel(extra)} each`
+            : `Covers up to ${included} riders`
+    }
+    return `${priceLabel(t.priceCents)} for the first rider, then ${priceLabel(extra!)} each`
+}
+
+// Ability + equipment bands as one line ("Beginner · 65cc"), omitted when neither is set.
+function groupBands(t: TicketTier): string {
+    return [t.skillLevel, t.equipmentLabel].filter(Boolean).join(' · ')
+}
+// A group's own time inside the event, shown only when it differs from the event's window.
+function groupTimeLabel(t: TicketTier): string {
+    if (!t.startsAt || !t.endsAt) return ''
+    return `${dayjs(t.startsAt).format('h:mm A')} to ${dayjs(t.endsAt).format('h:mm A')}`
+}
+
 // Buy-page hint for a price-ladder step: where the price goes next.
 function stepHint(t: TicketTier): string {
     if (t.nextPriceCents == null) return ''
@@ -579,8 +689,12 @@ function stepHint(t: TicketTier): string {
     return `then ${next}`
 }
 function canAdd(t: TicketTier): boolean {
+    const current = qty[t.id] || 0
+    // A party-priced tier caps riders per booking; the server rejects anything over, so stop
+    // the stepper here rather than failing at payment.
+    if (t.partySizeMax != null && current >= t.partySizeMax) return false
     const rem = remaining(t)
-    return rem == null || (qty[t.id] || 0) < rem
+    return rem == null || current < rem
 }
 function bump(t: TicketTier, delta: number) {
     qty[t.id] = Math.max(0, (qty[t.id] || 0) + delta)
@@ -616,6 +730,10 @@ onMounted(async () => {
     } catch { /* estimate falls back to no tax; the server still charges the correct amount */ }
 
     if (isAuthed.value) {
+        // Best-effort prefetch: no balance just means the credit offer doesn't show.
+        try {
+            myCreditCents.value = (await new CreditService().mine()).data.data.balanceCents
+        } catch { /* offer stays hidden */ }
         try {
             const r = await userService.getProfile()
             const p: any = (r.data as any).data ?? r.data
@@ -706,20 +824,28 @@ async function createIntent() {
         const r = await ticketService.createTicketPurchase({
             items,
             extras: extras.length ? extras : null,
+            lessonRental: selectedBikeId.value ? { variantId: selectedBikeId.value, quantity: 1 } : null,
             email: isAuthed.value ? null : email.value.trim(),
             name: isAuthed.value ? null : name.value.trim(),
             couponCode: couponCode.value.trim() || null,
             giftCardCode: giftCardCode.value.trim() || null,
+            useStoreCredit: useStoreCredit.value,
             deferRegistration: true,
         })
         const data = (r.data as any).data
         chargeCents.value = data.amountCents
+        // A bike deposit is a second PaymentIntent (a hold). The card is collected once: the
+        // payment element mounts on the primary secret (the main charge, or the hold itself when
+        // the lesson was free), and pay() authorizes the hold with the same card afterward. Mirror
+        // the standalone rental flow so a free lesson + bike deposit still collects a card.
+        const primarySecret: string | null = data.clientSecret || data.depositHoldClientSecret || null
+        depositHoldSecret.value = data.clientSecret ? (data.depositHoldClientSecret ?? null) : null
         resumeToken.value = data.tickets?.[0]?.redemptionToken ?? null
         buildRegistration(data.tickets)
-        if (!data.clientSecret) {
+        if (!primarySecret) {
             step.value = needsRegistration.value ? 'register' : 'done'
         } else {
-            clientSecret.value = data.clientSecret
+            clientSecret.value = primarySecret
             step.value = 'payment'
             await nextTick()
             await mountPaymentElement()
@@ -822,11 +948,30 @@ async function pay() {
         })
         if (error) {
             paymentError.value = error.message || 'Payment failed.'
-        } else if (paymentIntent?.status === 'succeeded') {
+        } else if (paymentIntent?.status === 'succeeded' || paymentIntent?.status === 'requires_capture') {
+            // A bike deposit hold rides along as a second PaymentIntent: authorize it now on the
+            // same card that just paid (confirmCardPayment is the documented way to confirm a second
+            // PI with an already-collected payment method; a manual-capture PI resolves in
+            // 'requires_capture' — authorized, not charged). A hold that fails is NOT fatal — the
+            // lesson + bike are already paid — so surface a note and continue.
+            if (depositHoldSecret.value) {
+                try {
+                    const holdResult = await stripe.confirmCardPayment(depositHoldSecret.value, {
+                        payment_method: paymentIntent!.payment_method as string,
+                    })
+                    if (holdResult.error) {
+                        paymentError.value = 'Your lesson is booked, but the bike security-deposit hold '
+                            + 'could not be placed on your card. The track may collect the deposit at pickup.'
+                    }
+                } catch {
+                    paymentError.value = 'Your lesson is booked, but the bike deposit hold could not be placed. '
+                        + 'The track may collect the deposit at pickup.'
+                }
+            }
             // Stripe confirmed the charge. Finalize server-side now (it re-verifies with
             // Stripe and is idempotent) so the entry shows on the rider's schedule right
             // away; the webhook / reconciler are the backup.
-            try { await ticketService.confirmIntent(paymentIntent.id) } catch { /* webhook/reconciler will finalize */ }
+            try { await ticketService.confirmIntent(paymentIntent!.id) } catch { /* webhook/reconciler will finalize */ }
             step.value = needsRegistration.value ? 'register' : 'done'
         } else {
             // No hard error, but the payment hasn't settled yet (e.g. 'processing' for

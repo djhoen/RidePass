@@ -106,6 +106,76 @@
                         append-inner-icon="mdi-help-circle-outline"
                         @click:append-inner="openHelp('serviceCharge')"></v-text-field>
 
+                    <!-- Training group (lessons only). Everything here is optional: a lesson can
+                         sell plain admissions with no coach and no bands, exactly as before. -->
+                    <template v-if="isLesson">
+                        <v-divider class="my-4"></v-divider>
+                        <div class="text-subtitle-2 mb-1">Training group (optional)</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Riders pick their own group by ability and bike, so name it the way they'd
+                            recognise it. Assigning a coach is optional; when you do, the group also stops
+                            selling once that coach is full.
+                        </p>
+                        <v-select v-model="form.instructorId" :items="coachOptions"
+                            item-title="label" item-value="value" label="Coach (optional)"
+                            density="compact" hide-details clearable
+                            :loading="coachesLoading"></v-select>
+                        <v-row dense class="mt-2">
+                            <v-col cols="12" sm="6">
+                                <v-combobox v-model="form.skillLevel" :items="skillOptions"
+                                    label="Ability level" density="compact" hide-details clearable
+                                    :placeholder="skillPlaceholder"></v-combobox>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <v-combobox v-model="form.equipmentLabel" :items="equipmentOptions"
+                                    label="Bike / equipment" density="compact" hide-details clearable
+                                    :placeholder="equipmentPlaceholder"></v-combobox>
+                            </v-col>
+                        </v-row>
+                        <p class="text-caption text-medium-emphasis mt-3 mb-1">
+                            Leave the times blank unless this group runs at its own time inside the event
+                            (for example beginners in the morning, intermediates in the afternoon).
+                        </p>
+                        <v-row dense>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="form.groupStartsLocal" type="datetime-local"
+                                    label="Group starts" density="compact" hide-details clearable></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="form.groupEndsLocal" type="datetime-local"
+                                    label="Group ends" density="compact" hide-details clearable></v-text-field>
+                            </v-col>
+                        </v-row>
+                        <div v-if="groupWindowError" class="text-error text-caption mt-1">{{ groupWindowError }}</div>
+                    </template>
+
+                    <!-- Party pricing: "one price covers up to N riders". Each rider still gets
+                         their own ticket and their own spot; only the price changes. -->
+                    <v-divider class="my-4"></v-divider>
+                    <div class="text-subtitle-2 mb-1">Party pricing (optional)</div>
+                    <p class="text-caption text-medium-emphasis mb-2">
+                        Use this to sell "up to N riders for one price". Leave it at 1 for normal
+                        per-person pricing. Every rider still takes a spot and needs their own waiver.
+                    </p>
+                    <v-row dense>
+                        <v-col cols="12" sm="4">
+                            <v-text-field v-model.number="form.partySizeIncluded" type="number" min="1" max="50"
+                                label="Riders covered by the price" density="compact" hide-details></v-text-field>
+                        </v-col>
+                        <v-col cols="12" sm="4">
+                            <v-text-field v-model.number="form.partyExtraDollars" type="number" min="0" step="0.5"
+                                prefix="$" label="Each extra rider" density="compact" hide-details clearable
+                                :placeholder="`${form.priceDollars}`"
+                                :hint="partyExtraHint" persistent-hint></v-text-field>
+                        </v-col>
+                        <v-col cols="12" sm="4">
+                            <v-text-field v-model.number="form.partySizeMax" type="number" min="1" max="50"
+                                label="Max riders (blank = no cap)" density="compact" hide-details clearable></v-text-field>
+                        </v-col>
+                    </v-row>
+                    <div v-if="partyError" class="text-error text-caption mt-1">{{ partyError }}</div>
+                    <p v-else-if="partyPreview" class="text-caption text-medium-emphasis mt-1">{{ partyPreview }}</p>
+
                     <!-- Dynamic pricing: group tiers into a price ladder. Steps sharing a group
                          escalate the price; the buyer sees the cheapest step whose trigger fired.
                          Super-admin feature toggle: hidden when off, unless this tier already has
@@ -198,6 +268,7 @@ import { useDragReorder } from '@/composables/useDragReorder'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { useConfirm } from '@/composables/useConfirm'
 import { branding } from '@/stores/branding'
+import { InstructorService, type Instructor } from '@/services/InstructorService'
 
 type AdmissionKind = 'race_entry' | 'gate_fee'
 type Audience = 'rider' | 'spectator'
@@ -213,7 +284,16 @@ type TriggerType = 'none' | 'sold' | 'days' | 'date'
 // "race class + rider gate"). The toggle shows only for a race rider gate; for spectator
 // gates and non-race rider gates the tier is the entry itself, so the flag is a no-op —
 // we hide the toggle and persist required=false.
-const props = defineProps<{ eventId: string | null; kind: AdmissionKind; isRace?: boolean }>()
+const props = defineProps<{
+    eventId: string | null
+    kind: AdmissionKind
+    isRace?: boolean
+    // Lessons only: unlocks the training-group fields (coach, ability/equipment bands, and an
+    // optional per-group window bounded by the event's own).
+    isLesson?: boolean
+    eventStartsLocal?: string
+    eventEndsLocal?: string
+}>()
 
 const service = new TicketService()
 const confirm = useConfirm()
@@ -301,7 +381,95 @@ const form = ref({
     minSold: 0,
     daysBefore: 30,
     effectiveDate: '',
+    instructorId: null as string | null,
+    skillLevel: null as string | null,
+    equipmentLabel: null as string | null,
+    groupStartsLocal: '',
+    groupEndsLocal: '',
+    partySizeIncluded: 1,
+    partyExtraDollars: null as number | null,
+    partySizeMax: null as number | null,
 })
+
+// ── Training groups (lessons only) ────────────────────────────────────────────────────
+// Coaches are loaded once per dialog mount, not per tier. Assignment is optional and always
+// staff-side: riders never choose a coach (docs/lessons.md).
+const instructorService = new InstructorService()
+const coaches = ref<Instructor[]>([])
+const coachesLoading = ref(false)
+const coachOptions = computed(() => [
+    { value: null as string | null, label: 'No coach assigned' },
+    ...coaches.value.map(c => ({
+        value: c.id as string | null,
+        label: `${c.name} (up to ${c.maxStudentsPerSession})`,
+    })),
+])
+
+// Free-text bands with a per-tenant-type suggestion list: MX segments by skill plus
+// displacement, MTB by trail-difficulty ability zone. Admins can type anything.
+const isMtb = computed(() => branding.tenantType === 'mountain_bike')
+const skillOptions = computed(() => isMtb.value
+    ? ['Green Circle', 'Blue Square', 'Black Diamond']
+    : ['Beginner', 'Novice', 'Intermediate', 'Advanced', 'Pro'])
+const equipmentOptions = computed(() => isMtb.value
+    ? ['Trail', 'Downhill', 'Enduro', 'E-bike']
+    : ['50cc', '65cc', '85cc', '125', '250F', '450'])
+const skillPlaceholder = computed(() => isMtb.value ? 'e.g. Blue Square' : 'e.g. Beginner')
+const equipmentPlaceholder = computed(() => isMtb.value ? 'e.g. Downhill' : 'e.g. 65cc')
+
+// Party pricing preview + validation, mirroring Services.Pricing.PartyPricing so the admin sees
+// the same totals the server will charge.
+const partyExtraHint = computed(() =>
+    form.value.partyExtraDollars == null ? 'Blank = same as the price above' : '')
+const partyError = computed(() => {
+    const included = form.value.partySizeIncluded || 1
+    const max = form.value.partySizeMax
+    if (included < 1) return 'Riders covered has to be at least 1.'
+    if (max != null && max < included) return "Max riders can't be less than the number the price covers."
+    return ''
+})
+const partyPreview = computed(() => {
+    const included = Math.max(1, form.value.partySizeIncluded || 1)
+    const extra = form.value.partyExtraDollars ?? form.value.priceDollars
+    if (included <= 1 && form.value.partyExtraDollars == null) return ''
+    const base = `$${(form.value.priceDollars || 0).toFixed(2)}`
+    if (included > 1) {
+        const tail = extra > 0 ? `, then $${extra.toFixed(2)} each` : ''
+        return `Buyers pay ${base} for up to ${included} riders${tail}.`
+    }
+    return `Buyers pay ${base} for the first rider, then $${extra.toFixed(2)} each.`
+})
+
+const bothGroupTimes = computed(() =>
+    !!form.value.groupStartsLocal && !!form.value.groupEndsLocal)
+
+// Same three rules the server enforces, surfaced inline.
+const groupWindowError = computed(() => {
+    if (!props.isLesson) return ''
+    const s = form.value.groupStartsLocal
+    const e = form.value.groupEndsLocal
+    if (!s && !e) return ''
+    if (!s || !e) return 'Set both a start and an end for the group, or leave both blank.'
+    if (new Date(e) <= new Date(s)) return 'The group ends before it starts.'
+    if (props.eventStartsLocal && props.eventEndsLocal) {
+        if (new Date(s) < new Date(props.eventStartsLocal) || new Date(e) > new Date(props.eventEndsLocal))
+            return 'The group has to run inside the event’s own start and end times.'
+    }
+    return ''
+})
+
+async function loadCoaches() {
+    if (!props.isLesson || coaches.value.length > 0) return
+    coachesLoading.value = true
+    try {
+        const r = await instructorService.listForAdmin()
+        coaches.value = ((r.data as any).data as Instructor[]).filter(c => c.isActive)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t load coaches. Reopen this section to try again.', 'error')
+    } finally {
+        coachesLoading.value = false
+    }
+}
 
 const triggerOptions: { value: TriggerType; label: string }[] = [
     { value: 'none', label: 'From the start (base price)' },
@@ -336,6 +504,9 @@ function blankForm() {
         riderPaidServiceChargePct: 100,
         bundledCount: null as number | null, bundledKind: 'percent' as BundledKind, bundledPercent: 20, bundledDollars: 5,
         ladderGroup: '', triggerType: 'none' as TriggerType, minSold: 0, daysBefore: 30, effectiveDate: '',
+        instructorId: null as string | null, skillLevel: null as string | null,
+        equipmentLabel: null as string | null, groupStartsLocal: '', groupEndsLocal: '',
+        partySizeIncluded: 1, partyExtraDollars: null as number | null, partySizeMax: null as number | null,
     }
 }
 
@@ -343,6 +514,7 @@ function openCreate() {
     editing.value = null
     form.value = blankForm()
     tierDialog.value = true
+    loadCoaches()
 }
 
 function openEdit(t: TicketTier) {
@@ -369,8 +541,17 @@ function openEdit(t: TicketTier) {
         minSold: t.minSold ?? 0,
         daysBefore: t.effectiveDaysBefore ?? 30,
         effectiveDate: t.effectiveAtUtc ? toLocalInput(t.effectiveAtUtc) : '',
+        instructorId: t.instructorId ?? null,
+        skillLevel: t.skillLevel ?? null,
+        equipmentLabel: t.equipmentLabel ?? null,
+        groupStartsLocal: t.startsAt ? toLocalInput(t.startsAt) : '',
+        groupEndsLocal: t.endsAt ? toLocalInput(t.endsAt) : '',
+        partySizeIncluded: t.partySizeIncluded ?? 1,
+        partyExtraDollars: t.partyPriceCents != null ? t.partyPriceCents / 100 : null,
+        partySizeMax: t.partySizeMax ?? null,
     }
     tierDialog.value = true
+    loadCoaches()
 }
 
 // Build the persisted/buffered tier shape from the form. Race classes are always
@@ -410,11 +591,27 @@ function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
         effectiveDaysBefore: group && tt === 'days' ? (form.value.daysBefore ?? 0) : null,
         effectiveAtUtc: group && tt === 'date' && form.value.effectiveDate
             ? new Date(form.value.effectiveDate).toISOString() : null,
+        // Group fields only mean anything on a lesson; on any other event type they stay null
+        // so switching an event's type can't leave a stale coach attached.
+        instructorId: props.isLesson ? (form.value.instructorId || null) : null,
+        skillLevel: props.isLesson ? (form.value.skillLevel?.trim() || null) : null,
+        equipmentLabel: props.isLesson ? (form.value.equipmentLabel?.trim() || null) : null,
+        startsAt: props.isLesson && bothGroupTimes.value
+            ? new Date(form.value.groupStartsLocal).toISOString() : null,
+        endsAt: props.isLesson && bothGroupTimes.value
+            ? new Date(form.value.groupEndsLocal).toISOString() : null,
+        partySizeIncluded: Math.max(1, form.value.partySizeIncluded || 1),
+        partyPriceCents: form.value.partyExtraDollars == null || isNaN(form.value.partyExtraDollars)
+            ? null : Math.round(form.value.partyExtraDollars * 100),
+        partySizeMax: form.value.partySizeMax || null,
     }
 }
 
 async function save() {
     if (!form.value.name.trim()) return
+    // Mirror the server's group-window rules so the admin gets the message inline rather than
+    // as a failed request.
+    if (groupWindowError.value || partyError.value) return
     const body = formToTier()
 
     // Buffer mode: hold locally; the parent persists on event create.

@@ -72,6 +72,72 @@ namespace webapi.Payments
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
+        public async Task<PaymentIntentCreated> CreateHoldPaymentIntentAsync(
+            long amountCents,
+            string currency,
+            IReadOnlyDictionary<string, string> metadata,
+            string? receiptEmail = null,
+            string? connectedAccountId = null,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey))
+            {
+                throw new InvalidOperationException(
+                    "Stripe:SecretKey is not configured. Set it via user-secrets or environment variables before taking payments.");
+            }
+
+            // capture_method=manual makes confirming this PI an authorization (a hold) rather than a
+            // charge: funds are reserved on the card but not moved, so Stripe charges no fee unless we
+            // later capture. Deliberately NO ApplicationFeeAmount — RidePass takes no cut of a deposit.
+            var options = new PaymentIntentCreateOptions
+            {
+                Amount = amountCents,
+                Currency = currency,
+                CaptureMethod = "manual",
+                AutomaticPaymentMethods = new PaymentIntentAutomaticPaymentMethodsOptions { Enabled = true },
+                Metadata = metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
+                ReceiptEmail = receiptEmail,
+            };
+
+            var service = new PaymentIntentService();
+            var intent = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
+            return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
+        }
+
+        public async Task<string?> CapturePaymentIntentAsync(string paymentIntentId, long amountToCaptureCents,
+            string? connectedAccountId = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            var service = new PaymentIntentService();
+            var requestOptions = BuildRequestOptions(connectedAccountId);
+            // A partial capture (amount_to_capture < authorized) tells Stripe to settle only this much
+            // and release the rest of the hold. You get one capture per authorization, which is exactly
+            // the deposit model: settle the damage once on return.
+            var options = new PaymentIntentCaptureOptions { AmountToCapture = amountToCaptureCents };
+            try
+            {
+                var captured = await service.CaptureAsync(paymentIntentId, options, requestOptions, ct);
+                return captured.Status;
+            }
+            catch (StripeException ex)
+            {
+                // Capture is rejected once the hold is already settled (a retried return after the
+                // capture succeeded but the status flip didn't). Re-read the real status so the caller
+                // can see it already reached 'succeeded' and proceed idempotently rather than fail.
+                _logger.LogWarning(ex, "Capture rejected for PaymentIntent {IntentId}; re-reading status.", paymentIntentId);
+                try
+                {
+                    var current = await service.GetAsync(paymentIntentId, requestOptions: requestOptions, cancellationToken: ct);
+                    return current.Status;
+                }
+                catch (StripeException ex2)
+                {
+                    _logger.LogWarning(ex2, "Failed to re-read PaymentIntent {IntentId} after capture.", paymentIntentId);
+                    return null;
+                }
+            }
+        }
+
         public async Task<TransferResult> CreateTransferAsync(string connectAccountId, long amountCents, string currency,
             string? description = null, IReadOnlyDictionary<string, string>? metadata = null,
             string? idempotencyKey = null,

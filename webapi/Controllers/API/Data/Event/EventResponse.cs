@@ -40,6 +40,33 @@
         public List<EligibleExtra> EligibleExtras { get; set; } = new();
         // Ordered schedule rows (e.g. "7:00 AM" / "Gates open"). Empty = none.
         public List<ScheduleItem> Schedule { get; set; } = new();
+        // Instructors assigned to this lesson (empty for non-lesson events).
+        public List<EventInstructor> Instructors { get; set; } = new();
+        // Bikes a rider can add when booking this lesson, with live availability.
+        public List<EligibleRental> EligibleRentals { get; set; } = new();
+    }
+
+    public class EventInstructor
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = null!;
+        public string? ImageUrl { get; set; }
+    }
+
+    public class EligibleRental
+    {
+        public Guid VariantId { get; set; }
+        public string Name { get; set; } = null!;
+        public string? Description { get; set; }
+        public string? ImageUrl { get; set; }
+        // Effective per-lesson price = override ?? the variant's daily rate. All-in (shop rentals
+        // carry no rider service charge and no tax line).
+        public int PriceCents { get; set; }
+        public int? PriceCentsOverride { get; set; }
+        public int DepositCents { get; set; }
+        public string TrackingKind { get; set; } = null!;
+        // Units free for THIS lesson's window right now.
+        public int Available { get; set; }
     }
 
     public class ScheduleItem

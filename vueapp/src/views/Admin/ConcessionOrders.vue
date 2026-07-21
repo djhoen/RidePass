@@ -4,9 +4,9 @@
             <h1 class="text-h4">Order History</h1>
             <v-spacer></v-spacer>
             <v-text-field v-model="dateFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @update:model-value="load"></v-text-field>
+                :max="dateTo || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
             <v-text-field v-model="dateTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @update:model-value="load"></v-text-field>
+                :min="dateFrom || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
             <v-btn variant="text" size="small" @click="resetToday">Today</v-btn>
             <v-text-field v-model="query" label="Search order # or name" density="compact" hide-details clearable
                 prepend-inner-icon="mdi-magnify" style="max-width: 280px"

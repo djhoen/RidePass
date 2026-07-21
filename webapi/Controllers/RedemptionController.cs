@@ -59,11 +59,18 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("No purchase found for this token in your tenant.");
             }
 
-            if (preview.Status == "redeemed")
+            // A multi-day event (a training camp) admits the same ticket once per DAY, so
+            // 'redeemed' from an earlier day must not block today. Per-day truth lives in
+            // event_ticket_attendance; the status flag still marks the first admission so
+            // existing reports and the roster keep working unchanged. Single-day events take
+            // the original path exactly.
+            var isMultiDay = IsMultiDayEvent(preview);
+
+            if (preview.Status == "redeemed" && !isMultiDay)
             {
                 return new ApiResponses().BadRequestResult("Already redeemed.");
             }
-            if (preview.Status != "paid")
+            if (preview.Status != "paid" && !(isMultiDay && preview.Status == "redeemed"))
             {
                 return new ApiResponses().BadRequestResult($"Cannot redeem a purchase with status '{preview.Status}'.");
             }
@@ -84,8 +91,28 @@ namespace webapi.Controllers
             var staffId = TryGetStaffUserId();
             var nowUtc = DateTime.UtcNow;
             var tenantId = _tenantContext.TenantId;
-            if (staffId.HasValue) await _tickets.MarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
-            else                 await _tickets.UpdateStatus(preview.PurchaseId, "redeemed");
+
+            if (isMultiDay)
+            {
+                // One admission per local day. A second scan on the same day is refused here
+                // rather than silently double-counting the roster.
+                var todayLocal = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(nowUtc, ResolveTenantTimeZone()).Date);
+                var recorded = await _tickets.TryRecordAttendance(preview.PurchaseId, tenantId, todayLocal, staffId);
+                if (!recorded)
+                {
+                    return new ApiResponses().BadRequestResult("Already checked in today.");
+                }
+                // Flip 'paid' -> 'redeemed' on the FIRST day only, so redeemed_at_utc keeps
+                // meaning "first admitted" and a later day never rewrites it.
+                if (preview.Status == "paid")
+                {
+                    if (staffId.HasValue) await _tickets.TryMarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
+                    else                  await _tickets.UpdateStatus(preview.PurchaseId, "redeemed");
+                }
+            }
+            else if (staffId.HasValue) await _tickets.MarkRedeemed(preview.PurchaseId, tenantId, staffId.Value, nowUtc);
+            else                       await _tickets.UpdateStatus(preview.PurchaseId, "redeemed");
 
             preview.Status = "redeemed";
             return new ApiResponses().OkResult(preview);
@@ -95,11 +122,35 @@ namespace webapi.Controllers
         // attributes the operator app filters on (race class / gate fee, rider vs spectator,
         // checked-in state, race number). Powers the live roster view and the offline roster
         // snapshot. Event- and tenant-scoped; SalesRedeem (class-level) gates it.
+        // onDate (yyyy-MM-dd, tenant-local) picks which day of a multi-day camp the roster is
+        // for; omit it and a camp defaults to today, which is what someone standing at the gate
+        // wants. A single-day event ignores it entirely and keeps reporting status-based
+        // check-in, so existing operator-app calls are unaffected.
         [HttpGet("Roster/{eventId:guid}")]
-        public async Task<IActionResult> Roster(Guid eventId)
+        public async Task<IActionResult> Roster(Guid eventId, [FromQuery] DateOnly? onDate = null)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var rows = await _tickets.ListEventRoster(eventId, _tenantContext.TenantId);
+
+            var ev = await _events.GetById(eventId, _tenantContext.TenantId);
+            if (ev is null) return new ApiResponses().NotFoundResult("Event not found.");
+
+            var tz = ResolveTenantTimeZone();
+            var startLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc), tz).Date;
+            var endLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(ev.EndsAt, DateTimeKind.Utc), tz).Date;
+
+            DateOnly? day = null;
+            if (endLocal > startLocal)
+            {
+                var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date);
+                day = onDate ?? today;
+                // Clamp to the camp's own days so a typo can't ask for a date the camp never runs.
+                var first = DateOnly.FromDateTime(startLocal);
+                var last = DateOnly.FromDateTime(endLocal);
+                if (day < first) day = first;
+                if (day > last) day = last;
+            }
+
+            var rows = await _tickets.ListEventRoster(eventId, _tenantContext.TenantId, day);
             return new ApiResponses().OkResult(rows);
         }
 
@@ -141,7 +192,14 @@ namespace webapi.Controllers
                     results.Add(result);
                     continue;
                 }
-                if (row.Status == "redeemed")
+                // A multi-day event (a camp) admits once per DAY, so 'redeemed' from an earlier
+                // day is not a duplicate and must fall through to the per-day check below.
+                var tzForDay = ResolveTenantTimeZone();
+                var rowStartLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(row.EventStartsAt, DateTimeKind.Utc), tzForDay).Date;
+                var rowEndLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(row.EventEndsAt, DateTimeKind.Utc), tzForDay).Date;
+                var rowIsMultiDay = rowEndLocal > rowStartLocal;
+
+                if (row.Status == "redeemed" && !rowIsMultiDay)
                 {
                     // Already in: your own re-sync is idempotent success; another device that
                     // got there first is a conflict to surface.
@@ -151,7 +209,7 @@ namespace webapi.Controllers
                     results.Add(result);
                     continue;
                 }
-                if (row.Status != "paid")
+                if (row.Status != "paid" && !(rowIsMultiDay && row.Status == "redeemed"))
                 {
                     result.Outcome = "not_admissible";
                     results.Add(result);
@@ -185,6 +243,37 @@ namespace webapi.Controllers
 
                 // Clamp the offline timestamp to [purchase time, now]; fall back to now if bogus.
                 var admittedAt = ClampAdmitTime(item.AdmittedAtUtc, DateTime.SpecifyKind(row.CreatedAt, DateTimeKind.Utc), nowUtc);
+
+                // Multi-day event (a camp): admission is per DAY, so the paid -> redeemed flip
+                // can't arbitrate. Attendance for the admitted day decides instead, keeping the
+                // same first-to-sync-wins semantics: whoever records the day wins, a second
+                // device syncing the same day is the duplicate.
+                if (rowIsMultiDay)
+                {
+                    var admittedDay = DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(admittedAt, tzForDay).Date);
+                    var recordedDay = await _tickets.TryRecordAttendance(row.Id, tenantId, admittedDay, staffId.Value);
+                    if (recordedDay)
+                    {
+                        // First day also flips the status so reports and the roster still see
+                        // this ticket as used; later days leave redeemed_at_utc alone.
+                        await _tickets.TryMarkRedeemed(row.Id, tenantId, staffId.Value, admittedAt);
+                        result.Outcome = "admitted";
+                        result.RedeemedByUserId = staffId.Value;
+                        result.RedeemedAtUtc = admittedAt;
+                    }
+                    else
+                    {
+                        // That day is already recorded. Same semantics as the single-day path:
+                        // your own re-sync is idempotent success, another device is a conflict.
+                        var freshDay = await _tickets.GetByRedemptionToken(item.RedemptionToken, tenantId);
+                        result.RedeemedByUserId = freshDay?.RedeemedByUserId;
+                        result.RedeemedAtUtc = freshDay?.RedeemedAtUtc;
+                        result.Outcome = freshDay?.RedeemedByUserId == staffId.Value ? "admitted" : "conflict";
+                    }
+                    results.Add(result);
+                    continue;
+                }
 
                 var flipped = await _tickets.TryMarkRedeemed(row.Id, tenantId, staffId.Value, admittedAt);
                 if (flipped)
@@ -811,6 +900,20 @@ namespace webapi.Controllers
             }
 
             return null;
+        }
+
+        // True when an event ticket covers more than one tenant-LOCAL calendar day: a training
+        // camp, not an event that merely runs past midnight in UTC. Only event tickets qualify;
+        // a day pass has no event window.
+        private bool IsMultiDayEvent(RedemptionPreviewResponse preview)
+        {
+            if (preview.Kind != "event_ticket") return false;
+            if (preview.EventStartsAtUtc is not DateTime startUtc) return false;
+            if (preview.EventEndsAtUtc is not DateTime endUtc) return false;
+            var tz = ResolveTenantTimeZone();
+            var startLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(startUtc, DateTimeKind.Utc), tz).Date;
+            var endLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(endUtc, DateTimeKind.Utc), tz).Date;
+            return endLocal > startLocal;
         }
 
         private TimeZoneInfo ResolveTenantTimeZone()

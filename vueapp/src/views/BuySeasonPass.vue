@@ -1,305 +1,509 @@
 <template>
-    <v-container style="max-width: 720px">
-        <h1 class="text-h4 mb-4">Season Passes</h1>
+    <div class="sp-page">
+        <v-container v-if="loadError" class="py-6">
+            <v-alert type="error" variant="tonal">{{ loadError }}</v-alert>
+        </v-container>
 
-        <div v-if="loading" class="text-center py-8">
-            <v-progress-circular indeterminate color="primary"></v-progress-circular>
-        </div>
-        <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
-        <v-alert v-else-if="featureDisabled" type="info" variant="tonal">
-            This track isn't selling season passes right now.
-        </v-alert>
-        <v-card v-else-if="products.length === 0" class="pa-6 text-center text-medium-emphasis">
-            No season passes available right now.
-        </v-card>
+        <v-container v-else-if="featureDisabled" class="py-6">
+            <v-alert type="info" variant="tonal">This track isn't selling season passes right now.</v-alert>
+        </v-container>
 
-        <v-card v-for="p in products" :key="p.id" class="mb-4 pa-4">
-            <div class="d-flex align-center">
-                <div class="flex-grow-1">
-                    <strong class="text-h6">{{ p.name }}</strong>
-                    <div v-if="p.description" class="text-caption text-medium-emphasis">{{ p.description }}</div>
-                    <div class="text-caption mt-1">
-                        Valid {{ formatDate(p.validFromDate) }} – {{ formatDate(p.validToDate) }}
-                        <span v-if="p.kind === 'days_of_week'"> · {{ daysLabel(p.validDaysOfWeek) }} only</span>
-                        <span v-else-if="p.kind === 'credits'"> · {{ p.totalCredits }} ride credits</span>
-                        <span v-else> · unlimited rides</span>
-                    </div>
+        <v-container v-else-if="loading" class="py-6">
+            <v-skeleton-loader type="image, article, actions"></v-skeleton-loader>
+        </v-container>
+
+        <template v-else>
+            <!-- ── HERO ──────────────────────────────────────────────────────
+                 Hosted site only. The embed gets the slim header below instead —
+                 a full-bleed hero inside someone else's page reads as a
+                 site-within-a-site. -->
+            <section v-if="!isEmbed" class="sp-hero" :style="heroStyle">
+                <div class="sp-hero-overlay">
+                    <v-container class="sp-hero-inner">
+                        <router-link to="/" class="sp-back">
+                            <v-icon icon="mdi-arrow-left" size="18"></v-icon>
+                            <span>Back to {{ branding.displayName }}</span>
+                        </router-link>
+                        <div class="sp-hero-bottom">
+                            <h1 class="sp-title font-display text-white">{{ heroTitle }}</h1>
+                            <p v-if="priceFromCents !== null" class="sp-hero-sub text-white">
+                                Ride the whole season from ${{ (priceFromCents / 100).toFixed(2) }}
+                            </p>
+                        </div>
+                    </v-container>
                 </div>
-                <div class="text-right">
-                    <div class="text-h5">${{ (p.priceCents / 100).toFixed(2) }}</div>
-                    <v-btn color="primary" class="mt-1" @click="openPhotoStep(p)">Buy</v-btn>
+            </section>
+
+            <!-- ── EMBED HEADER ────────────────────────────────────────────── -->
+            <v-container v-else class="pt-3 pb-0">
+                <a v-if="embedCameFromWidget" class="sp-back sp-back-embed mb-2" role="button"
+                    @click.prevent="router.back()">
+                    <v-icon icon="mdi-arrow-left" size="16"></v-icon>
+                    <span>Back</span>
+                </a>
+                <h1 class="text-h6 font-weight-bold font-display">{{ heroTitle }}</h1>
+                <div v-if="priceFromCents !== null" class="text-caption text-medium-emphasis">
+                    From ${{ (priceFromCents / 100).toFixed(2) }}
                 </div>
-            </div>
-        </v-card>
+            </v-container>
 
-        <v-dialog v-model="photoStepOpen" max-width="480" persistent>
-            <v-card v-if="selectedProduct">
-                <v-card-title class="d-flex align-center">
-                    <span>Take a photo</span>
-                    <v-spacer></v-spacer>
-                    <v-btn icon="mdi-close" variant="text" size="small" @click="photoStepOpen = false"></v-btn>
-                </v-card-title>
-                <v-card-text>
-                    <p class="text-body-2 text-medium-emphasis mb-3">
-                        We snap a photo so the gate worker can confirm you're the pass holder.
-                        Use a recent, well-lit selfie of just your face.
-                    </p>
-                    <PhotoCapture v-model="photoDataUrl" />
+            <v-container :class="isEmbed ? 'py-4' : 'py-8'">
+                <v-alert v-if="products.length === 0" type="info" variant="tonal">
+                    No season passes are on sale right now. Check back soon.
+                </v-alert>
 
-                    <div v-if="needsWaiverSigning && waiver" class="mt-4">
-                        <div class="text-subtitle-2 mb-1">{{ waiver.title }}</div>
-                        <div class="text-caption text-medium-emphasis mb-2" style="max-height: 160px; overflow-y: auto; white-space: pre-wrap; border: 1px solid rgba(0,0,0,0.12); border-radius: 4px; padding: 8px;">{{ waiver.body }}</div>
-                        <v-text-field v-if="waiverIsMinor" v-model="parentName" label="Parent/guardian name"
-                            density="compact" hide-details class="mb-2"></v-text-field>
-                        <v-text-field v-if="waiverIsMinor" v-model="parentPhone" label="Parent/guardian phone"
-                            density="compact" hide-details class="mb-2"></v-text-field>
-                        <div class="text-caption mb-1">Sign below to agree to the waiver:</div>
-                        <SignaturePad v-model="signatureDataUrl" />
-                    </div>
-                    <div v-else-if="selectedProduct.requiresWaiver && waiver" class="mt-4 text-caption text-success">
-                        Waiver already signed.
-                    </div>
+                <!-- In embed mode the checkout column leads (order 2/1 swap): when the iframe is
+                     narrow and the columns stack, buyers land on the buy box instead of scrolling
+                     past the details to find it. -->
+                <v-row v-else>
+                    <!-- ── Pass details ────────────────────────────────────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 2 : undefined">
+                        <section class="mb-8">
+                            <h2 class="text-h5 font-weight-bold font-display mb-4">Why a Season Pass</h2>
+                            <ul class="sp-checklist mb-4">
+                                <li v-for="(line, i) in benefitLines" :key="i">
+                                    <v-icon icon="mdi-check" size="18" class="sp-check"></v-icon>
+                                    <span>{{ line }}</span>
+                                </li>
+                            </ul>
+                            <div class="sp-meta">
+                                <div class="sp-meta-row">
+                                    <v-icon icon="mdi-calendar-check" class="sp-meta-icon"></v-icon>
+                                    <span>{{ seasonRangeLabel }}</span>
+                                </div>
+                                <div v-if="locationText" class="sp-meta-row">
+                                    <v-icon icon="mdi-map-marker" class="sp-meta-icon"></v-icon>
+                                    <span>{{ locationText }}</span>
+                                </div>
+                            </div>
+                        </section>
 
-                    <v-text-field v-model="couponCode" label="Promo code (optional)"
-                        placeholder="SUMMER25" density="compact" class="mt-3"
-                        :hide-details="false" :error-messages="couponError ? [couponError] : []"></v-text-field>
-                    <v-text-field v-model="giftCardCode" label="Gift card code (optional)"
-                        placeholder="GIFT-XXXXXXXX" density="compact" class="mt-3"
-                        :hide-details="false" :error-messages="giftCardError ? [giftCardError] : []"></v-text-field>
-                </v-card-text>
-                <v-card-actions>
-                    <v-spacer></v-spacer>
-                    <v-btn @click="photoStepOpen = false">Cancel</v-btn>
-                    <v-btn color="primary" :loading="busyId === selectedProduct.id"
-                        :disabled="!photoDataUrl || (needsWaiverSigning && !signatureDataUrl)"
-                        @click="buy(selectedProduct)">Continue to payment</v-btn>
-                </v-card-actions>
-            </v-card>
-        </v-dialog>
+                        <!-- ── Perks ──────────────────────────────────────────
+                             What each pass actually grants, straight off the tenant's benefits
+                             config, so the copy can't promise something this track doesn't sell.
+                             Rendered whenever any pass has benefits; a pass with none is simply
+                             omitted rather than shown as an empty card. -->
+                        <section v-if="passesWithPerks.length" class="mb-8">
+                            <h2 class="text-h5 font-weight-bold font-display mb-4">What's Included</h2>
+                            <div v-for="p in passesWithPerks" :key="p.id" class="sp-perk-block mb-4">
+                                <div v-if="passesWithPerks.length > 1" class="sp-section-subtitle mb-2">
+                                    {{ p.name }}
+                                </div>
+                                <ul class="sp-checklist">
+                                    <li v-for="(line, i) in perkLines(p)" :key="i">
+                                        <v-icon :icon="line.icon" size="18" class="sp-check"></v-icon>
+                                        <span>{{ line.text }}</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </section>
 
-        <v-dialog v-model="payOpen" persistent max-width="500">
-            <v-card v-if="purchaseInFlight">
-                <v-card-title class="d-flex align-center">
-                    <span>Pay for {{ purchaseInFlight.productName }}</span>
-                    <v-spacer></v-spacer>
-                    <v-btn icon="mdi-close" variant="text" size="small" @click="payOpen = false"></v-btn>
-                </v-card-title>
-                <v-card-text>
-                    <v-table v-if="purchaseInFlight.riderServiceChargeCents > 0 || purchaseInFlight.giftCardAppliedCents > 0" density="compact" class="mb-3">
-                        <tbody>
-                            <tr><td>Subtotal</td><td class="text-right">${{ ((purchaseInFlight.amountCents + purchaseInFlight.giftCardAppliedCents - purchaseInFlight.riderServiceChargeCents) / 100).toFixed(2) }}</td></tr>
-                            <tr v-if="purchaseInFlight.riderServiceChargeCents > 0"><td>Service charge</td><td class="text-right">${{ (purchaseInFlight.riderServiceChargeCents / 100).toFixed(2) }}</td></tr>
-                            <tr v-if="purchaseInFlight.giftCardAppliedCents > 0"><td>Gift card applied</td><td class="text-right">−${{ (purchaseInFlight.giftCardAppliedCents / 100).toFixed(2) }}</td></tr>
-                            <tr><td><strong>Total</strong></td><td class="text-right"><strong>${{ (purchaseInFlight.amountCents / 100).toFixed(2) }}</strong></td></tr>
-                        </tbody>
-                    </v-table>
-                    <div id="season-payment-element" class="mb-4"></div>
-                    <v-btn color="primary" :loading="paying" :disabled="!stripeReady" @click="pay">
-                        Pay ${{ (purchaseInFlight.amountCents / 100).toFixed(2) }}
-                    </v-btn>
-                    <div v-if="paymentError" class="text-error mt-3">{{ paymentError }}</div>
-                </v-card-text>
-            </v-card>
-        </v-dialog>
+                        <!-- Pricing: every pass on sale. Hidden in embed — the checkout card
+                             already lists each one with its price, so this would be duplicate
+                             scroll there. -->
+                        <section v-if="!isEmbed" class="mb-8">
+                            <h2 class="text-h5 font-weight-bold font-display mb-4">Passes &amp; Pricing</h2>
+                            <p v-if="hasServiceFee" class="text-body-2 text-medium-emphasis mb-4">
+                                All passes include a {{ serviceFeePercent }}% service fee.
+                            </p>
+                            <div v-for="p in products" :key="p.id" class="sp-price-block mb-4">
+                                <div class="sp-price-row">
+                                    <span class="sp-price-name">{{ p.name }}</span>
+                                    <span class="sp-price-amt">${{ (p.priceCents / 100).toFixed(2) }}</span>
+                                </div>
+                                <div class="text-caption text-medium-emphasis">
+                                    {{ accessLabel(p) }} · {{ validLabel(p) }}
+                                </div>
+                                <div v-if="p.description" class="text-body-2 mt-1">{{ p.description }}</div>
+                            </div>
+                        </section>
+                    </v-col>
 
-        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
-    </v-container>
+                    <!-- ── Checkout, then about ────────────────────────────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 1 : undefined">
+                        <v-card class="sp-entry-card" variant="flat">
+                            <v-card-text class="pa-5">
+                                <SeasonPassCheckout :products="products" />
+
+                                <div v-if="waiverNote" class="sp-infobox mt-4">
+                                    <v-icon icon="mdi-alert-circle-outline" size="20" class="sp-infobox-icon"></v-icon>
+                                    <div>{{ waiverNote }}</div>
+                                </div>
+                            </v-card-text>
+                        </v-card>
+
+                        <!-- Embed only: attribution under the checkout. Opens in a new tab so it
+                             never navigates the iframe out of the track's flow. -->
+                        <div v-if="isEmbed" class="text-center mt-2">
+                            <a class="rp-powered" href="https://ridepass.io" target="_blank" rel="noopener">
+                                Powered by <strong>RidePass</strong>
+                            </a>
+                        </div>
+
+                        <!-- Hidden in embed: it would describe the very site the widget sits on. -->
+                        <section v-if="!isEmbed && (aboutHtml || aboutPhoto)" class="mt-8">
+                            <h2 class="text-h5 font-weight-bold font-display mb-4">About {{ branding.displayName }}</h2>
+                            <div v-if="aboutHtml" class="rich-text-body mb-3" v-html="aboutHtml"></div>
+                            <a class="sp-link" href="/">Visit track home &rarr;</a>
+                            <div v-if="aboutPhoto" class="sp-about-photo mt-4"
+                                :style="{ backgroundImage: `url(${aboutPhoto})` }"></div>
+                        </section>
+                    </v-col>
+                </v-row>
+            </v-container>
+        </template>
+    </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
-import { SeasonPassService, type SeasonPassProduct } from '@/services/SeasonPassService'
-import { WaiverService, type WaiverDto } from '@/services/WaiverService'
+import DOMPurify from 'dompurify'
+import { SeasonPassService, type SeasonPassProduct, type SeasonPassBenefit } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
-import authHelper from '@/helpers/AuthHelper'
-import { getStripe } from '@/helpers/StripeHelper'
-import PhotoCapture from '@/components/PhotoCapture.vue'
-import SignaturePad from '@/components/SignaturePad.vue'
+import SeasonPassCheckout from '@/components/SeasonPassCheckout.vue'
 
+const route = useRoute()
 const router = useRouter()
-const service = new SeasonPassService()
-const waiverService = new WaiverService()
 
+// Embed mode (/embed/seasonpasses, /embed/seasonpass/:id): framed on a track's own site, so
+// no hero and no navigation out of the checkout flow. The only escape hatch is Back, and only
+// when the visitor arrived from another embedded widget in this same iframe.
+const isEmbed = computed(() => !!route.meta.embed)
+const embedCameFromWidget: boolean = (() => {
+    const back = String(window.history.state?.back ?? '')
+    return back.startsWith('/embed/')
+})()
+
+const service = new SeasonPassService()
 const products = ref<SeasonPassProduct[]>([])
-const loading = ref(false)
+const loading = ref(true)
 const loadError = ref('')
 const featureDisabled = ref(false)
-const busyId = ref<string | null>(null)
-const photoStepOpen = ref(false)
-const photoDataUrl = ref<string | null>(null)
-const selectedProduct = ref<SeasonPassProduct | null>(null)
-const couponCode = ref('')
-const couponError = ref('')
-watch(couponCode, () => { couponError.value = '' })
 
-const giftCardCode = ref('')
-const giftCardError = ref('')
-watch(giftCardCode, () => { giftCardError.value = '' })
+const aboutHtml = computed(() => DOMPurify.sanitize(branding.aboutHtml || ''))
+const aboutPhoto = computed(() => branding.secondaryHeroUrl || branding.heroImageUrl || null)
+const heroStyle = computed(() =>
+    branding.heroImageUrl ? { backgroundImage: `url(${branding.heroImageUrl})` } : {})
 
-// Waiver step (only when the pass requires one and the rider hasn't signed the current version).
-const waiver = ref<WaiverDto | null>(null)
-const needsWaiverSigning = ref(false)
-const waiverIsMinor = ref(false)
-const signatureDataUrl = ref<string | null>(null)
-const parentName = ref('')
-const parentPhone = ref('')
+// A single-pass embed (/embed/seasonpass/:id) titles itself after that pass; everything else
+// is the lineup.
+const heroTitle = computed(() =>
+    singleProductId.value && products.value.length === 1 ? products.value[0].name : 'Season Passes')
 
-async function openPhotoStep(p: SeasonPassProduct) {
-    // Buying requires an account (the purchase endpoint is authorized). Gate at entry so a
-    // guest signs in first and returns here, instead of filling the whole photo/waiver
-    // dialog and getting bounced to Login on submit.
-    if (!authHelper.isAuthenticated()) {
-        router.push({ path: '/Login', query: { next: '/SeasonPasses' } })
-        return
+const singleProductId = computed(() => (route.params.id as string | undefined) || null)
+
+const priceFromCents = computed(() =>
+    products.value.length === 0 ? null : Math.min(...products.value.map(p => p.priceCents)))
+
+const locationText = computed(() => {
+    const cityLine = [branding.city, [branding.region, branding.postalCode].filter(Boolean).join(' ')]
+        .filter(p => p && p.trim()).join(', ')
+    const parts = [branding.addressLine, cityLine].filter(p => p && p.trim())
+    return parts.length > 0 ? parts.join(', ') : branding.displayName || ''
+})
+
+// The season's outer bounds across every pass on sale — the "when is this good for" answer
+// a buyer wants before reading individual passes.
+const seasonRangeLabel = computed(() => {
+    if (products.value.length === 0) return ''
+    const from = products.value.map(p => dayjs(p.validFromDate)).sort((a, b) => a.valueOf() - b.valueOf())[0]
+    const to = products.value.map(p => dayjs(p.validToDate)).sort((a, b) => b.valueOf() - a.valueOf())[0]
+    return `Good for the ${from.format('MMM D, YYYY')} to ${to.format('MMM D, YYYY')} season`
+})
+
+// Benefits are derived from what the passes on sale actually are, so the copy can't promise
+// something this track doesn't sell. Per-event-type perks are deliberately NOT advertised:
+// they're configurable today but checkout doesn't apply them yet, so naming them here would
+// sell a discount the buyer wouldn't get.
+const benefitLines = computed(() => {
+    const lines: string[] = []
+    if (products.value.some(p => p.kind === 'unlimited')) {
+        lines.push('Unlimited riding all season — one price, no per-visit gate fee.')
     }
-    selectedProduct.value = p
-    photoDataUrl.value = null
-    signatureDataUrl.value = null
-    parentName.value = ''
-    parentPhone.value = ''
-    waiver.value = null
-    needsWaiverSigning.value = false
-    waiverIsMinor.value = false
-    photoStepOpen.value = true
-    if (p.requiresWaiver) {
-        try {
-            waiver.value = ((await waiverService.getActive()).data as any).data
-            const status = ((await waiverService.getMySignatureFor(waiver.value!.id)).data as any).data
-            needsWaiverSigning.value = !status.hasSignedCurrent
-            waiverIsMinor.value = status.riderIsMinor
-        } catch {
-            // No active waiver configured or fetch failed: leave signing off. The server still
-            // gates the purchase if a waiver is genuinely required.
-        }
+    if (products.value.some(p => p.kind === 'credits')) {
+        lines.push('Credit passes: buy a block of rides up front and use them whenever you like.')
     }
+    if (products.value.some(p => p.kind === 'days_of_week')) {
+        lines.push('Weekday passes for riders with a flexible schedule, at a lower price.')
+    }
+    lines.push('One pass per rider — buy for the whole family in a single checkout.')
+    lines.push('Scan your QR code at the gate. No paperwork on the day.')
+    return lines
+})
+
+// ── Perks ────────────────────────────────────────────────────────────────────
+const passesWithPerks = computed(() => products.value.filter(p => (p.benefits?.length ?? 0) > 0))
+
+function discountLabel(b: SeasonPassBenefit): string {
+    return b.discountKind === 'amount'
+        ? `$${(b.discountValue / 100).toFixed(2)} off`
+        : `${b.discountValue / 100}% off`
 }
 
-const payOpen = ref(false)
-const purchaseInFlight = ref<{ purchaseId: string; productName: string; amountCents: number; riderServiceChargeCents: number; giftCardAppliedCents: number; clientSecret: string } | null>(null)
-const stripeReady = ref(false)
-const paying = ref(false)
-const paymentError = ref<string | null>(null)
-let stripe: any = null
-let elements: any = null
+interface PerkLine { icon: string; text: string }
 
-const snackbar = ref(false)
-const snackbarText = ref('')
-const snackbarColor = ref<'success' | 'error'>('success')
+// Benefits are stored generically, so the wording is built per surface here rather than by the
+// tenant. 10000 bps = 100% = included free, which reads very differently from a discount and is
+// the strongest thing a pass offers, so it leads.
+function perkLines(p: SeasonPassProduct): PerkLine[] {
+    const lines: PerkLine[] = []
+    const benefits = p.benefits ?? []
 
-function formatDate(iso: string): string { return dayjs(iso).format('MMM D, YYYY') }
+    const events = benefits.filter(b => b.benefitType === 'event')
+    for (const b of events.filter(x => x.discountValue >= 10000 && x.discountKind === 'percent')) {
+        lines.push({
+            icon: 'mdi-check',
+            text: b.scopeName ? `${b.scopeName} included — no entry fee` : 'Every event included — no entry fee',
+        })
+    }
+    for (const b of events.filter(x => !(x.discountValue >= 10000 && x.discountKind === 'percent'))) {
+        lines.push({
+            icon: 'mdi-sale',
+            text: b.scopeName ? `${discountLabel(b)} ${b.scopeName}` : `${discountLabel(b)} event entry`,
+        })
+    }
+    for (const b of benefits.filter(b => b.benefitType === 'concession')) {
+        lines.push({ icon: 'mdi-silverware-fork-knife', text: `${discountLabel(b)} food & drink` })
+    }
+    for (const b of benefits.filter(b => b.benefitType === 'rental')) {
+        lines.push({ icon: 'mdi-motorbike', text: `${discountLabel(b)} bike & gear rentals` })
+    }
+    for (const b of benefits.filter(b => b.benefitType === 'retail')) {
+        lines.push({ icon: 'mdi-bike', text: `${discountLabel(b)} in the bike shop` })
+    }
+    for (const b of benefits.filter(b => b.benefitType === 'buddy_pass')) {
+        const n = b.quantity ?? 0
+        lines.push({
+            icon: 'mdi-account-multiple',
+            text: `${n} buddy ${n === 1 ? 'pass' : 'passes'} a season: bring a friend at ${discountLabel(b)}`,
+        })
+    }
+    return lines
+}
+
+const serviceFeePercent = computed(() => (branding.serviceChargeBps ?? 0) / 100)
+const hasServiceFee = computed(() =>
+    (branding.serviceChargeBps ?? 0) > 0
+    && products.value.some(p => (p.riderPaidServiceChargeBps ?? 10000) > 0))
+
+const waiverNote = computed(() =>
+    products.value.some(p => p.requiresWaiver)
+        ? 'Every pass holder signs a waiver during checkout, and we take a photo so gate staff '
+          + 'can confirm the pass belongs to the rider using it.'
+        : '')
+
+function accessLabel(p: SeasonPassProduct): string {
+    if (p.kind === 'days_of_week') return `${daysLabel(p.validDaysOfWeek)} only`
+    if (p.kind === 'credits') return `${p.totalCredits} ride credits`
+    return 'Unlimited rides'
+}
 function daysLabel(days: number[] | null): string {
     if (!days || days.length === 0) return ''
-    const names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
-    return days.slice().sort().map(d => names[d]).join('/')
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    return days.slice().sort((a, b) => a - b).map(d => names[d]).join('/')
+}
+function validLabel(p: SeasonPassProduct): string {
+    return `valid ${dayjs(p.validFromDate).format('MMM D')} to ${dayjs(p.validToDate).format('MMM D, YYYY')}`
 }
 
 onMounted(async () => {
-    // Feature off: show an in-page explanation rather than silently bouncing to home
-    // (consistent with how rentals / gift cards report a disabled feature).
+    // Feature off: explain in-page rather than silently bouncing home (consistent with how
+    // rentals / gift cards report a disabled feature).
     if (branding.loaded && !branding.seasonPassesEnabled) {
         featureDisabled.value = true
+        loading.value = false
         return
     }
-    loading.value = true
-    loadError.value = ''
     try {
         const r = await service.listActive()
-        products.value = (r.data as any).data
+        const all: SeasonPassProduct[] = (r.data as any).data ?? []
+        // The single-pass embed sells exactly one product. An unknown/inactive id yields an
+        // empty list, which renders the "no passes on sale" notice rather than quietly showing
+        // the whole lineup the embedding track didn't ask for.
+        products.value = singleProductId.value
+            ? all.filter(p => p.id === singleProductId.value)
+            : all
     } catch (err: any) {
         loadError.value = err.response?.data?.error
             || 'Could not load season passes. Refresh to try again, or check your connection.'
-    } finally { loading.value = false }
+    } finally {
+        loading.value = false
+    }
 })
-
-async function buy(p: SeasonPassProduct) {
-    if (!photoDataUrl.value) {
-        flash('Please take your photo first.', 'error')
-        return
-    }
-    if (needsWaiverSigning.value) {
-        if (!signatureDataUrl.value) { flash('Please sign the waiver to continue.', 'error'); return }
-        if (waiverIsMinor.value && (!parentName.value.trim() || parentPhone.value.trim().length < 7)) {
-            flash('Riders under 18 need a parent or guardian name and phone number.', 'error'); return
-        }
-    }
-    busyId.value = p.id
-    try {
-        // Sign the waiver first so it's on file before the purchase (which the server requires).
-        if (needsWaiverSigning.value && waiver.value) {
-            await waiverService.sign(waiver.value.id, {
-                signatureDataUrl: signatureDataUrl.value!,
-                parentName: waiverIsMinor.value ? parentName.value.trim() : null,
-                parentPhone: waiverIsMinor.value ? parentPhone.value.trim() : null,
-            })
-            needsWaiverSigning.value = false
-        }
-        const r = await service.buy(p.id, photoDataUrl.value,
-            couponCode.value.trim().length > 0 ? couponCode.value.trim() : null,
-            giftCardCode.value.trim().length > 0 ? giftCardCode.value.trim() : null)
-        const data = (r.data as any).data
-        purchaseInFlight.value = { ...data, productName: p.name }
-        photoStepOpen.value = false
-
-        // If gift card fully covered the pass, server returned no clientSecret — go straight to receipt.
-        if (!data.clientSecret && data.amountCents === 0) {
-            flash('Gift card covered the pass — your pass is ready!', 'success')
-            router.push('/User/SeasonPasses')
-            return
-        }
-
-        payOpen.value = true
-        await nextTick()
-        await mountStripe()
-    } catch (err: any) {
-        const message = err.response?.data?.error as string | undefined
-        if (message && /coupon/i.test(message)) {
-            couponError.value = message
-        } else if (message && /gift card/i.test(message)) {
-            giftCardError.value = message
-        } else {
-            flash(message || 'Could not start purchase.', 'error')
-        }
-    } finally {
-        busyId.value = null
-    }
-}
-
-async function mountStripe() {
-    if (!purchaseInFlight.value) return
-    // Direct-charge tenants confirm on their own connected account; platform tenants pass no account.
-    const stripeAccount = branding.stripeChargeMode === 'direct' ? branding.stripeConnectAccountId : null
-    stripe = await getStripe(branding.stripePublishableKey, stripeAccount)
-    if (!stripe) { paymentError.value = 'Stripe not available.'; return }
-    elements = stripe.elements({ clientSecret: purchaseInFlight.value.clientSecret })
-    const pe = elements.create('payment')
-    pe.mount('#season-payment-element')
-    stripeReady.value = true
-}
-
-async function pay() {
-    if (!stripe || !elements) return
-    paying.value = true
-    paymentError.value = null
-    try {
-        const { error } = await stripe.confirmPayment({
-            elements,
-            confirmParams: { return_url: window.location.origin + '/User/SeasonPasses' },
-            redirect: 'if_required',
-        })
-        if (error) paymentError.value = error.message || 'Payment failed.'
-        else router.push('/User/SeasonPasses')
-    } catch (err: any) {
-        paymentError.value = err?.message || 'Payment failed.'
-    } finally {
-        paying.value = false
-    }
-}
-
-function flash(text: string, color: 'success' | 'error') {
-    snackbarText.value = text
-    snackbarColor.value = color
-    snackbar.value = true
-}
 </script>
+
+<style scoped>
+/* Theme-aware surface + text colors so dark-mode tenants (theme_mode = 'dark') get a dark page
+   with light text instead of inheriting invisible headings. */
+.sp-page {
+    background:
+        linear-gradient(rgba(var(--v-theme-on-surface), 0.04), rgba(var(--v-theme-on-surface), 0.04)),
+        rgb(var(--v-theme-background));
+    min-height: 100vh;
+}
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.sp-hero {
+    background-size: cover;
+    background-position: center;
+    background-color: rgb(var(--v-theme-secondary));
+}
+.sp-hero-overlay {
+    /* Bottom-up darken (where the title sits) over a left-to-right darken, so text stays
+       legible over any photo. */
+    background:
+        linear-gradient(0deg, rgba(10, 13, 20, 0.9) 0%, rgba(10, 13, 20, 0.25) 55%, rgba(10, 13, 20, 0.45) 100%),
+        linear-gradient(90deg, rgba(16, 20, 28, 0.85) 0%, rgba(16, 20, 28, 0.5) 60%, rgba(16, 20, 28, 0.2) 100%);
+    min-height: 220px;
+    display: flex;
+}
+.sp-hero-inner {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding-top: 1.5rem;
+    padding-bottom: 2.5rem;
+}
+/* Back link as a translucent pill so it stays visible over light or busy photos. */
+.sp-back {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+    padding: 6px 14px 6px 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    backdrop-filter: blur(4px);
+    transition: background-color 0.15s ease;
+    cursor: pointer;
+}
+.sp-back:hover { background: rgba(255, 255, 255, 0.3); }
+/* Embed header variant: primary-tinted so it reads on light and dark themes alike. */
+.sp-back-embed {
+    color: rgb(var(--v-theme-primary));
+    background: rgba(var(--v-theme-primary), 0.08);
+    border-color: rgba(var(--v-theme-primary), 0.35);
+}
+.sp-back-embed:hover { background: rgba(var(--v-theme-primary), 0.16); }
+.sp-hero-bottom { margin-top: 1rem; }
+.sp-title {
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    line-height: 1.05;
+    font-weight: 700;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+.sp-hero-sub {
+    font-size: 1.1rem;
+    margin-top: 0.5rem;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+.rp-powered {
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), 0.5);
+    text-decoration: none;
+}
+.rp-powered:hover { color: rgba(var(--v-theme-on-surface), 0.8); text-decoration: underline; }
+
+/* ── Meta ───────────────────────────────────────────────────────────────── */
+.sp-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    width: fit-content;
+    max-width: 100%;
+}
+.sp-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: rgba(var(--v-theme-on-surface), 0.82);
+    font-size: 1rem;
+}
+.sp-meta-icon { color: rgb(var(--v-theme-primary)); }
+
+/* ── Pricing list ───────────────────────────────────────────────────────── */
+.sp-price-block {
+    padding-bottom: 0.6rem;
+    border-bottom: 1px dashed rgba(var(--v-theme-on-surface), 0.08);
+}
+.sp-price-block:last-child { border-bottom: none; }
+.sp-price-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.sp-price-name { color: rgba(var(--v-theme-on-surface), 0.9); font-weight: 600; }
+.sp-price-amt {
+    font-weight: 700;
+    white-space: nowrap;
+    color: rgb(var(--v-theme-primary));
+}
+
+/* ── Perks ──────────────────────────────────────────────────────────────── */
+.sp-section-subtitle {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgba(var(--v-theme-on-surface), 0.6);
+}
+.sp-perk-block:last-child { margin-bottom: 0 !important; }
+
+/* ── Benefits checklist ─────────────────────────────────────────────────── */
+.sp-checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.sp-checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    font-size: 1rem;
+}
+.sp-check { color: rgb(var(--v-theme-primary)); margin-top: 1px; }
+
+/* ── Important info box ─────────────────────────────────────────────────── */
+.sp-infobox {
+    display: flex;
+    gap: 0.75rem;
+    /* Alpha-tinted orange reads as the same soft warning band on light and dark. */
+    background: rgba(232, 130, 12, 0.12);
+    border: 1px solid rgba(232, 130, 12, 0.35);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    font-size: 0.95rem;
+    color: rgba(var(--v-theme-on-surface), 0.8);
+}
+.sp-infobox-icon { color: #e8820c; flex-shrink: 0; }
+
+/* ── About + photo ──────────────────────────────────────────────────────── */
+.sp-link {
+    color: rgb(var(--v-theme-primary));
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.sp-link:hover { text-decoration: underline; }
+.sp-about-photo {
+    width: 100%;
+    height: 220px;
+    border-radius: 12px;
+    background-size: cover;
+    background-position: center;
+}
+.rich-text-body :deep(*) { max-width: 100%; }
+
+/* ── Entry card ─────────────────────────────────────────────────────────── */
+.sp-entry-card { border-radius: 14px; }
+</style>

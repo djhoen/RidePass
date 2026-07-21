@@ -59,6 +59,17 @@
                     <v-text-field v-model="manualInput" label="Token or URL" density="compact" hide-details></v-text-field>
                     <v-btn color="primary" :loading="loading" @click="lookupManual">Look Up</v-btn>
                 </div>
+
+                <template v-if="branding.wristbandsEnabled">
+                    <v-divider class="my-4"></v-divider>
+                    <p class="text-caption text-medium-emphasis mb-2">Or scan / type a wristband:</p>
+                    <div class="d-flex ga-2">
+                        <v-text-field v-model="bandLookupInput" label="Wristband code or #" density="compact"
+                            hide-details prepend-inner-icon="mdi-watch"
+                            @keyup.enter="lookupBand"></v-text-field>
+                        <v-btn color="primary" :loading="bandLookupBusy" @click="lookupBand">Find</v-btn>
+                    </div>
+                </template>
             </v-card-text>
         </v-card>
 
@@ -137,6 +148,17 @@
                                 </div>
                                 <div v-if="item.attendeeName" class="text-caption text-medium-emphasis">
                                     Rider: {{ item.attendeeName }}
+                                </div>
+                                <div v-if="branding.wristbandsEnabled && item.kind === 'event_ticket'
+                                        && (item.status === 'paid' || item.status === 'redeemed')"
+                                     class="d-flex align-center ga-2 mt-1">
+                                    <v-chip v-if="bandsByTicket[item.purchaseId]" size="x-small" color="indigo"
+                                        prepend-icon="mdi-watch" closable
+                                        @click:close="unlinkBand(item.purchaseId)">
+                                        Band {{ bandsByTicket[item.purchaseId] }}
+                                    </v-chip>
+                                    <v-btn v-else size="x-small" variant="tonal" prepend-icon="mdi-watch"
+                                        @click="openLinkBand(item)">Link band</v-btn>
                                 </div>
                                 <div v-if="item.signedByParent" class="text-caption d-flex align-center ga-1" style="color: rgb(var(--v-theme-info))">
                                     <v-icon icon="mdi-shield-account" size="14"></v-icon>
@@ -278,6 +300,30 @@
             </v-card>
         </v-dialog>
 
+        <v-dialog v-model="bandDialogOpen" max-width="400">
+            <v-card v-if="bandTarget">
+                <v-card-title class="d-flex align-center">
+                    <span>Link wristband</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="bandDialogOpen = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">
+                        {{ bandTarget.attendeeName || bandTarget.itemName }} — scan the band's QR into the field,
+                        or type its printed number.
+                    </p>
+                    <v-text-field v-model="bandCodeInput" label="Band code or #" density="compact" autofocus
+                        hide-details @keyup.enter="saveBandLink"></v-text-field>
+                    <div v-if="bandDialogError" class="text-error text-body-2 mt-2">{{ bandDialogError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="bandDialogBusy" @click="bandDialogOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="bandDialogBusy" @click="saveBandLink">Link</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -289,8 +335,10 @@ import { Html5Qrcode } from 'html5-qrcode'
 import { TicketService, type OrderLookup, type OrderItem, type OrderWaiverAttendee, type OrderSignature,
     type GateSearchResult } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
+import { WristbandService } from '@/services/WristbandService'
 
 const service = new TicketService()
+const wristbands = new WristbandService()
 
 const manualInput = ref('')
 const searchInput = ref('')
@@ -409,6 +457,77 @@ async function openResult(r: GateSearchResult) {
     await loadOrder(r.anchorToken)
 }
 
+// ── Wristbands (tenant feature): link a serialized band to an entrant, find riders by band. ──
+const bandLookupInput = ref('')
+const bandLookupBusy = ref(false)
+const bandsByTicket = ref<Record<string, string>>({})
+const bandDialogOpen = ref(false)
+const bandDialogBusy = ref(false)
+const bandDialogError = ref('')
+const bandCodeInput = ref('')
+const bandTarget = ref<OrderItem | null>(null)
+
+async function lookupBand() {
+    const code = bandLookupInput.value.trim()
+    if (!code) return
+    bandLookupBusy.value = true
+    try {
+        const r = await wristbands.resolve(code)
+        bandLookupInput.value = ''
+        await loadOrder(r.data.data.redemptionToken)
+    } catch (err: any) {
+        flash(err.response?.status === 404
+            ? (err.response?.data?.error || 'No entrant is linked to that band.')
+            : (err.response?.data?.error || 'Could not look up that band. Check the connection and try again.'), 'error')
+    } finally { bandLookupBusy.value = false }
+}
+
+async function loadBands() {
+    bandsByTicket.value = {}
+    if (!branding.wristbandsEnabled) return
+    const ids = order.value?.items.filter(i => i.kind === 'event_ticket').map(i => i.purchaseId) ?? []
+    if (ids.length === 0) return
+    try {
+        const r = await wristbands.codes(ids)
+        const map: Record<string, string> = {}
+        for (const row of r.data.data) map[row.ticketId] = row.code
+        bandsByTicket.value = map
+    } catch { /* band chips are decoration on this screen; the order itself already loaded */ }
+}
+
+function openLinkBand(item: OrderItem) {
+    bandTarget.value = item
+    bandCodeInput.value = ''
+    bandDialogError.value = ''
+    bandDialogOpen.value = true
+}
+
+async function saveBandLink() {
+    if (!bandTarget.value) return
+    const code = bandCodeInput.value.trim()
+    if (!code) { bandDialogError.value = 'Scan or type the band code first.'; return }
+    bandDialogBusy.value = true
+    bandDialogError.value = ''
+    try {
+        await wristbands.link(bandTarget.value.purchaseId, code)
+        bandDialogOpen.value = false
+        flash(`Band ${code} linked.`, 'success')
+        await loadBands()
+    } catch (err: any) {
+        bandDialogError.value = err.response?.data?.error || 'Could not link the band. Please try again.'
+    } finally { bandDialogBusy.value = false }
+}
+
+async function unlinkBand(ticketId: string) {
+    try {
+        await wristbands.unlink(ticketId)
+        flash('Band unlinked.', 'success')
+        await loadBands()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not unlink the band.', 'error')
+    }
+}
+
 async function loadOrder(token: string) {
     try {
         loading.value = true
@@ -422,6 +541,7 @@ async function loadOrder(token: string) {
         selectedIds.value = order.value?.items
             .filter(i => i.isRedeemableToday)
             .map(i => i.purchaseId) ?? []
+        await loadBands()
     } catch (err: any) {
         // Only a real 404 means the QR/token is invalid. A network blip or server error must NOT read
         // as "not found" — that would turn away a paying customer holding a valid ticket.

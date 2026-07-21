@@ -7,6 +7,25 @@
             <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openCreate">Add User</v-btn>
         </div>
 
+        <v-card class="mb-4">
+            <v-card-text class="d-flex flex-wrap ga-3 align-center">
+                <v-text-field v-model="search" density="compact" hide-details clearable
+                    prepend-inner-icon="mdi-magnify" placeholder="Search name or email"
+                    style="max-width: 280px"></v-text-field>
+                <v-select v-model="roleFilter" :items="roleFilterOptions" item-title="title" item-value="value"
+                    density="compact" hide-details clearable label="Role" style="max-width: 220px"></v-select>
+                <v-btn-toggle v-model="statusFilter" density="compact" mandatory variant="outlined" divided>
+                    <v-btn value="active" size="small">Active</v-btn>
+                    <v-btn value="disabled" size="small">Disabled</v-btn>
+                    <v-btn value="all" size="small">All</v-btn>
+                </v-btn-toggle>
+                <v-spacer></v-spacer>
+                <span class="text-caption text-medium-emphasis">
+                    {{ visibleUsers.length }} of {{ users.length }}
+                </span>
+            </v-card-text>
+        </v-card>
+
         <v-card>
             <v-table>
                 <thead>
@@ -20,7 +39,12 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="u in users" :key="u.id">
+                    <tr v-if="visibleUsers.length === 0">
+                        <td colspan="6" class="text-center text-medium-emphasis py-6">
+                            {{ users.length === 0 ? 'No users yet.' : 'No users match these filters.' }}
+                        </td>
+                    </tr>
+                    <tr v-for="u in visibleUsers" :key="u.id">
                         <td>{{ u.firstName }} {{ u.lastName }}</td>
                         <td>{{ u.email }}</td>
                         <td>
@@ -153,11 +177,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { UserService, type TenantUserListItem } from '@/services/UserService'
 import { ASSIGNABLE_ROLES } from '@/helpers/TenantPermissions'
 import { useConfirm } from '@/composables/useConfirm'
+import { branding } from '@/stores/branding'
 
 const service = new UserService()
 const confirm = useConfirm()
@@ -184,7 +209,34 @@ const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
 
-const roleOptions = ASSIGNABLE_ROLES
+// Roles a tenant admin can assign. The per-area cashier roles only mean anything when that
+// area is switched on, so they stay out of both the assign lists and the filter otherwise.
+const roleOptions = computed(() => ASSIGNABLE_ROLES.filter(r => {
+    if (r.value === 'tenant_shop_cashier') return branding.bikeShopEnabled
+    if (r.value === 'tenant_fnb_cashier') return branding.concessionsEnabled
+    return true
+}))
+
+// ── Filters ───────────────────────────────────────────────────────────────────────────
+const search = ref('')
+const roleFilter = ref<string | null>(null)
+const statusFilter = ref<'active' | 'disabled' | 'all'>('active')
+
+const roleFilterOptions = computed(() => roleOptions.value)
+
+const visibleUsers = computed(() => {
+    const q = search.value.trim().toLowerCase()
+    return users.value.filter(u => {
+        if (statusFilter.value !== 'all' && u.status !== statusFilter.value) return false
+        if (roleFilter.value) {
+            const held = u.roles?.length ? u.roles : [u.role]
+            if (!held.includes(roleFilter.value)) return false
+        }
+        if (!q) return true
+        return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q)
+            || (u.email ?? '').toLowerCase().includes(q)
+    })
+})
 
 onMounted(load)
 
@@ -300,6 +352,7 @@ function roleColor(role: string): string {
         case 'tenant_admin': return 'error'
         case 'tenant_manager': return 'primary'
         case 'tenant_cashier': return 'secondary'
+        case 'tenant_shop_cashier': return 'orange'
         case 'tenant_scanner': return 'teal'
         case 'tenant_accountant': return 'indigo'
         default: return 'default'

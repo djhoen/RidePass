@@ -12,13 +12,14 @@ export interface TenantSummary {
     stripeConnectStatus: string | null
     isPublished: boolean
     giftCardsEnabled: boolean
-    rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    bikeShopEnabled: boolean
     blogEnabled: boolean
     membershipEnabled: boolean
     waitlistEnabled: boolean
+    waitlistPrepayEnabled: boolean
     allowSelfCancel: boolean
     dynamicPricingEnabled: boolean
     bundledCouponsEnabled: boolean
@@ -72,13 +73,14 @@ export interface UpdateTenantPayload {
     externalEventsUrl: string | null
     embedEventTarget: 'external' | 'ridepass'
     giftCardsEnabled: boolean
-    rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    bikeShopEnabled: boolean
     blogEnabled: boolean
     membershipEnabled: boolean
     waitlistEnabled: boolean
+    waitlistPrepayEnabled: boolean
     allowSelfCancel: boolean
     dynamicPricingEnabled: boolean
     bundledCouponsEnabled: boolean
@@ -102,13 +104,14 @@ export interface CreateTenantPayload {
     externalEventsUrl: string | null
     embedEventTarget: 'external' | 'ridepass'
     giftCardsEnabled: boolean
-    rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    bikeShopEnabled: boolean
     blogEnabled: boolean
     membershipEnabled: boolean
     waitlistEnabled: boolean
+    waitlistPrepayEnabled: boolean
     allowSelfCancel: boolean
     dynamicPricingEnabled: boolean
     bundledCouponsEnabled: boolean

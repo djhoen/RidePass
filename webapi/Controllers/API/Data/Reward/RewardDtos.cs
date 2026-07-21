@@ -22,6 +22,17 @@ namespace webapi.Controllers.API.Data.Reward
         [Range(1, 100)]
         public int RewardPercentOff { get; set; }
 
+        // percent_off = voucher after N purchases (the fields above); credit_rate = store
+        // credit back on every qualifying spend (the two fields below).
+        [Required, RegularExpression("^(percent_off|credit_rate)$")]
+        public string RewardKind { get; set; } = "percent_off";
+
+        [Range(1, 10000)]
+        public int? CreditRateBps { get; set; }
+
+        [RegularExpression("^(any|event_ticket|concession|shop_sale)$")]
+        public string CreditQualifyingKind { get; set; } = "any";
+
         [Range(1, 1000)]
         public int? ProximityEmailThreshold { get; set; }
 
@@ -37,6 +48,9 @@ namespace webapi.Controllers.API.Data.Reward
         public string RequirementKind { get; set; } = null!;
         public int RequirementCount { get; set; }
         public int RewardPercentOff { get; set; }
+        public string RewardKind { get; set; } = "percent_off";
+        public int? CreditRateBps { get; set; }
+        public string CreditQualifyingKind { get; set; } = "any";
         public int? ProximityEmailThreshold { get; set; }
         public bool IsActive { get; set; }
         public DateTime CreatedAtUtc { get; set; }
@@ -51,6 +65,9 @@ namespace webapi.Controllers.API.Data.Reward
         public string RequirementKind { get; set; } = null!;
         public int RequirementCount { get; set; }
         public int RewardPercentOff { get; set; }
+        public string RewardKind { get; set; } = "percent_off";
+        public int? CreditRateBps { get; set; }
+        public string CreditQualifyingKind { get; set; } = "any";
         public bool IsEnrolled { get; set; }
         public int Progress { get; set; }
         public int RemainingForReward { get; set; }

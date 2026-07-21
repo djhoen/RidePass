@@ -13,6 +13,9 @@ export interface UpcomingItem {
     tenantLogoUrl: string | null
     registrationComplete: boolean
     waiverSigned: boolean
+    // Whether this event needs a waiver at all, so the card can tell an unsigned waiver from
+    // one that was never required.
+    waiverRequired: boolean
     occursAtUtc: string | null
     // event_ticket: when the event ends. An event stays "upcoming" until the day after this.
     endsAtUtc: string | null

@@ -518,7 +518,6 @@ const KIND_LABELS: Record<string, string> = {
     season_pass: 'Season Pass',
     membership: 'Membership',
     gift_card: 'Gift Card',
-    rental: 'Rental',
     concession: 'Food & Beverage',
 }
 function kindLabel(kind: string): string {

@@ -18,6 +18,10 @@ namespace Services.Repositories
             bundled_coupon_discount_value AS BundledCouponDiscountValue,
             bundled_coupon_scope AS BundledCouponScope,
             bundled_coupon_expires_in_days AS BundledCouponExpiresInDays,
+            instructor_id AS InstructorId, skill_level AS SkillLevel,
+            equipment_label AS EquipmentLabel, starts_at AS StartsAt, ends_at AS EndsAt,
+            party_size_included AS PartySizeIncluded, party_price_cents AS PartyPriceCents,
+            party_size_max AS PartySizeMax,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -65,13 +69,17 @@ namespace Services.Repositories
                     ladder_group, min_sold, effective_days_before, effective_at_utc,
                     rider_paid_service_charge_bps,
                     bundled_coupon_count, bundled_coupon_discount_kind, bundled_coupon_discount_value,
-                    bundled_coupon_scope, bundled_coupon_expires_in_days)
+                    bundled_coupon_scope, bundled_coupon_expires_in_days,
+                    instructor_id, skill_level, equipment_label, starts_at, ends_at,
+                    party_size_included, party_price_cents, party_size_max)
                 VALUES (
                     @TenantId, @EventId, @Kind, @Audience, @Required, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
                     @LadderGroup, @MinSold, @EffectiveDaysBefore, @EffectiveAtUtc,
                     @RiderPaidServiceChargeBps,
                     @BundledCouponCount, @BundledCouponDiscountKind, @BundledCouponDiscountValue,
-                    @BundledCouponScope, @BundledCouponExpiresInDays)
+                    @BundledCouponScope, @BundledCouponExpiresInDays,
+                    @InstructorId, @SkillLevel, @EquipmentLabel, @StartsAt, @EndsAt,
+                    @PartySizeIncluded, @PartyPriceCents, @PartySizeMax)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, t);
             return result.First();
@@ -91,7 +99,11 @@ namespace Services.Repositories
                     bundled_coupon_discount_kind = @BundledCouponDiscountKind,
                     bundled_coupon_discount_value = @BundledCouponDiscountValue,
                     bundled_coupon_scope = @BundledCouponScope,
-                    bundled_coupon_expires_in_days = @BundledCouponExpiresInDays
+                    bundled_coupon_expires_in_days = @BundledCouponExpiresInDays,
+                    instructor_id = @InstructorId, skill_level = @SkillLevel,
+                    equipment_label = @EquipmentLabel, starts_at = @StartsAt, ends_at = @EndsAt,
+                    party_size_included = @PartySizeIncluded, party_price_cents = @PartyPriceCents,
+                    party_size_max = @PartySizeMax
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, t);
         }
@@ -124,6 +136,23 @@ namespace Services.Repositories
                   AND t.ladder_group = @ladderGroup
                   AND p.status IN ('pending', 'paid', 'redeemed')";
             return await _db.ExecuteScalar(sql, new { eventId, ladderGroup, tenantId });
+        }
+
+        // Active RIDER admissions sold across the whole event, for the event.capacity check.
+        // Spectator gate fees are excluded on purpose: capacity is how many riders the facility
+        // holds, not how many people walk through the gate. Counts every tier (ladder steps and
+        // standalone alike) so capacity is the outer bound on the event as a whole.
+        public async Task<int> EventSoldCount(Guid eventId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT COUNT(*)
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                WHERE p.tenant_id = @tenantId
+                  AND t.event_id = @eventId
+                  AND t.audience = 'rider'
+                  AND p.status IN ('pending', 'paid', 'redeemed')";
+            return await _db.ExecuteScalar(sql, new { eventId, tenantId });
         }
 
         public async Task UpdateSortOrders(Guid tenantId, Guid eventId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)

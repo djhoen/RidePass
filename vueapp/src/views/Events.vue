@@ -159,7 +159,7 @@
                             </div>
                             <div class="text-caption mt-1 d-flex align-center ga-1">
                                 <v-icon icon="mdi-clock-outline" size="14"></v-icon>
-                                {{ formatWhen(e.startsAtUtc) }}
+                                {{ formatWhen(e.startsAtUtc, e.endsAtUtc) }}
                             </div>
                         </div>
                         <v-chip size="small" :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }" class="flex-shrink-0">
@@ -598,6 +598,8 @@ async function applyDraftZip() {
         } else {
             flash(`Couldn't find "${draftZip.value}".`, 'error')
         }
+    } catch {
+        flash('Could not look up that location. Check your connection and try again.', 'error')
     } finally {
         geolocating.value = false
     }
@@ -656,6 +658,8 @@ async function applyZip() {
         } else {
             flash(`Couldn't find "${zipInput.value}".`, 'error')
         }
+    } catch {
+        flash('Could not look up that location. Check your connection and try again.', 'error')
     } finally {
         geolocating.value = false
     }
@@ -756,7 +760,17 @@ function eventTypeIcon(code: string): string {
 
 function formatDay(utc: string): string { return dayjs.utc(utc).tz(tz).format('D') }
 function formatMonth(utc: string): string { return dayjs.utc(utc).tz(tz).format('MMM').toUpperCase() }
-function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz).format('ddd, MMM D · h:mm A') }
+// A multi-day event (a training camp) has to show its span, not just its first day, or a
+// 3-day camp reads in the list as if it were a single afternoon.
+function formatWhen(startUtc: string, endUtc?: string): string {
+    const start = dayjs.utc(startUtc).tz(tz)
+    if (!endUtc) return start.format('ddd, MMM D · h:mm A')
+    const end = dayjs.utc(endUtc).tz(tz)
+    if (start.isSame(end, 'day')) return start.format('ddd, MMM D · h:mm A')
+    return start.month() === end.month()
+        ? `${start.format('MMM D')} to ${end.format('D')}`
+        : `${start.format('MMM D')} to ${end.format('MMM D')}`
+}
 
 function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text

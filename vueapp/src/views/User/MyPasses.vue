@@ -158,20 +158,13 @@
                             <v-spacer></v-spacer>
                             <v-chip size="small" :color="rentalStatusColor(r.status)">{{ r.status }}</v-chip>
                         </div>
-                        <div class="text-subtitle-1 font-weight-bold mb-1">{{ r.productName }}</div>
-                        <div class="text-caption text-medium-emphasis mb-3">
-                            <div>{{ formatRentalDate(r.startDate) }} → {{ formatRentalDate(r.endDate) }}</div>
-                            <div>{{ r.quantity }} unit{{ r.quantity === 1 ? '' : 's' }} · ${{ (r.amountCents / 100).toFixed(2) }}</div>
+                        <div class="text-subtitle-1 font-weight-bold mb-1">{{ rentalTitle(r) }}</div>
+                        <div class="text-caption text-medium-emphasis">
+                            <div>{{ formatRentalDate(r.startsAt) }} → {{ formatRentalDate(r.endsAt) }}</div>
+                            <div>${{ (r.totalCents / 100).toFixed(2) }}<span v-if="r.orderNumber != null"> · Order #{{ r.orderNumber }}</span></div>
                             <div v-if="r.depositCents > 0">
-                                Deposit: ${{ (r.depositCents / 100).toFixed(2) }} (refunded at return)
+                                Deposit: ${{ (r.depositCents / 100).toFixed(2) }} (released at return)
                             </div>
-                        </div>
-                        <v-btn v-if="!rentalExpanded[r.id]" variant="text" size="small" @click="rentalExpanded[r.id] = true">
-                            Show QR
-                        </v-btn>
-                        <div v-else class="text-center">
-                            <QrCode :value="redeemUrl(r.redemptionToken)" :size="220" />
-                            <v-btn variant="text" size="small" class="mt-2" @click="rentalExpanded[r.id] = false">Hide</v-btn>
                         </div>
                     </v-card>
                 </v-col>
@@ -264,7 +257,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { TicketService, type MyPurchase, type MyCoupon } from '@/services/TicketService'
 import SocialShare from '@/components/SocialShare.vue'
-import { RentalService, type MyRental } from '@/services/RentalService'
+import { BikeShopService, type MyShopRental } from '@/services/BikeShopService'
 import { WaitlistService, type MyWaitlistEntry } from '@/services/WaitlistService'
 import { ExtraService, kindIcon, kindLabel, type MyExtra } from '@/services/ExtraService'
 import { branding } from '@/stores/branding'
@@ -273,12 +266,12 @@ import { useConfirm } from '@/composables/useConfirm'
 
 const service = new TicketService()
 const confirm = useConfirm()
-const rentalService = new RentalService()
+
 const waitlistService = new WaitlistService()
 const extraService = new ExtraService()
 
 const purchases = ref<MyPurchase[]>([])
-const rentals = ref<MyRental[]>([])
+const rentals = ref<MyShopRental[]>([])
 const extras = ref<MyExtra[]>([])
 const extraExpanded = reactive<Record<string, boolean>>({})
 const waitlists = ref<MyWaitlistEntry[]>([])
@@ -286,7 +279,6 @@ const waitlistCancelling = ref<string | null>(null)
 const loading = ref(true)
 const loadError = ref('')
 const expanded = reactive<Record<string, boolean>>({})
-const rentalExpanded = reactive<Record<string, boolean>>({})
 // Coupons grouped by their issuing purchase id so the per-card render stays simple.
 const couponsByPurchase = reactive<Record<string, MyCoupon[]>>({})
 
@@ -328,17 +320,14 @@ async function load() {
             if (!couponsByPurchase[key]) couponsByPurchase[key] = []
             couponsByPurchase[key].push(c)
         }
-        // Rentals only when the tenant has them on; otherwise the call would 404 a
-        // 'not enabled' message and we'd render an empty section anyway.
-        if (branding.rentalsEnabled) {
+        // Rentals live on the bike shop now; only load when the module is on.
+        if (branding.bikeShopEnabled) {
             try {
-                const rr = await rentalService.listMine()
+                const rr = await bikeShopService.myRentals()
                 rentals.value = (rr.data as any).data
             } catch (e: any) {
                 rentals.value = []
-                // A 404 is the documented "feature not enabled" response and renders an empty
-                // section by design; any other failure is real and must not hide silently.
-                if (e.response?.status !== 404) flash(e.response?.data?.error || 'Could not load your rentals. Refresh to try again.', 'error')
+                flash(e.response?.data?.error || 'Could not load your rentals. Refresh to try again.', 'error')
             }
         }
         if (branding.extrasEnabled) {
@@ -393,7 +382,11 @@ async function cancelWaitlist(w: MyWaitlistEntry) {
     }
 }
 
-function formatRentalDate(d: string): string { return dayjs(d).format('MMM D, YYYY') }
+const bikeShopService = new BikeShopService()
+function rentalTitle(r: MyShopRental): string {
+    return r.lines.map(l => `${l.nameSnapshot}${l.variantLabel ? ' (' + l.variantLabel + ')' : ''}${l.quantity > 1 ? ' ×' + l.quantity : ''}`).join(', ') || 'Rental'
+}
+function formatRentalDate(d: string): string { return dayjs(d).format('MMM D, h:mm A') }
 function rentalStatusColor(s: string): string {
     if (s === 'paid') return 'primary'
     if (s === 'out') return 'warning'

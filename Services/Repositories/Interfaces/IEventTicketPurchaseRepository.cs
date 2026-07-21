@@ -25,7 +25,7 @@ namespace Services.Repositories.Interfaces
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
         // Operator-app check-in roster: every paid/redeemed attendee for one event with the
         // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
-        Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId);
+        Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId, DateOnly? onDate = null);
         Task SetStripePaymentIntentId(Guid id, string paymentIntentId);
         Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdateStatus(Guid id, string status);
@@ -45,6 +45,13 @@ namespace Services.Repositories.Interfaces
         // if THIS call made the transition (so the first sync wins and duplicates are detected).
         Task<bool> TryMarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
         Task UndoRedeemed(Guid id, Guid tenantId);
+
+        /// <summary>Records a multi-day ticket's check-in for one local date. False when already
+        /// checked in that day. Single-day events use the redeemed status flip instead.</summary>
+        Task<bool> TryRecordAttendance(Guid ticketId, Guid tenantId, DateOnly onDate, Guid? byUserId);
+
+        /// <summary>Local dates this ticket has been checked in on, oldest first.</summary>
+        Task<List<DateOnly>> ListAttendanceDates(Guid ticketId, Guid tenantId);
         Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);
         Task<bool> CompleteRegistration(Guid id, Guid tenantId,
             string? riderFirstName, string? riderLastName, DateTime? riderBirthdate, string? bike,

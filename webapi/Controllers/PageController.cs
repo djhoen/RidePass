@@ -20,7 +20,7 @@ namespace webapi.Controllers
         // registered last, right before the 404 catch-all.
         private static readonly HashSet<string> ReservedSlugs = new(StringComparer.OrdinalIgnoreCase)
         {
-            "", "events", "event", "blog", "giftcard", "rentals", "order", "login", "logout",
+            "", "events", "event", "blog", "giftcard", "order", "login", "logout",
             "resetpassword", "verifyemail", "redeem", "admin", "superadmin", "user", "embed",
             "p", "fortracks", "survey", "cart", "checkout", "api", "uploads", "assets",
         };

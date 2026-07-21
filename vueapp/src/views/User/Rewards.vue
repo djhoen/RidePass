@@ -2,6 +2,33 @@
     <v-container style="max-width: 720px">
         <h1 class="text-h4 mb-4">Rewards</h1>
 
+        <!-- Store credit: balance + how it moved. Spendable at any register or online checkout. -->
+        <v-card v-if="creditLoaded && (creditBalance > 0 || creditEntries.length > 0)" class="mb-4 pa-4">
+            <v-card-title class="d-flex align-center">
+                Store credit
+                <v-spacer></v-spacer>
+                <v-chip color="primary" variant="tonal">{{ money(creditBalance) }}</v-chip>
+            </v-card-title>
+            <v-card-text>
+                <p class="text-caption text-medium-emphasis mb-3">
+                    Use it at the counter (give them the email or phone on your account) or apply it
+                    at checkout when buying online.
+                </p>
+                <v-table v-if="creditEntries.length" density="compact">
+                    <thead><tr><th>When</th><th>What</th><th class="text-right">Amount</th></tr></thead>
+                    <tbody>
+                        <tr v-for="(e, i) in creditEntries" :key="i">
+                            <td class="text-caption">{{ formatDate(e.createdAt) }}</td>
+                            <td class="text-caption">{{ creditKindLabel(e.kind) }}</td>
+                            <td class="text-right" :class="e.deltaCents < 0 ? 'text-error' : 'text-success'">
+                                {{ e.deltaCents < 0 ? '-' : '+' }}{{ money(Math.abs(e.deltaCents)) }}</td>
+                        </tr>
+                    </tbody>
+                </v-table>
+            </v-card-text>
+        </v-card>
+        <v-alert v-if="creditError" type="warning" variant="tonal" density="compact" class="mb-4">{{ creditError }}</v-alert>
+
         <v-card v-if="redemptions.filter(r => !r.redeemedAtUtc).length > 0" class="mb-4 pa-4">
             <v-card-title>Your vouchers</v-card-title>
             <v-card-text>
@@ -42,13 +69,25 @@
                     <div v-if="p.description" class="text-caption text-medium-emphasis">{{ p.description }}</div>
                 </div>
                 <v-spacer></v-spacer>
-                <v-chip size="small" variant="tonal">
+                <v-chip v-if="p.rewardKind === 'credit_rate'" size="small" variant="tonal" color="primary">
+                    Earn {{ ((p.creditRateBps ?? 0) / 100) }}% back in store credit
+                </v-chip>
+                <v-chip v-else size="small" variant="tonal">
                     Buy {{ p.requirementCount }} {{ kindLabel(p.requirementKind) }}{{ p.requirementCount === 1 ? '' : 's' }} →
                     {{ p.rewardPercentOff === 100 ? 'Free' : `${p.rewardPercentOff}% off` }}
                 </v-chip>
             </div>
 
-            <template v-if="p.isEnrolled">
+            <template v-if="p.rewardKind === 'credit_rate'">
+                <p class="text-caption text-medium-emphasis mb-2">
+                    {{ creditProgramBlurb(p) }}
+                </p>
+                <v-btn v-if="p.enrollmentMode === 'opt_in' && !p.isEnrolled" color="primary" size="small"
+                    :loading="busyId === p.programId" @click="enroll(p.programId)">Join program</v-btn>
+                <v-btn v-else-if="p.enrollmentMode === 'opt_in' && p.isEnrolled" variant="text" size="small"
+                    :loading="busyId === p.programId" @click="unenroll(p.programId)">Leave program</v-btn>
+            </template>
+            <template v-else-if="p.isEnrolled">
                 <v-progress-linear :model-value="(p.progress / p.requirementCount) * 100"
                     height="20" rounded color="primary" class="mb-1">
                     <template #default>
@@ -106,6 +145,7 @@
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { RewardService, type RiderRewardProgram, type RiderRewardRedemption } from '@/services/RewardService'
+import { CreditService, type CreditEntry } from '@/services/CreditService'
 import { branding } from '@/stores/branding'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -134,6 +174,44 @@ function formatDate(iso: string): string {
     return dayjs.utc(iso).tz(branding.timezone || 'UTC').format('MMM D, YYYY')
 }
 
+// ── Store credit ───────────────────────────────────────────────────────────
+const creditBalance = ref(0)
+const creditEntries = ref<Pick<CreditEntry, 'deltaCents' | 'kind' | 'note' | 'createdAt'>[]>([])
+const creditLoaded = ref(false)
+const creditError = ref('')
+function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
+function creditProgramBlurb(p: RiderRewardProgram): string {
+    const what = p.creditQualifyingKind === 'event_ticket' ? 'event and gate purchases'
+        : p.creditQualifyingKind === 'concession' ? 'food & beverage orders'
+        : p.creditQualifyingKind === 'shop_sale' ? 'bike shop purchases'
+        : 'every purchase'
+    return p.enrollmentMode === 'auto' || p.isEnrolled
+        ? `Credit from ${what} lands on your balance above automatically.`
+        : `Join to start earning credit on ${what}.`
+}
+
+function creditKindLabel(kind: CreditEntry['kind']): string {
+    switch (kind) {
+        case 'deposit_excess': return 'Deposit overage kept as credit'
+        case 'refund_to_credit': return 'Refund issued as credit'
+        case 'loyalty_award': return 'Loyalty reward'
+        case 'manual_adjust': return 'Adjustment by the track'
+        case 'redeem': return 'Spent'
+        case 'redeem_reversal': return 'Returned to your balance'
+        default: return kind
+    }
+}
+async function loadCredit() {
+    try {
+        const r = await new CreditService().mine()
+        creditBalance.value = r.data.data.balanceCents
+        creditEntries.value = r.data.data.entries
+        creditLoaded.value = true
+    } catch (err: any) {
+        creditError.value = err.response?.data?.error || 'Could not load your store credit balance. Refresh to try again.'
+    }
+}
+
 async function load() {
     loading.value = true
     loadError.value = ''
@@ -141,6 +219,7 @@ async function load() {
         const [p, r] = await Promise.all([service.listMyPrograms(), service.listMyRedemptions()])
         programs.value = (p.data as any).data
         redemptions.value = (r.data as any).data
+        await loadCredit()
     } catch (err: any) {
         loadError.value = err.response?.data?.error || 'Could not load rewards. Refresh to try again.'
     } finally {

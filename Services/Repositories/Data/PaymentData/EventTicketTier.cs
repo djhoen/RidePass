@@ -31,6 +31,24 @@
         public int? BundledCouponDiscountValue { get; set; }       // bps if percent, cents if amount
         public string? BundledCouponScope { get; set; }            // all | pass | event_ticket | season_pass
         public int? BundledCouponExpiresInDays { get; set; }
+        // ── Training groups (docs/lessons.md) ────────────────────────────────────────────
+        // A coached group is a tier with a coach attached: same price, inventory, and checkout
+        // as a race class. All null on an ordinary tier.
+        public Guid? InstructorId { get; set; }
+        // Ability band, free text because the vocabulary is tenant-specific: MX uses skill plus
+        // displacement, MTB uses trail-difficulty ability zones (green / blue / black).
+        public string? SkillLevel { get; set; }
+        public string? EquipmentLabel { get; set; }   // '85cc', 'Downhill', ...
+        // The group's own window inside the event (beginners 9-12, intermediates 1-4).
+        // NULL inherits the event's window, which is what every ordinary tier does.
+        public DateTime? StartsAt { get; set; }
+        public DateTime? EndsAt { get; set; }
+        // ── Party pricing ("up to N riders, one price") ──────────────────────────────────
+        // Each rider still gets their own ticket row; only the price varies by position.
+        // Defaults (1 / null / null) are ordinary per-person pricing. See Services.Pricing.PartyPricing.
+        public int PartySizeIncluded { get; set; } = 1;
+        public int? PartyPriceCents { get; set; }
+        public int? PartySizeMax { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Services.Helpers;
+using Services.Payments;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Data.WaitlistData;
 using Services.Repositories.Interfaces;
@@ -27,6 +28,9 @@ namespace Services.Waitlist
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly ISmsSender _sms;
+        private readonly IPaymentProvider _payments;
+        private readonly IFeeCalculator _feeCalculator;
+        private readonly ITenantLedgerRepository _ledger;
         private readonly IConfiguration _config;
         private readonly ILogger<WaitlistPromoter> _logger;
 
@@ -38,6 +42,9 @@ namespace Services.Waitlist
             IUserRepository users,
             ITenantRepository tenants,
             ISmsSender sms,
+            IPaymentProvider payments,
+            IFeeCalculator feeCalculator,
+            ITenantLedgerRepository ledger,
             IConfiguration config,
             ILogger<WaitlistPromoter> logger)
         {
@@ -48,6 +55,9 @@ namespace Services.Waitlist
             _users = users;
             _tenants = tenants;
             _sms = sms;
+            _payments = payments;
+            _feeCalculator = feeCalculator;
+            _ledger = ledger;
             _config = config;
             _logger = logger;
         }
@@ -100,11 +110,13 @@ namespace Services.Waitlist
                 await _ticketPurchases.SetStripePaymentIntentId(created.Id, next.PrepayPiId!);
                 // Direct charge: the pre-pay ran on the tenant's own connected account (snapshotted on
                 // the waitlist entry). Carry it onto the ticket so a later refund acts on that account.
-                if (!string.IsNullOrEmpty(next.StripeConnectedAccountId))
+                var isDirect = !string.IsNullOrEmpty(next.StripeConnectedAccountId);
+                if (isDirect)
                 {
-                    await _ticketPurchases.MarkDirectCharge(created.Id, next.TenantId, next.StripeConnectedAccountId);
+                    await _ticketPurchases.MarkDirectCharge(created.Id, next.TenantId, next.StripeConnectedAccountId!);
                 }
                 await _ticketPurchases.UpdateStatus(created.Id, "paid");
+                await BookPrepaidSale(next, created.Id, serviceCharge, isDirect);
                 await _waitlist.MarkConfirmed(next.Id, created.Id, "event_ticket");
 
                 if (!string.IsNullOrWhiteSpace(user.Phone))
@@ -132,6 +144,61 @@ namespace Services.Waitlist
             }
             _logger.LogInformation("Promoted waitlist {Id} for event {EventId}, deadline {Deadline}",
                 next.Id, eventId, deadline);
+        }
+
+        /// <summary>
+        /// Book the sale ledger entry for a pre-paid alternate we just auto-confirmed.
+        ///
+        /// The pre-pay PaymentIntent succeeded back when the rider joined the waitlist, at which
+        /// point no purchase row existed yet — StripePurchaseFinalizer matched the entry by
+        /// prepay_pi_id, flipped is_prepaid, and returned without writing a ledger row (correct:
+        /// money was held, but nothing had been sold). The sale actually happens here, when the
+        /// spot opens and we convert that held charge into a ticket, so this is the only place
+        /// the entry can be booked. Without it the tenant is never paid for a pre-paid waitlist
+        /// ticket (net_to_tenant never accrues, so it never attaches to a payout) and RidePass
+        /// never takes its cut.
+        ///
+        /// This mirrors the single-line case of StripePurchaseFinalizer.OnPaymentSucceeded: one
+        /// ticket alone on its own PI, so it absorbs the whole Stripe fee.
+        /// </summary>
+        private async Task BookPrepaidSale(EventWaitlistEntry entry, Guid ticketPurchaseId, int serviceChargeCents, bool isDirect)
+        {
+            // Direct charge: the tenant's own account bore the Stripe fee, so we record none on our
+            // ledger (and skip the fee lookup, which would target the platform account anyway).
+            var stripeFeeCents = isDirect
+                ? 0
+                : (await _payments.GetActualStripeFeeCentsAsync(entry.PrepayPiId!) ?? 0);
+
+            var occurredAt = DateTime.UtcNow;
+            var calc = await _feeCalculator.Calculate(
+                entry.TenantId, entry.PrepayAmountCents, stripeFeeCents, serviceChargeCents, occurredAt, isDirect);
+
+            try
+            {
+                await _ledger.Insert(new TenantLedgerEntry
+                {
+                    TenantId = entry.TenantId,
+                    EntryKind = "sale",
+                    SourceKind = "event_ticket",
+                    SourceId = ticketPurchaseId,
+                    OccurredAtUtc = occurredAt,
+                    GrossCents = entry.PrepayAmountCents,
+                    StripeFeeCents = stripeFeeCents,
+                    RidepassCutCents = calc.RidepassCutCents,
+                    NetToTenantCents = calc.NetToTenantCents,
+                    AppliedTierId = calc.AppliedTierId,
+                    CumulativeMonthlyVolumeAtSaleCents = calc.CumulativeMonthlyVolumeAtSaleCents,
+                    StripePaymentIntentId = entry.PrepayPiId,
+                    PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                    Memo = $"Pre-paid waitlist promotion (waitlist {entry.Id})",
+                });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // Idempotent: duplicate (tenant_id, source_kind, source_id) for entry_kind='sale'.
+                // A concurrent promoter already booked this ticket — safe to ignore.
+                _logger.LogDebug("Ledger entry for event_ticket {Id} already exists; skipping.", ticketPurchaseId);
+            }
         }
     }
 }

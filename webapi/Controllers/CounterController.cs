@@ -38,10 +38,15 @@ namespace webapi.Controllers
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly ITenantLedgerRepository _ledger;
         private readonly IEventExtraRepository _extras;
+        private readonly IBikeShopRepository _shop;
+        private readonly IInstructorRepository _instructors;
         private readonly IMembershipRepository _memberships;
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantRepository _tenants;
         private readonly IDbHelper _db;
+        private readonly ITenantCreditRepository _credit;
+        private readonly webapi.Payments.IStripePurchaseFinalizer _finalizer;
+        private readonly Services.Rewards.IRewardEngine _rewardEngine;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantTaxRepository _tax;
         private readonly IConfiguration _config;
@@ -59,14 +64,22 @@ namespace webapi.Controllers
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             ITenantLedgerRepository ledger,
             IEventExtraRepository extras,
+            IBikeShopRepository shop,
+            IInstructorRepository instructors,
             IMembershipRepository memberships,
             IFeeCalculator feeCalculator,
             ITenantRepository tenants,
             IDbHelper db,
             ITenantContext tenantContext,
             ITenantTaxRepository tax,
-            IConfiguration config)
+            IConfiguration config,
+            ITenantCreditRepository credit,
+            webapi.Payments.IStripePurchaseFinalizer finalizer,
+            Services.Rewards.IRewardEngine rewardEngine)
         {
+            _credit = credit;
+            _finalizer = finalizer;
+            _rewardEngine = rewardEngine;
             _users = users;
             _waivers = waivers;
             _events = events;
@@ -79,6 +92,8 @@ namespace webapi.Controllers
             _orderConfirmations = orderConfirmations;
             _ledger = ledger;
             _extras = extras;
+            _shop = shop;
+            _instructors = instructors;
             _memberships = memberships;
             _feeCalculator = feeCalculator;
             _tenants = tenants;
@@ -87,6 +102,7 @@ namespace webapi.Controllers
             _tax = tax;
             _config = config;
         }
+
 
         // Loads the tenant's admission tax config (once per sale). None when no active, non-zero rate.
         private async Task<AdmissionTaxConfig> LoadAdmissionTaxConfig(Guid tenantId)
@@ -250,6 +266,14 @@ namespace webapi.Controllers
             var ticketItems = new List<(CounterCartItem Item, EventTicketTier Tier, int UnitAmountCents, int UnitServiceChargeCents, int UnitTaxCents)>();
             var extrasItems = new List<(CounterCartItem Item, EventExtraProduct Product, EventExtraVariant? Variant,
                                         int UnitAmountCents, int UnitServiceChargeCents, int UnitPriceFrozen)>();
+            // Lesson bike rentals booked at the counter, on the shop catalog (shop_rental). The
+            // fee is all-in and is the sale gross; the deposit is recorded on the rental but NOT
+            // charged here (same as a cash booking at the bike shop counter: staff handle any
+            // deposit physically, and card deposits are only held on the online flow).
+            var rentalItems = new List<(Services.Repositories.Data.BikeShopData.LessonRentableInfo Bike, Guid EventId,
+                                        DateTime StartsAtUtc, DateTime EndsAtUtc,
+                                        int Quantity, int FrozenRate, int FeeCents, int CashCutCents,
+                                        int DepositCents, List<Guid> PickedUnits)>();
             // Memberships: at most one per cart (every rider has exactly one active membership at a time).
             (CounterCartItem Item, int PriceCents, int ServiceChargeCents)? membershipItem = null;
             int totalCents = 0;
@@ -289,24 +313,15 @@ namespace webapi.Controllers
                             return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' isn't available right now.");
                         }
                         tier = state.Active;
-                        if (ev.Capacity.HasValue)
-                        {
-                            var cartGroupUnits = ticketItems
-                                .Where(t => t.Tier.EventId == tier.EventId && t.Tier.LadderGroup == tier.LadderGroup)
-                                .Sum(t => t.Item.Quantity) + item.Quantity;
-                            if (groupSold + cartGroupUnits > ev.Capacity.Value)
-                            {
-                                return new ApiResponses().BadRequestResult(
-                                    $"Only {Math.Max(0, ev.Capacity.Value - groupSold)} spot(s) left for \"{ev.Title}\".");
-                            }
-                        }
+                        // Capacity is not checked per ladder group: event.capacity is enforced
+                        // event-wide (rider admissions across every tier) under the lock below.
                     }
-                    else if (tier.Inventory.HasValue)
+                    else if (await EffectiveTierCap(tier) is int cartCap)
                     {
                         var sold = await _tiers.SoldCount(tier.Id);
-                        if (sold + item.Quantity > tier.Inventory.Value)
+                        if (sold + item.Quantity > cartCap)
                         {
-                            return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' has only {tier.Inventory.Value - sold} left.");
+                            return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' has only {Math.Max(0, cartCap - sold)} left.");
                         }
                     }
                     // Race classes are one-per-rider: block duplicates within the cart and any
@@ -336,6 +351,36 @@ namespace webapi.Controllers
                                     $"{rider.FirstName} is already entered in '{tier.Name}'.");
                             }
                         }
+                    }
+                    if (tier.PartySizeMax is int cPartyMax && item.Quantity > cPartyMax)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            $"'{tier.Name}' covers up to {cPartyMax} rider(s) per booking.");
+                    }
+                    // Party pricing makes riders in one booking cost different amounts, so a
+                    // single unit price times quantity no longer works. Split the line into one
+                    // entry per rider, each carrying its own price; the creation loop below
+                    // already emits one ticket row per entry, so nothing downstream changes.
+                    // An ordinary tier keeps its single entry and behaves exactly as before.
+                    if (Services.Pricing.PartyPricing.IsPartyPriced(tier) && item.Quantity > 1)
+                    {
+                        for (var pi = 0; pi < item.Quantity; pi++)
+                        {
+                            var partyUnitPrice = Services.Pricing.PartyPricing.UnitPriceCents(tier, pi);
+                            var (pPreTax, pServiceCharge) = ComputeWithServiceCharge(
+                                partyUnitPrice, quantity: 1, tenant.ServiceChargeBps, tier.RiderPaidServiceChargeBps);
+                            var pTax = AdmissionTax.Compute(partyUnitPrice, pPreTax - partyUnitPrice, admissionTax);
+                            var oneRider = new CounterCartItem
+                            {
+                                Kind = item.Kind, ItemId = item.ItemId, Quantity = 1,
+                                EventId = item.EventId, VariantId = item.VariantId,
+                            };
+                            ticketItems.Add((oneRider, tier, pTax.AmountToChargeCents, pServiceCharge, pTax.TaxCents));
+                            totalCents += pTax.AmountToChargeCents;
+                            ticketTaxCents += pTax.TaxCents;
+                        }
+                        if (ev.RequiresRiderWaiver) waiverRequiredByCart = true;
+                        continue;
                     }
                     var (unitPreTax, unitServiceCharge) = ComputeWithServiceCharge(
                         tier.PriceCents, quantity: 1, tenant.ServiceChargeBps, tier.RiderPaidServiceChargeBps);
@@ -406,6 +451,56 @@ namespace webapi.Controllers
                     extrasItems.Add((item, product, variant, unitAmount, unitServiceCharge, unitPriceFrozen));
                     totalCents += unitAmount * item.Quantity;
                     if (product.RequiresWaiver) waiverRequiredByCart = true;
+                }
+                else if (item.Kind == "rental")
+                {
+                    // A bike booked for a lesson at the counter. EventId is the lesson; ItemId the
+                    // shop variant.
+                    if (!tenant.BikeShopEnabled)
+                        return new ApiResponses().BadRequestResult("Bike rentals aren't enabled at this track.");
+                    if (item.EventId is not Guid lessonId)
+                        return new ApiResponses().BadRequestResult("A bike rental needs a lesson to attach to.");
+
+                    var lesson = await _events.GetById(lessonId, _tenantContext.TenantId);
+                    if (lesson is null || lesson.Status != "scheduled" || lesson.EndsAt < DateTime.UtcNow)
+                        return new ApiResponses().BadRequestResult("That lesson has already ended or isn't available.");
+                    var bike = await _shop.GetLessonRentable(lessonId, item.ItemId, _tenantContext.TenantId);
+                    if (bike is null)
+                        return new ApiResponses().BadRequestResult("That bike isn't offered with this lesson.");
+                    if (!bike.IsActive || (bike.PriceCentsOverride ?? bike.DailyRateCents) is null)
+                        return new ApiResponses().BadRequestResult("That bike isn't available.");
+
+                    var rStartsAt = DateTime.SpecifyKind(lesson.StartsAt, DateTimeKind.Utc);
+                    var rEndsAt = DateTime.SpecifyKind(lesson.EndsAt, DateTimeKind.Utc);
+                    var rQty = Math.Max(1, item.Quantity);
+
+                    // Availability for the lesson window; pick the specific units for serialized bikes.
+                    var pickedUnits = new List<Guid>();
+                    if (bike.TrackingKind == "pool")
+                    {
+                        var rem = await _shop.GetPoolAvailability(bike.VariantId, _tenantContext.TenantId, rStartsAt, rEndsAt);
+                        if (rQty > rem)
+                            return new ApiResponses().BadRequestResult(
+                                rem <= 0 ? "That bike is fully booked for this lesson."
+                                         : $"Only {rem} of that bike available for this lesson.");
+                    }
+                    else
+                    {
+                        var free = await _shop.GetFreeSerializedUnits(bike.VariantId, _tenantContext.TenantId, rStartsAt, rEndsAt);
+                        if (free.Count < rQty)
+                            return new ApiResponses().BadRequestResult($"Only {free.Count} of that bike available for this lesson.");
+                        pickedUnits = free.Take(rQty).Select(u => u.Id).ToList();
+                    }
+
+                    // All-in pricing (no rider service charge). Cash sales owe the platform its
+                    // percentage cut, mirroring a cash booking at the bike shop counter.
+                    var blockPrice = (bike.PriceCentsOverride ?? bike.DailyRateCents)!.Value;
+                    var feeCents = blockPrice * rQty;
+                    var cashCut = feeCents == 0 ? 0
+                        : (await _feeCalculator.Calculate(_tenantContext.TenantId, feeCents, 0, 0, DateTime.UtcNow)).RidepassCutCents;
+                    rentalItems.Add((bike, lessonId, rStartsAt, rEndsAt, rQty, blockPrice,
+                        feeCents, cashCut, bike.DepositCents * rQty, pickedUnits));
+                    totalCents += feeCents;
                 }
                 else if (item.Kind == "membership")
                 {
@@ -551,33 +646,35 @@ namespace webapi.Controllers
                     capacityLocks.Add(await _db.AcquireAdvisoryLock($"event-capacity:{evId}"));
 
                 // Authoritative re-check under the locks (the cart-build loop was a fast-fail).
-                // Ladder classes sell against event.capacity, so check total group sales plus
-                // this cart's units per (event, ladder group). Standalone tiers use their own
-                // inventory. Cache event capacity/title to avoid reloading per ticket row.
+                // Cache event capacity/title to avoid reloading per ticket row.
                 var rcEventCache = new Dictionary<Guid, (int? Capacity, string Title)>();
-                foreach (var grp in ticketItems
-                             .Where(t => t.Tier.LadderGroup is not null)
-                             .GroupBy(t => (t.Tier.EventId, Group: t.Tier.LadderGroup!)))
+                // Event-wide rider capacity, per event in the cart. This owns event.capacity for
+                // every tier shape; it replaced a per-ladder-group check that never ran for a
+                // plain tier, leaving counter sales against an at-capacity event unbounded. Rider
+                // admissions only, since spectators don't consume rider capacity.
+                foreach (var evGrp in ticketItems
+                             .Where(t => t.Tier.Audience == "rider")
+                             .GroupBy(t => t.Tier.EventId))
                 {
-                    if (!rcEventCache.TryGetValue(grp.Key.EventId, out var rcEv))
+                    if (!rcEventCache.TryGetValue(evGrp.Key, out var rcEv))
                     {
-                        var loaded = await _events.GetById(grp.Key.EventId, _tenantContext.TenantId);
+                        var loaded = await _events.GetById(evGrp.Key, _tenantContext.TenantId);
                         rcEv = (loaded?.Capacity, loaded?.Title ?? string.Empty);
-                        rcEventCache[grp.Key.EventId] = rcEv;
+                        rcEventCache[evGrp.Key] = rcEv;
                     }
                     if (!rcEv.Capacity.HasValue) continue;
-                    var groupSoldNow = await _tiers.GroupSoldCount(grp.Key.EventId, grp.Key.Group, _tenantContext.TenantId);
-                    var cartUnits = grp.Sum(t => t.Item.Quantity);
-                    if (groupSoldNow + cartUnits > rcEv.Capacity.Value)
+                    var eventSoldNow = await _tiers.EventSoldCount(evGrp.Key, _tenantContext.TenantId);
+                    var riderCartUnits = evGrp.Sum(t => t.Item.Quantity);
+                    if (eventSoldNow + riderCartUnits > rcEv.Capacity.Value)
                         return new ApiResponses().BadRequestResult(
-                            $"Only {Math.Max(0, rcEv.Capacity.Value - groupSoldNow)} spot(s) left for \"{rcEv.Title}\".");
+                            $"Only {Math.Max(0, rcEv.Capacity.Value - eventSoldNow)} spot(s) left for \"{rcEv.Title}\".");
                 }
                 foreach (var (rcItem, rcTier, _, _, _) in ticketItems)
                 {
-                    if (rcTier.LadderGroup is null && rcTier.Inventory.HasValue)
+                    if (rcTier.LadderGroup is null && await EffectiveTierCap(rcTier) is int rcCap)
                     {
                         var soldNow = await _tiers.SoldCount(rcTier.Id);
-                        if (soldNow + rcItem.Quantity > rcTier.Inventory.Value)
+                        if (soldNow + rcItem.Quantity > rcCap)
                             return new ApiResponses().BadRequestResult(
                                 $"Tier '{rcTier.Name}' has only {Math.Max(0, rcTier.Inventory.Value - soldNow)} left.");
                     }
@@ -690,6 +787,67 @@ namespace webapi.Controllers
                     ledgerLines.Add(("extras", created.Id, unitAmount, unitServiceCharge));
                 }
             }
+            // Lesson bike rentals: one shop_rental per cart line, reserved for the lesson window
+            // (window overlap holds the capacity), with serialized units assigned on the lines.
+            // Ledger gross = fee only; the deposit is recorded on the rental, not charged.
+            foreach (var r in rentalItems)
+            {
+                var bikeLabel = string.Join(" / ", new[] { r.Bike.Size, r.Bike.Color, r.Bike.Gender }
+                    .Where(x => !string.IsNullOrWhiteSpace(x)));
+                var rentalLines = new List<Services.Repositories.Data.BikeShopData.ShopRentalLine>();
+                if (r.Bike.TrackingKind == "serialized")
+                {
+                    rentalLines.AddRange(r.PickedUnits.Select(uid => new Services.Repositories.Data.BikeShopData.ShopRentalLine
+                    {
+                        VariantId = r.Bike.VariantId, ItemId = uid, Quantity = 1,
+                        NameSnapshot = r.Bike.ProductName,
+                        VariantLabel = string.IsNullOrEmpty(bikeLabel) ? null : bikeLabel,
+                        DailyRateCentsFrozen = r.FrozenRate, DepositCentsFrozen = r.Bike.DepositCents,
+                        LineAmountCents = r.FrozenRate,
+                    }));
+                }
+                else
+                {
+                    rentalLines.Add(new Services.Repositories.Data.BikeShopData.ShopRentalLine
+                    {
+                        VariantId = r.Bike.VariantId, Quantity = r.Quantity,
+                        NameSnapshot = r.Bike.ProductName,
+                        VariantLabel = string.IsNullOrEmpty(bikeLabel) ? null : bikeLabel,
+                        DailyRateCentsFrozen = r.FrozenRate, DepositCentsFrozen = r.Bike.DepositCents,
+                        LineAmountCents = r.FeeCents,
+                    });
+                }
+                var (rid, rToken) = await _shop.CreateRental(new Services.Repositories.Data.BikeShopData.ShopRental
+                {
+                    TenantId = _tenantContext.TenantId,
+                    RenterUserId = rider.Id,
+                    RenterName = purchaserName,
+                    RenterEmail = rider.Email,
+                    WaiverSignatureId = waiverSignatureId,
+                    StartsAt = r.StartsAtUtc,
+                    EndsAt = r.EndsAtUtc,
+                    Status = "pending",
+                    AmountCents = r.FeeCents,
+                    TaxCents = 0,
+                    TotalCents = r.FeeCents,
+                    DepositCents = r.DepositCents,
+                    PaymentMethod = paymentMethod == "cash" ? "cash" : "stripe",
+                    SoldByUserId = cashierId,
+                    EventId = r.EventId,
+                }, rentalLines);
+                lineItems.Add(new CounterSaleLineItem
+                {
+                    Kind = "shop_rental",
+                    PurchaseId = rid,
+                    RedemptionToken = rToken,
+                    DisplayName = $"{r.Bike.ProductName} (bike)",
+                    Quantity = r.Quantity,
+                    UnitPriceCents = r.FrozenRate,
+                    LineAmountCents = r.FeeCents,
+                });
+                ledgerLines.Add(("shop_rental", rid, r.FeeCents, r.CashCutCents));
+            }
+
             // Membership: one row per sale, frozen pricing + duration.
             if (membershipItem.HasValue)
             {
@@ -725,10 +883,51 @@ namespace webapi.Controllers
                 ledgerLines.Add(("membership", purchase.Id, priceCents, serviceCharge));
             }
 
+            // ── Store credit tender (Script0195): the cashier looked the account up; verify it,
+            // cap at balance + total, and debit through a tender row the whole checkout anchors
+            // on. Per-line ledger entries stay untouched; one balancing entry nets the books.
+            var creditApplied = 0;
+            Guid? creditTenderId = null;
+            if (request.CreditAccountId is not null && request.CreditCents > 0 && totalCents > 0)
+            {
+                var creditAccount = await _credit.GetAccount(request.CreditAccountId.Value, _tenantContext.TenantId);
+                if (creditAccount is null)
+                    return new ApiResponses().BadRequestResult("That store credit account no longer exists. Look it up again.");
+                var toApply = Math.Min(Math.Min(request.CreditCents, creditAccount.BalanceCents), totalCents);
+                var wouldBeDue = totalCents - toApply;
+                if (paymentMethod != "cash" && toApply > 0 && wouldBeDue > 0 && wouldBeDue < 50)
+                    return new ApiResponses().BadRequestResult(
+                        "Less than 50 cents would be left for the card after credit. Take the remainder as cash.");
+                if (toApply > 0)
+                {
+                    creditTenderId = await _credit.TryCreateCheckoutTender(
+                        _tenantContext.TenantId, creditAccount.Id, toApply, "counter");
+                    if (creditTenderId is null)
+                        return new ApiResponses().BadRequestResult(
+                            "The store credit balance changed while ringing up. Look the customer up again.");
+                    creditApplied = toApply;
+                }
+            }
+            var dueCents = totalCents - creditApplied;
+
+            // Books the tender's balancing entry for paths that settle right now (cash, or credit
+            // covering everything); card checkouts book it from the payment webhook instead.
+            async Task BookTenderNow()
+            {
+                if (creditTenderId is null) return;
+                await _finalizer.BookCreditTenderEntry(new Services.Repositories.Data.CreditData.CheckoutCreditTender
+                {
+                    Id = creditTenderId.Value,
+                    TenantId = _tenantContext.TenantId,
+                    CreditAppliedCents = creditApplied,
+                }, reduceNet: false);
+            }
+
             // Cash sale: tenant collected the rider's payment directly. We mark every row paid,
             // write a ledger entry per line with negative net_to_tenant equal to the service
-            // charge (tenant owes the platform that amount), and short-circuit Stripe.
-            if (paymentMethod == "cash")
+            // charge (tenant owes the platform that amount), and short-circuit Stripe. A sale
+            // fully covered by store credit settles the same way (nothing left to charge).
+            if (paymentMethod == "cash" || (creditApplied > 0 && dueCents == 0))
             {
                 var occurredAt = DateTime.UtcNow;
                 foreach (var (kind, purchaseId, gross, serviceCharge) in ledgerLines)
@@ -736,6 +935,11 @@ namespace webapi.Controllers
                     if (kind == "event_ticket") await _ticketPurchases.UpdateStatus(purchaseId, "paid");
                     else if (kind == "membership") await _memberships.UpdateStatus(purchaseId, "paid");
                     else if (kind == "extras") await _extras.UpdateStatus(purchaseId, "paid");
+                    else if (kind == "shop_rental")
+                    {
+                        if (await _shop.TryMarkRentalPaid(purchaseId, _tenantContext.TenantId))
+                            await _shop.SetRentalOrderNumber(purchaseId, await _shop.NextOrderNumber(_tenantContext.TenantId));
+                    }
                     try
                     {
                         await _ledger.Insert(new TenantLedgerEntry
@@ -762,6 +966,18 @@ namespace webapi.Controllers
                     await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, first.Kind, first.PurchaseId);
                 }
 
+                await BookTenderNow();
+
+                // Credit-back loyalty on the cash actually collected, keyed to the first line so
+                // a retried submit can't double-award.
+                try
+                {
+                    await _rewardEngine.AwardCreditBack(_tenantContext.TenantId, rider.Id, rider.Email,
+                        $"{rider.FirstName} {rider.LastName}".Trim(), "event_ticket",
+                        lineItems[0].PurchaseId, dueCents);
+                }
+                catch { /* loyalty is best-effort; the sale already settled */ }
+
                 // A cash sale at the counter never touches Stripe, so nothing else would email the
                 // rider. They still want the entry in their inbox and on their account.
                 await SendCounterConfirmations(lineItems);
@@ -771,6 +987,8 @@ namespace webapi.Controllers
                     ClientSecret = string.Empty,
                     TotalAmountCents = totalCents,
                     TaxCents = ticketTaxCents,
+                    CreditAppliedCents = creditApplied,
+                    DueCents = dueCents,
                     LineItems = lineItems,
                 });
             }
@@ -783,6 +1001,11 @@ namespace webapi.Controllers
                     if (li.Kind == "event_ticket") await _ticketPurchases.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "extras") await _extras.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "membership") await _memberships.UpdateStatus(li.PurchaseId, "paid");
+                    else if (li.Kind == "shop_rental")
+                    {
+                        if (await _shop.TryMarkRentalPaid(li.PurchaseId, _tenantContext.TenantId))
+                            await _shop.SetRentalOrderNumber(li.PurchaseId, await _shop.NextOrderNumber(_tenantContext.TenantId));
+                    }
                     // 'extras' is a valid ledger source_kind (Script0099), so the free path records a
                     // $0 sale row for every line, just like the cash and Stripe paths.
                     try
@@ -835,10 +1058,12 @@ namespace webapi.Controllers
             ChargePlan chargePlan;
             try
             {
-                chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, ledgerLines.Sum(l => (long)l.ServiceCharge), totalCents);
+                chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, ledgerLines.Sum(l => (long)l.ServiceCharge), dueCents);
             }
             catch (InvalidOperationException ex)
             {
+                if (creditTenderId is not null)
+                    await _credit.ReverseRedeem(_tenantContext.TenantId, "credit_tender", creditTenderId.Value, "payment could not start");
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
 
@@ -861,7 +1086,7 @@ namespace webapi.Controllers
             {
                 intent = cardPresent
                     ? await _payments.CreateCardPresentPaymentIntentAsync(
-                        amountCents: totalCents,
+                        amountCents: dueCents,
                         currency: "usd",
                         locationId: terminalLocationId!,
                         metadata: metadata,
@@ -870,7 +1095,7 @@ namespace webapi.Controllers
                         applicationFeeCents: chargePlan.ApplicationFeeCents,
                         ct: ct)
                     : await _payments.CreatePaymentIntentAsync(
-                        amountCents: totalCents,
+                        amountCents: dueCents,
                         currency: "usd",
                         metadata: metadata,
                         receiptEmail: rider.Email,
@@ -880,8 +1105,12 @@ namespace webapi.Controllers
             }
             catch (InvalidOperationException ex)
             {
+                if (creditTenderId is not null)
+                    await _credit.ReverseRedeem(_tenantContext.TenantId, "credit_tender", creditTenderId.Value, "payment could not start");
                 return new ApiResponses().BadRequestResult(ex.Message);
             }
+            if (creditTenderId is not null)
+                await _credit.SetCheckoutTenderPaymentIntent(creditTenderId.Value, _tenantContext.TenantId, intent.IntentId);
 
             // Stamp the same PaymentIntent id onto every line item so the webhook can finalize them
             // all, and (for a direct charge) snapshot the connected account on each so refunds route
@@ -905,6 +1134,11 @@ namespace webapi.Controllers
                         if (chargePlan.IsDirect)
                             await _memberships.MarkDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
                         break;
+                    case "shop_rental":
+                        await _shop.SetRentalPaymentIntent(li.PurchaseId, intent.IntentId);
+                        if (chargePlan.IsDirect)
+                            await _shop.MarkRentalDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                        break;
                 }
             }
 
@@ -913,6 +1147,8 @@ namespace webapi.Controllers
                 ClientSecret = intent.ClientSecret,
                 TotalAmountCents = totalCents,
                 TaxCents = ticketTaxCents,
+                CreditAppliedCents = creditApplied,
+                DueCents = dueCents,
                 LineItems = lineItems,
                 TerminalLocationId = terminalLocationId,
             });
@@ -1113,11 +1349,29 @@ namespace webapi.Controllers
                 await _orderConfirmations.SendForExtras(_tenantContext.TenantId, extraIds);
             }
         }
+
+        // Effective cap on a training group: the group's own inventory and its coach's
+        // per-session limit both apply, so the real ceiling is whichever is lower. Either may be
+        // absent (a coach is optional, and so is inventory); null means genuinely uncapped.
+        private async Task<int?> EffectiveTierCap(Services.Repositories.Data.PaymentData.EventTicketTier tier)
+        {
+            int? coachCap = null;
+            if (tier.InstructorId is Guid coachId)
+            {
+                var coach = await _instructors.Get(coachId, _tenantContext.TenantId);
+                coachCap = coach?.MaxStudentsPerSession;
+            }
+            if (tier.Inventory is null) return coachCap;
+            if (coachCap is null) return tier.Inventory;
+            return Math.Min(tier.Inventory.Value, coachCap.Value);
+        }
+
     }
 
     public class CardPresentTestChargeRequest
     {
         public int AmountCents { get; set; } = 100;
         public string? ReceiptEmail { get; set; }
+
     }
 }

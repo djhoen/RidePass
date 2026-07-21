@@ -1,31 +1,19 @@
 <template>
-    <div class="login-page">
-        <!-- Brand panel (md+). Tenant hero photo behind a brand-colored gradient,
-             with the logo / name / tagline. Falls back to a flat gradient when no
-             hero image is set. -->
-        <div class="login-brand d-none d-md-flex" :style="brandStyle">
-            <div class="login-brand-overlay"></div>
-            <div class="login-brand-content">
+    <div class="login-page" :style="brandStyle">
+        <!-- Full-bleed tenant hero behind a legibility gradient; the form floats on a
+             glass card in the middle. No side panel = nothing to clip at any size. -->
+        <div class="login-overlay"></div>
+
+        <div class="login-form-wrap">
+            <!-- Brand block above the card: always visible, photo gets the full stage. -->
+            <div class="login-brand-block text-center mb-5">
                 <img v-if="branding.logoUrl" :src="branding.logoUrl" :alt="branding.displayName"
                     class="login-brand-logo" />
                 <div v-else class="login-brand-name font-display">{{ branding.displayName }}</div>
                 <p v-if="branding.tagline" class="login-brand-tagline">{{ branding.tagline }}</p>
-                <p class="login-brand-welcome">
-                    Sign in to manage your passes, reserve your spot, and check in fast at the gate.
-                </p>
             </div>
-        </div>
 
-        <!-- Form panel -->
-        <div class="login-form-wrap">
             <div class="login-card">
-                <!-- Logo shows on mobile where the brand panel is hidden. -->
-                <div class="d-md-none text-center mb-4">
-                    <img v-if="branding.logoUrl" :src="branding.logoUrl" :alt="branding.displayName"
-                        class="login-mobile-logo" />
-                    <div v-else class="text-h5 font-weight-bold font-display">{{ branding.displayName }}</div>
-                </div>
-
                 <h1 class="text-h5 font-weight-bold mb-1">Welcome back</h1>
                 <p class="text-body-2 text-medium-emphasis mb-6">Sign in to your account to continue.</p>
 
@@ -38,7 +26,10 @@
                         :append-inner-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
                         @click:append-inner="showPassword = !showPassword"></v-text-field>
 
-                    <div class="d-flex justify-end mb-4">
+                    <div class="d-flex align-center justify-space-between mb-4">
+                        <v-checkbox v-model="form.rememberMe" color="primary" density="compact"
+                            hide-details label="Keep me signed in"
+                            hint="Skip this on a shared counter machine." persistent-hint></v-checkbox>
                         <router-link to="/ResetPassword" class="login-link text-body-2">Forgot password?</router-link>
                     </div>
 
@@ -86,15 +77,18 @@ const resending = ref(false)
 
 const form = ref({
     email: '',
-    password: ''
+    password: '',
+    // Extends the SESSION (21 days) rather than storing any credential. Off by default: the
+    // shared machine behind a counter should stay short-lived unless someone opts in.
+    rememberMe: false,
 })
 
 const brandStyle = computed(() =>
     branding.heroImageUrl ? { backgroundImage: `url(${branding.heroImageUrl})` } : {})
 
 function isTenantStaffRole(role: string): boolean {
-    return ['tenant_admin', 'tenant_manager', 'tenant_cashier', 'tenant_scanner',
-            'tenant_accountant', 'tenant_staff'].includes(role)
+    return ['tenant_admin', 'tenant_manager', 'tenant_cashier', 'tenant_shop_cashier',
+            'tenant_scanner', 'tenant_accountant', 'tenant_staff'].includes(role)
 }
 
 async function login() {
@@ -151,85 +145,78 @@ async function resendVerification() {
 </script>
 
 <style scoped>
+/* Full-bleed hero: the tenant photo covers the page; a brand-tinted gradient keeps the
+   card and brand block legible over any photo. Falls back to the gradient alone when no
+   hero image is set (brandStyle adds background-image only when one exists). */
 .login-page {
-    display: flex;
-    min-height: 100vh;
-    /* Theme-aware so the form panel background follows light/dark mode. */
-    background: rgb(var(--v-theme-background));
-}
-
-/* ── Brand panel ────────────────────────────────────────────────────────── */
-.login-brand {
     position: relative;
-    flex: 1 1 50%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
     background-size: cover;
     background-position: center;
     background-color: rgb(var(--v-theme-secondary));
-    display: flex;
-    align-items: flex-end;
-    overflow: hidden;
 }
-.login-brand-overlay {
+.login-overlay {
     position: absolute;
     inset: 0;
-    background: linear-gradient(150deg,
-        color-mix(in srgb, rgb(var(--v-theme-primary)) 78%, #000) 0%,
-        rgba(18, 22, 30, 0.86) 55%,
-        rgba(18, 22, 30, 0.74) 100%);
-}
-.login-brand-content {
-    position: relative;
-    color: #fff;
-    padding: 3.5rem;
-    max-width: 520px;
-}
-.login-brand-logo {
-    max-height: 64px;
-    max-width: 240px;
-    width: auto;
-    margin-bottom: 1.25rem;
-}
-.login-brand-name {
-    font-size: 2.75rem;
-    font-weight: 700;
-    line-height: 1;
-    margin-bottom: 1rem;
-}
-.login-brand-tagline {
-    font-size: 1.25rem;
-    font-weight: 500;
-    margin-bottom: 0.75rem;
-    opacity: 0.95;
-}
-.login-brand-welcome {
-    font-size: 1rem;
-    opacity: 0.8;
-    margin-bottom: 0;
-    max-width: 420px;
+    background:
+        radial-gradient(ellipse at center, rgba(14, 17, 24, 0.35) 0%, rgba(14, 17, 24, 0.72) 100%),
+        linear-gradient(160deg,
+            color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, transparent) 0%,
+            rgba(14, 17, 24, 0.35) 60%);
 }
 
-/* ── Form panel ─────────────────────────────────────────────────────────── */
+/* ── Brand block (above the card) ───────────────────────────────────────── */
+.login-brand-block {
+    color: #fff;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+    max-width: 460px;
+}
+.login-brand-logo {
+    max-height: 72px;
+    max-width: min(260px, 100%);
+    width: auto;
+    filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
+}
+.login-brand-name {
+    font-size: clamp(2rem, 5vw, 2.75rem);
+    font-weight: 700;
+    line-height: 1.05;
+    overflow-wrap: break-word;
+    padding: 0 0.1em;   /* slanted display fonts clip their edge glyphs without this */
+}
+.login-brand-tagline {
+    font-size: clamp(1rem, 2vw, 1.2rem);
+    font-weight: 500;
+    opacity: 0.92;
+    margin: 0.5rem 0 0;
+    overflow-wrap: break-word;
+}
+
+/* ── Floating glass card ────────────────────────────────────────────────── */
 .login-form-wrap {
-    flex: 1 1 50%;
+    position: relative;   /* above the overlay */
+    flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 2rem 1.5rem;
+    padding: 2.5rem 1.25rem;
 }
 .login-card {
     width: 100%;
-    max-width: 400px;
-    /* Surface (not hardcoded white) so text stays legible in dark mode. */
-    background: rgb(var(--v-theme-surface));
+    max-width: 420px;
+    /* Theme surface at ~86% over a blur: light theme reads as frosted white, dark theme
+       as smoked glass — Vuetify inputs inherit the right on-surface text either way. */
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 86%, transparent);
     color: rgb(var(--v-theme-on-surface));
-    border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-surface)) 40%, transparent);
+    border-radius: 18px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
     padding: 2.5rem 2.25rem;
-}
-.login-mobile-logo {
-    max-height: 56px;
-    max-width: 200px;
-    width: auto;
 }
 .login-link {
     color: rgb(var(--v-theme-primary));
@@ -239,11 +226,7 @@ async function resendVerification() {
 .login-link:hover { text-decoration: underline; }
 
 @media (max-width: 600px) {
-    .login-card {
-        box-shadow: none;
-        background: transparent;
-        padding: 1.5rem 0.5rem;
-    }
-    .login-form-wrap { background: rgb(var(--v-theme-surface)); }
+    .login-form-wrap { padding: 1.75rem 1rem; }
+    .login-card { padding: 1.75rem 1.25rem; }
 }
 </style>

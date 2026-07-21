@@ -49,6 +49,23 @@ namespace Services.Repositories.Data.TenantData
         public bool SmsEnabled { get; set; }
         public DateTime? SmsEnabledAtUtc { get; set; }
         public int ServiceChargeBps { get; set; }
+
+        /// <summary>
+        /// Share of the tenant service charge the RENTER pays on a bike-shop rental (bps).
+        /// 10000 = renter pays all (the default everywhere else in the system), 0 = the track
+        /// absorbs it. The RATE is ServiceChargeBps — the same percentage events use; this only
+        /// decides who funds it. Set on Rentals -> Settings.
+        /// </summary>
+        public int RentalRiderPaidServiceChargeBps { get; set; } = 10000;
+
+        /// <summary>
+        /// Sales tax on rentals, in basis points. NULL means never configured, which the UI warns
+        /// about; 0 means deliberately untaxed. The refundable deposit is never taxed.
+        /// </summary>
+        public int? RentalTaxBps { get; set; }
+
+        /// <summary>Is the renter-paid service fee part of the rental taxable base.</summary>
+        public bool RentalTaxServiceChargeTaxable { get; set; } = true;
         public int? MonthlyServiceChargeCapCents { get; set; }
         public string? ShippingName { get; set; }
         public string? AboutHtml { get; set; }
@@ -88,6 +105,27 @@ namespace Services.Repositories.Data.TenantData
         public bool ExtrasEnabled { get; set; } = true;
         public bool SeasonPassesEnabled { get; set; } = true;
         public bool ConcessionsEnabled { get; set; } = false;
+        public bool BikeShopEnabled { get; set; } = false;
+        /// <summary>Days after pickup to email a service reminder. 0 = off, the default: a track
+        /// opts in to contacting customers months later rather than discovering it did.</summary>
+        public int ShopServiceReminderDays { get; set; }
+        /// <summary>Email the customer when a repair is marked ready. Defaults ON: transactional,
+        /// free, and the customer is waiting on it.</summary>
+        public bool ShopReadyNotifyEmail { get; set; } = true;
+        /// <summary>Text the customer when a repair is marked ready. Defaults OFF: every send
+        /// bills the tenant, so it can't switch itself on just because Twilio is configured.</summary>
+        public bool ShopReadyNotifySms { get; set; }
+        /// <summary>Shop supply fee as basis points of the LABOR subtotal on a repair bill
+        /// (500 = 5%). 0 = off. Labor only: a percentage of an expensive part would track the
+        /// part's price rather than the consumables the job actually burned.</summary>
+        public int ShopSupplyFeeBps { get; set; }
+        /// <summary>Ceiling on that fee in cents; null = uncapped.</summary>
+        public int? ShopSupplyFeeCapCents { get; set; }
+        public string ShopSupplyFeeLabel { get; set; } = "Shop supplies";
+        /// <summary>Default shop labor rate in cents per hour. Null = no rate set, so labor lines
+        /// take a typed price. When set, a labor line entered by hours bills hours * this rate.</summary>
+        public int? ShopLaborRateCents { get; set; }
+        public bool WristbandsEnabled { get; set; } = false;
         public bool BlogEnabled { get; set; } = false;
         // Stepped event-ticket price ladders (price rises by date or sales volume).
         // Gates CONFIGURING steps; already-configured ladders keep resolving.
@@ -120,7 +158,13 @@ namespace Services.Repositories.Data.TenantData
         // NULL = platform defaults ("Riding Pass" / "Spectator Pass").
         public string? RiderGateLabel { get; set; }
         public string? SpectatorGateLabel { get; set; }
-        public bool WaitlistEnabled { get; set; } = true;
+        // Super-admin-gated platform features, both OFF by default (Script0180). Most tracks don't
+        // want a waitlist, and the ones that do usually want the notify-only version.
+        public bool WaitlistEnabled { get; set; } = false;
+        // Charge the rider at JOIN time and auto-confirm them when a spot opens, instead of texting
+        // a pay-now link. Holds a rider's money against a spot that may never open, so it's a
+        // separate deliberate decision. Inert unless WaitlistEnabled is also true.
+        public bool WaitlistPrepayEnabled { get; set; } = false;
         public int WaitlistConfirmWindowMinutes { get; set; } = 20;
         public bool MembershipEnabled { get; set; } = false;
         public string MembershipName { get; set; } = "Track Membership";

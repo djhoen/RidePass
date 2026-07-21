@@ -151,6 +151,86 @@
                                     </p>
                                 </v-expansion-panel-text>
                             </v-expansion-panel>
+
+                            <!-- Lesson + optional bike -->
+                            <v-expansion-panel value="lesson">
+                                <v-expansion-panel-title>
+                                    <div class="d-flex align-center ga-2">
+                                        <v-icon>mdi-whistle</v-icon>
+                                        <span>Lesson</span>
+                                        <v-chip v-if="cartCount('event_ticket') + cartCount('rental') > 0"
+                                            size="x-small" color="primary" class="ml-1">
+                                            {{ cartCount('event_ticket') + cartCount('rental') }}
+                                        </v-chip>
+                                    </div>
+                                </v-expansion-panel-title>
+                                <v-expansion-panel-text>
+                                    <div v-if="loadingLessons" class="text-center py-4">
+                                        <v-progress-circular indeterminate></v-progress-circular>
+                                    </div>
+                                    <div v-else-if="lessonEvents.length === 0" class="text-medium-emphasis">
+                                        No upcoming lessons. Schedule one on
+                                        <router-link to="/Admin/Events">Manage Events</router-link>
+                                        (event type “Lesson”).
+                                    </div>
+                                    <template v-else>
+                                        <v-select :model-value="selectedLessonId"
+                                            @update:model-value="onLessonSelected"
+                                            :items="lessonOptions" item-title="title" item-value="value"
+                                            label="Choose a lesson" density="compact" clearable hide-details></v-select>
+
+                                        <div v-if="loadingLessonDetail" class="text-center py-4">
+                                            <v-progress-circular indeterminate size="24"></v-progress-circular>
+                                        </div>
+
+                                        <template v-else-if="selectedLessonId">
+                                            <!-- Lesson ticket tiers -->
+                                            <div class="text-subtitle-2 mt-4 mb-1">Lesson ticket</div>
+                                            <div v-if="activeLessonTiers.length === 0" class="text-caption text-medium-emphasis">
+                                                This lesson has no ticket set up yet. Add one on Manage Events.
+                                            </div>
+                                            <div v-for="t in activeLessonTiers" :key="t.id"
+                                                class="d-flex align-center ga-2 py-1">
+                                                <div class="flex-grow-1">
+                                                    {{ t.name }}
+                                                    <span class="text-medium-emphasis">— ${{ (t.priceCents / 100).toFixed(2) }}</span>
+                                                </div>
+                                                <v-btn size="small" variant="tonal" color="primary"
+                                                    prepend-icon="mdi-plus" @click="addLessonTicket(t)">Add</v-btn>
+                                            </div>
+
+                                            <!-- Bikes for this lesson -->
+                                            <div class="text-subtitle-2 mt-4 mb-1">Add a bike (optional)</div>
+                                            <div v-if="lessonBikes.length === 0" class="text-caption text-medium-emphasis">
+                                                No bikes offered with this lesson.
+                                            </div>
+                                            <div v-for="b in lessonBikes" :key="b.variantId"
+                                                class="d-flex align-center ga-2 py-1">
+                                                <div class="flex-grow-1">
+                                                    {{ b.name }}
+                                                    <span class="text-medium-emphasis">— ${{ (b.priceCents / 100).toFixed(2) }}</span>
+                                                    <span v-if="b.depositCents > 0" class="text-caption text-medium-emphasis">
+                                                        + ${{ (b.depositCents / 100).toFixed(2) }} deposit at pickup
+                                                    </span>
+                                                    <v-chip v-if="b.available <= 0" size="x-small" color="error" variant="tonal" class="ml-1">
+                                                        Fully booked
+                                                    </v-chip>
+                                                    <v-chip v-else-if="b.available <= 3" size="x-small" color="warning" variant="tonal" class="ml-1">
+                                                        {{ b.available }} left
+                                                    </v-chip>
+                                                </div>
+                                                <v-btn size="small"
+                                                    :variant="lessonBikeInCart()?.itemId === b.variantId ? 'flat' : 'tonal'"
+                                                    :color="lessonBikeInCart()?.itemId === b.variantId ? 'success' : 'primary'"
+                                                    :disabled="b.available <= 0 && lessonBikeInCart()?.itemId !== b.variantId"
+                                                    @click="toggleLessonBike(b)">
+                                                    {{ lessonBikeInCart()?.itemId === b.variantId ? 'Added' : 'Add' }}
+                                                </v-btn>
+                                            </div>
+                                        </template>
+                                    </template>
+                                </v-expansion-panel-text>
+                            </v-expansion-panel>
                         </v-expansion-panels>
 
                         <v-divider class="my-4"></v-divider>
@@ -198,6 +278,9 @@
                             <div class="d-flex justify-space-between text-body-1 mt-1">
                                 <strong>Total</strong>
                                 <strong>${{ totalDollars }}</strong>
+                            </div>
+                            <div v-if="cartDepositCents > 0" class="text-caption text-medium-emphasis mt-1">
+                                A ${{ (cartDepositCents / 100).toFixed(2) }} refundable deposit is due separately when the bike is picked up.
                             </div>
                         </div>
 
@@ -285,9 +368,13 @@
                     <v-card-text>
                         <div class="mb-3">
                             Total to collect: <strong>${{ totalDollars }}</strong>
+                            <span v-if="creditEstimate > 0" class="text-success">
+                                ({{ moneyCents(creditEstimate) }} store credit, {{ moneyCents(dueEstimateCents) }} due)
+                            </span>
                         </div>
 
                         <div v-if="!clientSecret && !cashSubmitted">
+                            <CreditLookupField v-model="creditAccount" class="mb-3" style="max-width: 440px" />
                             <v-tabs v-model="paymentMethod" density="compact" class="mb-3">
                                 <v-tab value="card" prepend-icon="mdi-credit-card">Card</v-tab>
                                 <v-tab value="cash" prepend-icon="mdi-cash">Cash</v-tab>
@@ -316,7 +403,7 @@
                                     Prepare card payment
                                 </v-btn>
                                 <v-btn v-else color="primary" :loading="creatingSale" @click="submitCash">
-                                    Confirm ${{ totalDollars }} cash received
+                                    Confirm {{ moneyCents(dueEstimateCents) }} cash received
                                 </v-btn>
                             </div>
                         </div>
@@ -382,7 +469,9 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import dayjs from 'dayjs'
 import { CounterService, type CounterRider } from '@/services/CounterService'
 import { PassService, type WaiverDto } from '@/services/PassService'
-import type { EligibleExtra, EligibleExtraVariant } from '@/services/EventService'
+import type { EligibleExtra, EligibleExtraVariant, EventDto, EligibleRental } from '@/services/EventService'
+import { EventService } from '@/services/EventService'
+import { TicketService, type TicketTier } from '@/services/TicketService'
 import { ExtraService, type ExtraProduct } from '@/services/ExtraService'
 import { RewardService, type RiderRewardRedemption } from '@/services/RewardService'
 import { branding } from '@/stores/branding'
@@ -392,10 +481,12 @@ import QrCode from '@/components/QrCode.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import SignaturePad from '@/components/SignaturePad.vue'
 import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue'
+import CreditLookupField from '@/components/CreditLookupField.vue'
+import { type CreditLookupResult } from '@/services/CreditService'
 import PhoneField from '@/components/PhoneField.vue'
 
 type Customer = CounterRider
-type CartKind = 'extras' | 'membership'
+type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental'
 
 interface CartLine {
     kind: CartKind
@@ -406,6 +497,11 @@ interface CartLine {
     requiresWaiver: boolean
     riderPaidServiceChargeBps: number
     variantId?: string | null
+    // Set for lesson ticket + bike lines: the lesson event the sale is attached to.
+    eventId?: string | null
+    // Refundable bike deposit (rental lines only). Added to the charged total but held, not
+    // earned — returned to the customer at bike return.
+    depositCents?: number
 }
 
 const MEMBERSHIP_ITEM_ID = '00000000-0000-0000-0000-000000000001'
@@ -413,6 +509,8 @@ const MEMBERSHIP_ITEM_ID = '00000000-0000-0000-0000-000000000001'
 const counter = new CounterService()
 const passService = new PassService()
 const extraService = new ExtraService()
+const eventService = new EventService()
+const ticketService = new TicketService()
 const rewardService = new RewardService()
 
 const stepLabels = ['Customer', 'Cart', 'Waiver', 'Payment', 'Receipt']
@@ -503,6 +601,102 @@ const extrasSelection = computed<ExtraSelection[]>(() =>
 const membershipOffered = computed(() =>
     branding.membershipEnabled && branding.membershipPriceCents > 0)
 
+// ── Lessons: sell a lesson (ticket) + optional bike at the counter ───────────
+const lessonEvents = ref<EventDto[]>([])
+const loadingLessons = ref(false)
+const selectedLessonId = ref<string | null>(null)
+const lessonDetail = ref<EventDto | null>(null)      // hydrated single event (tiers + bikes + availability)
+const lessonTiers = ref<TicketTier[]>([])
+const loadingLessonDetail = ref(false)
+const lessonOptions = computed(() => lessonEvents.value.map(e => ({
+    value: e.id,
+    title: `${e.title} — ${new Date(e.startsAtUtc).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`,
+})))
+const lessonBikes = computed<EligibleRental[]>(() => lessonDetail.value?.eligibleRentals ?? [])
+const activeLessonTiers = computed(() => lessonTiers.value.filter(t => t.isActive))
+
+async function loadLessons() {
+    loadingLessons.value = true
+    try {
+        // Upcoming lesson-type events over the next 120 days.
+        const from = new Date().toISOString()
+        const to = new Date(Date.now() + 120 * 24 * 3600 * 1000).toISOString()
+        const r = await eventService.list(from, to)
+        lessonEvents.value = ((r.data as any).data as EventDto[])
+            .filter(e => e.eventTypeCode === 'lesson' && e.status === 'scheduled'
+                && new Date(e.endsAtUtc).getTime() > Date.now())
+    } catch (err: any) {
+        lessonEvents.value = []
+        paymentError.value = err.response?.data?.error || 'Could not load lessons. Try reopening the section.'
+    } finally {
+        loadingLessons.value = false
+    }
+}
+
+async function onLessonSelected(id: string | null) {
+    selectedLessonId.value = id
+    lessonDetail.value = null
+    lessonTiers.value = []
+    if (!id) return
+    loadingLessonDetail.value = true
+    try {
+        const [ev, tiers] = await Promise.all([
+            eventService.getPublic(id),
+            ticketService.listActiveTiers(id),
+        ])
+        lessonDetail.value = (ev.data as any).data
+        lessonTiers.value = (tiers.data as any).data
+    } catch (err: any) {
+        paymentError.value = err.response?.data?.error || 'Could not load this lesson’s tickets and bikes.'
+    } finally {
+        loadingLessonDetail.value = false
+    }
+}
+
+function lessonBikeInCart(): CartLine | undefined {
+    return cart.value.find(c => c.kind === 'rental' && c.eventId === selectedLessonId.value)
+}
+
+function addLessonTicket(tier: TicketTier) {
+    if (!selectedLessonId.value) return
+    // One lesson-ticket line per tier click; the counter allows multiple (e.g. two riders).
+    const existing = cart.value.find(c => c.kind === 'event_ticket' && c.itemId === tier.id)
+    if (existing) { existing.quantity += 1; return }
+    cart.value.push({
+        kind: 'event_ticket',
+        itemId: tier.id,
+        displayName: `${lessonDetail.value?.title ?? 'Lesson'} — ${tier.name}`,
+        unitPriceCents: tier.priceCents,
+        quantity: 1,
+        requiresWaiver: !!lessonDetail.value?.requiresRiderWaiver,
+        riderPaidServiceChargeBps: tier.riderPaidServiceChargeBps ?? 10000,
+        eventId: selectedLessonId.value,
+    })
+}
+
+function toggleLessonBike(bike: EligibleRental) {
+    if (!selectedLessonId.value) return
+    const existing = lessonBikeInCart()
+    if (existing && existing.itemId === bike.variantId) {
+        cart.value = cart.value.filter(c => c !== existing)   // clicking the selected bike removes it
+        return
+    }
+    // One bike per lesson: replace any existing bike line for this lesson.
+    cart.value = cart.value.filter(c => !(c.kind === 'rental' && c.eventId === selectedLessonId.value))
+    cart.value.push({
+        kind: 'rental',
+        itemId: bike.variantId,
+        displayName: `${bike.name} (bike)`,
+        unitPriceCents: bike.priceCents,
+        quantity: 1,
+        requiresWaiver: false,
+        // All-in pricing on the shop catalog: the bike fee carries no rider service charge.
+        riderPaidServiceChargeBps: 0,
+        eventId: selectedLessonId.value,
+        depositCents: bike.depositCents,
+    })
+}
+
 // Waiver step
 const activeWaiver = ref<WaiverDto | null>(null)
 const customerAcknowledged = ref(false)
@@ -546,11 +740,21 @@ const cartServiceChargeCents = computed(() => {
         return sum + customerPerUnit * c.quantity
     }, 0)
 })
+// Refundable bike deposits: NOT charged with the sale. Recorded on the rental and handled
+// at the shop when the bike goes out (hold or cash, staff's call).
+const cartDepositCents = computed(() => cart.value.reduce((sum, c) => sum + (c.depositCents ?? 0), 0))
 const cartTotalCents = computed(() => cartSubtotalCents.value + cartServiceChargeCents.value)
 const totalDollars = computed(() => {
     const cents = clientSecret.value ? totalAmountCents.value : cartTotalCents.value
     return (cents / 100).toFixed(2)
 })
+
+// Store credit tender (client estimate for display; the server re-verifies and caps).
+const creditAccount = ref<CreditLookupResult | null>(null)
+const creditEstimate = computed(() =>
+    creditAccount.value ? Math.min(creditAccount.value.balanceCents, cartTotalCents.value) : 0)
+const dueEstimateCents = computed(() => Math.max(0, cartTotalCents.value - creditEstimate.value))
+function moneyCents(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -603,6 +807,8 @@ onMounted(async () => {
     } finally {
         loadingExtras.value = false
     }
+    // Lessons load in the background so the Lesson panel is ready when the cashier opens it.
+    await loadLessons()
 })
 
 async function findCustomer() {
@@ -760,7 +966,7 @@ async function createSale(method: 'stripe' | 'cash') {
                 kind: c.kind,
                 itemId: c.itemId,
                 quantity: c.quantity,
-                eventId: null,
+                eventId: c.eventId ?? null,
                 variantId: c.variantId ?? null,
             })),
             signWaiver: willSignWaiver.value && customerAcknowledged.value,
@@ -769,6 +975,8 @@ async function createSale(method: 'stripe' | 'cash') {
             parentPhone: signingForMinor ? parentPhone.value.trim() : null,
             rewardRedemptionId: selectedVoucherId.value,
             paymentMethod: method,
+            creditAccountId: creditAccount.value?.id ?? null,
+            creditCents: creditAccount.value?.balanceCents ?? 0,
         })
         const data = (r.data as any).data
         clientSecret.value = data.clientSecret
@@ -776,9 +984,12 @@ async function createSale(method: 'stripe' | 'cash') {
         lineItems.value = data.lineItems
 
         if (!clientSecret.value) {
-            cashSubmitted.value = method === 'cash'
+            cashSubmitted.value = true
             step.value = 5
-            flash(method === 'cash' ? 'Cash sale recorded.' : 'Voucher applied — sale complete!', 'success')
+            const credited = data.creditAppliedCents ?? 0
+            flash(credited > 0
+                ? `Sale complete: ${moneyCents(credited)} store credit applied, ${moneyCents(data.dueCents ?? 0)} collected.`
+                : method === 'cash' ? 'Cash sale recorded.' : 'Voucher applied — sale complete!', 'success')
             return
         }
 
@@ -869,6 +1080,7 @@ function reset() {
     selectedVoucherId.value = null
     availableVouchers.value = []
     catalogPanel.value = 'extras'
+    creditAccount.value = null
 }
 
 function redeemUrl(token: string): string {

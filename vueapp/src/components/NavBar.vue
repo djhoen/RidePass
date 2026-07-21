@@ -20,7 +20,9 @@
             <v-btn to="/" variant="text">Home</v-btn>
             <v-btn to="/Events" variant="text">Events</v-btn>
             <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
-            <v-btn v-if="branding.rentalsEnabled" to="/Rentals" variant="text">Rentals</v-btn>
+            <v-btn v-if="branding.bikeShopEnabled" to="/Shop" variant="text" prepend-icon="mdi-bike">Shop</v-btn>
+            <!-- Standalone /Rentals retired — rentals are booked at the Bike Shop counter now. -->
+
             <v-btn v-if="showOrderFood" to="/Order" variant="text" prepend-icon="mdi-silverware-fork-knife">Order Food</v-btn>
             <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
             <v-btn v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" variant="text">{{ p.label }}</v-btn>
@@ -107,7 +109,7 @@
                     <v-list-item to="/" title="Home" prepend-icon="mdi-home"></v-list-item>
                     <v-list-item to="/Events" title="Events" prepend-icon="mdi-calendar"></v-list-item>
                     <v-list-item v-if="branding.giftCardsEnabled" to="/GiftCard" title="Gift Cards" prepend-icon="mdi-gift"></v-list-item>
-                    <v-list-item v-if="branding.rentalsEnabled" to="/Rentals" title="Rentals" prepend-icon="mdi-bike-fast"></v-list-item>
+                    <v-list-item v-if="branding.bikeShopEnabled" to="/Shop" title="Shop" prepend-icon="mdi-bike"></v-list-item>
                     <v-list-item v-if="showOrderFood" to="/Order" title="Order Food" prepend-icon="mdi-silverware-fork-knife"></v-list-item>
                     <v-list-item v-if="branding.blogEnabled" to="/Blog" title="Blog" prepend-icon="mdi-post"></v-list-item>
                     <v-list-item v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" :title="p.label"
@@ -245,7 +247,7 @@ const superAdminLinks: SuperAdminLink[] = [
 // Platform features the super-admin gates per tenant. A link carrying one of these
 // is hidden unless the tenant has that feature enabled (so disabled features don't
 // show in the admin nav at all).
-type FeatureFlag = 'seasonPassesEnabled' | 'rentalsEnabled' | 'extrasEnabled'
+type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled'
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
 interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag }
 interface AdminGroup { value: string; title: string; icon: string; links: AdminLink[] }
@@ -268,11 +270,11 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-silverware-fork-knife',
         links: [
             { to: '/Admin/Concessions',       icon: 'mdi-cog',                   title: 'Administration', perm: Perm.CatalogManage, feature: 'concessionsEnabled' },
-            { to: '/Admin/ConcessionPos',     icon: 'mdi-point-of-sale',         title: 'Cashier Screen', perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
-            { to: '/Admin/ConcessionKitchen', icon: 'mdi-stove',                 title: 'Cook Screen',    perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
-            { to: '/Admin/ConcessionMenu',    icon: 'mdi-silverware-fork-knife', title: 'Menu Board',     perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
-            { to: '/Admin/ConcessionPickupBoard', icon: 'mdi-bell-ring-outline', title: 'Pickup Board',   perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
-            { to: '/Admin/ConcessionOrders',  icon: 'mdi-receipt-text-clock',    title: 'Order History',  perm: Perm.SalesCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionPos',     icon: 'mdi-point-of-sale',         title: 'Cashier Screen', perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionKitchen', icon: 'mdi-stove',                 title: 'Cook Screen',    perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionMenu',    icon: 'mdi-silverware-fork-knife', title: 'Menu Board',     perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionPickupBoard', icon: 'mdi-bell-ring-outline', title: 'Pickup Board',   perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionOrders',  icon: 'mdi-receipt-text-clock',    title: 'Order History',  perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
         ],
     },
     {
@@ -284,17 +286,23 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Counter', icon: 'mdi-cash-register', title: 'Gate Sale', perm: Perm.SalesCounter },
             { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan', title: 'Scan Tickets', perm: Perm.SalesRedeem },
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
+            { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage, feature: 'extrasEnabled' },
         ],
     },
     {
-        value: 'rentals',
-        title: 'Rentals',
-        icon: 'mdi-bike-fast',
+        value: 'bikeshop',
+        title: 'Bike Shop',
+        icon: 'mdi-bike',
         links: [
-            { to: '/Admin/Rentals',      icon: 'mdi-bike-fast',            title: 'Rentals',       perm: Perm.CatalogManage, feature: 'rentalsEnabled' },
+            { to: '/Admin/BikeShop',     icon: 'mdi-package-variant',      title: 'Inventory',   perm: Perm.CatalogManage, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/Register', icon: 'mdi-cash-register',   title: 'Register',    perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/Rentals',  icon: 'mdi-bike-fast',       title: 'Rentals',     perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/WorkOrders', icon: 'mdi-wrench',        title: 'Work Orders', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/Sales',    icon: 'mdi-receipt-text-clock', title: 'Shop Sales', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/Settings', icon: 'mdi-cog',             title: 'Shop Settings', perm: Perm.CatalogManage, feature: 'bikeShopEnabled' },
         ],
     },
     {
@@ -303,7 +311,7 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-cart-check',
         links: [
             { to: '/Admin/Purchases',     icon: 'mdi-cart-check',     title: 'Purchases',      perm: Perm.SalesView },
-            { to: '/Admin/RentalCounter', icon: 'mdi-store-clock',    title: 'Rental Counter', perm: Perm.SalesCounter, feature: 'rentalsEnabled' },
+            { to: '/Admin/StoreCredit',   icon: 'mdi-wallet-giftcard', title: 'Store Credit',  perm: Perm.CustomersView },
             { to: '/Admin/Payouts',       icon: 'mdi-bank-transfer',  title: 'Payouts',        perm: Perm.ReportsView },
         ],
     },
@@ -333,6 +341,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Pages',             icon: 'mdi-file-document-outline', title: 'Pages', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
+            { to: '/Admin/Settings/QuickBooks', icon: 'mdi-book-open-variant', title: 'QuickBooks', perm: Perm.AccountingManage },
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage, feature: 'membershipEnabled' },
             { to: '/Admin/Waiver',            icon: 'mdi-file-sign',     title: 'Waivers',    perm: Perm.CatalogManage },
         ],

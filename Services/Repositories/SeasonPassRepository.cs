@@ -35,6 +35,8 @@ namespace Services.Repositories
             cancelled_at AS CancelledAt, cancelled_by_user_id AS CancelledByUserId,
             refund_note AS RefundNote,
             photo_data_url AS PhotoDataUrl,
+            holder_first_name AS HolderFirstName, holder_last_name AS HolderLastName,
+            holder_birthdate AS HolderBirthdate,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string ReservationColumns = @"
@@ -162,6 +164,135 @@ namespace Services.Repositories
             }
         }
 
+        private const string BenefitColumns = @"
+            id, tenant_id AS TenantId, pass_product_id AS PassProductId,
+            benefit_type AS BenefitType, scope_id AS ScopeId,
+            discount_kind AS DiscountKind, discount_value AS DiscountValue,
+            quantity";
+
+        public async Task<List<SeasonPassBenefit>> ListBenefits(Guid passProductId, Guid tenantId)
+        {
+            var sql = $@"
+                SELECT {BenefitColumns}
+                FROM season_pass_benefit
+                WHERE pass_product_id = @passProductId AND tenant_id = @tenantId
+                ORDER BY benefit_type, discount_value DESC";
+            return (await _db.Query<SeasonPassBenefit>(sql, new { passProductId, tenantId })).ToList();
+        }
+
+        public async Task<Dictionary<Guid, List<SeasonPassBenefit>>> ListBenefitsForProducts(
+            IEnumerable<Guid> passProductIds, Guid tenantId)
+        {
+            var ids = passProductIds.Distinct().ToArray();
+            if (ids.Length == 0) return new Dictionary<Guid, List<SeasonPassBenefit>>();
+            var sql = $@"
+                SELECT {BenefitColumns}
+                FROM season_pass_benefit
+                WHERE pass_product_id = ANY(@ids) AND tenant_id = @tenantId
+                ORDER BY benefit_type, discount_value DESC";
+            var rows = await _db.Query<SeasonPassBenefit>(sql, new { ids, tenantId });
+            return rows.GroupBy(b => b.PassProductId).ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        public async Task ReplaceBenefits(Guid passProductId, Guid tenantId, IEnumerable<SeasonPassBenefit> benefits)
+        {
+            // Tenant-scoped delete: without it a spoofed product id from another tenant would wipe
+            // that tenant's benefits before the insert failed.
+            await _db.Execute(
+                "DELETE FROM season_pass_benefit WHERE pass_product_id = @passProductId AND tenant_id = @tenantId",
+                new { passProductId, tenantId });
+            foreach (var b in benefits)
+            {
+                const string sql = @"
+                    INSERT INTO season_pass_benefit
+                        (tenant_id, pass_product_id, benefit_type, scope_id, discount_kind, discount_value, quantity)
+                    VALUES (@tenantId, @passProductId, @BenefitType, @ScopeId, @DiscountKind, @DiscountValue, @Quantity)
+                    ON CONFLICT DO NOTHING";
+                await _db.Execute(sql, new
+                {
+                    tenantId,
+                    passProductId,
+                    b.BenefitType,
+                    b.ScopeId,
+                    b.DiscountKind,
+                    b.DiscountValue,
+                    b.Quantity,
+                });
+            }
+        }
+
+        public async Task<List<SeasonPassBenefitGrant>> ListActiveBenefitGrantsForUser(
+            Guid userId, Guid tenantId, string benefitType, Guid? scopeId, DateTime onDateUtc)
+        {
+            // One row per (pass, matching benefit). The scope filter accepts a benefit scoped to
+            // this exact scope OR one with no scope (the whole surface).
+            //
+            // "Active" is deliberately strict, mirroring what the gate would accept on the day:
+            //   * status = 'paid'                — a pending/refunded pass grants nothing
+            //   * photo present                  — unregistered passes aren't usable (Script0176)
+            //   * waiver signed when required    — same rule as check-in
+            //   * the event date inside the pass's validity window
+            //   * the day-of-week rule for days_of_week products
+            // Without these a rider could buy an unregistered pass and immediately claim free entry
+            // at a race their pass isn't valid for.
+            //
+            // Credits products grant NOTHING here, deliberately. A credit pass is "N rides", so a
+            // benefit it grants has to burn a credit — and burning one safely means recording which
+            // pass paid for which ticket, so a failed or refunded charge hands the credit back.
+            // That accounting doesn't exist yet, and without it a 10-credit pass would hand out
+            // UNLIMITED free entry (the count never drops). Excluding them is the safe half: a
+            // credits pass simply offers no event benefit until the burn is wired.
+            // Columns are spelled out rather than reusing BenefitColumns: the joins make the
+            // shared names (id, tenant_id, quantity) ambiguous, and Dapper's splitOn needs the
+            // benefit's own id to start the second object.
+            const string sql = @"
+                SELECT sp.id                AS PassPurchaseId,
+                       sp.product_id        AS PassProductId,
+                       p.name               AS ProductName,
+                       p.kind               AS ProductKind,
+                       sp.credits_remaining AS CreditsRemaining,
+                       b.id,
+                       b.tenant_id      AS TenantId,
+                       b.pass_product_id AS PassProductId,
+                       b.benefit_type   AS BenefitType,
+                       b.scope_id       AS ScopeId,
+                       b.discount_kind  AS DiscountKind,
+                       b.discount_value AS DiscountValue,
+                       b.quantity
+                FROM season_pass_purchase sp
+                JOIN season_pass_product p ON p.id = sp.product_id
+                JOIN season_pass_benefit b ON b.pass_product_id = sp.product_id
+                WHERE sp.purchaser_user_id = @userId
+                  AND sp.tenant_id = @tenantId
+                  AND sp.status = 'paid'
+                  AND sp.photo_data_url IS NOT NULL
+                  AND (p.requires_waiver = false OR sp.waiver_signature_id IS NOT NULL)
+                  AND @onDate::date BETWEEN sp.valid_from_date AND sp.valid_to_date
+                  AND (p.kind <> 'days_of_week'
+                       OR p.valid_days_of_week IS NULL
+                       OR EXTRACT(DOW FROM @onDate::date)::int = ANY(p.valid_days_of_week))
+                  AND p.kind <> 'credits'
+                  AND b.benefit_type = @benefitType
+                  AND (b.scope_id = @scopeId OR b.scope_id IS NULL)
+                ORDER BY sp.created_at";
+            var rows = await _db.Query<SeasonPassBenefitGrant, SeasonPassBenefit, SeasonPassBenefitGrant>(
+                sql, (grant, benefit) => { grant.Benefit = benefit; return grant; },
+                new { userId, tenantId, benefitType, scopeId, onDate = onDateUtc.Date },
+                splitOn: "id");
+
+            // A pass whose product carries BOTH a type-scoped benefit and a whole-surface one
+            // matches twice. The scoped row wins: "10% off Race" alongside "50% off all events"
+            // reads as a deliberate override for races, not an accident, so specificity beats
+            // size (a tie on specificity falls back to the bigger discount). One grant per pass
+            // means the caller can treat grant count as "how many tickets can be discounted".
+            return rows
+                .GroupBy(g => g.PassPurchaseId)
+                .Select(g => g.OrderByDescending(x => x.Benefit.ScopeId.HasValue ? 1 : 0)
+                              .ThenByDescending(x => x.Benefit.DiscountValue)
+                              .First())
+                .ToList();
+        }
+
         public async Task<(Guid Id, Guid RedemptionToken)> CreatePurchase(SeasonPassPurchase p)
         {
             const string sql = @"
@@ -194,6 +325,19 @@ namespace Services.Repositories
             return (await _db.Query<SeasonPassPurchase>(sql, new { paymentIntentId })).FirstOrDefault();
         }
 
+        public async Task<List<SeasonPassPurchase>> ListPurchasesByStripePaymentIntentId(string paymentIntentId)
+        {
+            // One checkout can put several passes on a single PaymentIntent (a parent buying for
+            // three kids), so finalization and refunds must see every row, not just the first.
+            // Ordered by created_at so the caller's per-pass output is stable across calls.
+            var sql = $@"
+                SELECT {PurchaseColumns}
+                FROM season_pass_purchase
+                WHERE stripe_payment_intent_id = @paymentIntentId
+                ORDER BY created_at";
+            return (await _db.Query<SeasonPassPurchase>(sql, new { paymentIntentId })).ToList();
+        }
+
         public async Task<SeasonPassPurchase?> GetPurchaseByRedemptionToken(Guid token)
         {
             var sql = $"SELECT {PurchaseColumns} FROM season_pass_purchase WHERE redemption_token = @token LIMIT 1";
@@ -202,18 +346,9 @@ namespace Services.Repositories
 
         public async Task<List<SeasonPassPurchaseWithContext>> ListMine(Guid userId, Guid tenantId)
         {
+            // Columns are spelled out rather than reusing PurchaseColumns because the product join
+            // makes the shared names (id, status, name) ambiguous — they need the sp. qualifier.
             var sql = $@"
-                SELECT {PurchaseColumns},
-                       p.name AS ProductName,
-                       p.kind AS ProductKind,
-                       p.total_credits AS ProductTotalCredits,
-                       p.valid_days_of_week AS ProductValidDaysOfWeek
-                FROM season_pass_purchase sp
-                JOIN season_pass_product p ON p.id = sp.product_id
-                WHERE sp.purchaser_user_id = @userId AND sp.tenant_id = @tenantId
-                ORDER BY sp.created_at DESC";
-            // Re-qualify columns so ambiguous ones (id, status, name) resolve. Easier: rewrite.
-            sql = $@"
                 SELECT
                     sp.id, sp.tenant_id AS TenantId, sp.purchaser_user_id AS PurchaserUserId,
                     sp.product_id AS ProductId, sp.waiver_signature_id AS WaiverSignatureId,
@@ -229,11 +364,14 @@ namespace Services.Repositories
                     sp.cancelled_at AS CancelledAt, sp.cancelled_by_user_id AS CancelledByUserId,
                     sp.refund_note AS RefundNote,
                     sp.photo_data_url AS PhotoDataUrl,
+                    sp.holder_first_name AS HolderFirstName, sp.holder_last_name AS HolderLastName,
+                    sp.holder_birthdate AS HolderBirthdate,
                     sp.created_at AS CreatedAt, sp.updated_at AS UpdatedAt,
                     p.name AS ProductName,
                     p.kind AS ProductKind,
                     p.total_credits AS ProductTotalCredits,
-                    p.valid_days_of_week AS ProductValidDaysOfWeek
+                    p.valid_days_of_week AS ProductValidDaysOfWeek,
+                    p.requires_waiver AS ProductRequiresWaiver
                 FROM season_pass_purchase sp
                 JOIN season_pass_product p ON p.id = sp.product_id
                 WHERE sp.purchaser_user_id = @userId AND sp.tenant_id = @tenantId
@@ -262,6 +400,38 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE season_pass_purchase SET status = @status, updated_at = now() WHERE id = @id";
             await _db.Execute(sql, new { id, status });
+        }
+
+        public async Task<int> CompleteRegistration(Guid id, Guid tenantId, Guid purchaserUserId,
+            string holderFirstName, string holderLastName, DateTime? holderBirthdate,
+            string photoDataUrl, Guid? waiverSignatureId)
+        {
+            // Scoped by tenant AND purchaser: registration is driven by a client-supplied pass id,
+            // so without the purchaser predicate any signed-in rider could write their own holder
+            // name, photo, and waiver onto someone else's pass. Returns rows affected so the caller
+            // can tell "not yours / wrong tenant" from a real update.
+            //
+            // status = 'paid' because an unpaid pass has nothing to register against — a pending row
+            // may still fail its charge, and registering it would leave a holder-complete pass the
+            // gate would happily admit. Re-running on an already-registered pass overwrites it,
+            // which is what a buyer correcting a typo needs.
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET holder_first_name   = @holderFirstName,
+                    holder_last_name    = @holderLastName,
+                    holder_birthdate    = @holderBirthdate,
+                    photo_data_url      = @photoDataUrl,
+                    waiver_signature_id = COALESCE(@waiverSignatureId, waiver_signature_id),
+                    updated_at          = now()
+                WHERE id = @id
+                  AND tenant_id = @tenantId
+                  AND purchaser_user_id = @purchaserUserId
+                  AND status = 'paid'";
+            return await _db.Execute(sql, new
+            {
+                id, tenantId, purchaserUserId, holderFirstName, holderLastName,
+                holderBirthdate, photoDataUrl, waiverSignatureId,
+            });
         }
 
         public async Task DecrementCredits(Guid purchaseId)
@@ -299,9 +469,14 @@ namespace Services.Repositories
                 SELECT r.id AS ReservationId, r.event_id AS EventId,
                        p.purchaser_user_id AS HolderUserId,
                        p.purchaser_email AS HolderEmail,
-                       p.purchaser_name AS HolderName
+                       p.purchaser_name AS HolderName,
+                       p.holder_first_name AS HolderFirstName,
+                       (p.photo_data_url IS NOT NULL) AS HasPhoto,
+                       p.waiver_signature_id AS WaiverSignatureId,
+                       pr.requires_waiver AS ProductRequiresWaiver
                 FROM season_pass_reservation r
                 JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                JOIN season_pass_product pr ON pr.id = p.product_id
                 WHERE r.id = @reservationId AND p.tenant_id = @tenantId
                 LIMIT 1";
             return (await _db.Query<SeasonPassCheckInContext>(sql, new { reservationId, tenantId })).FirstOrDefault();

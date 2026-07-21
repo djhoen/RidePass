@@ -23,5 +23,9 @@ namespace Services.Repositories.Data.PaymentData
         public string TierName { get; set; } = null!;
         public string TierKind { get; set; } = null!;      // race_entry | gate_fee
         public string TierAudience { get; set; } = null!;  // rider | spectator
+        /// <summary>Whether this ticket is checked in FOR THE DAY the roster was asked for.
+        /// On a multi-day camp that is today's attendance row; on a single-day event it mirrors
+        /// status = 'redeemed', so a client can rely on this one field either way.</summary>
+        public bool CheckedInOnDate { get; set; }
     }
 }

@@ -4,6 +4,9 @@
     {
         public string ClientSecret { get; set; } = null!;
         public int TotalAmountCents { get; set; }
+        // Store credit applied as a tender and the remainder actually charged/collected.
+        public int CreditAppliedCents { get; set; }
+        public int DueCents { get; set; }
         // Admission tax contained in TotalAmountCents (0 when the tenant has no admission tax).
         public int TaxCents { get; set; }
         public List<CounterSaleLineItem> LineItems { get; set; } = new();

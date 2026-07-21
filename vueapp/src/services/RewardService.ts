@@ -8,6 +8,9 @@ export interface RewardProgram {
     requirementKind: 'pass' | 'event_ticket' | 'any'
     requirementCount: number
     rewardPercentOff: number
+    rewardKind: 'percent_off' | 'credit_rate'
+    creditRateBps: number | null
+    creditQualifyingKind: 'any' | 'event_ticket' | 'concession' | 'shop_sale'
     proximityEmailThreshold: number | null
     isActive: boolean
     createdAtUtc: string
@@ -20,6 +23,9 @@ export interface UpsertRewardProgram {
     requirementKind: 'pass' | 'event_ticket' | 'any'
     requirementCount: number
     rewardPercentOff: number
+    rewardKind: 'percent_off' | 'credit_rate'
+    creditRateBps: number | null
+    creditQualifyingKind: 'any' | 'event_ticket' | 'concession' | 'shop_sale'
     proximityEmailThreshold: number | null
     isActive: boolean
 }
@@ -32,6 +38,9 @@ export interface RiderRewardProgram {
     requirementKind: 'pass' | 'event_ticket' | 'any'
     requirementCount: number
     rewardPercentOff: number
+    rewardKind: 'percent_off' | 'credit_rate'
+    creditRateBps: number | null
+    creditQualifyingKind: 'any' | 'event_ticket' | 'concession' | 'shop_sale'
     isEnrolled: boolean
     progress: number
     remainingForReward: number

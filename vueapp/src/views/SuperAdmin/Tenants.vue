@@ -417,10 +417,12 @@
                     <div v-if="editError" class="text-error text-caption mt-2">{{ editError }}</div>
                 </v-card-text>
                 <v-card-actions>
-                    <!-- Stage/local only: one-shot demo data. Disappears once the tenant is seeded. -->
-                    <v-btn v-if="editTenant?.canSeedData && !editTenant?.seedDataPopulated"
+                    <!-- Stage/local only. Re-running is safe: the seeder skips sections that already
+                         have data, so it only fills in demo sections added since the last run. -->
+                    <v-btn v-if="editTenant?.canSeedData"
                         variant="tonal" color="secondary" prepend-icon="mdi-database-plus"
-                        :loading="seeding" @click="populateSeed">Populate Seed Data</v-btn>
+                        :loading="seeding" @click="populateSeed">
+                        {{ editTenant?.seedDataPopulated ? 'Re-run Seed Data' : 'Populate Seed Data' }}</v-btn>
                     <v-spacer></v-spacer>
                     <v-btn @click="editDialog = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="savingEdit" @click="saveEdit">Save</v-btn>
@@ -545,13 +547,14 @@ function blankCreateForm() {
         // Feature defaults below are the MX baseline; switching to MTB re-applies the
         // MTB defaults via the tenantType watcher.
         giftCardsEnabled: false,
-        rentalsEnabled: false,
         extrasEnabled: true,
         seasonPassesEnabled: true,
         concessionsEnabled: false,
+        bikeShopEnabled: false,
         blogEnabled: false,
         membershipEnabled: true,
-        waitlistEnabled: true,
+        waitlistEnabled: false,
+        waitlistPrepayEnabled: false,
         allowSelfCancel: false,
         dynamicPricingEnabled: false,
         bundledCouponsEnabled: false,
@@ -560,7 +563,7 @@ function blankCreateForm() {
 const createForm = ref(blankCreateForm())
 
 // Re-apply sensible feature defaults + venue category whenever the tenant type changes
-// in the create dialog. MTB turns Rentals on (bike/gear rental is core to parks); both
+// in the create dialog. Both
 // types get Add-ons / Memberships / Season passes / Waitlist on, the rest off. Manual
 // toggles after a type pick stick until the type is changed again.
 function applyTypeFeatureDefaults(type: 'motocross' | 'mountain_bike') {
@@ -568,14 +571,15 @@ function applyTypeFeatureDefaults(type: 'motocross' | 'mountain_bike') {
     f.extrasEnabled = true
     f.membershipEnabled = true
     f.seasonPassesEnabled = true
-    f.waitlistEnabled = true
+    f.waitlistEnabled = false
+    f.waitlistPrepayEnabled = false
     f.giftCardsEnabled = false
     f.concessionsEnabled = false
+    f.bikeShopEnabled = false
     f.blogEnabled = false
     f.allowSelfCancel = false
     f.dynamicPricingEnabled = false
     f.bundledCouponsEnabled = false
-    f.rentalsEnabled = type === 'mountain_bike'
 }
 watch(() => createForm.value.tenantType, (type) => {
     createForm.value.venueCategory = type === 'mountain_bike'
@@ -588,18 +592,19 @@ watch(() => createForm.value.tenantType, (type) => {
 // description is a one-liner so a super-admin knows what each bit turns on without
 // leaving the dialog. Keys map to the matching boolean on both form shapes.
 type FeatureKey =
-    | 'giftCardsEnabled' | 'rentalsEnabled' | 'extrasEnabled' | 'seasonPassesEnabled'
-    | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled' | 'waitlistEnabled' | 'allowSelfCancel'
+    | 'giftCardsEnabled' | 'extrasEnabled' | 'seasonPassesEnabled'
+    | 'concessionsEnabled' | 'bikeShopEnabled' | 'blogEnabled' | 'membershipEnabled' | 'waitlistEnabled' | 'waitlistPrepayEnabled' | 'allowSelfCancel'
     | 'dynamicPricingEnabled' | 'bundledCouponsEnabled'
 const featureToggles: { key: FeatureKey; label: string; description: string }[] = [
     { key: 'giftCardsEnabled', label: 'Gift cards', description: 'Riders buy and redeem digital gift cards delivered by email.' },
-    { key: 'rentalsEnabled', label: 'Rentals', description: 'Rent gear (bikes, helmets, pads) per session, with deposit and insurance support.' },
     { key: 'extrasEnabled', label: 'Add-ons', description: 'Sell camping, parking, pit-vehicle passes, and merch alongside event entries.' },
     { key: 'seasonPassesEnabled', label: 'Season passes', description: 'Sell season-long passes that cover entry to qualifying events.' },
     { key: 'concessionsEnabled', label: 'Food & Beverage', description: 'Sell food, drink, and swag from the mobile tap-to-pay app, separate from events.' },
+    { key: 'bikeShopEnabled', label: 'Bike Shop', description: 'Sell and rent bikes, gear, and parts and take in repairs, with full inventory and a retail register.' },
     { key: 'blogEnabled', label: 'Blog', description: 'Publish posts with photos and add a Blog link to the public nav.' },
     { key: 'membershipEnabled', label: 'Membership', description: 'Sell yearly or one-time memberships and gate selected purchases behind them.' },
-    { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens.' },
+    { key: 'waitlistEnabled', label: 'Event waitlist', description: 'Sold-out events and tiers offer a waitlist; alternates get texted when a spot opens. Off by default, most tracks do not want one.' },
+    { key: 'waitlistPrepayEnabled', label: 'Waitlist pre-pay', description: 'Riders pay when they JOIN the waitlist and are auto-confirmed when a spot opens, instead of being texted a pay-now link. This holds money against a spot that may never open, so switch it on only when a track asks. Does nothing unless Event waitlist is also on.' },
     { key: 'allowSelfCancel', label: 'Rider self-cancel', description: 'Riders cancel their own purchases from My Passes (refund honors the service-charge rule).' },
     { key: 'dynamicPricingEnabled', label: 'Dynamic pricing', description: 'Event tickets can use stepped price ladders: the price rises automatically as tickets sell or the event date approaches (early-bird pricing).' },
     { key: 'bundledCouponsEnabled', label: 'Bundled coupons', description: 'Race-entry tiers can include single-use discount codes, generated at purchase, that the buyer shares to discount tickets for that same event.' },
@@ -664,13 +669,14 @@ interface TenantEditForm {
     externalEventsUrl: string | null
     embedEventTarget: 'external' | 'ridepass'
     giftCardsEnabled: boolean
-    rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    bikeShopEnabled: boolean
     blogEnabled: boolean
     membershipEnabled: boolean
     waitlistEnabled: boolean
+    waitlistPrepayEnabled: boolean
     allowSelfCancel: boolean
     dynamicPricingEnabled: boolean
     bundledCouponsEnabled: boolean
@@ -884,13 +890,14 @@ async function submitCreateTenant() {
             externalEventsUrl: createForm.value.externalEventsUrl.trim() || null,
             embedEventTarget: createForm.value.embedEventTarget,
             giftCardsEnabled: createForm.value.giftCardsEnabled,
-            rentalsEnabled: createForm.value.rentalsEnabled,
             extrasEnabled: createForm.value.extrasEnabled,
             seasonPassesEnabled: createForm.value.seasonPassesEnabled,
             concessionsEnabled: createForm.value.concessionsEnabled,
+            bikeShopEnabled: createForm.value.bikeShopEnabled,
             blogEnabled: createForm.value.blogEnabled,
             membershipEnabled: createForm.value.membershipEnabled,
             waitlistEnabled: createForm.value.waitlistEnabled,
+            waitlistPrepayEnabled: createForm.value.waitlistPrepayEnabled,
             allowSelfCancel: createForm.value.allowSelfCancel,
             dynamicPricingEnabled: createForm.value.dynamicPricingEnabled,
             bundledCouponsEnabled: createForm.value.bundledCouponsEnabled,
@@ -916,9 +923,9 @@ function emptyEditForm(): TenantEditForm {
         loampassMxDestinationId: null,
         clientType: 'hosted', customDomain: null, customDomainVerified: false, embedEnabled: false, embedAllowedOrigins: [],
         externalHomeUrl: null, externalEventsUrl: null, embedEventTarget: 'external',
-        giftCardsEnabled: false, rentalsEnabled: false, extrasEnabled: false, seasonPassesEnabled: true,
-        concessionsEnabled: false, blogEnabled: false, membershipEnabled: false,
-        waitlistEnabled: true, allowSelfCancel: false,
+        giftCardsEnabled: false, extrasEnabled: false, seasonPassesEnabled: true,
+        concessionsEnabled: false, bikeShopEnabled: false, blogEnabled: false, membershipEnabled: false,
+        waitlistEnabled: false, waitlistPrepayEnabled: false, allowSelfCancel: false,
         dynamicPricingEnabled: false, bundledCouponsEnabled: false,
     }
 }
@@ -954,13 +961,14 @@ function openEdit(t: TenantSummary) {
         externalEventsUrl: t.externalEventsUrl,
         embedEventTarget: t.embedEventTarget ?? 'external',
         giftCardsEnabled: t.giftCardsEnabled,
-        rentalsEnabled: t.rentalsEnabled,
         extrasEnabled: t.extrasEnabled,
         seasonPassesEnabled: t.seasonPassesEnabled,
         concessionsEnabled: t.concessionsEnabled,
+        bikeShopEnabled: t.bikeShopEnabled,
         blogEnabled: t.blogEnabled,
         membershipEnabled: t.membershipEnabled,
         waitlistEnabled: t.waitlistEnabled,
+        waitlistPrepayEnabled: t.waitlistPrepayEnabled,
         allowSelfCancel: t.allowSelfCancel,
         dynamicPricingEnabled: t.dynamicPricingEnabled,
         bundledCouponsEnabled: t.bundledCouponsEnabled,
@@ -1033,13 +1041,14 @@ async function saveEdit() {
             externalEventsUrl: norm(f.externalEventsUrl),
             embedEventTarget: f.embedEventTarget,
             giftCardsEnabled: f.giftCardsEnabled,
-            rentalsEnabled: f.rentalsEnabled,
             extrasEnabled: f.extrasEnabled,
             seasonPassesEnabled: f.seasonPassesEnabled,
             concessionsEnabled: f.concessionsEnabled,
+            bikeShopEnabled: f.bikeShopEnabled,
             blogEnabled: f.blogEnabled,
             membershipEnabled: f.membershipEnabled,
             waitlistEnabled: f.waitlistEnabled,
+            waitlistPrepayEnabled: f.waitlistPrepayEnabled,
             allowSelfCancel: f.allowSelfCancel,
             dynamicPricingEnabled: f.dynamicPricingEnabled,
             bundledCouponsEnabled: f.bundledCouponsEnabled,
@@ -1095,11 +1104,13 @@ async function populateSeed() {
         const r = await service.populateSeedData(editTenant.value.id)
         const s = (r.data as any).data as Record<string, number>
         const total = Object.values(s).reduce((a, b) => a + b, 0)
-        // Hide the button (also reflected server-side by seed_data_populated_at).
         editTenant.value.seedDataPopulated = true
         const match = tenants.value.find(t => t.id === editTenant.value!.id)
         if (match) match.seedDataPopulated = true
-        flash(`Seeded ${total} demo records (${s.events} events, ${s.tickets} tickets, ${s.concessionOrders} F&B orders).`, 'success')
+        // The summary counts what THIS run created; a re-run that found everything present is 0.
+        flash(total === 0
+            ? 'Nothing to add: every demo section already has data for this tenant.'
+            : `Seeded ${total} demo records (${s.events} events, ${s.tickets} tickets, ${s.concessionOrders} F&B orders).`, 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not populate seed data. Check the server logs and try again.', 'error')
     } finally {

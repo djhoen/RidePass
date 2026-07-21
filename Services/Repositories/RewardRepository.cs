@@ -12,6 +12,9 @@ namespace Services.Repositories
             requirement_kind AS RequirementKind,
             requirement_count AS RequirementCount,
             reward_percent_off AS RewardPercentOff,
+            reward_kind AS RewardKind,
+            credit_rate_bps AS CreditRateBps,
+            credit_qualifying_kind AS CreditQualifyingKind,
             proximity_email_threshold AS ProximityEmailThreshold,
             is_active AS IsActive,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
@@ -52,10 +55,12 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO reward_program
                     (tenant_id, name, description, enrollment_mode, requirement_kind,
-                     requirement_count, reward_percent_off, proximity_email_threshold, is_active)
+                     requirement_count, reward_percent_off, reward_kind, credit_rate_bps,
+                     credit_qualifying_kind, proximity_email_threshold, is_active)
                 VALUES
                     (@TenantId, @Name, @Description, @EnrollmentMode, @RequirementKind,
-                     @RequirementCount, @RewardPercentOff, @ProximityEmailThreshold, @IsActive)
+                     @RequirementCount, @RewardPercentOff, @RewardKind, @CreditRateBps,
+                     @CreditQualifyingKind, @ProximityEmailThreshold, @IsActive)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, p)).First();
         }
@@ -70,6 +75,9 @@ namespace Services.Repositories
                     requirement_kind = @RequirementKind,
                     requirement_count = @RequirementCount,
                     reward_percent_off = @RewardPercentOff,
+                    reward_kind = @RewardKind,
+                    credit_rate_bps = @CreditRateBps,
+                    credit_qualifying_kind = @CreditQualifyingKind,
                     proximity_email_threshold = @ProximityEmailThreshold,
                     is_active = @IsActive,
                     updated_at = now()

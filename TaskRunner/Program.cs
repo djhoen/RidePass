@@ -1,7 +1,8 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Services.Helpers;
 using Services.Payments;
+using Services.QuickBooks;
 using Services.Repositories;
 using Services.Scheduling;
 using Services.Scheduling.Handlers;
@@ -9,7 +10,7 @@ using Services.Sms;
 
 // RidePass TaskRunner, background process for deferred work.
 //
-// Two concurrent loops, different cadences:
+// Four concurrent loops, different cadences:
 //
 //   • Scheduled-task dispatcher (60s tick) — polls scheduled_task for due rows,
 //     dispatches to per-kind handlers, retries with backoff on failure. The
@@ -21,6 +22,14 @@ using Services.Sms;
 //     the previous month's payout for any tenant that doesn't already have
 //     one. Stays standalone because it's a single periodic sweep, not a
 //     per-row job.
+//
+//   • QuickBooks sync (60m tick) — tenant-spanning sweep that posts each
+//     connected tenant's completed local business days into their QuickBooks
+//     Online company as one summarised journal entry per day. Idempotent via
+//     the unique index on qbo_sync_log (tenant_id, business_date), so a tick
+//     that overlaps a manual "Sync now" can't double-post. Hourly rather than
+//     daily because tenants span timezones — a day closes at a different UTC
+//     moment for each, and the sweep simply posts whatever is now complete.
 //
 //   • SMS billing attacher (60s tick) — drains tenant_billing_event rows
 //     into tenant_ledger_entry as negative sms_charge adjustments so the
@@ -87,6 +96,18 @@ var ledgerRepo = new TenantLedgerRepository(dbHelper);
 var smsBillingAttacher = new SmsBillingPayoutAttacher(billingEventRepo, ledgerRepo,
     NullLogger<SmsBillingPayoutAttacher>.Instance);
 
+// QuickBooks sync dependencies. Same "single periodic sweep" shape as the payout
+// drafter, so it stays standalone rather than becoming a scheduled_task kind.
+var quickBooksRepo = new QuickBooksRepository(dbHelper);
+var accountingEntryRepo = new AccountingEntryRepository(dbHelper);
+var quickBooksOptions = new QuickBooksOptions(configuration);
+var quickBooksTokens = new QuickBooksTokenService(quickBooksOptions, quickBooksRepo, dbHelper,
+    NullLogger<QuickBooksTokenService>.Instance);
+var quickBooksApi = new QuickBooksApiClient(quickBooksOptions, quickBooksTokens, quickBooksRepo,
+    NullLogger<QuickBooksApiClient>.Instance);
+var quickBooksSync = new QuickBooksSyncService(quickBooksRepo, accountingEntryRepo, quickBooksApi,
+    tenantRepo, NullLogger<QuickBooksSyncService>.Instance);
+
 // One entry per handler kind. Add new jobs here. These must mirror the
 // IScheduledTaskHandler registrations in webapi/Program.cs — TaskRunner is the
 // only process that actually runs the dispatcher, so a handler missing here
@@ -106,14 +127,49 @@ var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// Three independent loops. Cancellation token wired so Ctrl-C stops all.
+// Four independent loops. Cancellation token wired so Ctrl-C stops all.
 var dispatcherLoop = Task.Run(() => DispatcherLoop(dispatcher, cts.Token));
 var drafterLoop = Task.Run(() => DrafterLoop(drafter, cts.Token));
 var smsBillingLoop = Task.Run(() => SmsBillingAttachLoop(smsBillingAttacher, cts.Token));
+var quickBooksLoop = Task.Run(() => QuickBooksSyncLoop(quickBooksSync, quickBooksOptions, cts.Token));
 
-await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop);
+await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop, quickBooksLoop);
 
 Console.WriteLine("TaskRunner stopped.");
+
+static async Task QuickBooksSyncLoop(IQuickBooksSyncService sync, QuickBooksOptions options, CancellationToken ct)
+{
+    if (!options.IsConfigured)
+    {
+        // No Intuit app credentials on this deployment, so no tenant can be connected. Log once
+        // and stop rather than tick hourly forever doing nothing.
+        Console.WriteLine($"[{DateTime.UtcNow:o}] QuickBooks sync: not configured (QuickBooks:ClientId/ClientSecret/RedirectUri unset); loop disabled.");
+        return;
+    }
+
+    var tick = TimeSpan.FromMinutes(60);
+    var timer = new PeriodicTimer(tick);
+    try
+    {
+        do
+        {
+            try
+            {
+                var summary = await sync.SyncDueTenantsAsync(ct);
+                if (summary.TenantsConsidered > 0)
+                {
+                    Console.WriteLine($"[{DateTime.UtcNow:o}] QuickBooks sync: tenants={summary.TenantsConsidered} posted={summary.DaysPosted} skipped={summary.DaysSkipped} failed={summary.DaysFailed}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[{DateTime.UtcNow:o}] QuickBooks sync loop error: {ex.Message}");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(ct));
+    }
+    catch (OperationCanceledException) { /* shutting down */ }
+}
 
 static async Task DispatcherLoop(ScheduledTaskDispatcher dispatcher, CancellationToken ct)
 {

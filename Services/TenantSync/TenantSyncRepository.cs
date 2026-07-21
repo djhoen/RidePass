@@ -83,7 +83,6 @@ namespace Services.TenantSync
                   + (SELECT count(*) FROM event_extra_purchase  WHERE tenant_id = @tenantId AND status IN ('paid','redeemed','refunded'))
                   + (SELECT count(*) FROM season_pass_purchase  WHERE tenant_id = @tenantId AND status IN ('paid','redeemed','refunded'))
                   + (SELECT count(*) FROM membership_purchase   WHERE tenant_id = @tenantId AND status IN ('paid','redeemed','refunded'))
-                  + (SELECT count(*) FROM rental_purchase       WHERE tenant_id = @tenantId AND status IN ('paid','redeemed','refunded'))
                   + (SELECT count(*) FROM concession_sale       WHERE tenant_id = @tenantId AND status IN ('paid','redeemed','refunded'))";
             return await _db.ExecuteScalar(sql, new { tenantId });
         }

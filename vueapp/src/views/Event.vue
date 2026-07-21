@@ -18,6 +18,10 @@
                             <span>Back to Events</span>
                         </router-link>
                         <div class="evt-hero-bottom">
+                            <div class="d-flex align-center ga-2 mb-1">
+                                <v-icon :icon="eventTypeIcon(event.eventTypeCode)" size="18" class="text-white"></v-icon>
+                                <span class="text-caption text-white">{{ event.eventTypeName }}</span>
+                            </div>
                             <h1 class="evt-title font-display text-white">{{ event.title }}</h1>
                         </div>
                     </v-container>
@@ -35,7 +39,7 @@
                 </a>
                 <h1 class="text-h6 font-weight-bold font-display">{{ event.title }}</h1>
                 <div class="text-caption text-medium-emphasis">
-                    {{ dateLine }}<span v-if="locationText"> · {{ locationText }}</span>
+                    {{ event.eventTypeName }} · {{ dateLine }}<span v-if="locationText"> · {{ locationText }}</span>
                 </div>
             </v-container>
 
@@ -221,9 +225,12 @@ const detailLines = computed(() =>
 const waiverNote = computed(() => {
     const rider = !!event.value?.requiresRiderWaiver
     const spectator = !!event.value?.requiresSpectatorWaiver
+    // "Racers" only makes sense at a race. Everywhere else (lessons, practice, open ride)
+    // the rider-audience word is simply "riders".
+    const riderWord = event.value?.eventTypeCode === 'race' ? 'Racers' : 'Riders'
     let who = ''
-    if (rider && spectator) who = 'Racers and spectators must sign a waiver before entry.'
-    else if (rider) who = 'Racers must sign a waiver before riding before entry.'
+    if (rider && spectator) who = `${riderWord} and spectators must sign a waiver before entry.`
+    else if (rider) who = `${riderWord} must sign a waiver before riding.`
     else if (spectator) who = 'Spectators must sign a waiver before entry.'
     else return ''
     return `${who} You'll be asked to sign during checkout if it isn't already on file.`

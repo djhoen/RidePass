@@ -17,17 +17,18 @@ export interface CounterRider {
 }
 
 export interface CounterCartItem {
-    kind: 'pass' | 'event_ticket' | 'extras' | 'membership'
+    kind: 'pass' | 'event_ticket' | 'extras' | 'membership' | 'rental'
     itemId: string
     quantity: number
-    // Required when kind === 'extras' (anchors the add-on to a specific event).
+    // Required when kind === 'extras' (anchors the add-on to a specific event) and when
+    // kind === 'rental' (the lesson the bike is booked for).
     eventId?: string | null
     // Required when kind === 'extras' AND the product has any active variants.
     variantId?: string | null
 }
 
 export interface CounterSaleLineItem {
-    kind: 'pass' | 'event_ticket' | 'extras' | 'membership'
+    kind: 'pass' | 'event_ticket' | 'extras' | 'membership' | 'shop_rental'
     purchaseId: string
     redemptionToken: string
     displayName: string
@@ -39,6 +40,8 @@ export interface CounterSaleLineItem {
 export interface CounterSaleResponse {
     clientSecret: string
     totalAmountCents: number
+    creditAppliedCents?: number
+    dueCents?: number
     lineItems: CounterSaleLineItem[]
 }
 
@@ -57,7 +60,7 @@ export class CounterService {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders`, body)
     }
 
-    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; rewardRedemptionId?: string | null; paymentMethod?: 'stripe' | 'cash' | null }) {
+    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; rewardRedemptionId?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
     }
 }

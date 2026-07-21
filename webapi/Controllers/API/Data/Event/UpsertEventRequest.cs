@@ -67,11 +67,27 @@ namespace webapi.Controllers.API.Data.Event
 
         // Ordered schedule rows ({time, label}). Null / empty = no schedule.
         public List<ScheduleItem>? Schedule { get; set; }
+
+        // Instructors assigned to this lesson. Null = leave assignments untouched;
+        // empty list = clear all. The server rejects the save if any assigned
+        // instructor already has an overlapping event (no double-booking).
+        public List<Guid>? InstructorIds { get; set; }
+
+        // Rental products (bikes) a rider may add when booking this lesson, each with
+        // an optional per-lesson price override. Null = untouched; empty = clear.
+        public List<EligibleRentalInput>? EligibleRentals { get; set; }
     }
 
     public class EligibleExtraInput
     {
         public Guid ProductId { get; set; }
         public int? Inventory { get; set; }
+    }
+
+    public class EligibleRentalInput
+    {
+        public Guid VariantId { get; set; }
+        // NULL = charge the variant's daily rate for the lesson block.
+        public int? PriceCentsOverride { get; set; }
     }
 }

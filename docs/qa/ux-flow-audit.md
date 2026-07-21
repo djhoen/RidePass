@@ -131,3 +131,54 @@ to Stripe and routes the overflow back to the gift card via the new `RestoreGift
 helper (deletes the redemption rows, restores the balance, re-records any still-applied remainder
 on a partial refund). The refund ledger stays at `-refundCents` (full), consistent with the
 sale recording full gross. Needs an end-to-end stage test (split-pay then full + partial refund).
+
+---
+
+## Bike-shop pass (2026-07-21)
+
+The 2026-06-22 audit predated the bike-shop admin surface. This pass applied the
+same rubric to the 7 bike-shop views + 25 components. Most were clean (dialogs
+validate + surface server messages; lists set explicit load errors; confirms use
+`useConfirm`; modals have X-close). Confirmed findings:
+
+| ID | Verdict | Finding + fix |
+|----|---------|---------------|
+| BS1 | `confirmed` ✅ fixed | `ItemsDialog.vue` `load()` didn't clear `items` on failure. The dialog is reused across variants, so a failed load for variant B left variant A's serialized units on screen, and `edit()`→`updateItem` would mutate the wrong variant's stock. FIX: `items.value = []` before the fetch. |
+| BS2 | `confirmed` ✅ fixed | `BikeShopRentals.vue` `loadRetailTax()` set `retailTaxCategories = []` on error, driving the banner to assert "No retail tax categories. Anything sold is being rung up with no sales tax" — a false factual claim on a transient load failure. FIX: added `retailTaxError`; on error show a neutral "couldn't check" info alert instead of the "none configured" warning, and don't clear the list. |
+| BS3 | `confirmed` ✅ fixed | `ConditionPhotos.vue` `load()` (re-runs on bound-record change) only set `photos` on success, so switching records with a failed load left the previous record's photos under the new one. FIX: clear `photos` before the fetch. |
+| BS4 | `confirmed` ✅ fixed | `BikeShopRentals.vue` Cash/Card buttons gated only on `lines.length`, not `windowValid`; after adding a line, editing the window to invert (`days` falls back to 1) let staff book an inverted window. Server validates, but the UI shouldn't offer it. FIX: added `|| !windowValid` to both buttons + an inline reason. |
+| BS5 | `guarded` ✅ fixed | `BikeShopRentals.vue` "Damage to keep" had no client upper bound vs the authorized deposit. Server clamps (`BikeShopRentalController.cs:490` `Math.Min(req.DepositCapturedCents, rental.DepositCents)`), so over-capture was impossible; added `:max` + client clamp + hint for consistency with M15. |
+| BS6 | `confirmed` (low, not fixed) | `InspectionChecklistTab.vue` `saveItem`/`saveTemplate` silently no-op on an emptied label/name (reverts on next `load()`); no data loss, and a flash on every in-progress blur would be noisier than the issue. Left as-is; use the row's remove button to delete a point. |
+
+---
+
+## App-wide pass (2026-07-21)
+
+Extended the audit beyond the bike shop to the surfaces the June pass didn't cover:
+Concessions QSR suite, money/auth transactional flows, all SuperAdmin views, admin
+content editors + all Reports subviews, the 33 shared components, and rider/User
+views. Five parallel read-only scouts against the rubric; every finding re-verified
+against the code (incl. the service method) before fixing. Overall quality was high —
+most catches surface the server message, confirms use `useConfirm`, empty states are
+legitimate. Confirmed findings:
+
+| ID | Verdict | Finding + fix |
+|----|---------|---------------|
+| AW1 | `confirmed` ✅ fixed | `RichTextEditor.vue:127` used native `window.prompt('Link URL')` (banned) for link insertion in the Blog + Pages editors. FIX: replaced with a themed `v-dialog` (URL field, Apply/Remove/Cancel, X-close), wired `toggleLink`/`applyLink`/`removeLink`. |
+| AW2 | `confirmed` ✅ fixed | `OrderFood.vue:227` pay dialog title was hardcoded `Pay {full total}` while the cart + PaymentIntent used the reduced due; a rider covering part with store credit saw a higher number than charged. FIX: bound the title to `total − (useStoreCredit ? creditToApply : 0)`. |
+| AW3 | `confirmed` ✅ fixed | `EventRiders.vue:38` "Export Trackside CSV" was a plain `<a :href>` GET; auth is bearer-only (attached by the axios interceptor), so it 401'd and downloaded nothing with no error. FIX: `ReportsService.downloadTracksideCsv` fetches via axios `responseType:'blob'` and the view triggers a client-side download with a loading + error path. |
+| AW4 | `confirmed` ✅ fixed | `Events.vue` (rider) `applyZip`/`applyDraftZip` had `try/finally` with no `catch`; `geocode()` throws on a network error (not returns null), so an offline zip lookup was a silent unhandled rejection (spinner stops, nothing happens). FIX: added `catch` → flash a network-error message. |
+| AW5 | `confirmed` ✅ fixed | `ConcessionInventory.vue` receive-stock qty had no `min` and guarded only falsy; a negative was sendable (server rejects `<= 0`, so guarded, but no immediate feedback). FIX: `min="0"` + client `<= 0` guard. |
+| AW6 | `confirmed` ✅ fixed | `ConcessionOrders.vue` From/To pickers allowed From > To → empty "No orders found" reading as a genuinely empty day. FIX: cross-constrained `:max`/`:min` on the pickers. |
+| AW7 | `guarded` ✅ fixed | `SuperAdmin/Payouts.vue` `submitCreatePayout` had no client start<end check (server rejects with a message). FIX: client guard before submit. |
+| AW8 | `confirmed` ✅ fixed | `Admin/Events.vue` `load()` had no range guard; From > To queried an inverted window and read "No events in this range." FIX: guard rejecting From > To (mirrors the report views). |
+| AW9 | `confirmed` ✅ fixed | `SuperAdmin/Refunds.vue` a refund row with no `stripePaymentIntentId` (cash/comp) showed a permanently-disabled button with no reason. FIX: replaced with an inline "No Stripe charge on record — refund manually" note. |
+| AW10 | `confirmed` ⚠️ DEFERRED | `EventDialog.vue` Duplicate (`seedFromDuplicate`) sets `editing=null`, so the child tier editors run in empty-buffer mode and never load the source event's race classes / gate-fee passes; a race event whose only items were tiers then fails the "add a purchasable item" save guard. A real admin bug, but the fix (fetch the source event's tiers into the tier-editor buffers) is involved and touches a complex dialog — flagged for a dedicated follow-up rather than a blind fix. |
+
+Considered, not fixed (intentional / low / needs-check):
+- `Profile.vue:316` loampass status swallow — fail-closed on an optional secondary panel; surfacing it would show a "couldn't load" notice to non-participating tenants. Left.
+- `Discover.vue:15` radius has an explicit Search button (select disabled until coords) — batch-search by design.
+- `ConcessionMenuBoard.vue`/`ConcessionPickupBoard.vue` first-load silence — unattended kiosk displays that retry; defensible.
+- `Upcoming.vue:148` invoice hardcodes Tax `$0.00` — needs-check whether tickets are ever taxed (currently untaxed).
+- `SurveyForm.vue` client required-field validation absent — parent surfaces the server rejection.
+- `TicketTiersList`/`EventDialog` price/capacity bounds advisory — server backstops with a surfaced message.

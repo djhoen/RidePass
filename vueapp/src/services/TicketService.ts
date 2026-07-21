@@ -22,6 +22,20 @@ export interface TicketTier {
     bundledCouponExpiresInDays: number | null
     // Dynamic pricing (price steps). Admin step config:
     ladderGroup: string | null
+    // Training group (lessons). Null on an ordinary tier. Coach assignment is optional and
+    // always staff-side; riders never pick one.
+    instructorId?: string | null
+    instructorName?: string | null
+    instructorImageUrl?: string | null
+    skillLevel?: string | null
+    equipmentLabel?: string | null
+    startsAt?: string | null
+    endsAt?: string | null
+    // Party pricing: the base price covers partySizeIncluded riders; each rider beyond that
+    // costs partyPriceCents (null = the base price). Every rider still gets their own ticket.
+    partySizeIncluded?: number
+    partyPriceCents?: number | null
+    partySizeMax?: number | null
     minSold: number | null
     effectiveDaysBefore: number | null
     effectiveAtUtc: string | null
@@ -42,6 +56,12 @@ export interface TicketPurchaseResponse {
     riderServiceChargeCents: number
     taxCents: number
     giftCardAppliedCents: number
+    // Set when a bike was bundled with a lesson. The rental FEE is already inside amountCents
+    // (one charge); the refundable deposit is a SEPARATE hold to confirm after the main charge
+    // with the same card. Null when no bike or no deposit.
+    depositHoldClientSecret?: string | null
+    rentalFeeCents?: number
+    rentalDepositCents?: number
 }
 
 export interface TicketRedemption {
@@ -160,7 +180,12 @@ export class TicketService {
         rewardRedemptionId?: string | null
         couponCode?: string | null
         giftCardCode?: string | null
+        // Burn the signed-in rider's store credit as the last tender (server caps at the total).
+        useStoreCredit?: boolean
         extras?: Array<{ productId: string; quantity: number; variantId?: string | null }> | null
+        // Optional bike rental bundled with a lesson: its fee rides this same PI; the deposit
+        // comes back as depositHoldClientSecret to confirm separately with the same card.
+        lessonRental?: { variantId: string; quantity: number } | null
         // Bundles a track-membership purchase into the same PI when the rider opts in
         // from the membership-required dialog instead of being kicked out to /Membership.
         addMembership?: boolean

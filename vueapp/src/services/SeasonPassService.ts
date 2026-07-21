@@ -5,6 +5,22 @@ export interface SeasonPassPerk {
     discountPercent: number
 }
 
+export type SeasonPassBenefitType = 'event' | 'concession' | 'rental' | 'retail' | 'buddy_pass'
+
+/** Something a pass grants its holder. Supersedes SeasonPassPerk. */
+export interface SeasonPassBenefit {
+    benefitType: SeasonPassBenefitType
+    /** Event type id for 'event'; null = the whole surface. */
+    scopeId: string | null
+    discountKind: 'percent' | 'amount'
+    /** Basis points when percent (10000 = 100% = included free), cents when amount. */
+    discountValue: number
+    /** Uses per season; null = unlimited. */
+    quantity: number | null
+    /** Display name of what scopeId points at. Response-only. */
+    scopeName?: string | null
+}
+
 export interface SeasonPassProduct {
     id: string
     name: string
@@ -19,7 +35,9 @@ export interface SeasonPassProduct {
     riderPaidServiceChargeBps: number
     isActive: boolean
     sortOrder: number
+    /** @deprecated Legacy event-only shape. Read `benefits` instead; still emitted for older clients. */
     perks: SeasonPassPerk[]
+    benefits: SeasonPassBenefit[]
 }
 
 export interface UpsertSeasonPassProduct {
@@ -35,16 +53,41 @@ export interface UpsertSeasonPassProduct {
     riderPaidServiceChargeBps: number
     isActive: boolean
     sortOrder: number
-    perks: SeasonPassPerk[]
+    benefits: SeasonPassBenefit[]
+}
+
+export interface SeasonPassCartItem {
+    productId: string
+    quantity: number
+}
+
+/** One pass created by checkout, to be registered to a holder after payment. */
+export interface SeasonPassPurchaseItem {
+    purchaseId: string
+    redemptionToken: string
+    productId: string
+    productName: string
+    requiresWaiver: boolean
 }
 
 export interface BuySeasonPassResponse {
-    purchaseId: string
-    redemptionToken: string
+    passes: SeasonPassPurchaseItem[]
     clientSecret: string
     amountCents: number
     riderServiceChargeCents: number
     giftCardAppliedCents: number
+}
+
+/** Holder details for one pass, collected after payment. */
+export interface SeasonPassRegistrationItem {
+    purchaseId: string
+    firstName: string
+    lastName: string
+    birthdate?: string | null
+    photoDataUrl: string
+    waiverSignatureDataUrl?: string | null
+    parentGuardianName?: string | null
+    parentGuardianPhone?: string | null
 }
 
 export interface MySeasonPass {
@@ -57,6 +100,11 @@ export interface MySeasonPass {
     validFromDate: string
     validToDate: string
     status: string
+    requiresWaiver: boolean
+    /** False while the pass is paid but has no holder/photo/waiver — the gate refuses it until fixed. */
+    registrationComplete: boolean
+    holderFirstName: string | null
+    holderLastName: string | null
     createdAtUtc: string
 }
 
@@ -79,6 +127,10 @@ export interface PassLookup {
     validToDate: string
     creditsRemaining: number | null
     photoDataUrl: string | null
+    /** Who the pass admits — may differ from the buyer. Null until registration finishes. */
+    holderName: string | null
+    /** False while the pass is paid but has no holder/photo/waiver yet; check-in is refused. */
+    registrationComplete: boolean
     productName: string
     productKind: string
     validDaysOfWeek: number[] | null
@@ -107,9 +159,15 @@ export class SeasonPassService {
     reorderProducts(items: { id: string; sortOrder: number }[]) {
         return axios.post(`${this.apiUrl}/SeasonPass/Products/Reorder`, { items })
     }
-    buy(productId: string, photoDataUrl: string, couponCode: string | null = null, giftCardCode: string | null = null) {
+    buy(items: SeasonPassCartItem[], couponCode: string | null = null, giftCardCode: string | null = null) {
         return axios.post<{ data: BuySeasonPassResponse }>(`${this.apiUrl}/SeasonPass/Buy`,
-            { productId, photoDataUrl, couponCode, giftCardCode })
+            { items, couponCode, giftCardCode })
+    }
+    completeRegistration(passes: SeasonPassRegistrationItem[]) {
+        return axios.post(`${this.apiUrl}/SeasonPass/CompleteRegistration`, { passes })
+    }
+    confirmIntent(paymentIntentId: string) {
+        return axios.post(`${this.apiUrl}/Payment/ConfirmIntent`, { paymentIntentId })
     }
     listMine() {
         return axios.get<{ data: MySeasonPass[] }>(`${this.apiUrl}/SeasonPass/Mine`)

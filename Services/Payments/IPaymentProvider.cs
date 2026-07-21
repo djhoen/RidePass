@@ -19,6 +19,32 @@ namespace Services.Payments
             CancellationToken ct = default);
 
         /// <summary>
+        /// Creates a PaymentIntent as a HOLD (authorization): capture_method=manual, so confirming it
+        /// reserves funds on the card without capturing them. Used for refundable security deposits —
+        /// the money is never actually taken (and so incurs no Stripe fee) unless later captured for
+        /// damage. Carries NO application fee: RidePass takes no cut of a deposit. The authorization is
+        /// valid ~7 days; capture or cancel before it expires (an expired hold auto-releases).
+        /// <paramref name="connectedAccountId"/> places the hold on the tenant's own account (direct mode).
+        /// </summary>
+        Task<PaymentIntentCreated> CreateHoldPaymentIntentAsync(
+            long amountCents,
+            string currency,
+            IReadOnlyDictionary<string, string> metadata,
+            string? receiptEmail = null,
+            string? connectedAccountId = null,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Captures (settles) an authorized manual-capture PaymentIntent for up to the authorized
+        /// amount. A partial capture (less than authorized) automatically releases the remainder, and
+        /// only the captured amount is charged and incurs a Stripe fee. Used to keep a damage amount
+        /// out of a security-deposit hold on return. Returns the resulting PI status ("succeeded").
+        /// For a direct-charge hold, pass the <paramref name="connectedAccountId"/> it was authorized on.
+        /// </summary>
+        Task<string?> CapturePaymentIntentAsync(string paymentIntentId, long amountToCaptureCents,
+            string? connectedAccountId = null, CancellationToken ct = default);
+
+        /// <summary>
         /// Pushes funds from the platform balance to a connected (Express) account. The connected
         /// account's Stripe-managed payout schedule then deposits to the tenant's bank.
         /// </summary>

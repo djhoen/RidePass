@@ -107,7 +107,12 @@ namespace webapi.Controllers
                     "Please verify your email before signing in. Check your inbox for the verification link.");
             }
 
-            var token = _jwtIssuer.IssueForUser(user);
+            // "Remember me" = a longer-lived token, not a stored credential. NOTE: there is no
+            // refresh/revocation mechanism today, so a remembered token stays valid for its full
+            // life even after a password change or deactivation. 21 days is the agreed balance
+            // between not re-authenticating a bench phone daily and limiting that exposure.
+            var token = _jwtIssuer.IssueForUser(
+                user, request.RememberMe ? TimeSpan.FromDays(21) : null);
 
             return new ApiResponses().OkResult(new LoginResponse
             {
@@ -498,7 +503,7 @@ namespace webapi.Controllers
 
         private static readonly HashSet<string> AssignableRoles = new()
         {
-            "tenant_admin", "tenant_manager", "tenant_cashier", "tenant_scanner", "tenant_accountant",
+            "tenant_admin", "tenant_manager", "tenant_cashier", "tenant_shop_cashier", "tenant_scanner", "tenant_accountant",
         };
 
         // Resolve a request that may carry Roles[] (preferred) and/or a single Role into a

@@ -5,9 +5,41 @@ using Services.Helpers.Interfaces;
 
 namespace Services.Helpers
 {
+    /// <summary>
+    /// Teaches Dapper how to bind DateOnly. The pinned Dapper (2.0.123) predates native support,
+    /// so ANY DateOnly parameter throws "cannot be used as a parameter value" at runtime. That is
+    /// invisible to the compiler, so it only shows up when the screen is opened. Registered in
+    /// DbHelper's static constructor rather than Program.cs so every consumer gets it: the API,
+    /// the background workers, and anything else that touches the database.
+    /// </summary>
+    internal sealed class DateOnlyTypeHandler : SqlMapper.TypeHandler<DateOnly>
+    {
+        public override void SetValue(System.Data.IDbDataParameter parameter, DateOnly value)
+        {
+            parameter.DbType = System.Data.DbType.Date;
+            parameter.Value = value.ToDateTime(TimeOnly.MinValue);
+        }
+
+        public override DateOnly Parse(object value) => value switch
+        {
+            DateOnly d => d,
+            DateTime dt => DateOnly.FromDateTime(dt),
+            string s => DateOnly.Parse(s),
+            _ => throw new InvalidCastException($"Cannot convert {value?.GetType().Name ?? "null"} to DateOnly."),
+        };
+    }
+
     public class DbHelper : IDbHelper
     {
         public const int DEFAULT_TIMEOUT = 30;
+
+        static DbHelper()
+        {
+            // Both the value and nullable forms: a `DateOnly? onDate = null` parameter still
+            // reaches Dapper as a member it has to know how to bind.
+            SqlMapper.AddTypeHandler(typeof(DateOnly), new DateOnlyTypeHandler());
+            SqlMapper.AddTypeHandler(typeof(DateOnly?), new DateOnlyTypeHandler());
+        }
 
         public string ConnectionString { get; }
 

@@ -202,8 +202,14 @@ export class ReportsService {
     cancelScheduledRiderMessage(id: string) {
         return axios.post(`${this.apiUrl}/Reports/Admin/ScheduledMessages/${id}/Cancel`)
     }
-    tracksideExportUrl(eventId: string): string {
-        return `${this.apiUrl}/Reports/Admin/EventRiders/${eventId}/Export/Trackside`
+    // Fetch the CSV through axios so the Bearer token is attached (a plain <a href> GET carries no
+    // auth and silently 401s), then hand back the blob + filename for a client-side download.
+    async downloadTracksideCsv(eventId: string): Promise<{ blob: Blob; filename: string }> {
+        const r = await axios.get(`${this.apiUrl}/Reports/Admin/EventRiders/${eventId}/Export/Trackside`,
+            { responseType: 'blob' })
+        const cd = (r.headers['content-disposition'] as string | undefined) ?? ''
+        const filename = cd.match(/filename="?([^";]+)"?/)?.[1] ?? `trackside-${eventId}.csv`
+        return { blob: r.data as Blob, filename }
     }
 
     getDailyEvents(fromUtc: string, toUtc: string, localDate: string) {

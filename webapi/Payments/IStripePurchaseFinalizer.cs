@@ -21,5 +21,13 @@ namespace webapi.Payments
         /// reconciler synthesizes this from the PaymentIntent's status at Stripe.
         /// </param>
         Task ProcessPaymentIntentAsync(string paymentIntentId, string eventType, CancellationToken ct = default);
+
+        /// <summary>
+        /// Books a checkout credit tender's balancing ledger entry (gross -credit; net -credit
+        /// only when reduceNet: platform-mode Stripe rows whose PI collected credit-less; cash
+        /// and direct-mode rows already reflect reality). Called by the webhook path for card
+        /// checkouts and directly by the controllers for immediately-settled ones. Idempotent.
+        /// </summary>
+        Task BookCreditTenderEntry(Services.Repositories.Data.CreditData.CheckoutCreditTender tender, bool reduceNet);
     }
 }

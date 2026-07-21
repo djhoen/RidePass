@@ -320,6 +320,10 @@ namespace Services.Repositories.Data.ConcessionData
         public string? PurchaserEmail { get; set; }
         public string? PurchaserName { get; set; }
         public bool IsRush { get; set; }   // cook-screen priority flag
+        // Store credit spent as a tender on this order (Script0194): total_cents stays the full
+        // value, the money paths (cash / card-present PI / ledger) collect total minus this.
+        public int CreditAppliedCents { get; set; }
+        public Guid? CreditAccountId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? PaidAt { get; set; }
     }

@@ -12,6 +12,7 @@ namespace Services.Rewards
         private readonly ITenantRepository _tenants;
         private readonly ISmtpEmailer _emailer;
         private readonly IEmailSuppressionRepository _suppression;
+        private readonly ITenantCreditRepository _credit;
         private readonly IDbHelper _db;
         private readonly ILogger<RewardEngine> _logger;
 
@@ -20,6 +21,7 @@ namespace Services.Rewards
             ITenantRepository tenants,
             ISmtpEmailer emailer,
             IEmailSuppressionRepository suppression,
+            ITenantCreditRepository credit,
             IDbHelper db,
             ILogger<RewardEngine> logger)
         {
@@ -27,6 +29,7 @@ namespace Services.Rewards
             _tenants = tenants;
             _emailer = emailer;
             _suppression = suppression;
+            _credit = credit;
             _db = db;
             _logger = logger;
         }
@@ -86,6 +89,79 @@ namespace Services.Rewards
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Credit-back loyalty (Script0196): pay a rate of the money collected back as store
+        /// credit. Called from every settle point; sourceId keys idempotency (one award per
+        /// settled purchase via the once-per-reference unique index, double-checked here so a
+        /// webhook + reconciler double-fire doesn't email twice). Auto programs pay every
+        /// customer (walk-ins by email/phone included); opt-in programs pay enrolled users.
+        /// Best-effort by contract: callers wrap in try/catch, the sale never depends on this.
+        /// </summary>
+        public async Task AwardCreditBack(Guid tenantId, Guid? userId, string? email, string? name,
+            string sourceKind, Guid sourceId, int spentCents)
+        {
+            if (spentCents <= 0) return;
+            if (userId is null && string.IsNullOrWhiteSpace(email)) return;
+
+            var programs = (await _rewards.ListProgramsForTenant(tenantId, activeOnly: true))
+                .Where(p => p.RewardKind == "credit_rate" && p.CreditRateBps is > 0
+                    && (p.CreditQualifyingKind == "any" || p.CreditQualifyingKind == sourceKind))
+                .ToList();
+            if (programs.Count == 0) return;
+
+            // One award per settled purchase, race-guarded so the winner alone emails.
+            await using var awardLock = await _db.AcquireAdvisoryLock($"credit-award:{sourceId}");
+            if (await _credit.HasEntry(tenantId, "loyalty_award", sourceKind, sourceId)) return;
+
+            var enrolled = userId.HasValue
+                ? (await _rewards.ListEnrollmentsForUser(userId.Value)).Select(e => e.ProgramId).ToHashSet()
+                : new HashSet<Guid>();
+            var eligible = new List<RewardProgram>();
+            foreach (var p in programs)
+            {
+                if (p.EnrollmentMode == "auto")
+                {
+                    if (userId.HasValue) await _rewards.CreateEnrollment(p.Id, userId.Value);
+                    eligible.Add(p);
+                }
+                else if (userId.HasValue && enrolled.Contains(p.Id))
+                {
+                    eligible.Add(p);
+                }
+            }
+            if (eligible.Count == 0) return;
+
+            var award = eligible.Sum(p => (int)((long)spentCents * p.CreditRateBps!.Value / 10_000L));
+            if (award <= 0) return;
+
+            var account = await _credit.GetOrCreateAccount(tenantId, userId, email, null, name);
+            if (account is null) return;
+            var note = string.Join(" + ", eligible.Select(p => p.Name));
+            if (!await _credit.TryAdjust(account.Id, tenantId, award, "loyalty_award",
+                    sourceKind, sourceId, note, null))
+                return;
+
+            _logger.LogInformation("Loyalty credit-back: {Award}c to account {Account} for {Kind} {Id} (tenant {Tenant})",
+                award, account.Id, sourceKind, sourceId, tenantId);
+
+            // Tell them only when it's worth an email; small awards surface on their Rewards page.
+            if (award >= 100 && !string.IsNullOrWhiteSpace(email))
+                await SendCreditBackEmail(tenantId, email!, name?.Split(' ').FirstOrDefault() ?? "rider", award, note);
+        }
+
+        private async Task SendCreditBackEmail(Guid tenantId, string toEmail, string firstName, int awardCents, string programNames)
+        {
+            if (!_emailer.IsConfigured) return;
+            if (await _suppression.IsSuppressed(toEmail, tenantId, marketing: false)) return;
+            var amount = "$" + (awardCents / 100m).ToString("0.00");
+            var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(firstName)},</p>
+<p>Your purchase just earned you <strong>{amount} in store credit</strong> from <strong>{System.Net.WebUtility.HtmlEncode(programNames)}</strong>.</p>
+<p>It's on your account now: spend it at the counter or apply it at checkout next time you buy online.</p>";
+            var tenant = await _tenants.GetById(tenantId);
+            await _emailer.Send(toEmail, $"You earned {amount} in store credit", html, null,
+                Services.Email.TenantEmailIdentity.For(tenant));
         }
 
         private async Task SendRewardEmail(Guid tenantId, string toEmail, string firstName, RewardProgram program)

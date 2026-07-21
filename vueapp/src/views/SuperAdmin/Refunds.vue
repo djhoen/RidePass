@@ -43,11 +43,14 @@
                             <span v-else class="text-medium-emphasis">—</span>
                         </td>
                         <td class="text-right">
-                            <v-btn size="small" color="primary" variant="tonal"
-                                :disabled="!r.stripePaymentIntentId" :loading="processingId === r.kind + ':' + r.id"
+                            <v-btn v-if="r.stripePaymentIntentId" size="small" color="primary" variant="tonal"
+                                :loading="processingId === r.kind + ':' + r.id"
                                 @click="processRefund(r)">
                                 Process Refund
                             </v-btn>
+                            <span v-else class="text-caption text-medium-emphasis">
+                                No Stripe charge on record — refund manually
+                            </span>
                         </td>
                     </tr>
                     <tr v-if="!loadingRefunds && refunds.length === 0">

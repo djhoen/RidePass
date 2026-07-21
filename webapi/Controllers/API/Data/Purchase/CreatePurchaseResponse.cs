@@ -18,6 +18,18 @@ namespace webapi.Controllers.API.Data.Purchase
         // When a gift card was applied, this is the amount drawn from its balance.
         // Stripe is charged AmountCents - GiftCardAppliedCents.
         public int GiftCardAppliedCents { get; set; }
+        // Store credit applied as a tender (already deducted from AmountCents).
+        public int CreditAppliedCents { get; set; }
+
+        // Set when a bike rental was bundled with a lesson. The rental FEE is already part of
+        // AmountCents (the single ticket charge). The refundable deposit is a SEPARATE hold the
+        // client confirms after the main charge, with the same card. Null when no bike was added
+        // or the bike had no deposit.
+        public string? DepositHoldClientSecret { get; set; }
+        // The bundled bike's rental fee (already inside AmountCents) and deposit-hold amount, so
+        // the checkout can show both line items and explain the hold.
+        public int RentalFeeCents { get; set; }
+        public int RentalDepositCents { get; set; }
     }
 
     public class TicketRedemption

@@ -28,6 +28,11 @@
                 </div>
                 <v-chip v-if="!item.registrationComplete" size="x-small" color="warning" variant="tonal"
                     prepend-icon="mdi-alert-circle" class="mt-2">Waiver / details needed</v-chip>
+                <!-- Registration can be complete while the waiver still isn't signed. That used
+                     to read as "Ready for gate", which is exactly the surprise a rider gets
+                     turned away for at check-in. -->
+                <v-chip v-else-if="needsWaiver" size="x-small" color="warning" variant="tonal"
+                    prepend-icon="mdi-file-alert-outline" class="mt-2">Waiver not signed</v-chip>
                 <v-chip v-else-if="item.waiverSigned" size="x-small" color="success" variant="tonal"
                     prepend-icon="mdi-file-sign" class="mt-2">Waiver signed</v-chip>
                 <v-chip v-else size="x-small" color="success" variant="tonal"
@@ -45,6 +50,8 @@
                 <v-btn v-if="!item.registrationComplete && item.redemptionToken"
                     size="small" color="warning" variant="flat" block :href="finishUrl" rel="noopener"
                     prepend-icon="mdi-draw-pen">Finish</v-btn>
+                <v-btn v-else-if="needsWaiver" size="small" color="warning" variant="flat" block
+                    :href="waiverUrl" rel="noopener" prepend-icon="mdi-draw-pen">Sign waiver</v-btn>
             </div>
         </v-card-text>
 
@@ -89,7 +96,14 @@ function tenantUrl(path: string): string {
     return `${proto}//${props.item.tenantSubdomain}.${tenantHelper.rootDomain()}${port}${path}`
 }
 const eventUrl = computed(() => tenantUrl(`/Event/${props.item.id}`))
+// Required by this event AND not yet signed. waiverRequired is what stops a no-waiver event
+// from nagging about a signature it never wanted.
+const needsWaiver = computed(() => props.item.waiverRequired && !props.item.waiverSigned)
+
 const finishUrl = computed(() => tenantUrl(`/FinishRegistration/${props.item.redemptionToken}`))
+// The waiver belongs to the track, and this feed spans tracks, so send the rider to that
+// tenant's own site rather than signing against whichever host this page happens to be.
+const waiverUrl = computed(() => tenantUrl('/Waiver'))
 // Points at the tenant's staff-gated redemption screen for this order's token.
 const checkInUrl = computed(() => tenantUrl(`/redeem/${props.item.redemptionToken}`))
 

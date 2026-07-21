@@ -19,6 +19,8 @@ namespace webapi.Controllers
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IEventTicketTierRepository _tiers;
         private readonly IEventExtraRepository _extras;
+        private readonly IInstructorRepository _instructors;
+        private readonly IBikeShopRepository _shop;
         private readonly IWaiverRepository _waivers;
         private readonly IEventNotifier _notifier;
         private readonly ITenantContext _tenantContext;
@@ -29,6 +31,8 @@ namespace webapi.Controllers
             ITenantEventTypeRepository eventTypes,
             IEventTicketTierRepository tiers,
             IEventExtraRepository extras,
+            IInstructorRepository instructors,
+            IBikeShopRepository shop,
             IWaiverRepository waivers,
             IEventNotifier notifier,
             ITenantContext tenantContext,
@@ -38,6 +42,8 @@ namespace webapi.Controllers
             _eventTypes = eventTypes;
             _tiers = tiers;
             _extras = extras;
+            _instructors = instructors;
+            _shop = shop;
             _waivers = waivers;
             _notifier = notifier;
             _tenantContext = tenantContext;
@@ -197,6 +203,10 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("An event must allow riders, spectators, or both.");
             }
 
+            var conflictErr = await CheckInstructorConflicts(
+                request.InstructorIds, request.StartsAtUtc.ToUniversalTime(), request.EndsAtUtc.ToUniversalTime(), null);
+            if (conflictErr is not null) return new ApiResponses().BadRequestResult(conflictErr);
+
             var ev = new Event
             {
                 TenantId = _tenantContext.TenantId,
@@ -230,6 +240,7 @@ namespace webapi.Controllers
                         EventId = ev.Id, ProductId = e.ProductId, Inventory = e.Inventory,
                     }));
             }
+            await PersistLessonAssociations(ev.Id, request);
             FireAndForgetNotify(ev);
             var types = new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> { [typeCheck.Id] = typeCheck };
             return new ApiResponses().OkResult(await MapResponseAsync(ev, types));
@@ -278,6 +289,10 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("An event must allow riders, spectators, or both.");
             }
 
+            var conflictErr = await CheckInstructorConflicts(
+                request.InstructorIds, request.StartsAtUtc.ToUniversalTime(), request.EndsAtUtc.ToUniversalTime(), existing.Id);
+            if (conflictErr is not null) return new ApiResponses().BadRequestResult(conflictErr);
+
             existing.EventTypeId = request.EventTypeId;
             existing.Title = request.Title;
             existing.Description = request.Description;
@@ -307,8 +322,55 @@ namespace webapi.Controllers
                         EventId = existing.Id, ProductId = e.ProductId, Inventory = e.Inventory,
                     }));
             }
+            await PersistLessonAssociations(existing.Id, request);
             var types = new Dictionary<Guid, Services.Repositories.Data.TenantData.TenantEventType> { [typeCheck.Id] = typeCheck };
             return new ApiResponses().OkResult(await MapResponseAsync(existing, types));
+        }
+
+        // Assign instructors + eligible bikes to a (lesson) event. Null lists are left
+        // untouched so a caller that doesn't manage lessons can't wipe them; an empty
+        // list clears. Conflict validation runs BEFORE this in Create/Update.
+        //
+        // Tenant isolation: instructor/product ids are attacker-controlled request input, and
+        // the join-table FKs don't carry a tenant column, so a crafted request could otherwise
+        // attach another tenant's instructor/bike to this event. We intersect against the ids
+        // this tenant actually owns and silently drop the rest (no existence leak).
+        private async Task PersistLessonAssociations(Guid eventId, UpsertEventRequest request)
+        {
+            if (request.InstructorIds is not null)
+                await _instructors.ReplaceEventInstructors(eventId, await OwnedInstructorIds(request.InstructorIds));
+
+            if (request.EligibleRentals is not null)
+            {
+                // Tenant ownership of each variant is enforced inside the repo (INSERT..SELECT
+                // guarded by tenant), so foreign ids are silently dropped, not attached.
+                await _shop.ReplaceLessonRentables(eventId, _tenantContext.TenantId,
+                    request.EligibleRentals.Select(r => (r.VariantId, r.PriceCentsOverride)));
+            }
+        }
+
+        // Returns a rider-facing error if any requested instructor is already booked on an
+        // overlapping event, else null. No-op when no instructors are requested. Only
+        // tenant-owned instructor ids are considered.
+        private async Task<string?> CheckInstructorConflicts(
+            List<Guid>? instructorIds, DateTime startsAtUtc, DateTime endsAtUtc, Guid? excludeEventId)
+        {
+            if (instructorIds is null || instructorIds.Count == 0) return null;
+            var owned = await OwnedInstructorIds(instructorIds);
+            if (owned.Count == 0) return null;
+            var conflicts = await _instructors.FindConflicts(
+                _tenantContext.TenantId, owned, startsAtUtc, endsAtUtc, excludeEventId);
+            if (conflicts.Count == 0) return null;
+            var c = conflicts[0];
+            return $"{c.InstructorName} is already assigned to \"{c.EventTitle}\" during that time. " +
+                   "Pick a different instructor or time.";
+        }
+
+        private async Task<List<Guid>> OwnedInstructorIds(IEnumerable<Guid> requested)
+        {
+            var owned = (await _instructors.List(_tenantContext.TenantId, activeOnly: false))
+                .Select(i => i.Id).ToHashSet();
+            return requested.Distinct().Where(owned.Contains).ToList();
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -380,6 +442,25 @@ namespace webapi.Controllers
                     {
                         EventId = clone.Id, ProductId = e.ProductId, Inventory = e.Inventory,
                     }));
+            }
+
+            // Carry over lesson associations: instructors and eligible bikes. The 7-day
+            // shift keeps the new window clear of the source, but a coach could still clash
+            // with a third event, so drop any that would now double-book rather than fail.
+            var srcInstructors = (await _instructors.ListForEvent(source.Id, _tenantContext.TenantId)).Select(i => i.Id).ToList();
+            if (srcInstructors.Count > 0)
+            {
+                var clash = await _instructors.FindConflicts(
+                    _tenantContext.TenantId, srcInstructors, clone.StartsAt, clone.EndsAt, clone.Id);
+                var clashIds = clash.Select(c => c.InstructorId).ToHashSet();
+                var keep = srcInstructors.Where(i => !clashIds.Contains(i)).ToList();
+                if (keep.Count > 0) await _instructors.ReplaceEventInstructors(clone.Id, keep);
+            }
+            var srcRentals = await _shop.ListLessonRentables(source.Id, _tenantContext.TenantId);
+            if (srcRentals.Count > 0)
+            {
+                await _shop.ReplaceLessonRentables(clone.Id, _tenantContext.TenantId,
+                    srcRentals.Select(r => (r.VariantId, r.PriceCentsOverride)));
             }
 
             // Carry over the ticket tiers (incl. price-ladder steps) so the duplicate is
@@ -575,6 +656,43 @@ namespace webapi.Controllers
                         RequiresWaiver = prod.RequiresWaiver,
                         RiderPaidServiceChargeBps = prod.RiderPaidServiceChargeBps,
                         Variants = variantList,
+                    });
+                }
+            }
+
+            // Instructors assigned to this lesson.
+            foreach (var i in await _instructors.ListForEvent(ev.Id, _tenantContext.TenantId))
+            {
+                resp.Instructors.Add(new EventInstructor { Id = i.Id, Name = i.Name, ImageUrl = i.ImageUrl });
+            }
+
+            // Eligible bikes with live availability for THIS lesson's window. A day rental
+            // and two lessons on the same bike coexist because availability is time-scoped.
+            var rentalRows = await _shop.ListLessonRentables(ev.Id, _tenantContext.TenantId);
+            if (rentalRows.Count > 0)
+            {
+                var startsAtUtc = DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc);
+                var endsAtUtc = DateTime.SpecifyKind(ev.EndsAt, DateTimeKind.Utc);
+                foreach (var b in rentalRows)
+                {
+                    // A bike with neither a daily rate nor a lesson override has no price; skip it.
+                    if (!b.IsActive || (b.PriceCentsOverride ?? b.DailyRateCents) is null) continue;
+                    int available = b.TrackingKind == "pool"
+                        ? await _shop.GetPoolAvailability(b.VariantId, _tenantContext.TenantId, startsAtUtc, endsAtUtc)
+                        : (await _shop.GetFreeSerializedUnits(b.VariantId, _tenantContext.TenantId, startsAtUtc, endsAtUtc)).Count;
+                    var label = string.Join(" / ", new[] { b.Size, b.Color, b.Gender }
+                        .Where(x => !string.IsNullOrWhiteSpace(x)));
+                    resp.EligibleRentals.Add(new EligibleRental
+                    {
+                        VariantId = b.VariantId,
+                        Name = string.IsNullOrEmpty(label) ? b.ProductName : $"{b.ProductName} ({label})",
+                        Description = b.Description,
+                        ImageUrl = b.ImageUrl,
+                        PriceCents = (b.PriceCentsOverride ?? b.DailyRateCents)!.Value,
+                        PriceCentsOverride = b.PriceCentsOverride,
+                        DepositCents = b.DepositCents,
+                        TrackingKind = b.TrackingKind,
+                        Available = available,
                     });
                 }
             }

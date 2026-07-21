@@ -62,9 +62,13 @@ builder.Services.AddScoped<ILoampassRedemptionRepository, LoampassRedemptionRepo
 builder.Services.AddSingleton<Services.LoamPassMx.ILoamPassMxService, Services.LoamPassMx.LoamPassMxService>();
 builder.Services.AddScoped<IBlackoutRepository, BlackoutRepository>();
 builder.Services.AddScoped<ISeasonPassRepository, SeasonPassRepository>();
+builder.Services.AddScoped<IBikeShopRepository, BikeShopRepository>();
+builder.Services.AddScoped<ITenantCreditRepository, TenantCreditRepository>();
+builder.Services.AddScoped<IWristbandRepository, WristbandRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IWaiverRepository, WaiverRepository>();
 builder.Services.AddScoped<IEventTicketTierRepository, EventTicketTierRepository>();
+builder.Services.AddScoped<IInstructorRepository, InstructorRepository>();
 builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRepository>();
 builder.Services.AddScoped<IDisputeRepository, DisputeRepository>();
 builder.Services.AddScoped<IReportsRepository, ReportsRepository>();
@@ -89,6 +93,15 @@ builder.Services.AddHttpClient<webapi.Sync.TenantSyncClient>();
 builder.Services.AddScoped<webapi.Sync.TenantPromotionService>();
 builder.Services.AddScoped<IConcessionRepository, ConcessionRepository>();
 builder.Services.AddScoped<ITenantTaxRepository, TenantTaxRepository>();
+builder.Services.AddScoped<IQuickBooksRepository, QuickBooksRepository>();
+builder.Services.AddScoped<IAccountingEntryRepository, AccountingEntryRepository>();
+// QuickBooks Online sync. Options are a singleton (pure config read); the rest are scoped because
+// they touch the request-scoped IDbHelper. The nightly sweep itself lives in TaskRunner — these
+// registrations serve the settings screen and the manual "Sync now" / re-sync actions.
+builder.Services.AddSingleton<Services.QuickBooks.QuickBooksOptions>();
+builder.Services.AddScoped<Services.QuickBooks.IQuickBooksTokenService, Services.QuickBooks.QuickBooksTokenService>();
+builder.Services.AddScoped<Services.QuickBooks.IQuickBooksApiClient, Services.QuickBooks.QuickBooksApiClient>();
+builder.Services.AddScoped<Services.QuickBooks.IQuickBooksSyncService, Services.QuickBooks.QuickBooksSyncService>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<Services.Email.ISendGridEventService, Services.Email.SendGridEventService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -107,7 +120,6 @@ builder.Services.AddScoped<IGiftCardRepository, GiftCardRepository>();
 builder.Services.AddScoped<Services.GiftCards.IGiftCardValidator, Services.GiftCards.GiftCardValidator>();
 builder.Services.AddScoped<Services.GiftCards.IGiftCardDeliveryService, Services.GiftCards.GiftCardDeliveryService>();
 builder.Services.AddHostedService<webapi.Workers.GiftCardScheduledDeliveryWorker>();
-builder.Services.AddScoped<IRentalRepository, RentalRepository>();
 builder.Services.AddScoped<IEventWaitlistRepository, EventWaitlistRepository>();
 builder.Services.AddScoped<IEventExtraRepository, EventExtraRepository>();
 builder.Services.AddScoped<ITrackFeedbackRepository, TrackFeedbackRepository>();
@@ -220,6 +232,7 @@ builder.Services.AddHostedService<webapi.Workers.PendingPurchaseReconciler>();
 // Emails purchasers a "finish your registration" link for paid-but-incomplete event
 // tickets, once the checkout is >1h old and at most once per order.
 builder.Services.AddHostedService<webapi.Workers.RegistrationReminderWorker>();
+builder.Services.AddHostedService<webapi.Workers.ShopServiceReminderWorker>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
 // Image storage: DigitalOcean Spaces (S3) when a bucket is configured, else local disk
 // (dev / single-box). Spaces returns absolute bucket URLs, which is what lets a cloned

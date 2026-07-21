@@ -35,6 +35,11 @@ export interface BrandingState {
     stripeConnectStatus: string | null
     stripeChargeMode: string
     serviceChargeBps: number
+    // Renter's share of the service charge on rentals (bps). 10000 = renter pays all.
+    rentalRiderPaidServiceChargeBps: number
+    // Rental sales tax (bps). null = never configured, which the admin UI warns about.
+    rentalTaxBps: number | null
+    rentalTaxServiceChargeTaxable: boolean
     shippingName: string | null
     aboutHtml: string | null
     hoursJson: string | null
@@ -63,10 +68,19 @@ export interface BrandingState {
     giftCardsEnabled: boolean
     giftCardMinCents: number
     giftCardMaxCents: number
-    rentalsEnabled: boolean
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    bikeShopEnabled: boolean
+    // Days after pickup to email a shop service reminder; 0 = off.
+    shopServiceReminderDays: number
+    shopReadyNotifyEmail: boolean
+    shopReadyNotifySms: boolean
+    shopSupplyFeeBps: number
+    shopSupplyFeeCapCents: number | null
+    shopSupplyFeeLabel: string
+    shopLaborRateCents: number | null
+    wristbandsEnabled: boolean
     blogEnabled: boolean
     // Published, nav-visible custom pages, in sort order. Rendered as top-level links
     // (public top bar + drawer) alongside the built-in Blog link.
@@ -89,6 +103,7 @@ export interface BrandingState {
     riderGateLabel: string | null
     spectatorGateLabel: string | null
     waitlistEnabled: boolean
+    waitlistPrepayEnabled: boolean
     waitlistConfirmWindowMinutes: number
     membershipEnabled: boolean
     membershipName: string
@@ -127,6 +142,9 @@ const defaults: BrandingState = {
     stripeConnectStatus: null,
     stripeChargeMode: 'platform',
     serviceChargeBps: 300,
+    rentalRiderPaidServiceChargeBps: 10000,
+    rentalTaxBps: null,
+    rentalTaxServiceChargeTaxable: true,
     shippingName: null,
     aboutHtml: null,
     hoursJson: null,
@@ -155,10 +173,18 @@ const defaults: BrandingState = {
     giftCardsEnabled: false,
     giftCardMinCents: 1000,
     giftCardMaxCents: 50000,
-    rentalsEnabled: false,
     extrasEnabled: false,
     seasonPassesEnabled: true,
     concessionsEnabled: false,
+    bikeShopEnabled: false,
+    shopServiceReminderDays: 0,
+    shopReadyNotifyEmail: true,
+    shopReadyNotifySms: false,
+    shopSupplyFeeBps: 0,
+    shopSupplyFeeCapCents: null,
+    shopSupplyFeeLabel: 'Shop supplies',
+    shopLaborRateCents: null,
+    wristbandsEnabled: false,
     blogEnabled: false,
     navPages: [],
     dynamicPricingEnabled: false,
@@ -176,7 +202,8 @@ const defaults: BrandingState = {
     allowSelfCancel: false,
     riderGateLabel: null,
     spectatorGateLabel: null,
-    waitlistEnabled: true,
+    waitlistEnabled: false,
+    waitlistPrepayEnabled: false,
     waitlistConfirmWindowMinutes: 20,
     membershipEnabled: false,
     membershipName: 'Track Membership',
@@ -262,6 +289,10 @@ export async function loadBranding(): Promise<void> {
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'
         branding.serviceChargeBps = data.serviceChargeBps ?? 300
+        branding.rentalRiderPaidServiceChargeBps = data.rentalRiderPaidServiceChargeBps ?? 10000
+        // Preserve null: it is what distinguishes "never set" from "deliberately 0%".
+        branding.rentalTaxBps = data.rentalTaxBps ?? null
+        branding.rentalTaxServiceChargeTaxable = data.rentalTaxServiceChargeTaxable ?? true
         branding.shippingName = data.shippingName ?? null
         branding.aboutHtml = data.aboutHtml ?? null
         branding.hoursJson = data.hoursJson ?? null
@@ -290,10 +321,18 @@ export async function loadBranding(): Promise<void> {
         branding.giftCardsEnabled = !!data.giftCardsEnabled
         branding.giftCardMinCents = data.giftCardMinCents ?? 1000
         branding.giftCardMaxCents = data.giftCardMaxCents ?? 50000
-        branding.rentalsEnabled = !!data.rentalsEnabled
         branding.extrasEnabled = !!data.extrasEnabled
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
+        branding.bikeShopEnabled = !!data.bikeShopEnabled
+        branding.shopServiceReminderDays = data.shopServiceReminderDays ?? 0
+        branding.shopReadyNotifyEmail = data.shopReadyNotifyEmail !== false
+        branding.shopReadyNotifySms = !!data.shopReadyNotifySms
+        branding.shopSupplyFeeBps = data.shopSupplyFeeBps ?? 0
+        branding.shopSupplyFeeCapCents = data.shopSupplyFeeCapCents ?? null
+        branding.shopSupplyFeeLabel = data.shopSupplyFeeLabel ?? 'Shop supplies'
+        branding.shopLaborRateCents = data.shopLaborRateCents ?? null
+        branding.wristbandsEnabled = !!data.wristbandsEnabled
         branding.blogEnabled = !!data.blogEnabled
         branding.navPages = Array.isArray(data.navPages) ? data.navPages : []
         branding.dynamicPricingEnabled = !!data.dynamicPricingEnabled
@@ -311,7 +350,10 @@ export async function loadBranding(): Promise<void> {
         branding.allowSelfCancel = !!data.allowSelfCancel
         branding.riderGateLabel = data.riderGateLabel ?? null
         branding.spectatorGateLabel = data.spectatorGateLabel ?? null
-        branding.waitlistEnabled = data.waitlistEnabled !== false   // default true
+        // Both default OFF now (Script0180): the waitlist is a super-admin-gated platform feature,
+        // so an absent flag must read as "off" rather than quietly showing a waitlist the API rejects.
+        branding.waitlistEnabled = !!data.waitlistEnabled
+        branding.waitlistPrepayEnabled = !!data.waitlistPrepayEnabled
         branding.waitlistConfirmWindowMinutes = data.waitlistConfirmWindowMinutes ?? 20
         branding.membershipEnabled = !!data.membershipEnabled
         branding.membershipName = data.membershipName ?? 'Track Membership'

@@ -105,7 +105,16 @@
                                 <v-text-field v-if="tipMode === 'custom'" v-model.number="tipCustomDollars" type="number" min="0" step="0.50"
                                     prefix="$" label="Custom tip" density="compact" hide-details class="mt-2" style="max-width: 180px" />
                             </template>
-                            <div class="d-flex justify-space-between mt-3 text-h6 font-weight-bold"><span>Total</span><span>{{ money(total) }}</span></div>
+                            <v-checkbox v-if="myCreditCents > 0" v-model="useStoreCredit" color="primary"
+                                density="compact" hide-details class="mt-2"
+                                :label="`Use my store credit (${money(myCreditCents)} available)`"></v-checkbox>
+                            <div v-if="useStoreCredit && creditToApply > 0" class="d-flex justify-space-between mt-1 text-body-2 text-success">
+                                <span>Store credit</span><span>-{{ money(creditToApply) }}</span>
+                            </div>
+                            <div class="d-flex justify-space-between mt-3 text-h6 font-weight-bold">
+                                <span>{{ useStoreCredit && creditToApply > 0 ? 'Due' : 'Total' }}</span>
+                                <span>{{ money(total - (useStoreCredit ? creditToApply : 0)) }}</span>
+                            </div>
                         </v-card-text>
                         <v-card-actions class="pa-3">
                             <v-btn block color="primary" size="large" :loading="placing" @click="checkout">Place order &amp; pay</v-btn>
@@ -215,7 +224,7 @@
         <v-dialog v-model="payDialog" max-width="460" persistent>
             <v-card>
                 <v-card-title class="d-flex align-center">
-                    Pay {{ money(total) }}
+                    Pay {{ money(total - (useStoreCredit ? creditToApply : 0)) }}
                     <v-spacer /><v-btn icon="mdi-close" variant="text" size="small" :disabled="paying" @click="cancelPay" />
                 </v-card-title>
                 <v-card-text>
@@ -246,6 +255,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
+import { CreditService } from '@/services/CreditService'
 import {
     ConcessionService,
     type ConcessionProduct, type ConcessionVariant, type ConcessionModifierGroup,
@@ -337,6 +347,12 @@ const taxCents = computed(() =>
     cart.value.reduce((s, l) => s + computeTax(l.lineTotal, lineTaxBps(l.input.productId)), 0))
 const total = computed(() => subtotal.value + (pricesIncludeTax.value ? 0 : taxCents.value) + tipCents.value)
 
+// Store credit: balance loaded on mount (this page requires sign-in); the server re-verifies
+// and caps, so this is the offer + display only.
+const myCreditCents = ref(0)
+const useStoreCredit = ref(false)
+const creditToApply = computed(() => Math.min(myCreditCents.value, total.value))
+
 // Adjust a cart line's quantity inline; dropping to 0 removes it.
 function setLineQty(i: number, qty: number) {
     if (qty <= 0) { cart.value.splice(i, 1); return }
@@ -348,6 +364,9 @@ function setLineQty(i: number, qty: number) {
 onMounted(async () => {
     if (!branding.loaded) await loadBranding()
     await Promise.all([loadMenu(), refreshOrders(), refreshStatus()])
+    // Best-effort: no balance just means the credit offer doesn't show.
+    try { myCreditCents.value = (await new CreditService().mine()).data.data.balanceCents }
+    catch { /* offer stays hidden */ }
     // Poll status + orders together: keeps "Ready!" live and the quote/open-state fresh as the kitchen
     // fills and drains.
     timer = window.setInterval(() => { refreshOrders(); refreshStatus() }, 8000)
@@ -545,8 +564,20 @@ let currentSaleId: string | null = null
 async function checkout() {
     placing.value = true
     try {
-        const res = (await svc.placeOrder({ items: cart.value.map(l => l.input), tipCents: tipCents.value, paymentMethod: 'card' }) as any).data.data
+        const res = (await svc.placeOrder({
+            items: cart.value.map(l => l.input), tipCents: tipCents.value, paymentMethod: 'card',
+            creditCents: useStoreCredit.value ? myCreditCents.value : 0,
+        }) as any).data.data
         currentSaleId = res.saleId
+        if (res.status === 'paid') {
+            // Store credit covered the whole order: no card to run.
+            myCreditCents.value = Math.max(0, myCreditCents.value - (res.creditAppliedCents ?? 0))
+            lastOrderNumber.value = res.orderNumber ?? null
+            doneDialog.value = true
+            cart.value = []; tipMode.value = 'none'; tipCustomDollars.value = null
+            await refreshOrders()
+            return
+        }
         payError.value = ''
         payDialog.value = true
         await nextTick()

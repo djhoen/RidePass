@@ -33,6 +33,27 @@ export interface EventDto {
     eligiblePasses?: EligiblePass[]
     eligibleExtras?: EligibleExtra[]
     schedule?: ScheduleItem[]
+    // Lessons: assigned instructors + bikes offered with the lesson (with live availability).
+    instructors?: EventInstructor[]
+    eligibleRentals?: EligibleRental[]
+}
+
+export interface EventInstructor {
+    id: string
+    name: string
+    imageUrl: string | null
+}
+
+export interface EligibleRental {
+    variantId: string
+    name: string
+    description: string | null
+    imageUrl: string | null
+    priceCents: number              // effective per-lesson price = override ?? daily rate (all-in)
+    priceCentsOverride: number | null
+    depositCents: number
+    trackingKind: 'pool' | 'serialized'
+    available: number               // free for THIS lesson's window
 }
 
 export interface ScheduleItem {
@@ -102,6 +123,16 @@ export interface UpsertEventDto {
     eligiblePassProductIds?: string[]
     eligibleExtras?: EligibleExtraInput[]
     schedule?: ScheduleItem[]
+    // Lessons: assigned instructor ids (server rejects an overlapping double-booking) and
+    // the bikes offered with this lesson, each with an optional per-lesson price override.
+    // null = leave untouched on save; [] = clear.
+    instructorIds?: string[]
+    eligibleRentals?: EligibleRentalInput[]
+}
+
+export interface EligibleRentalInput {
+    variantId: string
+    priceCentsOverride: number | null
 }
 
 export class EventService {
