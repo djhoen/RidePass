@@ -6,7 +6,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "serve": "node server.js"
+    "serve": "node server.js",
+    "e2e": "playwright test --project=smoke",
+    "e2e:report": "playwright show-report e2e/report"
   },
   "dependencies": {
     "@mdi/font": "^7.2.96",
@@ -46,6 +48,7 @@
     "vuetify": "^3.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/d3-geo": "^3.1.0",
     "@types/d3-selection": "^3.0.11",
     "@types/d3-transition": "^3.0.9",

@@ -140,7 +140,7 @@ import { useRouter } from 'vue-router'
 import { BikeShopService, type StoreCatalog } from '@/services/BikeShopService'
 import { CreditService } from '@/services/CreditService'
 import { branding } from '@/stores/branding'
-import authHelper from '@/helpers/authHelper'
+import authHelper from '@/helpers/AuthHelper'
 import { getStripe } from '@/helpers/StripeHelper'
 
 type CatalogProduct = StoreCatalog['products'][number]
