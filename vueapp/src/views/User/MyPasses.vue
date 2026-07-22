@@ -28,7 +28,10 @@
                         <div>Purchased {{ formatInTenant(p.createdAtUtc) }}</div>
                         <div>${{ (p.amountCents / 100).toFixed(2) }}</div>
                     </div>
-                    <v-btn v-if="!expanded[p.id]" variant="text" size="small" @click="expanded[p.id] = true">
+                    <!-- Show QR is the gate check-in action, so it's the prominent primary control;
+                         Cancel is destructive and demoted to a muted link so it can't be mis-tapped. -->
+                    <v-btn v-if="!expanded[p.id]" variant="flat" color="primary" block
+                        prepend-icon="mdi-qrcode" @click="expanded[p.id] = true">
                         Show QR
                     </v-btn>
                     <div v-else class="text-center">
@@ -36,15 +39,17 @@
                         <v-btn variant="text" size="small" class="mt-2" @click="expanded[p.id] = false">Hide</v-btn>
                     </div>
 
-                    <v-btn v-if="canCancel(p)" size="small" variant="text" color="error" class="mt-2"
-                        prepend-icon="mdi-cancel" @click="openCancelDialog(p)">
-                        {{ branding.allowSelfCancel ? 'Cancel' : 'Request cancellation' }}
-                    </v-btn>
-
-                    <v-btn v-if="canShareRegistration(p)" size="small" variant="text" color="primary" class="mt-2"
-                        prepend-icon="mdi-share-variant" @click="openRegistrationShare(p)">
-                        Share my registration
-                    </v-btn>
+                    <div class="d-flex align-center flex-wrap ga-1 mt-2">
+                        <v-btn v-if="canShareRegistration(p)" size="small" variant="text" color="primary"
+                            prepend-icon="mdi-share-variant" @click="openRegistrationShare(p)">
+                            Share my registration
+                        </v-btn>
+                        <v-spacer></v-spacer>
+                        <v-btn v-if="canCancel(p)" size="x-small" variant="text" color="medium-emphasis"
+                            @click="openCancelDialog(p)">
+                            {{ branding.allowSelfCancel ? 'Cancel' : 'Request cancellation' }}
+                        </v-btn>
+                    </div>
 
                     <!-- Bundled coupons issued with this race entry. Phase 2 displays them
                          (codes + discount + status); Phase 3 wires the "Send to a friend" action. -->
@@ -136,7 +141,8 @@
                             <div>{{ formatInTenant(x.eventStartsAtUtc) }}</div>
                             <div>${{ (x.amountCents / 100).toFixed(2) }}</div>
                         </div>
-                        <v-btn v-if="!extraExpanded[x.id]" variant="text" size="small" @click="extraExpanded[x.id] = true">
+                        <v-btn v-if="!extraExpanded[x.id]" variant="flat" color="primary" block
+                            prepend-icon="mdi-qrcode" @click="extraExpanded[x.id] = true">
                             Show QR
                         </v-btn>
                         <div v-else class="text-center">

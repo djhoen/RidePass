@@ -45,11 +45,14 @@
                     </v-card-text>
                 </v-card>
 
-                <!-- KPI: Needs attention -->
-                <v-card v-else-if="w.type === 'kpi.attention'" height="100%">
+                <!-- KPI: Needs attention. Tints amber when something is actually pending so a
+                     dispute (with a chargeback deadline) can't hide among neutral revenue tiles. -->
+                <v-card v-else-if="w.type === 'kpi.attention'" height="100%"
+                    :color="attentionCount > 0 ? 'warning' : undefined"
+                    :variant="attentionCount > 0 ? 'tonal' : undefined">
                     <v-card-text>
-                        <div class="text-caption text-medium-emphasis">Needs Attention</div>
-                        <div class="text-h4">{{ (snapshot.openDisputesCount ?? 0) + (snapshot.pendingRefundsCount ?? 0) }}</div>
+                        <div class="text-caption" :class="attentionCount > 0 ? '' : 'text-medium-emphasis'">Needs Attention</div>
+                        <div class="text-h4">{{ attentionCount }}</div>
                         <div class="text-caption text-medium-emphasis">
                             <span v-if="snapshot.openDisputesCount !== null">{{ snapshot.openDisputesCount }} disputes</span>
                             <span v-if="snapshot.openDisputesCount !== null && snapshot.pendingRefundsCount !== null"> · </span>
@@ -217,6 +220,8 @@ const CATALOG: WidgetMeta[] = [
 ]
 
 const snapshot = ref<DashboardSnapshot | null>(null)
+const attentionCount = computed(() =>
+    (snapshot.value?.openDisputesCount ?? 0) + (snapshot.value?.pendingRefundsCount ?? 0))
 const widgets = ref<DashboardWidgetEntry[]>([])
 const draftWidgets = ref<DashboardWidgetEntry[]>([])
 const loading = ref(false)

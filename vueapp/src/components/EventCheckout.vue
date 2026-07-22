@@ -231,6 +231,9 @@
                 <v-btn block color="primary" size="large" :loading="paying" :disabled="!stripeReady" @click="pay">
                     Pay {{ priceLabel(chargeCents) }}
                 </v-btn>
+                <div class="text-caption text-medium-emphasis d-flex align-center justify-center ga-1 mt-2">
+                    <v-icon size="14">mdi-lock</v-icon> Payments secured by Stripe
+                </div>
             </template>
         </template>
 

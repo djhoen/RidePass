@@ -19,6 +19,8 @@
                  so they can always navigate back to Home / Events. -->
             <v-btn to="/" variant="text">Home</v-btn>
             <v-btn to="/Events" variant="text">Events</v-btn>
+            <v-btn v-if="branding.seasonPassesEnabled" to="/SeasonPasses" variant="text">Season Passes</v-btn>
+            <v-btn v-if="branding.membershipEnabled" to="/Membership" variant="text">Membership</v-btn>
             <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
             <v-btn v-if="branding.bikeShopEnabled" to="/Shop" variant="text" prepend-icon="mdi-bike">Shop</v-btn>
             <!-- Standalone /Rentals retired — rentals are booked at the Bike Shop counter now. -->
@@ -108,6 +110,8 @@
                 <template v-if="isMobile">
                     <v-list-item to="/" title="Home" prepend-icon="mdi-home"></v-list-item>
                     <v-list-item to="/Events" title="Events" prepend-icon="mdi-calendar"></v-list-item>
+                    <v-list-item v-if="branding.seasonPassesEnabled" to="/SeasonPasses" title="Season Passes" prepend-icon="mdi-ticket-percent"></v-list-item>
+                    <v-list-item v-if="branding.membershipEnabled" to="/Membership" title="Membership" prepend-icon="mdi-card-account-details"></v-list-item>
                     <v-list-item v-if="branding.giftCardsEnabled" to="/GiftCard" title="Gift Cards" prepend-icon="mdi-gift"></v-list-item>
                     <v-list-item v-if="branding.bikeShopEnabled" to="/Shop" title="Shop" prepend-icon="mdi-bike"></v-list-item>
                     <v-list-item v-if="showOrderFood" to="/Order" title="Order Food" prepend-icon="mdi-silverware-fork-knife"></v-list-item>

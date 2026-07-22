@@ -229,9 +229,14 @@
                                     <div v-if="e.minTicketPriceCents" class="text-body-2 mt-2">
                                         From <strong>${{ (e.minTicketPriceCents / 100).toFixed(2) }}</strong>
                                     </div>
-                                    <div v-if="e.hasRaceEntryTiers" class="d-flex flex-wrap ga-2 mt-auto pt-3">
-                                        <v-btn size="small" color="deep-orange" :to="`/Event/${e.id}`">
+                                    <!-- Every card gets a CTA so non-race events (practice, lesson,
+                                         open ride) don't look unbookable. -->
+                                    <div class="d-flex flex-wrap ga-2 mt-auto pt-3">
+                                        <v-btn v-if="e.hasRaceEntryTiers" size="small" color="deep-orange" :to="`/Event/${e.id}`">
                                             Race Entry
+                                        </v-btn>
+                                        <v-btn v-else size="small" color="primary" variant="flat" :to="`/Event/${e.id}`">
+                                            {{ e.minTicketPriceCents ? 'Get tickets' : 'View event' }}
                                         </v-btn>
                                     </div>
                                 </v-card-text>
