@@ -124,7 +124,7 @@
                                 <td>
                                     <div class="d-flex align-center ga-3">
                                         <v-avatar size="36" rounded="lg" color="grey-lighten-3">
-                                            <v-img v-if="p.imageUrl" :src="p.imageUrl" cover></v-img>
+                                            <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)" cover></v-img>
                                             <v-icon v-else size="20" color="grey">mdi-image-outline</v-icon>
                                         </v-avatar>
                                         <div>
@@ -327,6 +327,14 @@ import ImportCsvDialog from '@/components/bikeshop/ImportCsvDialog.vue'
 import MatrixDialog from '@/components/bikeshop/MatrixDialog.vue'
 
 const service = new BikeShopService()
+
+// Uploaded images come back as a relative /uploads/... path. That only resolves against the
+// SPA origin, which is wrong whenever the API is a different origin (local dev, or a split
+// deployment), so prefix it with the API host (matching the product dialog's preview).
+function absoluteUrl(u: string): string {
+    return u.startsWith('http') ? u : `${import.meta.env.VITE_API_ENDPOINT?.replace(/\/api$/, '') ?? ''}${u}`
+}
+
 // ?tab=tax lets other screens (e.g. Rentals -> Settings) deep-link straight to a section
 // instead of telling the user to go hunt for it.
 const route = useRoute()

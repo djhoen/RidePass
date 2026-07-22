@@ -21,7 +21,7 @@
             <v-row>
                 <v-col v-for="p in filteredProducts" :key="p.id" cols="12" sm="6" md="4" lg="3">
                     <v-card class="d-flex flex-column" height="100%">
-                        <v-img v-if="p.imageUrl" :src="p.imageUrl" height="160" cover></v-img>
+                        <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)" height="160" cover></v-img>
                         <v-card-text class="flex-grow-1">
                             <div class="text-caption text-medium-emphasis">{{ p.brand || '' }}</div>
                             <div class="font-weight-medium">{{ p.name }}</div>
@@ -147,6 +147,12 @@ type CatalogProduct = StoreCatalog['products'][number]
 
 const router = useRouter()
 const service = new BikeShopService()
+
+// Product images come back as a relative /uploads/... path; prefix with the API host so they
+// resolve when the API is a different origin than the SPA (local dev / split deployment).
+function absoluteUrl(u: string): string {
+    return u.startsWith('http') ? u : `${import.meta.env.VITE_API_ENDPOINT?.replace(/\/api$/, '') ?? ''}${u}`
+}
 
 const catalog = ref<StoreCatalog>({ categories: [], products: [] })
 const loading = ref(true)
