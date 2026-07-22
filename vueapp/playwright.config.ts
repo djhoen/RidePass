@@ -37,5 +37,14 @@ export default defineConfig({
             dependencies: ['setup'],
             use: { storageState: 'e2e/.auth/admin.json' },
         },
+        {
+            // Behavioral flow tests, segmented by feature domain under e2e/flows/. These MUTATE stage
+            // data, so they self-clean (create -> assert -> delete) and get a longer per-test budget.
+            name: 'flows',
+            testMatch: /flows[\\/].*\.flow\.spec\.ts/,
+            dependencies: ['setup'],
+            timeout: 120_000,
+            use: { storageState: 'e2e/.auth/admin.json' },
+        },
     ],
 })

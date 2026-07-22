@@ -33,7 +33,7 @@ export interface CreditLookupResult {
 }
 
 export class CreditService {
-    private apiUrl = import.meta.env.VITE_API_URL
+    private apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
 
     searchAccounts(query: string | null, limit = 50) {
         const q = query ? `&query=${encodeURIComponent(query)}` : ''
