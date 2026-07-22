@@ -22,6 +22,10 @@
                         <v-chip size="small" :color="statusColor(p.status)">{{ p.status }}</v-chip>
                     </div>
                     <div class="text-subtitle-1 font-weight-bold mb-1">{{ p.itemName }}</div>
+                    <!-- Holder name so a buyer with several passes knows which QR is whose. -->
+                    <div v-if="p.holderName" class="text-body-2 mb-1">
+                        <v-icon size="14" class="mr-1">mdi-account</v-icon>{{ p.holderName }}
+                    </div>
                     <div class="text-caption text-medium-emphasis mb-3">
                         <div v-if="p.validOnDate">Valid on {{ p.validOnDate.substring(0,10) }}</div>
                         <div v-if="p.eventStartsAtUtc">Event: {{ formatInTenant(p.eventStartsAtUtc) }}</div>

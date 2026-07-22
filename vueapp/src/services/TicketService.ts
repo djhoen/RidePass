@@ -83,6 +83,7 @@ export interface MyPurchase {
     redemptionToken: string
     createdAtUtc: string
     tierKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | null
+    holderName: string | null
 }
 
 export interface MyCoupon {

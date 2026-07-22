@@ -77,6 +77,9 @@
                     <td class="text-caption">{{ o.customerBikeDesc || '(shop unit)' }}</td>
                     <td>
                         <v-chip size="x-small" :color="statusColor(o.status)">{{ statusLabel(o.status) }}</v-chip>
+                        <!-- Overdue jobs get a red flag next to the (config-colored) status so staff
+                             can spot them at a glance during a busy counter session. -->
+                        <v-chip v-if="overdue(o)" size="x-small" color="error" variant="flat" class="ml-1">Overdue</v-chip>
                         <v-icon v-if="o.checkedByUserId" size="14" color="success" class="ml-1"
                             icon="mdi-check-decagram" title="QC checked"></v-icon>
                     </td>

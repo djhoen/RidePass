@@ -52,7 +52,15 @@
                             </template>
                             <span v-else class="text-medium-emphasis">—</span>
                         </td>
-                        <td>{{ row.status }}</td>
+                        <!-- Only surface status when it's an exception (cancelled / completed);
+                             "scheduled" is the default for every row and just adds noise. -->
+                        <td>
+                            <v-chip v-if="row.status && row.status !== 'scheduled'" size="small" variant="tonal"
+                                :color="row.status === 'cancelled' ? 'error' : (row.status === 'completed' ? 'success' : 'grey')">
+                                {{ row.status }}
+                            </v-chip>
+                            <span v-else class="text-medium-emphasis">—</span>
+                        </td>
                         <td class="text-right">
                             <v-btn variant="text" size="small" @click="openShare(row)">Share</v-btn>
                             <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>

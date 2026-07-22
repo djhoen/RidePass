@@ -240,6 +240,8 @@ namespace webapi.Controllers
                 RedemptionToken = tk.RedemptionToken,
                 CreatedAtUtc = DateTime.SpecifyKind(tk.CreatedAt, DateTimeKind.Utc),
                 TierKind = tk.TierKind,
+                HolderName = string.IsNullOrWhiteSpace(tk.RiderFirstName) && string.IsNullOrWhiteSpace(tk.RiderLastName)
+                    ? null : $"{tk.RiderFirstName} {tk.RiderLastName}".Trim(),
             }));
 
             var ordered = combined.OrderByDescending(p => p.CreatedAtUtc).ToList();

@@ -699,6 +699,7 @@ namespace Services.Repositories
                        p.status, p.purchaser_email AS PurchaserEmail, p.purchaser_name AS PurchaserName,
                        p.redemption_token AS RedemptionToken,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
+                       p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
                        t.name AS TierName, t.kind AS TierKind,
                        e.id AS EventId, e.title AS EventTitle, e.starts_at AS EventStartsAt
                 FROM event_ticket_purchase p

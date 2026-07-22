@@ -42,6 +42,18 @@
                         label="Send on" density="compact" class="mt-2"
                         :hint="`Times in ${branding.timezone || 'UTC'}`" persistent-hint></v-text-field>
 
+                    <div v-if="amountCents >= branding.giftCardMinCents" class="mt-4 text-body-2">
+                        <div class="d-flex justify-space-between text-medium-emphasis">
+                            <span>Gift card value</span><span>${{ (amountCents / 100).toFixed(2) }}</span>
+                        </div>
+                        <div v-if="estServiceChargeCents > 0" class="d-flex justify-space-between text-medium-emphasis">
+                            <span>Service charge</span><span>${{ (estServiceChargeCents / 100).toFixed(2) }}</span>
+                        </div>
+                        <div class="d-flex justify-space-between font-weight-bold mt-1">
+                            <span>Total today</span><span>${{ (estTotalCents / 100).toFixed(2) }}</span>
+                        </div>
+                    </div>
+
                     <v-btn color="primary" class="mt-4" :loading="creating" :disabled="!canContinue" @click="createIntent">
                         Continue to Payment
                     </v-btn>
@@ -140,6 +152,13 @@ let elements: any = null
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
+
+// Estimated fee shown on the compose step so the total isn't a surprise on the next screen. The
+// server is authoritative (it returns the exact serviceChargeCents on createIntent); this mirrors
+// its per-value math (floor(value * tenantBps)).
+const estServiceChargeCents = computed(() =>
+    Math.floor((amountCents.value * (branding.serviceChargeBps ?? 0)) / 10000))
+const estTotalCents = computed(() => amountCents.value + estServiceChargeCents.value)
 
 const canContinue = computed(() => {
     if (!branding.giftCardsEnabled) return false

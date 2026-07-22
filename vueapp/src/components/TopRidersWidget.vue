@@ -35,8 +35,9 @@
                     </template>
                 </v-list-item>
                 <v-list-item v-if="!loading && riders.length === 0">
-                    <v-list-item-subtitle class="text-medium-emphasis text-center">
-                        No paid activity from waiver-signed riders {{ period === 'year' ? 'this year' : 'this month' }} yet.
+                    <v-list-item-subtitle class="text-medium-emphasis text-center" style="white-space: normal">
+                        No riders to rank {{ period === 'year' ? 'this year' : 'this month' }} yet. This lists top
+                        spenders among riders who have signed a waiver; guest and unlinked purchases aren't counted here.
                     </v-list-item-subtitle>
                 </v-list-item>
             </v-list>
