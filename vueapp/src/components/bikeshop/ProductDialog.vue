@@ -11,7 +11,18 @@
                 <v-textarea v-model="form.description" label="Description" density="compact" rows="2" class="mt-4" hide-details></v-textarea>
                 <v-row dense class="mt-2">
                     <v-col cols="6"><v-text-field v-model="form.brand" label="Brand" density="compact" hide-details></v-text-field></v-col>
-                    <v-col cols="6"><v-text-field v-model="form.imageUrl" label="Image URL" density="compact" hide-details></v-text-field></v-col>
+                    <v-col cols="6">
+                        <div class="d-flex align-center ga-3">
+                            <v-avatar v-if="form.imageUrl" size="40" rounded="lg">
+                                <v-img :src="absoluteUrl(form.imageUrl)"></v-img>
+                            </v-avatar>
+                            <v-file-input :model-value="null" label="Image" accept="image/png,image/jpeg,image/webp"
+                                density="compact" prepend-icon="mdi-camera" hide-details :loading="uploading"
+                                style="flex: 1" @update:model-value="onImageSelected"></v-file-input>
+                            <v-btn v-if="form.imageUrl" icon="mdi-delete" variant="text" size="small"
+                                @click="form.imageUrl = null"></v-btn>
+                        </div>
+                    </v-col>
                 </v-row>
                 <v-select v-model="form.categoryId" :items="categories" item-title="name" item-value="id"
                     label="Category" density="compact" clearable class="mt-4" hide-details></v-select>
@@ -46,8 +57,27 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'save
 
 const service = new BikeShopService()
 const saving = ref(false)
+const uploading = ref(false)
 const error = ref('')
 const form = ref<UpsertShopProduct>(blank())
+
+function absoluteUrl(u: string): string {
+    return u.startsWith('http') ? u : `${import.meta.env.VITE_API_ENDPOINT?.replace(/\/api$/, '') ?? ''}${u}`
+}
+
+async function onImageSelected(v: File | File[] | null) {
+    const file = Array.isArray(v) ? (v[0] ?? null) : v
+    if (!file) return
+    uploading.value = true
+    try {
+        const r = await service.uploadImage(file)
+        form.value.imageUrl = (r.data as any).data.imageUrl
+    } catch (err: any) {
+        error.value = err.response?.data?.error || 'Could not upload the image. Check that it is a PNG, JPEG, or WEBP under 5 MB and try again.'
+    } finally {
+        uploading.value = false
+    }
+}
 
 function blank(): UpsertShopProduct {
     return { name: '', description: null, brand: null, imageUrl: null, categoryId: null, supplierId: null,

@@ -366,6 +366,13 @@ export class BikeShopService {
     updateProduct(id: string, req: UpsertShopProduct) {
         return axios.put(`${this.apiUrl}/BikeShop/Products/${id}`, req)
     }
+    uploadImage(file: File) {
+        const form = new FormData()
+        form.append('file', file)
+        return axios.post<{ data: { imageUrl: string } }>(`${this.apiUrl}/BikeShop/Image`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        })
+    }
     createVariant(productId: string, req: UpsertShopVariant) {
         return axios.post<{ data: { id: string } }>(`${this.apiUrl}/BikeShop/Products/${productId}/Variants`, req)
     }

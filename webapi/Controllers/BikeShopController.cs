@@ -4,6 +4,7 @@ using Npgsql;
 using Services.Helpers;
 using Services.Repositories.Data.BikeShopData;
 using Services.Repositories.Interfaces;
+using Services.Storage;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.BikeShop;
 using webapi.Multitenancy;
@@ -21,13 +22,15 @@ namespace webapi.Controllers
         private readonly IBikeShopRepository _shop;
         private readonly ITenantContext _tenantContext;
         private readonly Services.Helpers.ISmtpEmailer _emailer;
+        private readonly IImageStorage _imageStorage;
 
         public BikeShopController(IBikeShopRepository shop, ITenantContext tenantContext,
-            Services.Helpers.ISmtpEmailer emailer)
+            Services.Helpers.ISmtpEmailer emailer, IImageStorage imageStorage)
         {
             _shop = shop;
             _tenantContext = tenantContext;
             _emailer = emailer;
+            _imageStorage = imageStorage;
         }
 
         private Guid TenantId => _tenantContext.TenantId;
@@ -291,6 +294,27 @@ namespace webapi.Controllers
             p.IsActive = req.IsActive;
             p.SortOrder = req.SortOrder;
             return p;
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Image")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (file is null || file.Length == 0) return new ApiResponses().BadRequestResult("File is required.");
+            if (file.Length > 5 * 1024 * 1024) return new ApiResponses().BadRequestResult("File exceeds 5 MB limit.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+                return new ApiResponses().BadRequestResult($"Unsupported content type: {file.ContentType}.");
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, TenantId, "shop", ext, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
         }
 
         // ── Variants ──────────────────────────────────────────────────────────────
