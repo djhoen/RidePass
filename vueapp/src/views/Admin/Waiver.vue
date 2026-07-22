@@ -278,7 +278,7 @@ async function loadAssociatedEvents() {
 
 async function loadAllEvents() {
     if (eventsLoaded.value) return
-    // Pick a wide range — admins reorganising waivers may need to attach to
+    // Pick a wide range — admins reorganizing waivers may need to attach to
     // historical events for retroactive cleanup as well as upcoming ones.
     const from = dayjs().subtract(2, 'year').utc().toISOString()
     const to = dayjs().add(2, 'year').utc().toISOString()

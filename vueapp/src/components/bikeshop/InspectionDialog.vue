@@ -37,7 +37,7 @@
                         <div v-for="r in g.items" :key="r.id"
                             class="d-flex align-center ga-2 py-1 flex-wrap insp-row">
                             <div style="min-width: 200px; flex: 1">{{ r.label }}</div>
-                            <!-- Colour scale every shop already speaks. Monitor is the one that
+                            <!-- Color scale every shop already speaks. Monitor is the one that
                                  earns money later: a documented "we told you in March". -->
                             <v-btn-toggle :model-value="r.rating" density="compact" divided
                                 @update:model-value="v => setRating(r, v)">

@@ -90,12 +90,19 @@
                                     {{ formatWhen(e.startsAtUtc) }}<span v-if="e.capacity"> · capacity {{ e.capacity }}</span>
                                 </v-list-item-subtitle>
                                 <template #append>
-                                    <v-btn v-if="hasPerm('catalog.manage')" icon="mdi-pencil" variant="text" size="small"
-                                        :to="`/Admin/Events?edit=${e.id}`" title="Edit event"></v-btn>
-                                    <v-btn v-if="hasPerm('reports.view')" icon="mdi-account-group" variant="text"
-                                        size="small"
-                                        :to="`/Admin/Reports?report=event-riders&eventId=${e.id}`"
-                                        title="Rider report"></v-btn>
+                                    <v-tooltip v-if="hasPerm('catalog.manage')" text="Edit event" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" icon="mdi-pencil" variant="text" size="small"
+                                                :to="`/Admin/Events?edit=${e.id}`"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                    <v-tooltip v-if="hasPerm('reports.view')" text="Rider report" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" icon="mdi-account-group" variant="text"
+                                                size="small"
+                                                :to="`/Admin/Reports?report=event-riders&eventId=${e.id}`"></v-btn>
+                                        </template>
+                                    </v-tooltip>
                                 </template>
                             </v-list-item>
                             <v-list-item v-if="snapshot.upcomingEvents.length === 0">

@@ -131,8 +131,11 @@
                                             <div class="d-flex align-center ga-2">
                                                 <strong>{{ p.name }}</strong>
                                                 <v-chip v-if="!p.isActive" size="x-small" color="warning">Inactive</v-chip>
-                                                <v-chip v-if="p.isSellable && !p.isPublished" size="x-small" variant="tonal"
-                                                    title="Sellable at the counter but not listed online">Not online</v-chip>
+                                                <v-tooltip v-if="p.isSellable && !p.isPublished" text="Sellable at the counter but not listed online" location="top">
+                                                    <template #activator="{ props }">
+                                                        <v-chip v-bind="props" size="x-small" variant="tonal">Not online</v-chip>
+                                                    </template>
+                                                </v-tooltip>
                                                 <v-chip v-if="p.isRentable" size="x-small" variant="tonal">Also rented</v-chip>
                                             </div>
                                             <div v-if="p.brand" class="text-caption text-medium-emphasis">{{ p.brand }}</div>
@@ -147,8 +150,12 @@
                                 </td>
                                 <td class="text-caption text-medium-emphasis">{{ p.variants.length }}</td>
                                 <td class="text-right">
-                                    <v-btn size="x-small" variant="text" icon="mdi-pencil"
-                                        title="Edit product" @click.stop="openProduct(p)"></v-btn>
+                                    <v-tooltip text="Edit product" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-pencil"
+                                                @click.stop="openProduct(p)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
                                 </td>
                             </tr>
                             <tr v-if="expanded.has(p.id)" class="expanded-row">
@@ -200,12 +207,24 @@
                                                     </td>
                                                     <td class="text-right">
                                                         <v-btn size="x-small" variant="text" icon="mdi-pencil" @click="openVariant(p, v)"></v-btn>
-                                                        <v-btn v-if="v.barcode || v.sku" size="x-small" variant="text"
-                                                            icon="mdi-barcode" title="Print barcode label" @click="openLabel(p, v)"></v-btn>
-                                                        <v-btn v-if="v.trackingKind === 'pool'" size="x-small" variant="text"
-                                                            icon="mdi-plus-minus-variant" title="Adjust stock" @click="openAdjust(v)"></v-btn>
-                                                        <v-btn v-else size="x-small" variant="text" icon="mdi-format-list-numbered"
-                                                            title="Manage units" @click="openItems(v)"></v-btn>
+                                                        <v-tooltip v-if="v.barcode || v.sku" text="Print barcode label" location="top">
+                                                            <template #activator="{ props }">
+                                                                <v-btn v-bind="props" size="x-small" variant="text"
+                                                                    icon="mdi-barcode" @click="openLabel(p, v)"></v-btn>
+                                                            </template>
+                                                        </v-tooltip>
+                                                        <v-tooltip v-if="v.trackingKind === 'pool'" text="Adjust stock" location="top">
+                                                            <template #activator="{ props }">
+                                                                <v-btn v-bind="props" size="x-small" variant="text"
+                                                                    icon="mdi-plus-minus-variant" @click="openAdjust(v)"></v-btn>
+                                                            </template>
+                                                        </v-tooltip>
+                                                        <v-tooltip v-else text="Manage units" location="top">
+                                                            <template #activator="{ props }">
+                                                                <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-format-list-numbered"
+                                                                    @click="openItems(v)"></v-btn>
+                                                            </template>
+                                                        </v-tooltip>
                                                     </td>
                                                 </tr>
                                             </tbody>
@@ -228,7 +247,7 @@
             </v-card>
             </div>
 
-            <!-- Categories only exist to organise products, so they live beside them. -->
+            <!-- Categories only exist to organize products, so they live beside them. -->
             <div v-else-if="productsTab === 'categories'">
                 <SimpleCrud label="category" :rows="categories" @new="openCategory()" @edit="openCategory">
                     <template #cols="{ row }"><td>{{ row.name }}</td></template>

@@ -115,7 +115,7 @@ watch([reports, selected, () => branding.loaded], () => {
     }
 }, { immediate: true })
 
-// Honour external query updates (e.g. browser back/forward) without losing the
+// Honor external query updates (e.g. browser back/forward) without losing the
 // in-memory state of the other panes.
 watch(() => route.query, (q) => {
     selected.value = parseReport(q.report as string | undefined)

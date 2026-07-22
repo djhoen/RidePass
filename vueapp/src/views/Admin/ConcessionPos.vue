@@ -106,7 +106,11 @@
                             </div>
                             <div class="text-right d-flex flex-column align-end">
                                 <div class="font-weight-medium">{{ money(line.lineTotal) }}</div>
-                                <v-btn icon="mdi-tag-outline" size="x-small" variant="text" class="mt-1" title="Discount or comp this item" @click="openDiscount(i)" />
+                                <v-tooltip text="Discount or comp this item" location="top">
+                                    <template #activator="{ props }">
+                                        <v-btn v-bind="props" icon="mdi-tag-outline" size="x-small" variant="text" class="mt-1" @click="openDiscount(i)" />
+                                    </template>
+                                </v-tooltip>
                                 <v-btn icon="mdi-close" size="x-small" variant="text" class="mt-1" @click="cart.splice(i, 1)" />
                             </div>
                         </div>

@@ -94,8 +94,11 @@
                                         :disabled="stripeSendingId === p.id || voidingId === p.id" @click="openMarkPaid(p)">Mark paid</v-btn>
                                     <v-btn v-if="p.status === 'pending'" size="x-small" variant="text" color="error"
                                         :loading="voidingId === p.id" :disabled="stripeSendingId === p.id" @click="voidPayout(p)">Void</v-btn>
-                                    <v-btn size="x-small" variant="text" icon="mdi-download" @click="downloadPayoutCsv(p)"
-                                        :title="'Download CSV'"></v-btn>
+                                    <v-tooltip text="Download CSV" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-download" @click="downloadPayoutCsv(p)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
                                 </td>
                             </tr>
                             <tr v-if="detailPayouts.length === 0">

@@ -81,8 +81,11 @@
                     <tr v-for="p in displayRows" :key="p.kind + ':' + p.id">
                         <td>{{ formatWhen(p.createdAt) }}</td>
                         <td>
-                            <span v-if="orderRef(p)" class="text-medium-emphasis"
-                                :title="p.redemptionToken || p.id">{{ orderRef(p) }}</span>
+                            <v-tooltip v-if="orderRef(p)" :text="p.redemptionToken || p.id" location="top">
+                                <template #activator="{ props }">
+                                    <span v-bind="props" class="text-medium-emphasis">{{ orderRef(p) }}</span>
+                                </template>
+                            </v-tooltip>
                         </td>
                         <td>
                             <div>{{ p.purchaserName }}</div>
@@ -127,9 +130,13 @@
                         <div class="d-flex flex-wrap ga-6 mb-4">
                             <div>
                                 <div class="text-caption text-medium-emphasis">Order ID</div>
-                                <div :title="detailsAnchor?.redemptionToken || detailsAnchor?.id">
-                                    {{ detailsAnchor ? orderRef(detailsAnchor) : '' }}
-                                </div>
+                                <v-tooltip :text="detailsAnchor?.redemptionToken || detailsAnchor?.id" location="top">
+                                    <template #activator="{ props }">
+                                        <div v-bind="props">
+                                            {{ detailsAnchor ? orderRef(detailsAnchor) : '' }}
+                                        </div>
+                                    </template>
+                                </v-tooltip>
                             </div>
                             <div>
                                 <div class="text-caption text-medium-emphasis">Date</div>

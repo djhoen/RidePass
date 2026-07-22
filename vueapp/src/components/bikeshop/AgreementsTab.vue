@@ -5,9 +5,9 @@
             checked out; the repair authorization is signed when a bike is dropped off.
         </p>
 
-        <v-tabs v-model="kind" density="compact" class="mb-4">
-            <v-tab value="rental_agreement">Rental agreement</v-tab>
-            <v-tab value="work_order_terms">Repair authorization</v-tab>
+        <v-tabs v-model="kind" :height="40" class="mb-4 sub-tabs" hide-slider selected-class="sub-tab-active">
+            <v-tab value="work_order_terms" class="sub-tab">Repair authorization</v-tab>
+            <v-tab value="rental_agreement" class="sub-tab">Rental agreement</v-tab>
         </v-tabs>
 
         <div v-if="loading" class="text-center py-6">
@@ -56,7 +56,7 @@ import { BikeShopService, type ShopAgreement } from '@/services/BikeShopService'
 
 const service = new BikeShopService()
 
-const kind = ref<'rental_agreement' | 'work_order_terms'>('rental_agreement')
+const kind = ref<'rental_agreement' | 'work_order_terms'>('work_order_terms')
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')

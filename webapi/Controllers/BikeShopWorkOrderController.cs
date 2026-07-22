@@ -122,9 +122,9 @@ namespace webapi.Controllers
             if (req.SubjectItemId is not null && await _shop.GetItem(req.SubjectItemId.Value, TenantId) is null)
                 return new ApiResponses().BadRequestResult("That shop unit doesn't exist.");
 
-            // Resolve behaviours from the tenant's status definitions. The seven built-in CODES are
-            // the behavioural backbone, so this drives the same inventory rules whatever a tenant
-            // named or coloured its statuses, and works for custom ('open') stages too.
+            // Resolve behaviors from the tenant's status definitions. The seven built-in CODES are
+            // the behavioral backbone, so this drives the same inventory rules whatever a tenant
+            // named or colored its statuses, and works for custom ('open') stages too.
             var statuses = await LoadStatusMap();
             if (!statuses.TryGetValue(req.Status, out var target) || !target.IsActive)
                 return new ApiResponses().BadRequestResult("That work order status isn't available.");
@@ -206,7 +206,7 @@ namespace webapi.Controllers
         }
 
         /// <summary>The tenant's statuses keyed by code (case-insensitive), used to resolve
-        /// behaviour and the notify flag during transitions.</summary>
+        /// behavior and the notify flag during transitions.</summary>
         private async Task<Dictionary<string, ShopWorkOrderStatus>> LoadStatusMap() =>
             (await _shop.ListWorkOrderStatuses(TenantId))
                 .ToDictionary(s => s.Code, s => s, StringComparer.OrdinalIgnoreCase);
@@ -452,6 +452,18 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListWorkOrderStatuses(TenantId));
         }
 
+        /// <summary>Persist a drag-drop reorder of the stages in one round trip.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPost("WorkOrderStatuses/Reorder")]
+        public async Task<IActionResult> ReorderStatuses([FromBody] ReorderWorkOrderStatusesRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (req.Items.Count == 0) return new ApiResponses().OkResult();
+            await _shop.UpdateWorkOrderStatusSortOrders(TenantId,
+                req.Items.Select(i => i.Id).ToList(), req.Items.Select(i => i.SortOrder).ToList());
+            return new ApiResponses().OkResult();
+        }
+
         /// <summary>Add a custom working stage. Configuration, so gated above the bench.</summary>
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPost("WorkOrderStatuses")]
@@ -484,7 +496,7 @@ namespace webapi.Controllers
             var status = await _shop.GetWorkOrderStatus(id, TenantId);
             if (status is null) return new ApiResponses().NotFoundResult("Status not found.");
 
-            // A built-in can't be turned off (its behaviour is load-bearing), and the default can't
+            // A built-in can't be turned off (its behavior is load-bearing), and the default can't
             // be turned off (a new order needs somewhere to start).
             var isActive = req.IsActive;
             if (status.IsBuiltin) isActive = true;

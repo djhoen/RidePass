@@ -68,17 +68,27 @@
                             <v-btn size="x-small" variant="text" prepend-icon="mdi-plus"
                                 @click="addItem(g.name)">Add point</v-btn>
                         </div>
-                        <div v-for="(it, i) in g.items" :key="it.id"
-                            class="d-flex align-center ga-2 py-1">
-                            <v-text-field v-model="it.label" density="compact" hide-details
-                                placeholder="What gets checked" @blur="saveItem(it)"></v-text-field>
-                            <v-btn size="x-small" variant="text" icon="mdi-arrow-up"
-                                :disabled="i === 0" title="Move up" @click="move(g, i, -1)"></v-btn>
-                            <v-btn size="x-small" variant="text" icon="mdi-arrow-down"
-                                :disabled="i === g.items.length - 1" title="Move down" @click="move(g, i, 1)"></v-btn>
-                            <v-btn size="x-small" variant="text" icon="mdi-close" color="error"
-                                title="Remove" @click="removeItem(it)"></v-btn>
-                        </div>
+                        <draggable :list="g.items" item-key="id" handle=".drag-handle"
+                            :animation="180" ghost-class="drag-ghost" @end="onDragEnd">
+                            <template #item="{ element: it }">
+                                <div class="d-flex align-center ga-2 py-1">
+                                    <v-tooltip text="Drag to reorder" location="top">
+                                        <template #activator="{ props }">
+                                            <v-icon v-bind="props" size="20" class="drag-handle"
+                                                style="cursor: grab">mdi-drag-vertical</v-icon>
+                                        </template>
+                                    </v-tooltip>
+                                    <v-text-field v-model="it.label" density="compact" hide-details
+                                        placeholder="What gets checked" @blur="saveItem(it)"></v-text-field>
+                                    <v-tooltip text="Remove" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-close"
+                                                color="error" @click="removeItem(it)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                </div>
+                            </template>
+                        </draggable>
                     </div>
 
                     <v-divider class="my-3"></v-divider>
@@ -120,6 +130,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import draggable from 'vuedraggable'
 import { BikeShopService, type ShopInspectionTemplate, type ShopInspectionTemplateItem } from '@/services/BikeShopService'
 
 const service = new BikeShopService()
@@ -258,15 +269,30 @@ async function removeItem(it: ShopInspectionTemplateItem) {
     }
 }
 
-// Swap sort orders with the neighbour, then persist both.
-async function move(g: { name: string; items: ShopInspectionTemplateItem[] }, index: number, delta: number) {
-    const a = g.items[index], b = g.items[index + delta]
-    if (!a || !b || !selected.value) return
-    const tmp = a.sortOrder; a.sortOrder = b.sortOrder; b.sortOrder = tmp
+// Drag-drop reorder within a group. vuedraggable has already spliced the dragged group's items
+// into their new order (in the `groups` computed's cached value, since its dep — selected.items —
+// hasn't changed yet). Renumber every item across all groups in that visual order (spaced by 10),
+// then persist the ones whose sort_order actually moved. Setting sortOrder mutates selected.items,
+// which re-runs the computed so the render stays consistent with what was persisted.
+async function onDragEnd() {
+    const t = selected.value
+    if (!t) return
+    let order = 0
+    const changed: ShopInspectionTemplateItem[] = []
+    for (const g of groups.value) {
+        for (const it of g.items) {
+            const ns = (order += 10)
+            if (it.sortOrder !== ns) { it.sortOrder = ns; changed.push(it) }
+        }
+    }
+    if (changed.length === 0) return
     try {
-        await Promise.all([saveItem(a), saveItem(b)])
-        await load()
-    } catch {
+        await Promise.all(changed.map(it => service.upsertInspectionItem(t.id, {
+            id: it.id, groupLabel: it.groupLabel, label: it.label.trim(),
+            sortOrder: it.sortOrder, isActive: it.isActive,
+        })))
+    } catch (e: any) {
+        flash(e.response?.data?.error || 'Could not save the new order.', 'error')
         await load()
     }
 }

@@ -615,7 +615,7 @@ function attendeeColor(a: OrderWaiverAttendee): string {
 }
 
 // What the line actually admits. An event ticket is a race entry, a rider gate fee, or a
-// spectator gate fee, and labelling all three "Race Entry" misleads whoever is working the gate.
+// spectator gate fee, and labeling all three "Race Entry" misleads whoever is working the gate.
 function kindLabel(item: OrderItem): string {
     switch (item.kind) {
         case 'pass': return 'Pass'

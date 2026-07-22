@@ -261,7 +261,7 @@ namespace webapi.Controllers
             new ApiResponses().BadRequestResult("No tenant resolved for this request.");
 
         // Public endpoints: tenant must resolve AND have the blog turned on. When off we
-        // return 404 so the blog is invisible rather than signalling that it exists.
+        // return 404 so the blog is invisible rather than signaling that it exists.
         private bool RequirePublicBlog(out IActionResult? error)
         {
             if (!_tenantContext.IsResolved)

@@ -1,9 +1,9 @@
 <template>
     <div>
         <p class="text-caption text-medium-emphasis mb-4">
-            The stages a repair moves through. Rename or recolour any of them, reorder them, and add
-            your own working stages (for example "Waiting on customer" or "Test riding"). The built-in
-            stages keep their behaviour: <strong>Estimate</strong> holds parts as a quote,
+            The stages a repair moves through. Rename or recolor any of them, drag to reorder them, and
+            add your own working stages (for example "Waiting on customer" or "Test riding"). The built-in
+            stages keep their behavior: <strong>Estimate</strong> holds parts as a quote,
             <strong>Ready</strong> and <strong>Picked up</strong> and <strong>Cancelled</strong> do
             what they say. Turn on the bell to text or email the customer when a repair reaches a stage.
         </p>
@@ -14,58 +14,80 @@
 
         <template v-else>
             <v-card variant="outlined">
-                <div v-for="(s, i) in statuses" :key="s.id"
-                    class="d-flex align-center ga-2 pa-2 flex-wrap"
-                    :class="{ 'border-b': i < statuses.length - 1 }">
-                    <!-- Colour swatch + preview -->
-                    <v-menu>
-                        <template #activator="{ props }">
-                            <v-btn v-bind="props" size="small" variant="tonal" :color="s.color"
-                                icon="mdi-palette"></v-btn>
-                        </template>
-                        <v-card><v-card-text class="d-flex flex-wrap ga-1" style="max-width: 240px">
-                            <v-btn v-for="c in palette" :key="c" :color="c" size="x-small" icon
-                                :variant="s.color === c ? 'flat' : 'tonal'" @click="s.color = c"></v-btn>
-                        </v-card-text></v-card>
-                    </v-menu>
+                <draggable :list="visibleRows" item-key="id" handle=".drag-handle"
+                    :animation="180" ghost-class="drag-ghost" @end="onReorderEnd">
+                    <template #item="{ element: s, index: i }">
+                        <div class="d-flex align-center ga-2 pa-2 flex-wrap"
+                            :class="{ 'border-b': i < visibleRows.length - 1 }">
+                            <v-tooltip text="Drag to reorder" location="top">
+                                <template #activator="{ props }">
+                                    <v-icon v-bind="props" class="drag-handle" style="cursor: grab">mdi-drag-vertical</v-icon>
+                                </template>
+                            </v-tooltip>
 
-                    <v-text-field v-model="s.name" density="compact" hide-details style="max-width: 220px"
-                        :disabled="saving === s.id"></v-text-field>
+                            <!-- Color swatch + preview -->
+                            <v-menu>
+                                <template #activator="{ props: menuProps }">
+                                    <v-tooltip text="Change color" location="top">
+                                        <template #activator="{ props: tipProps }">
+                                            <v-btn v-bind="mergeProps(menuProps, tipProps)" size="small"
+                                                variant="tonal" :color="s.color" icon="mdi-palette"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                </template>
+                                <v-card><v-card-text class="d-flex flex-wrap ga-1" style="max-width: 240px">
+                                    <v-btn v-for="c in palette" :key="c" :color="c" size="x-small" icon
+                                        :variant="s.color === c ? 'flat' : 'tonal'" @click="s.color = c"></v-btn>
+                                </v-card-text></v-card>
+                            </v-menu>
 
-                    <v-chip size="x-small" variant="tonal">{{ behaviorLabel(s.behavior) }}</v-chip>
-                    <v-chip v-if="s.isDefault" size="x-small" color="primary">Default start</v-chip>
-                    <v-chip v-if="!s.isActive" size="x-small" color="warning">Off</v-chip>
+                            <v-text-field v-model="s.name" density="compact" hide-details style="max-width: 220px"
+                                :disabled="saving === s.id"></v-text-field>
 
-                    <v-tooltip text="Notify the customer when a repair reaches this stage" location="top">
-                        <template #activator="{ props }">
-                            <v-btn v-bind="props" size="small" variant="text"
-                                :color="s.notifyCustomer ? 'primary' : undefined"
-                                :icon="s.notifyCustomer ? 'mdi-bell' : 'mdi-bell-outline'"
-                                @click="s.notifyCustomer = !s.notifyCustomer"></v-btn>
-                        </template>
-                    </v-tooltip>
+                            <v-chip size="x-small" variant="tonal">{{ behaviorLabel(s.behavior) }}</v-chip>
+                            <v-chip v-if="s.isDefault" size="x-small" color="primary">Default start</v-chip>
+                            <v-chip v-if="!s.isActive" size="x-small" color="warning">Off</v-chip>
 
-                    <v-spacer></v-spacer>
+                            <v-spacer></v-spacer>
 
-                    <v-btn size="x-small" variant="text" icon="mdi-arrow-up" :disabled="i === 0"
-                        title="Move up" @click="move(i, -1)"></v-btn>
-                    <v-btn size="x-small" variant="text" icon="mdi-arrow-down" :disabled="i === statuses.length - 1"
-                        title="Move down" @click="move(i, 1)"></v-btn>
+                            <v-btn v-if="dirty(s)" size="small" color="primary" variant="tonal"
+                                :loading="saving === s.id" @click="save(s)">Save</v-btn>
 
-                    <v-btn v-if="dirty(s)" size="small" color="primary" variant="tonal"
-                        :loading="saving === s.id" @click="save(s)">Save</v-btn>
+                            <!-- Notification bell + the row actions all live on the right. -->
+                            <v-tooltip text="Notify the customer when a repair reaches this stage" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="small" variant="text"
+                                        :color="s.notifyCustomer ? 'primary' : undefined"
+                                        :icon="s.notifyCustomer ? 'mdi-bell' : 'mdi-bell-outline'"
+                                        @click="s.notifyCustomer = !s.notifyCustomer"></v-btn>
+                                </template>
+                            </v-tooltip>
 
-                    <v-btn v-if="!s.isDefault && s.behavior !== 'done' && s.behavior !== 'cancelled' && s.isActive"
-                        size="x-small" variant="text" title="Make this the starting stage"
-                        icon="mdi-flag-outline" @click="makeDefault(s)"></v-btn>
+                            <v-tooltip v-if="!s.isDefault && s.behavior !== 'done' && s.behavior !== 'cancelled' && s.isActive"
+                                text="Make this the starting stage" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="x-small" variant="text"
+                                        icon="mdi-flag-outline" @click="makeDefault(s)"></v-btn>
+                                </template>
+                            </v-tooltip>
 
-                    <!-- Built-in stages can be turned on always; custom ones can be switched off. -->
-                    <v-btn v-if="!s.isBuiltin && !s.isDefault" size="x-small" variant="text"
-                        :icon="s.isActive ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
-                        :title="s.isActive ? 'Turn off' : 'Turn on'" @click="toggleActive(s)"></v-btn>
-                    <v-btn v-if="!s.isBuiltin" size="x-small" variant="text" color="error"
-                        icon="mdi-delete-outline" title="Delete" @click="remove(s)"></v-btn>
-                </div>
+                            <!-- Built-in stages can be turned on always; custom ones can be switched off. -->
+                            <v-tooltip v-if="!s.isBuiltin && !s.isDefault" :text="s.isActive ? 'Turn off' : 'Turn on'" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="x-small" variant="text"
+                                        :icon="s.isActive ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                                        @click="toggleActive(s)"></v-btn>
+                                </template>
+                            </v-tooltip>
+                            <v-tooltip v-if="!s.isBuiltin" text="Delete" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="x-small" variant="text" color="error"
+                                        icon="mdi-delete-outline" @click="remove(s)"></v-btn>
+                                </template>
+                            </v-tooltip>
+                        </div>
+                    </template>
+                </draggable>
             </v-card>
 
             <!-- Add a custom working stage -->
@@ -74,8 +96,13 @@
                     placeholder="e.g. Waiting on customer" style="max-width: 260px"
                     @keyup.enter="add"></v-text-field>
                 <v-menu>
-                    <template #activator="{ props }">
-                        <v-btn v-bind="props" size="small" variant="tonal" :color="newColor" icon="mdi-palette"></v-btn>
+                    <template #activator="{ props: menuProps }">
+                        <v-tooltip text="Change color" location="top">
+                            <template #activator="{ props: tipProps }">
+                                <v-btn v-bind="mergeProps(menuProps, tipProps)" size="small" variant="tonal"
+                                    :color="newColor" icon="mdi-palette"></v-btn>
+                            </template>
+                        </v-tooltip>
                     </template>
                     <v-card><v-card-text class="d-flex flex-wrap ga-1" style="max-width: 240px">
                         <v-btn v-for="c in palette" :key="c" :color="c" size="x-small" icon
@@ -92,8 +119,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, mergeProps } from 'vue'
+import draggable from 'vuedraggable'
 import { BikeShopService, type ShopWorkOrderStatusDef } from '@/services/BikeShopService'
+import { useDragReorder } from '@/composables/useDragReorder'
 import { useConfirm } from '@/composables/useConfirm'
 
 const service = new BikeShopService()
@@ -107,9 +136,21 @@ const adding = ref(false)
 const newName = ref('')
 const newColor = ref('blue')
 
-// Vuetify colour tokens that render as chip colours.
+// Vuetify color tokens that render as chip colors.
 const palette = ['grey', 'blue-grey', 'blue', 'indigo', 'deep-purple', 'purple', 'teal', 'cyan',
     'green', 'success', 'lime', 'amber', 'orange', 'warning', 'deep-orange', 'red', 'error', 'brown', 'primary']
+
+// Drag-drop reorder: persist the new order via the bulk endpoint, then rebaseline the dirty
+// snapshots (sort_order is part of the snapshot) so a reorder doesn't leave every row "dirty".
+const { visibleRows, onReorderEnd } = useDragReorder<ShopWorkOrderStatusDef>({
+    rows: statuses,
+    save: items => service.reorderWorkOrderStatuses(items),
+    onSuccess: () => {
+        for (const s of statuses.value) original.value[s.id] = snapshot(s)
+        flash('Order saved.')
+    },
+    onError: () => load(),
+})
 
 const snack = ref({ show: false, text: '', color: 'success' as 'success' | 'error' })
 function flash(text: string, color: 'success' | 'error' = 'success') { snack.value = { show: true, text, color } }
@@ -187,19 +228,6 @@ async function remove(s: ShopWorkOrderStatusDef) {
     }
 }
 
-// Swap sort order with the neighbour and persist both.
-async function move(index: number, delta: number) {
-    const a = statuses.value[index], b = statuses.value[index + delta]
-    if (!a || !b) return
-    const tmp = a.sortOrder; a.sortOrder = b.sortOrder; b.sortOrder = tmp
-    statuses.value.sort((x, y) => x.sortOrder - y.sortOrder)
-    try {
-        await Promise.all([save(a), save(b)])
-    } catch {
-        await load()
-    }
-}
-
 async function add() {
     const name = newName.value.trim()
     if (!name) return
@@ -223,5 +251,8 @@ onMounted(load)
 <style scoped>
 .border-b {
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.drag-ghost {
+    opacity: 0.5;
 }
 </style>

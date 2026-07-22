@@ -358,7 +358,7 @@ export interface OrderSignature {
 
 export interface OrderItem {
     kind: 'pass' | 'event_ticket' | 'extras' | 'membership' | string
-    // Event tickets only: what the admission is, so a spectator's gate fee isn't labelled
+    // Event tickets only: what the admission is, so a spectator's gate fee isn't labeled
     // "Race Entry" at the gate. Null on add-ons.
     ticketKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | string | null
     audience: 'rider' | 'spectator' | string | null

@@ -13,9 +13,13 @@
                 <span class="text-subtitle-1">Notifications</span>
                 <v-spacer></v-spacer>
                 <v-btn v-if="unread > 0" size="x-small" variant="text" @click="markAll">Mark all read</v-btn>
-                <v-btn icon size="x-small" variant="text" :title="'Notification settings'" @click="openSettings">
-                    <v-icon>mdi-cog</v-icon>
-                </v-btn>
+                <v-tooltip text="Notification settings" location="top">
+                    <template #activator="{ props }">
+                        <v-btn v-bind="props" icon size="x-small" variant="text" @click="openSettings">
+                            <v-icon>mdi-cog</v-icon>
+                        </v-btn>
+                    </template>
+                </v-tooltip>
             </v-card-title>
             <v-divider></v-divider>
             <v-list density="compact" max-height="500" class="overflow-y-auto py-0">

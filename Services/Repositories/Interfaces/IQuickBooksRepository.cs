@@ -39,7 +39,7 @@ namespace Services.Repositories.Interfaces
         Task RecordSyncOutcome(QboSyncLogEntry entry);
         /// <summary>
         /// Claim a (tenant, business_date) for posting. Returns false if it's already been posted
-        /// successfully, which is the last line of defence against double-posting into live books.
+        /// successfully, which is the last line of defense against double-posting into live books.
         /// </summary>
         Task<bool> TryClaimBusinessDate(Guid tenantId, DateOnly businessDate);
     }

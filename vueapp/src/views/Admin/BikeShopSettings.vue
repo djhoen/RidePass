@@ -17,11 +17,11 @@
         </p>
 
         <v-tabs v-model="tab" class="mb-4">
-            <v-tab value="tax">Tax</v-tab>
             <v-tab value="service">Service &amp; fees</v-tab>
             <v-tab value="statuses">Work order stages</v-tab>
             <v-tab value="agreements">Agreements</v-tab>
             <v-tab value="inspections">Inspection checklist</v-tab>
+            <v-tab value="tax">Tax</v-tab>
         </v-tabs>
 
         <!-- ── Tax categories ───────────────────────────────────────────── -->
@@ -91,9 +91,9 @@ const service = new BikeShopService()
 const route = useRoute()
 
 // ?tab= so the Rentals page's "manage retail tax" link lands straight on Tax.
-const validTabs = ['tax', 'service', 'statuses', 'agreements', 'inspections']
+const validTabs = ['service', 'statuses', 'agreements', 'inspections', 'tax']
 const requested = String(route.query.tab ?? '')
-const tab = ref(validTabs.includes(requested) ? requested : 'tax')
+const tab = ref(validTabs.includes(requested) ? requested : 'service')
 
 const taxCategories = ref<ShopTaxCategory[]>([])
 const taxLoaded = ref(false)

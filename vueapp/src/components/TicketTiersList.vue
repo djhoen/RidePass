@@ -113,7 +113,7 @@
                         <div class="text-subtitle-2 mb-1">Training group (optional)</div>
                         <p class="text-caption text-medium-emphasis mb-2">
                             Riders pick their own group by ability and bike, so name it the way they'd
-                            recognise it. Assigning a coach is optional; when you do, the group also stops
+                            recognize it. Assigning a coach is optional; when you do, the group also stops
                             selling once that coach is full.
                         </p>
                         <v-select v-model="form.instructorId" :items="coachOptions"

@@ -264,6 +264,7 @@ namespace Services.Repositories.Interfaces
         Task EnsureDefaultWorkOrderStatuses(Guid tenantId);
         Task<List<ShopWorkOrderStatus>> ListWorkOrderStatuses(Guid tenantId, bool activeOnly = false);
         Task<ShopWorkOrderStatus?> GetWorkOrderStatus(Guid id, Guid tenantId);
+        Task UpdateWorkOrderStatusSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
         Task<ShopWorkOrderStatus?> CreateWorkOrderStatus(Guid tenantId, string code, string name, string color, bool notifyCustomer, int sortOrder);
         Task<int> UpdateWorkOrderStatusPresentation(Guid id, Guid tenantId, string name, string color, bool notifyCustomer, int sortOrder, bool isActive);
         Task<int> SetDefaultWorkOrderStatus(Guid id, Guid tenantId);

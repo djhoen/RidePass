@@ -33,7 +33,7 @@ namespace webapi.Controllers.API.Data.BikeShop
         public int PageSize { get; set; } = 25;
 
         /// <summary>
-        /// Values are whitelisted here rather than trusted: an unrecognised status or payment
+        /// Values are whitelisted here rather than trusted: an unrecognized status or payment
         /// method is dropped, so a typo returns everything instead of silently returning nothing.
         /// </summary>
         public ShopSaleQuery ToQuery() => new()

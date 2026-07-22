@@ -94,7 +94,11 @@
                             <div class="flex-grow-1" style="min-width: 0">
                                 <div class="text-h6 font-weight-bold text-truncate">{{ orderDetail.eventTitle || 'Event order' }}</div>
                                 <div v-if="orderToken || orderPlacedAt" class="text-caption text-medium-emphasis mt-1">
-                                    <span v-if="orderToken" :title="orderToken ?? undefined">Order {{ shortOrderId }}</span>
+                                    <v-tooltip v-if="orderToken" :text="orderToken ?? undefined" location="top">
+                                        <template #activator="{ props }">
+                                            <span v-bind="props">Order {{ shortOrderId }}</span>
+                                        </template>
+                                    </v-tooltip>
                                     <span v-if="orderToken && orderPlacedAt"> &middot; </span>
                                     <span v-if="orderPlacedAt">Placed {{ formatDate(orderPlacedAt) }}</span>
                                 </div>

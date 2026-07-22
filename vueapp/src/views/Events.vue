@@ -126,9 +126,13 @@
                         </div>
                         <component :is="linkTag(ev)" v-for="ev in day.events.slice(0, 3)" :key="ev.id"
                             v-bind="linkProps(ev)" class="event-chip-link">
-                            <div class="event-chip" :style="{ background: ev.eventTypeColor || '#1976D2' }" :title="ev.title">
-                                {{ ev.title }}
-                            </div>
+                            <v-tooltip :text="ev.title" location="top">
+                                <template #activator="{ props }">
+                                    <div v-bind="props" class="event-chip" :style="{ background: ev.eventTypeColor || '#1976D2' }">
+                                        {{ ev.title }}
+                                    </div>
+                                </template>
+                            </v-tooltip>
                         </component>
                         <div v-if="day.events.length > 3" class="text-caption text-medium-emphasis">
                             +{{ day.events.length - 3 }} more

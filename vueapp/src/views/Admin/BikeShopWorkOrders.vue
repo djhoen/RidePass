@@ -70,8 +70,11 @@
                 <tr v-for="o in visibleOrders" :key="o.id">
                     <td>
                         {{ o.customerName }}
-                        <v-icon v-if="o.groupId" size="13" class="text-medium-emphasis ml-1"
-                            title="Part of a multi-bike visit">mdi-account-group</v-icon>
+                        <v-tooltip v-if="o.groupId" text="Part of a multi-bike visit" location="top">
+                            <template #activator="{ props }">
+                                <v-icon v-bind="props" size="13" class="text-medium-emphasis ml-1">mdi-account-group</v-icon>
+                            </template>
+                        </v-tooltip>
                         <div class="text-caption text-medium-emphasis">{{ o.customerPhone }}</div>
                     </td>
                     <td class="text-caption">{{ o.customerBikeDesc || '(shop unit)' }}</td>
@@ -80,8 +83,12 @@
                         <!-- Overdue jobs get a red flag next to the (config-colored) status so staff
                              can spot them at a glance during a busy counter session. -->
                         <v-chip v-if="overdue(o)" size="x-small" color="error" variant="flat" class="ml-1">Overdue</v-chip>
-                        <v-icon v-if="o.checkedByUserId" size="14" color="success" class="ml-1"
-                            icon="mdi-check-decagram" title="QC checked"></v-icon>
+                        <v-tooltip v-if="o.checkedByUserId" text="QC checked" location="top">
+                            <template #activator="{ props }">
+                                <v-icon v-bind="props" size="14" color="success" class="ml-1"
+                                    icon="mdi-check-decagram"></v-icon>
+                            </template>
+                        </v-tooltip>
                     </td>
                     <!-- Age is how a bike quietly sits for three weeks: an open job with no
                          promised date has nothing else drawing the eye to it. -->
@@ -364,18 +371,27 @@
                             <span class="text-body-2">{{ money(l.unitPriceCents * l.quantity) }}</span>
                             <!-- Approve / decline this line. The lit button shows the current decision. -->
                             <template v-if="!closed">
-                                <v-btn icon="mdi-check" size="x-small" variant="text"
-                                    :color="l.approvalStatus === 'approved' ? 'success' : undefined"
-                                    :title="l.approvalStatus === 'approved' ? 'Approved (click to clear)' : 'Approve line'"
-                                    @click="setLineApproval(l.id, l.approvalStatus === 'approved' ? 'pending' : 'approved')"></v-btn>
-                                <v-btn icon="mdi-cancel" size="x-small" variant="text"
-                                    :color="l.approvalStatus === 'declined' ? 'error' : undefined"
-                                    :title="l.approvalStatus === 'declined' ? 'Declined (click to clear)' : 'Decline line'"
-                                    @click="setLineApproval(l.id, l.approvalStatus === 'declined' ? 'pending' : 'declined')"></v-btn>
+                                <v-tooltip :text="l.approvalStatus === 'approved' ? 'Approved (click to clear)' : 'Approve line'" location="top">
+                                    <template #activator="{ props }">
+                                        <v-btn v-bind="props" icon="mdi-check" size="x-small" variant="text"
+                                            :color="l.approvalStatus === 'approved' ? 'success' : undefined"
+                                            @click="setLineApproval(l.id, l.approvalStatus === 'approved' ? 'pending' : 'approved')"></v-btn>
+                                    </template>
+                                </v-tooltip>
+                                <v-tooltip :text="l.approvalStatus === 'declined' ? 'Declined (click to clear)' : 'Decline line'" location="top">
+                                    <template #activator="{ props }">
+                                        <v-btn v-bind="props" icon="mdi-cancel" size="x-small" variant="text"
+                                            :color="l.approvalStatus === 'declined' ? 'error' : undefined"
+                                            @click="setLineApproval(l.id, l.approvalStatus === 'declined' ? 'pending' : 'declined')"></v-btn>
+                                    </template>
+                                </v-tooltip>
                             </template>
-                            <v-btn v-if="!closed && l.lineKind === 'part' && !l.poLineId && !l.arrivedAt"
-                                icon="mdi-truck-delivery-outline" size="x-small" variant="text"
-                                title="Order from supplier" @click="openOrderPart(l)"></v-btn>
+                            <v-tooltip v-if="!closed && l.lineKind === 'part' && !l.poLineId && !l.arrivedAt" text="Order from supplier" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" icon="mdi-truck-delivery-outline" size="x-small" variant="text"
+                                        @click="openOrderPart(l)"></v-btn>
+                                </template>
+                            </v-tooltip>
                             <v-btn v-if="!closed" icon="mdi-close" size="x-small" variant="text" @click="removeLine(l.id)"></v-btn>
                         </div>
                         <div v-if="editing.lines.length" class="d-flex justify-space-between mt-1">
@@ -484,13 +500,24 @@
                     <div v-if="editorError" class="text-error text-body-2 mt-3">{{ editorError }}</div>
                 </v-card-text>
                 <v-card-actions style="flex: 0 0 auto">
-                    <v-btn v-if="editing && (editing.customerUserId || editing.customerEmail || editing.customerPhone)"
-                        icon="mdi-history" variant="text" size="small" title="Customer history"
-                        @click="historyOpen = true"></v-btn>
-                    <v-btn v-if="editing" icon="mdi-printer" variant="text" size="small" title="Print claim tag"
-                        @click="printClaimTag"></v-btn>
-                    <v-btn v-if="editing && editing.lines.length > 0" icon="mdi-file-document-outline" variant="text"
-                        size="small" title="Print estimate" @click="printEstimate"></v-btn>
+                    <v-tooltip v-if="editing && (editing.customerUserId || editing.customerEmail || editing.customerPhone)" text="Customer history" location="top">
+                        <template #activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-history" variant="text" size="small"
+                                @click="historyOpen = true"></v-btn>
+                        </template>
+                    </v-tooltip>
+                    <v-tooltip v-if="editing" text="Print claim tag" location="top">
+                        <template #activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-printer" variant="text" size="small"
+                                @click="printClaimTag"></v-btn>
+                        </template>
+                    </v-tooltip>
+                    <v-tooltip v-if="editing && editing.lines.length > 0" text="Print estimate" location="top">
+                        <template #activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-file-document-outline" variant="text"
+                                size="small" @click="printEstimate"></v-btn>
+                        </template>
+                    </v-tooltip>
                     <v-btn v-if="editing && !closed && editing.lines.length > 0" color="secondary" variant="tonal"
                         :disabled="form.status === 'estimate'" @click="openBill">Bill &amp; pick up</v-btn>
                     <v-spacer></v-spacer>
@@ -678,7 +705,7 @@ const statusFilter = ref<string[]>([])
 const techFilter = ref<string | null>(null)
 const dueFilter = ref<'all' | 'overdue' | 'unpromised'>('all')
 
-// Tenant-defined statuses drive the labels, colours and dropdowns. Behaviour is the fixed system
+// Tenant-defined statuses drive the labels, colors and dropdowns. Behavior is the fixed system
 // meaning; a status is "terminal" (hidden from the default open view) when done or cancelled.
 const statuses = ref<ShopWorkOrderStatusDef[]>([])
 const statusMap = computed(() => new Map(statuses.value.map(s => [s.code, s])))

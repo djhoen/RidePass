@@ -306,7 +306,7 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("User not found.");
             }
 
-            // Defence-in-depth: tenant-scoped users must match the resolved subdomain's tenant.
+            // Defense-in-depth: tenant-scoped users must match the resolved subdomain's tenant.
             // Global users (rider, super_admin) have TenantId = NULL and may access any tenant.
             if (_tenantContext.IsResolved && user.TenantId.HasValue && user.TenantId != _tenantContext.TenantId)
             {

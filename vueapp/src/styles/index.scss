@@ -96,6 +96,45 @@ a {
     }
 }
 
+// ── Sub-tabs ────────────────────────────────────────────────────────────────
+// The standard style for secondary/nested tab navigation inside a page that
+// already has a main <v-tabs> (or inside a settings panel). A compact pill group
+// in a subtle container, primary-tinted when active, so it reads as a level below
+// the page tabs. Usage:
+//   <v-tabs v-model="x" :height="40" class="sub-tabs" hide-slider selected-class="sub-tab-active">
+//     <v-tab value="a" class="sub-tab">A</v-tab>
+//   </v-tabs>
+.sub-tabs {
+    background: rgba(var(--v-theme-on-surface), 0.04);
+    border-radius: 4px; // same radius as a button
+    padding: 4px;
+    display: inline-flex;
+    flex: 0 0 auto;
+
+    .v-slide-group__content {
+        gap: 4px;
+        align-items: center;
+    }
+    .v-tab {
+        border-radius: 4px;
+        height: 32px;
+        min-height: 32px;
+        min-width: 0;
+        padding: 0 18px;
+        font-size: 13px;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        opacity: 0.75;
+    }
+    .v-tab.sub-tab-active,
+    .v-tab--selected {
+        background: rgba(var(--v-theme-primary), 0.14);
+        color: rgb(var(--v-theme-primary));
+        opacity: 1;
+        font-weight: 600;
+    }
+}
+
 // Responsive breakpoints
 @media (max-width: 960px) {
     .siteContainer {

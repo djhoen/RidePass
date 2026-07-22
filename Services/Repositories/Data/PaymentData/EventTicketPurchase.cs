@@ -71,7 +71,7 @@ namespace Services.Repositories.Data.PaymentData
         public string TierKind { get; set; } = null!;   // 'race_entry' | 'gate_fee' | 'spectator_pass' (legacy)
         // Gate fees pick an audience; a race entry is always a rider. Together with TierKind this
         // is what decides rider-vs-spectator treatment at the gate (which waiver applies, how the
-        // line is labelled). Only populated by the queries that select it.
+        // line is labeled). Only populated by the queries that select it.
         public string? TierAudience { get; set; }       // 'rider' | 'spectator'
         public Guid EventId { get; set; }
         public string EventTitle { get; set; } = null!;

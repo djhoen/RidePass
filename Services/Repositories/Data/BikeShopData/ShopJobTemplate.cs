@@ -9,7 +9,7 @@ namespace Services.Repositories.Data.BikeShopData
         public Guid TenantId { get; set; }
         public string Name { get; set; } = null!;
         /// <summary>Free-text fit note, e.g. "250F four-strokes". Deliberately not a structured
-        /// vehicle model: what a job fits is a mechanic's judgement, not a lookup table.</summary>
+        /// vehicle model: what a job fits is a mechanic's judgment, not a lookup table.</summary>
         public string? FitsNote { get; set; }
         /// <summary>Appended to the work order's intake notes when applied, so standard caveats
         /// travel with the job.</summary>

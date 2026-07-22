@@ -145,10 +145,18 @@
                         <td class="text-right" style="white-space: nowrap">
                             <v-btn v-if="isAwaiting(s)" size="x-small" variant="tonal" color="success"
                                 :loading="pickupBusyId === s.id" @click="markPickedUp(s)">Picked up</v-btn>
-                            <v-btn size="x-small" variant="text" icon="mdi-receipt-text-send-outline"
-                                title="Send receipt" @click="openReceipt(s)"></v-btn>
-                            <v-btn v-if="s.status === 'paid'" size="x-small" variant="text" icon="mdi-cash-refund"
-                                title="Refund" @click="openRefund(s)"></v-btn>
+                            <v-tooltip text="Send receipt" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-receipt-text-send-outline"
+                                        @click="openReceipt(s)"></v-btn>
+                                </template>
+                            </v-tooltip>
+                            <v-tooltip v-if="s.status === 'paid'" text="Refund" location="top">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-cash-refund"
+                                        @click="openRefund(s)"></v-btn>
+                                </template>
+                            </v-tooltip>
                         </td>
                     </tr>
                 </tbody>

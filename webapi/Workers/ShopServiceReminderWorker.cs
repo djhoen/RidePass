@@ -66,7 +66,7 @@ namespace webapi.Workers
                         continue;
                     }
 
-                    // This is marketing-adjacent, so honour opt-outs and hard bounces. Claim it
+                    // This is marketing-adjacent, so honor opt-outs and hard bounces. Claim it
                     // either way: a suppressed address will still be suppressed next sweep.
                     if (await suppression.IsSuppressed(wo.CustomerEmail!, wo.TenantId, marketing: true))
                     {

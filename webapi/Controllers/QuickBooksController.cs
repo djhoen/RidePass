@@ -13,7 +13,7 @@ namespace webapi.Controllers
 {
     /// <summary>
     /// Connect a track to QuickBooks Online, map their chart of accounts, and inspect/re-run the
-    /// nightly sync. Modelled on the Stripe Connect onboarding flow in TenantController: redirect
+    /// nightly sync. Modeled on the Stripe Connect onboarding flow in TenantController: redirect
     /// out to the provider, land a callback, persist the link, keep status fresh.
     /// </summary>
     [ApiController]

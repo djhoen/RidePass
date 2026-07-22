@@ -304,14 +304,26 @@
                     <td class="text-right" style="white-space: nowrap">
                         <v-btn v-if="r.status === 'paid'" size="x-small" color="primary" variant="tonal"
                             :loading="busyId === r.id" @click="checkOut(r)">Check out</v-btn>
-                        <v-btn v-if="r.status === 'paid' || r.status === 'pending'" size="x-small" variant="text"
-                            icon="mdi-draw-pen" title="Agreement + waiver" @click="openSign(r)"></v-btn>
+                        <v-tooltip v-if="r.status === 'paid' || r.status === 'pending'" text="Agreement + waiver" location="top">
+                            <template #activator="{ props }">
+                                <v-btn v-bind="props" size="x-small" variant="text"
+                                    icon="mdi-draw-pen" @click="openSign(r)"></v-btn>
+                            </template>
+                        </v-tooltip>
                         <v-btn v-if="r.status === 'out'" size="x-small" color="secondary" variant="tonal"
                             @click="openReturn(r)">Return</v-btn>
-                        <v-btn size="x-small" variant="text" icon="mdi-camera" title="Condition photos"
-                            @click="openPhotos(r)"></v-btn>
-                        <v-btn v-if="r.status === 'pending' || r.status === 'paid'" size="x-small" variant="text"
-                            icon="mdi-close" title="Cancel" @click="cancel(r)"></v-btn>
+                        <v-tooltip text="Condition photos" location="top">
+                            <template #activator="{ props }">
+                                <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-camera"
+                                    @click="openPhotos(r)"></v-btn>
+                            </template>
+                        </v-tooltip>
+                        <v-tooltip v-if="r.status === 'pending' || r.status === 'paid'" text="Cancel" location="top">
+                            <template #activator="{ props }">
+                                <v-btn v-bind="props" size="x-small" variant="text"
+                                    icon="mdi-close" @click="cancel(r)"></v-btn>
+                            </template>
+                        </v-tooltip>
                     </td>
                 </tr>
             </tbody>

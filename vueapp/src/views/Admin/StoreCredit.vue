@@ -27,7 +27,11 @@
                     <td class="text-caption">{{ a.phone || '' }}</td>
                     <td class="text-right">{{ money(a.balanceCents) }}</td>
                     <td class="text-right">
-                        <v-btn size="x-small" variant="text" icon="mdi-history" title="History & adjust" @click="openDetail(a)"></v-btn>
+                        <v-tooltip text="History & adjust" location="top">
+                            <template #activator="{ props }">
+                                <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-history" @click="openDetail(a)"></v-btn>
+                            </template>
+                        </v-tooltip>
                     </td>
                 </tr>
             </tbody>

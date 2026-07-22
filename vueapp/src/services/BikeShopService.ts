@@ -696,6 +696,9 @@ export class BikeShopService {
     deleteWorkOrderStatus(id: string) {
         return axios.delete(`${this.apiUrl}/BikeShopWorkOrder/WorkOrderStatuses/${id}`)
     }
+    reorderWorkOrderStatuses(items: { id: string; sortOrder: number }[]) {
+        return axios.post(`${this.apiUrl}/BikeShopWorkOrder/WorkOrderStatuses/Reorder`, { items })
+    }
     addWorkOrderLine(id: string, req: { lineKind: 'labor' | 'part'; description?: string | null; variantId?: string | null; quantity: number; unitPriceCents?: number | null; laborHours?: number | null; estimatedMinutes?: number | null }) {
         return axios.post<{ data: { id: string } }>(`${this.apiUrl}/BikeShopWorkOrder/WorkOrders/${id}/Lines`, req)
     }
@@ -1012,7 +1015,7 @@ export interface ShopWorkOrder {
     subjectItemId: string | null
     customerBikeDesc: string | null
     customerBikeId: string | null
-    /** Status code (built-in or a tenant's custom one); resolve label/colour via the status defs. */
+    /** Status code (built-in or a tenant's custom one); resolve label/color via the status defs. */
     status: string
     assignedTechUserId: string | null
     /** Accumulated worked minutes (from the timer or a manual set). */

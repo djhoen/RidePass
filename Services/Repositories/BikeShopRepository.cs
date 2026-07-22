@@ -163,7 +163,7 @@ namespace Services.Repositories
             if (q.Rentable == false) where.Add("p.is_rentable = false");
 
             // Type-or-scan: name/brand plus any variant's SKU or barcode. ILIKE so a scanned or
-            // typed code matches regardless of the case it was catalogued in.
+            // typed code matches regardless of the case it was cataloged in.
             if (!string.IsNullOrWhiteSpace(q.Search))
             {
                 where.Add(@"(
@@ -2367,7 +2367,21 @@ namespace Services.Repositories
                 $"SELECT {WoStatusCols} FROM shop_work_order_status WHERE id = @id AND tenant_id = @tenantId",
                 new { id, tenantId })).FirstOrDefault();
 
-        /// <summary>Creates a custom status (always 'open' behaviour) and returns it.</summary>
+        // Bulk drag-drop reorder: set each stage's sort_order in one round trip. Scoped by
+        // tenant_id so a leaked id can't reorder another tenant's stages.
+        public async Task UpdateWorkOrderStatusSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)
+        {
+            if (ids.Count == 0) return;
+            const string sql = @"
+                UPDATE shop_work_order_status AS s
+                SET sort_order = data.sort_order
+                FROM (SELECT unnest(@ids::uuid[]) AS id,
+                             unnest(@orders::int[]) AS sort_order) AS data
+                WHERE s.id = data.id AND s.tenant_id = @tenantId";
+            await _db.Execute(sql, new { tenantId, ids = ids.ToArray(), orders = sortOrders.ToArray() });
+        }
+
+        /// <summary>Creates a custom status (always 'open' behavior) and returns it.</summary>
         public async Task<ShopWorkOrderStatus?> CreateWorkOrderStatus(Guid tenantId, string code, string name,
             string color, bool notifyCustomer, int sortOrder)
         {
@@ -2381,7 +2395,7 @@ namespace Services.Repositories
         }
 
         /// <summary>Updates the presentation fields of a status (built-in or custom). Code and
-        /// behaviour are never changed here, so the behavioural backbone stays intact.</summary>
+        /// behavior are never changed here, so the behavioral backbone stays intact.</summary>
         public Task<int> UpdateWorkOrderStatusPresentation(Guid id, Guid tenantId, string name, string color,
             bool notifyCustomer, int sortOrder, bool isActive) => _db.Execute(@"
             UPDATE shop_work_order_status

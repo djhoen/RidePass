@@ -16,16 +16,22 @@
             <div v-for="day in days" :key="day.key" class="cal-cell"
                 :class="{ 'cal-cell--muted': !day.inMonth, 'cal-cell--today': day.isToday, 'cal-cell--blackout': day.blackoutReasons.length > 0 }">
                 <div class="cal-daynum">{{ day.dayNum }}</div>
-                <div v-if="day.blackoutReasons.length" class="cal-blackout"
-                    :title="day.blackoutReasons.join(', ')">
-                    <v-icon size="11" class="mr-1">mdi-calendar-remove</v-icon>{{ day.blackoutReasons[0] }}
-                </div>
+                <v-tooltip v-if="day.blackoutReasons.length" :text="day.blackoutReasons.join(', ')" location="top">
+                    <template #activator="{ props }">
+                        <div v-bind="props" class="cal-blackout">
+                            <v-icon size="11" class="mr-1">mdi-calendar-remove</v-icon>{{ day.blackoutReasons[0] }}
+                        </div>
+                    </template>
+                </v-tooltip>
                 <div class="cal-events">
-                    <button v-for="ev in day.events" :key="ev.id" type="button" class="cal-event"
-                        :style="{ backgroundColor: ev.eventTypeColor || '#1976d2' }"
-                        :title="`${timeLabel(ev)} ${ev.title}`" @click="$emit('select', ev)">
-                        <span class="cal-event-time">{{ timeLabel(ev) }}</span> {{ ev.title }}
-                    </button>
+                    <v-tooltip v-for="ev in day.events" :key="ev.id" :text="`${timeLabel(ev)} ${ev.title}`" location="top">
+                        <template #activator="{ props }">
+                            <button v-bind="props" type="button" class="cal-event"
+                                :style="{ backgroundColor: ev.eventTypeColor || '#1976d2' }" @click="$emit('select', ev)">
+                                <span class="cal-event-time">{{ timeLabel(ev) }}</span> {{ ev.title }}
+                            </button>
+                        </template>
+                    </v-tooltip>
                 </div>
             </div>
         </div>

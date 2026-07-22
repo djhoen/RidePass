@@ -122,7 +122,7 @@ namespace webapi.Payments
             // lifecycle (authorize at booking, capture-for-damage or cancel at return) is driven
             // by BikeShopRentalController, not by this webhook: the authorization fires
             // amount_capturable_updated and a later damage capture fires succeeded, but neither is a
-            // sale to book here. Recognise it and return quietly so it doesn't fall through to the
+            // sale to book here. Recognize it and return quietly so it doesn't fall through to the
             // "unknown payment_intent" warning (or, worse, get treated as a bookable charge).
             var shopDepositHold = await _shop.GetRentalByDepositPaymentIntentId(paymentIntentId);
             if (shopDepositHold is not null)
