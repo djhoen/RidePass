@@ -13,10 +13,11 @@ setup('authenticate as admin', async ({ page }) => {
     }
 
     await page.goto('/Login')
-    // Vuetify inputs: target by type to avoid label-association flakiness.
-    await page.locator('input[type="email"]').fill(email)
+    // The page has more than one email field (sign-in + resend-verification), so scope to the
+    // sign-in form: the first email + first password, and the "Sign in" submit button.
+    await page.locator('input[type="email"]').first().fill(email)
     await page.locator('input[type="password"]').first().fill(password)
-    await page.getByRole('button', { name: 'Sign in' }).click()
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
     // The app persists its bearer token on success; that's the reliable "logged in" signal.
     await page.waitForFunction(() => !!localStorage.getItem('token'), null, { timeout: 20_000 })

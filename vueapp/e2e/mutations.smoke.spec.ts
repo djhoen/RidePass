@@ -13,30 +13,31 @@ test.describe('write flows (gated by RUN_MUTATIONS=1)', () => {
         await page.goto('/Admin/BikeShop/WorkOrders')
         await expect(page).not.toHaveURL(/\/Login/)
 
-        // Open the new-work-order editor. Button label may be "New work order" / "New".
-        await page.getByRole('button', { name: /New work order|New/i }).first().click()
+        // Open the new-work-order editor.
+        await page.getByRole('button', { name: 'New work order' }).click()
+        const dlg = page.getByRole('dialog')
 
+        // Intake requires a customer name + a bike description (or linked bike record).
         const name = `${TAG} Rider ${Date.now()}`
-        await page.getByLabel(/Customer name/i).fill(name)
-        // Bike description satisfies the intake requirement without needing a bike record.
-        await page.getByLabel(/Bike \(make, model, color\)|Bike/i).first().fill(`${TAG} YZ250F`)
-        await page.getByRole('button', { name: /^Save$|Create/i }).first().click()
+        await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill(name)
+        await dlg.getByRole('textbox', { name: 'Bike (make, model, color)' }).fill(`${TAG} YZ250F`)
+        await dlg.getByRole('button', { name: 'Save', exact: true }).click()
 
-        // Editor reopens on the saved order; the Labor time panel + timer are present.
-        await expect(page.getByText(/Labor time/i)).toBeVisible()
+        // On create, the editor reopens on the saved order; the Labor time panel + timer appear.
+        await expect(dlg.getByText('Labor time').first()).toBeVisible({ timeout: 15_000 })
 
-        // Add a labor line with an estimate.
-        await page.getByLabel(/Work performed/i).fill(`${TAG} Fork service`)
-        await page.getByLabel(/Est\. min/i).fill('60')
-        await page.getByLabel(/^Price$/i).fill('90')
-        await page.getByRole('button', { name: /Add line/i }).click()
-        await expect(page.getByText(/est 60m/i)).toBeVisible()
+        // Add a labor line with a 60-minute estimate. Number fields expose the spinbutton role.
+        await dlg.getByRole('textbox', { name: 'Work performed' }).fill(`${TAG} Fork service`)
+        await dlg.getByRole('spinbutton', { name: 'Est. min' }).fill('60')
+        await dlg.getByRole('spinbutton', { name: 'Price', exact: true }).fill('90')
+        await dlg.getByRole('button', { name: 'Add line' }).click()
+        await expect(dlg.getByText(/est 60m/i)).toBeVisible()
 
-        // Start then stop the timer; actual should be recorded (>= 0m shown, timer returns to Start).
-        await page.getByRole('button', { name: /^Start$/i }).click()
-        await expect(page.getByText(/running/i)).toBeVisible()
-        await page.getByRole('button', { name: /^Stop$/i }).click()
-        await expect(page.getByRole('button', { name: /^Start$/i })).toBeVisible()
+        // Start then stop the timer; it should flip to "running" then back to a Start button.
+        await dlg.getByRole('button', { name: 'Start', exact: true }).click()
+        await expect(dlg.getByText(/running/i)).toBeVisible()
+        await dlg.getByRole('button', { name: 'Stop', exact: true }).click()
+        await expect(dlg.getByRole('button', { name: 'Start', exact: true })).toBeVisible()
 
         await page.screenshot({ path: 'e2e/results/mutation-workorder-timer.png', fullPage: true })
     })
