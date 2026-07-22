@@ -64,7 +64,7 @@
             </v-row>
         </section>
 
-        <v-card v-if="!loading && items.length === 0" variant="outlined">
+        <v-card v-if="!loading && !loadError && items.length === 0" variant="outlined">
             <v-card-text class="text-center text-medium-emphasis py-12">
                 <v-icon icon="mdi-calendar-blank-outline" size="48" class="mb-3"></v-icon>
                 <div class="mb-2">Nothing on your schedule yet.</div>

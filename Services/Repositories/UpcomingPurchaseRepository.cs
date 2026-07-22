@@ -93,10 +93,11 @@ namespace Services.Repositories
                     sp.name,
                     NULL::text,
                     NULL::text,
-                    true,
-                    false,
-                    NULL::timestamptz,
-                    NULL::timestamptz,
+                    true,                -- RegistrationComplete
+                    false,               -- WaiverSigned
+                    false,               -- WaiverRequired (a pass has no per-event waiver; column must align with the event branch)
+                    NULL::timestamptz,   -- OccursAtUtc
+                    NULL::timestamptz,   -- EndsAtUtc
                     (s.valid_to_date + INTERVAL '1 day')::timestamptz AS ValidToUtc,
                     s.amount_cents,
                     s.redemption_token::text,
@@ -122,10 +123,11 @@ namespace Services.Repositories
                     m.name_at_purchase,
                     NULL::text,
                     NULL::text,
-                    true,
-                    false,
-                    NULL::timestamptz,
-                    NULL::timestamptz,
+                    true,                -- RegistrationComplete
+                    false,               -- WaiverSigned
+                    false,               -- WaiverRequired (a membership has no per-event waiver; column must align with the event branch)
+                    NULL::timestamptz,   -- OccursAtUtc
+                    NULL::timestamptz,   -- EndsAtUtc
                     m.valid_to_utc,
                     m.amount_cents,
                     NULL::text,

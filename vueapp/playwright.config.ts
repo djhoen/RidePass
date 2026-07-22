@@ -46,5 +46,13 @@ export default defineConfig({
             timeout: 120_000,
             use: { storageState: 'e2e/.auth/admin.json' },
         },
+        {
+            // Screenshot capture for the usability review (not assertions). Read-only.
+            name: 'usability',
+            testMatch: /usability[\\/].*\.spec\.ts/,
+            dependencies: ['setup'],
+            timeout: 180_000,
+            use: { storageState: 'e2e/.auth/admin.json' },
+        },
     ],
 })
