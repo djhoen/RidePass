@@ -14,6 +14,7 @@ namespace Services.Repositories
             service_charge_cents AS ServiceChargeCents,
             tax_cents AS TaxCents, tax_rate_bps AS TaxRateBps, tax_inclusive AS TaxInclusive,
             applied_reward_redemption_id AS AppliedRewardRedemptionId,
+            applied_season_pass_purchase_id AS AppliedSeasonPassPurchaseId,
             payment_method AS PaymentMethod,
             status, purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
             redemption_token AS RedemptionToken,
@@ -42,17 +43,31 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO event_ticket_purchase
                     (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents,
-                     tax_cents, tax_rate_bps, tax_inclusive, applied_reward_redemption_id, payment_method,
+                     tax_cents, tax_rate_bps, tax_inclusive, applied_reward_redemption_id,
+                     applied_season_pass_purchase_id, payment_method,
                      status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete,
                      waiver_signature_id)
                 VALUES
                     (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents,
-                     @TaxCents, @TaxRateBps, @TaxInclusive, @AppliedRewardRedemptionId, @PaymentMethod,
+                     @TaxCents, @TaxRateBps, @TaxInclusive, @AppliedRewardRedemptionId,
+                     @AppliedSeasonPassPurchaseId, @PaymentMethod,
                      @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete,
                      @WaiverSignatureId)
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
             return (row.Id, row.RedemptionToken);
+        }
+
+        public async Task<int> ClearAppliedSeasonPass(Guid id, Guid tenantId)
+        {
+            // The IS NOT NULL predicate makes this a single-winner operation under concurrent
+            // finalizer passes (webhook + reconciler): only one caller sees a row to update,
+            // so only one hands the credit back.
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET applied_season_pass_purchase_id = NULL, updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId AND applied_season_pass_purchase_id IS NOT NULL";
+            return await _db.Execute(sql, new { id, tenantId });
         }
 
         public async Task<EventTicketPurchase?> GetById(Guid id, Guid tenantId)

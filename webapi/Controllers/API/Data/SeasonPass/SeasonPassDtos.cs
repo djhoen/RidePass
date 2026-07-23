@@ -36,6 +36,14 @@ namespace webapi.Controllers.API.Data.SeasonPass
 
         public int SortOrder { get; set; } = 100;
 
+        // ── Landing page ──────────────────────────────────────────────────────
+        // Blank slug + unpublished + empty body = no landing page (the default).
+        // A blank slug with landing content auto-derives from the product name.
+        [MaxLength(140)] public string? Slug { get; set; }
+        [MaxLength(500)] public string? HeroImageUrl { get; set; }
+        public string? LandingHtml { get; set; }
+        public bool LandingPublished { get; set; }
+
         // Per-event-type perks (free entry or % off). Superseded by Benefits — still accepted so
         // an older client keeps working, but Benefits wins when both are sent.
         public List<EventTypePerkInput> Perks { get; set; } = new();
@@ -66,6 +74,15 @@ namespace webapi.Controllers.API.Data.SeasonPass
         public int RiderPaidServiceChargeBps { get; set; }
         public bool IsActive { get; set; }
         public int SortOrder { get; set; }
+
+        // Landing page fields. Product counts per tenant are small, so carrying the body in
+        // the list response beats a second admin fetch; the lineup page only reads slug +
+        // landingPublished (for "Learn more" links).
+        public string? Slug { get; set; }
+        public string? HeroImageUrl { get; set; }
+        public string? LandingHtml { get; set; }
+        public bool LandingPublished { get; set; }
+
         public List<EventTypePerkInput> Perks { get; set; } = new();
 
         /// <summary>What this pass grants, resolved with display names for the landing page.</summary>

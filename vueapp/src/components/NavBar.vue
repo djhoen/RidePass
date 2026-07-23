@@ -34,6 +34,7 @@
             <v-spacer></v-spacer>
 
             <template v-if="isAuthenticated">
+                <ImpersonationMenu />
                 <NotificationBell />
                 <!-- Super Admin gear: dedicated platform-level drawer. -->
                 <v-btn v-if="isSuperAdmin" icon variant="text" aria-label="Super Admin"
@@ -83,6 +84,7 @@
 
         <template v-else>
             <v-spacer></v-spacer>
+            <ImpersonationMenu />
             <NotificationBell v-if="isAuthenticated" />
             <v-app-bar-nav-icon @click="drawer = !drawer"></v-app-bar-nav-icon>
         </template>
@@ -163,6 +165,7 @@ import { branding } from '../stores/branding'
 import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import NotificationBell from './NotificationBell.vue'
+import ImpersonationMenu from './ImpersonationMenu.vue'
 import { Perm, type Permission } from '@/helpers/TenantPermissions'
 import { ConcessionService } from '@/services/ConcessionService'
 
@@ -310,6 +313,17 @@ const allGroups: AdminGroup[] = [
         ],
     },
     {
+        value: 'waivers',
+        title: 'Waivers',
+        icon: 'mdi-file-sign',
+        links: [
+            { to: '/Admin/Waiver', icon: 'mdi-file-document-edit-outline', title: 'Manage Waivers', perm: Perm.CatalogManage },
+            { to: '/Admin/SignedWaivers', icon: 'mdi-draw', title: 'Signed Waivers', perm: Perm.CustomersView },
+            { to: '/Admin/WaiverCompliance', icon: 'mdi-clipboard-check-outline', title: 'Compliance Today', perm: Perm.CustomersView },
+            { to: '/Admin/WaiverRequests', icon: 'mdi-email-arrow-right-outline', title: 'Signature Requests', perm: Perm.CustomersView },
+        ],
+    },
+    {
         value: 'sales',
         title: 'Sales',
         icon: 'mdi-cart-check',
@@ -347,7 +361,6 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/QuickBooks', icon: 'mdi-book-open-variant', title: 'QuickBooks', perm: Perm.AccountingManage },
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage, feature: 'membershipEnabled' },
-            { to: '/Admin/Waiver',            icon: 'mdi-file-sign',     title: 'Waivers',    perm: Perm.CatalogManage },
         ],
     },
 ]
@@ -456,6 +469,15 @@ const logout = () => {
 .nav-bar-themed :deep(.v-app-bar-title),
 .nav-bar-themed :deep(.v-icon) {
     color: var(--nav-bar-fg, #ffffff) !important;
+}
+
+/* Exception: the red Impersonating pill keeps its own error-contrast text/icon
+   color regardless of the tenant's nav foreground. Must come after the generic
+   pin above (equal specificity, so the later rule wins). */
+.nav-bar-themed :deep(.impersonation-btn),
+.nav-bar-themed :deep(.impersonation-btn .v-btn__content),
+.nav-bar-themed :deep(.impersonation-btn .v-icon) {
+    color: rgb(var(--v-theme-on-error)) !important;
 }
 
 /* Reduce the indent on nested admin nav items so they're slightly inset from the parent

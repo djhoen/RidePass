@@ -684,6 +684,28 @@ namespace webapi.Controllers
                 }
             }
 
+            // Burn ride credits UP FRONT, before any purchase row exists (gift-card pattern:
+            // debit at checkout, hand back on failure). A credits grant only ever reaches here
+            // 100%-off with credits_remaining > 0 (repo-side filter), but a concurrent purchase
+            // or gate scan can race the last credit away between the grant fetch and now — in
+            // that case compensate any burns already made in this request and abort cleanly
+            // while nothing has been created or charged.
+            var burnedPassIds = new List<Guid>();
+            foreach (var creditGrant in passBenefitByTicketIndex.Values.Where(g => g.ProductKind == "credits"))
+            {
+                var burned = await _seasonPasses.TryDecrementCredits(creditGrant.PassPurchaseId, _tenantContext.TenantId);
+                if (burned == 0)
+                {
+                    foreach (var passId in burnedPassIds)
+                    {
+                        await _seasonPasses.IncrementCredits(passId, _tenantContext.TenantId);
+                    }
+                    return new ApiResponses().BadRequestResult(
+                        "A ride credit on your season pass was just used elsewhere, so this order was not charged. Review the updated price and try again.");
+                }
+                burnedPassIds.Add(creditGrant.PassPurchaseId);
+            }
+
             var unitIndex = -1;
             foreach (var item in items)
             {
@@ -741,6 +763,9 @@ namespace webapi.Controllers
                         TaxRateBps = admissionTax.RateBps,
                         TaxInclusive = admissionTax.PricesIncludeTax,
                         AppliedRewardRedemptionId = (q == 0 && voucherCheck.percentOff.HasValue) ? request.RewardRedemptionId : null,
+                        // The funding pass for a credit-covered ticket (burn already done above),
+                        // so a refund or failed payment knows which pass gets the ride back.
+                        AppliedSeasonPassPurchaseId = passGrant?.ProductKind == "credits" ? passGrant.PassPurchaseId : null,
                         PaymentMethod = unitAmount == 0 ? "voucher" : "stripe",
                         Status = "pending",
                         PurchaserEmail = purchaserEmail,
@@ -1853,6 +1878,9 @@ namespace webapi.Controllers
             string? connectedAccount = null;
             string ledgerSourceKind;
             Guid eventTicketTierId = Guid.Empty;
+            // Funding "credits" season pass of a credit-covered ticket — the refund hands the
+            // ride back (mirrors the Loam Pass credit return above).
+            Guid? appliedSeasonPassId = null;
 
             switch (kind)
             {
@@ -1863,6 +1891,7 @@ namespace webapi.Controllers
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     connectedAccount = p.StripeConnectedAccountId;
                     eventTicketTierId = p.TierId;
+                    appliedSeasonPassId = p.AppliedSeasonPassPurchaseId;
                     ledgerSourceKind = "event_ticket";
                     break;
                 }
@@ -1964,6 +1993,11 @@ namespace webapi.Controllers
                     if (status == "redeemed") await _ticketPurchases.UndoRedeemed(purchaseId, tenantId);
                     await _ticketPurchases.Cancel(purchaseId, tenantId, staffId, reason);
                     await _ticketPurchases.MarkRefunded(purchaseId, note);
+                    // Credit-funded ticket: hand the ride back to the funding pass. Idempotent
+                    // against double-refund via the alreadyDone short-circuit above, and a no-op
+                    // when the pass itself was refunded (status guard inside IncrementCredits).
+                    if (appliedSeasonPassId.HasValue)
+                        await _seasonPasses.IncrementCredits(appliedSeasonPassId.Value, tenantId);
                     // A refund frees a spot, so promote the next waitlist alternate.
                     var refundedTier = await _tiers.GetById(eventTicketTierId, tenantId);
                     if (refundedTier is not null)

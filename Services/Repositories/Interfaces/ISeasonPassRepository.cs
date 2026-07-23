@@ -11,6 +11,10 @@ namespace Services.Repositories.Interfaces
         Task UpdateProduct(SeasonPassProduct p);
         Task DeleteProduct(Guid id, Guid tenantId);
 
+        /// <summary>Landing-page lookup: case-insensitive slug, tenant-scoped.</summary>
+        Task<SeasonPassProduct?> GetProductBySlug(string slug, Guid tenantId);
+        Task<bool> ProductSlugExists(string slug, Guid tenantId, Guid? excludeId);
+
         /// <summary>Atomic bulk update of sort_order for many season pass products at once.</summary>
         Task UpdateProductSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
 
@@ -60,7 +64,21 @@ namespace Services.Repositories.Interfaces
         Task<int> CompleteRegistration(Guid id, Guid tenantId, Guid purchaserUserId,
             string holderFirstName, string holderLastName, DateTime? holderBirthdate,
             string photoDataUrl, Guid? waiverSignatureId);
-        Task DecrementCredits(Guid purchaseId);
+        /// <summary>Burn one ride credit. Guarded (&gt; 0, paid, tenant-scoped); returns rows
+        /// affected — 0 means no credit was available and the caller must abort the thing the
+        /// credit was about to fund.</summary>
+        Task<int> TryDecrementCredits(Guid purchaseId, Guid tenantId);
+
+        /// <summary>Automatic credit hand-back (ticket refund / failed payment), capped at the
+        /// product's total_credits and a no-op on non-paid or non-credit passes.</summary>
+        Task IncrementCredits(Guid purchaseId, Guid tenantId, int by = 1);
+
+        /// <summary>
+        /// Admin support override: set a credits pass's remaining ride count outright.
+        /// Guarded to credits passes (credits_remaining IS NOT NULL) and tenant-scoped.
+        /// Returns rows affected — 0 means not found in tenant or not a credits pass.
+        /// </summary>
+        Task<int> SetCredits(Guid purchaseId, Guid tenantId, int credits);
 
         // Reservations
         Task<Guid> CreateReservation(SeasonPassReservation r);
@@ -69,6 +87,21 @@ namespace Services.Repositories.Interfaces
         /// <summary>Resolve a reservation id to its event + the season-pass holder, for check-in
         /// waiver gating. Tenant-scoped through the purchase join. Null if not found in this tenant.</summary>
         Task<SeasonPassCheckInContext?> GetReservationForCheckIn(Guid reservationId, Guid tenantId);
+
+        /// <summary>Same holder/registration context, but resolved from the pass itself (no
+        /// reservation yet) — for walk-up gate redemption. ReservationId/EventId are unset.</summary>
+        Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId);
+
+        /// <summary>
+        /// Walk-up gate admission in ONE atomic statement: optionally burns a credit
+        /// (guarded &gt; 0, paid, tenant-scoped) and upserts the (pass, event) reservation
+        /// straight to checked_in (reviving a cancelled row if present). Returns null when
+        /// the credit guard fails — the pass has no rides left; otherwise the reservation id
+        /// and the post-burn credits (null for non-credit passes). Caller must hold the
+        /// per-pass advisory lock and have pre-checked for an existing live reservation.
+        /// </summary>
+        Task<(Guid ReservationId, int? CreditsRemaining)?> CreateGateCheckIn(
+            Guid passPurchaseId, Guid tenantId, Guid eventId, Guid? staffUserId, bool burnCredit);
         Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchase(Guid purchaseId);
         Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(Guid purchaseId, DateTime atUtc, DateTime untilUtc);
         /// <summary>

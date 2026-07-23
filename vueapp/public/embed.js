@@ -5,6 +5,8 @@
  *
  *   <div data-ridepass="events" data-tenant="your-subdomain"></div>
  *   <div data-ridepass="event"  data-tenant="your-subdomain" data-event="<event-id>"></div>
+ *   <div data-ridepass="seasonpasses" data-tenant="your-subdomain"></div>
+ *   <div data-ridepass="seasonpass"   data-tenant="your-subdomain" data-pass="<pass-id>"></div>
  *   <script src="https://ridepass.io/embed.js" async></script>
  *
  * Legacy shorthand still works:
@@ -45,6 +47,16 @@
                     return null;
                 }
                 return { path: '/embed/event/' + encodeURIComponent(id) };
+            }
+            case 'seasonpasses':
+                return { path: '/embed/seasonpasses' };
+            case 'seasonpass': {
+                var pid = el.getAttribute('data-pass');
+                if (!pid) {
+                    console.warn('[ridepass] embed: data-pass is required for the "seasonpass" widget');
+                    return null;
+                }
+                return { path: '/embed/seasonpass/' + encodeURIComponent(pid) };
             }
             case 'calendar': {
                 var cqs = [];

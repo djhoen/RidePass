@@ -70,6 +70,12 @@ namespace Services.Repositories.Interfaces
         Task<List<EventTicketPurchaseWithContext>> GetForUser(Guid userId, Guid tenantId);
         Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);
         Task MarkRefunded(Guid id, string? refundNote);
+
+        /// <summary>Atomically detach the funding season pass from a DEAD (failed) ticket.
+        /// Returns rows affected — exactly one racer wins, so the winner (and only the winner)
+        /// hands the ride credit back. Refunds keep the link for audit; this is only for
+        /// failed/abandoned payments.</summary>
+        Task<int> ClearAppliedSeasonPass(Guid id, Guid tenantId);
         Task<List<EventTicketPurchaseWithContext>> ListByStatusAcrossTenants(string status);
 
         /// <summary>Tenant-scoped count of purchases in a given status (e.g. cancelled-awaiting-refund

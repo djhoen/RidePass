@@ -16,7 +16,7 @@
                         <th style="width: 200px">Valid</th>
                         <th style="width: 160px">Kind</th>
                         <th style="width: 90px">Active</th>
-                        <th style="width: 160px" class="text-right"></th>
+                        <th style="width: 200px" class="text-right"></th>
                     </tr>
                 </thead>
                 <draggable tag="tbody" :list="visibleRows" item-key="id" handle=".drag-handle"
@@ -42,6 +42,12 @@
                                 <v-icon v-else color="grey">mdi-close</v-icon>
                             </td>
                             <td class="text-right">
+                                <v-tooltip text="Copy pass ID (used by the embedded widget)" location="top">
+                                    <template #activator="{ props: tt }">
+                                        <v-btn v-bind="tt" icon="mdi-identifier" variant="text" size="small"
+                                            @click="copyId(p)"></v-btn>
+                                    </template>
+                                </v-tooltip>
                                 <v-btn variant="text" size="small" @click="openEdit(p)">Edit</v-btn>
                                 <v-btn variant="text" size="small" color="error" @click="remove(p)">Delete</v-btn>
                             </td>
@@ -56,14 +62,27 @@
             </v-table>
         </v-card>
 
-        <v-dialog v-model="dialog" max-width="720" persistent>
-            <v-card>
-                <v-card-title class="d-flex align-center">
+        <v-dialog v-model="dialog" max-width="760" persistent>
+            <!-- Explicit flex column with a bounded height so the tall Landing tab scrolls
+                 inside the body and can never squeeze the tabs bar (no min-height on the
+                 scrolling v-card-text). -->
+            <v-card class="d-flex flex-column" style="max-height: 90vh">
+                <v-card-title class="d-flex align-center" style="flex: 0 0 auto">
                     <span>{{ editing ? 'Edit Pass' : 'New Pass' }}</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
                 </v-card-title>
-                <v-card-text>
+                <v-tabs v-model="editorTab" color="primary" style="flex: 0 0 auto">
+                    <v-tab value="details">Details</v-tab>
+                    <v-tab value="landing">
+                        Landing page
+                        <v-chip v-if="form.landingPublished" size="x-small" color="success" class="ml-2">Live</v-chip>
+                    </v-tab>
+                </v-tabs>
+                <v-divider></v-divider>
+                <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
+                    <v-window v-model="editorTab">
+                    <v-window-item value="details">
                     <v-text-field v-model="form.name" label="Name" density="compact"></v-text-field>
                     <v-textarea v-model="form.description" label="Description (optional)" rows="2" density="compact" class="mt-6"></v-textarea>
                     <v-row class="mt-2">
@@ -149,12 +168,88 @@
                         </v-col>
                     </v-row>
                     <v-switch v-model="form.isActive" label="Active" hide-details color="primary"></v-switch>
+                    </v-window-item>
+
+                    <!-- ── Landing page tab ─────────────────────────────────────── -->
+                    <v-window-item value="landing">
+                        <p class="text-body-2 text-medium-emphasis mb-2">
+                            A marketing page just for this pass, at its own URL on your site. Great as
+                            a link target from ads, socials, or your own website.
+                        </p>
+                        <v-switch v-model="form.landingPublished" color="primary" hide-details
+                            label="Published: visible to riders at its URL"></v-switch>
+
+                        <v-text-field v-model="form.slug" label="URL slug" density="compact" class="mt-4"
+                            hint="Leave blank to generate from the pass name on save."
+                            persistent-hint></v-text-field>
+                        <div v-if="landingUrl" class="d-flex align-center ga-1 mt-1">
+                            <span class="text-caption text-medium-emphasis text-truncate">{{ landingUrl }}</span>
+                            <v-btn icon="mdi-content-copy" variant="text" size="x-small"
+                                aria-label="Copy landing URL" @click="copyLandingUrl"></v-btn>
+                            <v-btn v-if="editing" icon="mdi-open-in-new" variant="text" size="x-small"
+                                aria-label="Open landing page" :href="landingUrl + '?preview=1'"
+                                target="_blank"></v-btn>
+                        </div>
+
+                        <div class="text-subtitle-2 mt-4 mb-1">Hero image</div>
+                        <div class="d-flex align-center ga-3">
+                            <v-img v-if="form.heroImageUrl" :src="absoluteUrl(form.heroImageUrl)!"
+                                max-width="180" max-height="90" cover rounded class="flex-grow-0"></v-img>
+                            <v-btn variant="outlined" size="small" :loading="heroUploading" @click="pickHero">
+                                {{ form.heroImageUrl ? 'Replace' : 'Upload' }}
+                            </v-btn>
+                            <v-btn v-if="form.heroImageUrl" variant="text" size="small"
+                                @click="form.heroImageUrl = null">Remove</v-btn>
+                            <input ref="heroInput" type="file" accept="image/png,image/jpeg,image/webp"
+                                class="d-none" @change="onHeroPicked" />
+                        </div>
+                        <div class="text-caption text-medium-emphasis mt-1">PNG, JPG, or WebP, max 5 MB.</div>
+
+                        <div class="text-subtitle-2 mt-4 mb-1">Page content</div>
+                        <RichTextEditor v-model="form.landingHtml" :upload-image="uploadInlineImage" />
+
+                        <template v-if="editing">
+                            <div class="text-subtitle-2 mt-4 mb-1">Embed on another website</div>
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                Paste this snippet into any page to embed this pass's landing content and
+                                checkout. The site's domain must be on your allowed embed origins.
+                            </p>
+                            <div class="d-flex align-start ga-1">
+                                <pre class="snippet flex-grow-1">{{ embedSnippet }}</pre>
+                                <v-btn icon="mdi-content-copy" variant="text" size="small"
+                                    aria-label="Copy embed snippet" @click="copyEmbedSnippet"></v-btn>
+                            </div>
+                        </template>
+
+                        <div class="mt-4">
+                            <v-btn variant="outlined" size="small" prepend-icon="mdi-eye"
+                                @click="previewOpen = true">Preview content</v-btn>
+                        </div>
+                    </v-window-item>
+                    </v-window>
                 </v-card-text>
-                <v-card-actions>
+                <v-card-actions style="flex: 0 0 auto">
                     <v-spacer></v-spacer>
                     <v-btn @click="dialog = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="saving" @click="save">Save</v-btn>
                 </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Landing content preview (mirrors the public landing view's body rendering). -->
+        <v-dialog v-model="previewOpen" max-width="720">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span class="text-truncate">{{ form.name || 'Landing preview' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="previewOpen = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-img v-if="form.heroImageUrl" :src="absoluteUrl(form.heroImageUrl)!"
+                        max-height="240" cover rounded class="mb-4"></v-img>
+                    <RichTextView v-if="form.landingHtml" :html="form.landingHtml" />
+                    <p v-else class="text-caption text-medium-emphasis">No page content yet.</p>
+                </v-card-text>
             </v-card>
         </v-dialog>
 
@@ -163,7 +258,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import draggable from 'vuedraggable'
 import dayjs from 'dayjs'
 import { useDragReorder } from '@/composables/useDragReorder'
@@ -171,6 +266,10 @@ import { SeasonPassService, type SeasonPassProduct, type UpsertSeasonPassProduct
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { useConfirm } from '@/composables/useConfirm'
 import { branding } from '@/stores/branding'
+import { buildEmbedSnippet } from '@/embed/widgets'
+import tenantHelper from '@/helpers/TenantHelper'
+import RichTextEditor from '@/components/RichTextEditor.vue'
+import RichTextView from '@/components/RichTextView.vue'
 
 const service = new SeasonPassService()
 const eventTypeService = new EventTypeService()
@@ -211,8 +310,78 @@ const form = ref({
     requiresWaiver: true,
     riderPaidServiceChargePct: 100,
     isActive: true,
+    slug: '',
+    heroImageUrl: null as string | null,
+    landingHtml: '',
+    landingPublished: false,
     benefits: [] as SeasonPassBenefit[],
 })
+
+// ── Landing tab state ────────────────────────────────────────────────────────
+const editorTab = ref<'details' | 'landing'>('details')
+const previewOpen = ref(false)
+const heroUploading = ref(false)
+const heroInput = ref<HTMLInputElement | null>(null)
+
+// Mirror of the server's Slugify, for the URL preview before save (the server remains
+// authoritative and de-duplicates with a -2/-3 suffix on collision).
+function slugify(input: string): string {
+    return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+const slugPreview = computed(() => slugify(form.value.slug || form.value.name))
+const landingUrl = computed(() =>
+    slugPreview.value ? `${window.location.origin}/SeasonPasses/${slugPreview.value}` : '')
+
+function absoluteUrl(url: string | null): string | null {
+    if (!url) return null
+    if (/^https?:\/\//i.test(url)) return url
+    const base = import.meta.env.VITE_API_ENDPOINT ?? ''
+    return base ? new URL(url, base).toString() : url
+}
+
+function pickHero() { heroInput.value?.click() }
+
+async function onHeroPicked(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    ;(e.target as HTMLInputElement).value = ''
+    if (!file) return
+    heroUploading.value = true
+    try {
+        const r = await service.uploadImage(file)
+        form.value.heroImageUrl = (r.data as any).data.imageUrl
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t upload the hero image. Check the file type/size and try again.', 'error')
+    } finally {
+        heroUploading.value = false
+    }
+}
+
+// Inline-image hook for the rich text editor: upload, return the URL for the <img>.
+async function uploadInlineImage(file: File): Promise<string> {
+    const r = await service.uploadImage(file)
+    return absoluteUrl((r.data as any).data.imageUrl)!
+}
+
+const embedSnippet = computed(() =>
+    buildEmbedSnippet('seasonpass', tenantHelper.getSubdomain() ?? '', { pass: editing.value?.id ?? '' }))
+
+async function copyLandingUrl() {
+    try {
+        await navigator.clipboard.writeText(landingUrl.value)
+        flash('Landing URL copied.', 'success')
+    } catch {
+        flash(`Couldn't copy (the browser blocked clipboard access). The URL is ${landingUrl.value}`, 'error')
+    }
+}
+
+async function copyEmbedSnippet() {
+    try {
+        await navigator.clipboard.writeText(embedSnippet.value)
+        flash('Embed snippet copied.', 'success')
+    } catch {
+        flash('Couldn’t copy (the browser blocked clipboard access). Select the snippet text and copy manually.', 'error')
+    }
+}
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -315,8 +484,13 @@ function openCreate() {
         requiresWaiver: true,
         riderPaidServiceChargePct: 100,
         isActive: true,
+        slug: '',
+        heroImageUrl: null,
+        landingHtml: '',
+        landingPublished: false,
         benefits: [],
     }
+    editorTab.value = 'details'
     dialog.value = true
 }
 
@@ -334,11 +508,16 @@ function openEdit(p: SeasonPassProduct) {
         requiresWaiver: p.requiresWaiver,
         riderPaidServiceChargePct: p.riderPaidServiceChargeBps / 100,
         isActive: p.isActive,
+        slug: p.slug ?? '',
+        heroImageUrl: p.heroImageUrl,
+        landingHtml: p.landingHtml ?? '',
+        landingPublished: p.landingPublished,
         // Copy each benefit, not just the array: the editor mutates discountValue in place, and
         // sharing the objects with the loaded product would edit the list behind the dialog
         // (leaving stale values on screen after a Cancel).
         benefits: (p.benefits ?? []).map(b => ({ ...b })),
     }
+    editorTab.value = 'details'
     dialog.value = true
 }
 
@@ -368,6 +547,16 @@ async function save() {
             riderPaidServiceChargeBps: Math.round((form.value.riderPaidServiceChargePct || 0) * 100),
             isActive: form.value.isActive,
             sortOrder: 100,
+            slug: form.value.slug.trim() || null,
+            heroImageUrl: form.value.heroImageUrl,
+            // Tiptap normalizes an empty document to '<p></p>' the moment the editor gets
+            // focus; treat that as no content so merely opening the tab doesn't create a
+            // landing page (the server derives a slug whenever landing content exists).
+            landingHtml: (() => {
+                const body = form.value.landingHtml.trim()
+                return !body || body === '<p></p>' ? null : body
+            })(),
+            landingPublished: form.value.landingPublished,
             benefits: form.value.benefits,
         }
         if (editing.value) await service.update(editing.value.id, body)
@@ -391,6 +580,15 @@ async function remove(p: SeasonPassProduct) {
     }
 }
 
+async function copyId(p: SeasonPassProduct) {
+    try {
+        await navigator.clipboard.writeText(p.id)
+        flash('Pass ID copied.', 'success')
+    } catch {
+        flash(`Couldn't copy (the browser blocked clipboard access). The ID is ${p.id}`, 'error')
+    }
+}
+
 function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text
     snackbarColor.value = color
@@ -399,6 +597,15 @@ function flash(text: string, color: 'success' | 'error') {
 </script>
 
 <style scoped>
+.snippet {
+    background: rgba(var(--v-theme-on-surface), 0.06);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: auto;
+}
 .drag-handle-cell { padding-left: 4px !important; padding-right: 0 !important; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }

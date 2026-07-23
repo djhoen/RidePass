@@ -34,6 +34,9 @@ namespace webapi.Controllers
         private readonly ITenantLedgerRepository _ledger;
         private readonly Services.Payments.IFeeCalculator _feeCalculator;
         private readonly ITenantContext _tenantContext;
+        private readonly Services.Helpers.Interfaces.IDbHelper _db;
+        private readonly Services.Audit.IAuditLogger _audit;
+        private readonly Services.Storage.IImageStorage _imageStorage;
 
         public SeasonPassController(
             ISeasonPassRepository passes,
@@ -51,7 +54,10 @@ namespace webapi.Controllers
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantLedgerRepository ledger,
             Services.Payments.IFeeCalculator feeCalculator,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            Services.Helpers.Interfaces.IDbHelper db,
+            Services.Audit.IAuditLogger audit,
+            Services.Storage.IImageStorage imageStorage)
         {
             _passes = passes;
             _events = events;
@@ -69,6 +75,9 @@ namespace webapi.Controllers
             _ledger = ledger;
             _feeCalculator = feeCalculator;
             _tenantContext = tenantContext;
+            _db = db;
+            _audit = audit;
+            _imageStorage = imageStorage;
         }
 
         // ── Products: public list ─────────────────────────────────────────────────
@@ -78,6 +87,63 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var products = await _passes.ListProductsForTenant(_tenantContext.TenantId, activeOnly: true);
             return new ApiResponses().OkResult(await ToResponses(products));
+        }
+
+        /// <summary>
+        /// One pass product's landing page (marketing content + live product facts).
+        /// Public; accepts a slug or a product id (the embed widget links by id).
+        /// Drafts and inactive products 404 for the public but stay visible to staff
+        /// holding CatalogManage, so the admin "preview" link works before publishing.
+        /// </summary>
+        [HttpGet("Landing/{slugOrId}")]
+        public async Task<IActionResult> GetLanding(string slugOrId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var byId = Guid.TryParse(slugOrId, out var id);
+            var product = byId
+                ? await _passes.GetProduct(id, _tenantContext.TenantId)
+                : await _passes.GetProductBySlug(slugOrId, _tenantContext.TenantId);
+            if (product is null)
+            {
+                return new ApiResponses().NotFoundResult("This pass isn't available.");
+            }
+
+            var isStaff = CallerHasCatalogManage();
+            if (!product.IsActive && !isStaff)
+            {
+                return new ApiResponses().NotFoundResult("This pass isn't available.");
+            }
+            // Slug URLs are the marketing surface: a draft slug 404s (same message as
+            // not-found so its existence isn't leaked). Id lookups are the embed widget,
+            // which must keep working for passes with no landing at all — the product is
+            // already public via the products list — so an id resolves regardless, with
+            // unpublished landing CONTENT stripped below for non-staff.
+            var landingVisible = product.LandingPublished || isStaff;
+            if (!byId && !landingVisible)
+            {
+                return new ApiResponses().NotFoundResult("This pass isn't available.");
+            }
+
+            var projected = await ToResponse(product);
+            return new ApiResponses().OkResult(new SeasonPassLandingResponse
+            {
+                Id = product.Id,
+                Name = product.Name,
+                Description = product.Description,
+                PriceCents = product.PriceCents,
+                ValidFromDate = product.ValidFromDate,
+                ValidToDate = product.ValidToDate,
+                Kind = product.Kind,
+                ValidDaysOfWeek = product.ValidDaysOfWeek,
+                TotalCredits = product.TotalCredits,
+                RequiresWaiver = product.RequiresWaiver,
+                RiderPaidServiceChargeBps = product.RiderPaidServiceChargeBps,
+                Slug = product.Slug,
+                HeroImageUrl = landingVisible ? product.HeroImageUrl : null,
+                LandingHtml = landingVisible ? product.LandingHtml : null,
+                LandingPublished = product.LandingPublished,
+                Benefits = projected.Benefits,
+            });
         }
 
         // ── Products: tenant-admin CRUD ───────────────────────────────────────────
@@ -121,7 +187,11 @@ namespace webapi.Controllers
                 RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps,
                 IsActive = request.IsActive,
                 SortOrder = request.SortOrder,
+                HeroImageUrl = Trim(request.HeroImageUrl),
+                LandingHtml = Trim(request.LandingHtml),
+                LandingPublished = request.LandingPublished,
             };
+            product.Slug = await ResolveLandingSlug(request, excludeId: null);
             product.Id = await _passes.CreateProduct(product);
             var createError = await SaveBenefits(product.Id, request);
             if (createError is not null) return new ApiResponses().BadRequestResult(createError);
@@ -150,10 +220,101 @@ namespace webapi.Controllers
             existing.RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps;
             existing.IsActive = request.IsActive;
             existing.SortOrder = request.SortOrder;
+            existing.HeroImageUrl = Trim(request.HeroImageUrl);
+            existing.LandingHtml = Trim(request.LandingHtml);
+            existing.LandingPublished = request.LandingPublished;
+            existing.Slug = await ResolveLandingSlug(request, excludeId: id);
             await _passes.UpdateProduct(existing);
             var updateError = await SaveBenefits(existing.Id, request);
             if (updateError is not null) return new ApiResponses().BadRequestResult(updateError);
             return new ApiResponses().OkResult(await ToResponse(existing));
+        }
+
+        // Landing hero / inline-body image upload, decoupled from row mutation (same pattern
+        // as PageController/BlogController): returns a URL the editor patches onto the product
+        // on save.
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Products/Image")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadLandingImage(IFormFile file, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var (ext, error) = ValidateImage(file);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, _tenantContext.TenantId, "passes", ext!, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
+        }
+
+        private static (string? ext, string? error) ValidateImage(IFormFile file)
+        {
+            if (file is null || file.Length == 0) return (null, "File is required.");
+            if (file.Length > 5 * 1024 * 1024) return (null, "File exceeds 5 MB limit.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+                return (null, $"Unsupported content type: {file.ContentType}.");
+            return (ext, null);
+        }
+
+        /// <summary>
+        /// The product's landing slug: null when the product has no landing content at all,
+        /// otherwise the requested slug (or one derived from the name), de-duplicated per
+        /// tenant with a -2/-3 suffix (Pages precedent). No reserved-word list is needed —
+        /// landing URLs live under their own /SeasonPasses/* namespace.
+        /// </summary>
+        private async Task<string?> ResolveLandingSlug(UpsertSeasonPassProductRequest request, Guid? excludeId)
+        {
+            var hasLanding = request.LandingPublished
+                || !string.IsNullOrWhiteSpace(request.Slug)
+                || !string.IsNullOrWhiteSpace(request.LandingHtml)
+                || !string.IsNullOrWhiteSpace(request.HeroImageUrl);
+            if (!hasLanding) return null;
+
+            var baseSlug = Slugify(string.IsNullOrWhiteSpace(request.Slug) ? request.Name : request.Slug!);
+            var slug = baseSlug;
+            var n = 2;
+            while (await _passes.ProductSlugExists(slug, _tenantContext.TenantId, excludeId))
+            {
+                slug = $"{baseSlug}-{n++}";
+            }
+            return slug;
+        }
+
+        private static string Slugify(string input)
+        {
+            var lower = (input ?? "").Trim().ToLowerInvariant();
+            var sb = new System.Text.StringBuilder(lower.Length);
+            var lastHyphen = false;
+            foreach (var ch in lower)
+            {
+                if (char.IsLetterOrDigit(ch))
+                {
+                    sb.Append(ch);
+                    lastHyphen = false;
+                }
+                else if (!lastHyphen && sb.Length > 0)
+                {
+                    sb.Append('-');
+                    lastHyphen = true;
+                }
+            }
+            var slug = sb.ToString().Trim('-');
+            return slug.Length == 0 ? "pass" : slug;
+        }
+
+        private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        // Imperative CatalogManage check for the public landing endpoint's draft-preview
+        // carve-out (an [Authorize] attribute would lock the whole endpoint).
+        private bool CallerHasCatalogManage()
+        {
+            var roles = User.FindAll("role").Select(c => c.Value);
+            return TenantPermissions.ForRoles(roles).Contains(TenantPermissions.CatalogManage);
         }
 
         /// <summary>
@@ -764,13 +925,34 @@ namespace webapi.Controllers
                 return new ApiResponses().OkResult(new { reservationId = existing.Id, alreadyReserved = true });
             }
 
-            var reservationId = await _passes.CreateReservation(new SeasonPassReservation
+            // Burn BEFORE creating the reservation: if the last credit was raced away since the
+            // check above, no reservation must exist to admit anyone. (The old order created the
+            // reservation first and ignored the burn result — a raced pass could over-reserve.)
+            if (product.Kind == "credits")
             {
-                SeasonPassPurchaseId = request.PassPurchaseId,
-                EventId = request.EventId,
-                Status = "reserved",
-            });
-            if (product.Kind == "credits") await _passes.DecrementCredits(pass.Id);
+                var burned = await _passes.TryDecrementCredits(pass.Id, _tenantContext.TenantId);
+                if (burned == 0)
+                {
+                    return new ApiResponses().BadRequestResult("This pass has no credits remaining.");
+                }
+            }
+            Guid reservationId;
+            if (existing is not null)
+            {
+                // A cancelled prior reservation blocks the (pass, event) UNIQUE — revive it
+                // instead of inserting a duplicate.
+                await _passes.UpdateReservationStatus(existing.Id, _tenantContext.TenantId, "reserved");
+                reservationId = existing.Id;
+            }
+            else
+            {
+                reservationId = await _passes.CreateReservation(new SeasonPassReservation
+                {
+                    SeasonPassPurchaseId = request.PassPurchaseId,
+                    EventId = request.EventId,
+                    Status = "reserved",
+                });
+            }
             return new ApiResponses().OkResult(new { reservationId, alreadyReserved = false });
         }
 
@@ -794,6 +976,13 @@ namespace webapi.Controllers
             var untilUtc = TimeZoneInfo.ConvertTimeToUtc(dayStartLocal.AddDays(1), tz);
             var reservations = await _passes.ListReservationsForPurchaseOnDate(pass.Id, atUtc, untilUtc);
 
+            // Today's admissible events, so the scanner can offer walk-up redemption without
+            // the pass holder having pre-booked anything (0 → nothing running today, 1 →
+            // auto-selected, >1 → staff pick).
+            var todaysEvents = (await _events.GetInRange(_tenantContext.TenantId, atUtc, untilUtc))
+                .Where(e => e.Status == "scheduled")
+                .ToList();
+
             // Registration state up front so staff see "not registered yet" on the scan rather than
             // only when the check-in button fails.
             var registrationComplete = pass.IsRegistered(product?.RequiresWaiver ?? false);
@@ -816,7 +1005,15 @@ namespace webapi.Controllers
                 RegistrationComplete = registrationComplete,
                 ProductName = product?.Name,
                 ProductKind = product?.Kind,
+                ProductTotalCredits = product?.TotalCredits,
                 ValidDaysOfWeek = product?.ValidDaysOfWeek,
+                TodaysEvents = todaysEvents.Select(e => new
+                {
+                    e.Id,
+                    e.Title,
+                    StartsAtUtc = DateTime.SpecifyKind(e.StartsAt, DateTimeKind.Utc),
+                    EndsAtUtc = DateTime.SpecifyKind(e.EndsAt, DateTimeKind.Utc),
+                }),
                 TodaysReservations = reservations.Select(r => new
                 {
                     r.Id,
@@ -915,6 +1112,159 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        /// <summary>
+        /// Walk-up gate redemption: staff scanned a pass QR and admits the holder to one of
+        /// today's events, with no pre-booking required. For credits passes this burns one ride
+        /// credit atomically with the check-in record; unlimited / day-of-week passes go through
+        /// the same door without a burn (fixing the long-standing gap where a pass QR had no
+        /// walk-up path at all and holders had to pre-book a $0 ticket online).
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
+        [HttpPost("Pass/{token:guid}/Redeem")]
+        public async Task<IActionResult> RedeemPassAtGate(Guid token, [FromBody] SeasonPassGateRedeemRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            Guid? staffId = TryGetUserId(out var sid) ? sid : (Guid?)null;
+
+            var pass = await _passes.GetPurchaseByRedemptionToken(token);
+            if (pass is null || pass.TenantId != _tenantContext.TenantId)
+            {
+                // Same shape as the lookup: don't reveal that the token exists on another tenant.
+                return new ApiResponses().NotFoundResult("Pass not found.");
+            }
+            if (pass.Status == "pending")
+                return new ApiResponses().BadRequestResult("This pass's payment hasn't settled yet, so it can't be used.");
+            if (pass.Status != "paid")
+                return new ApiResponses().BadRequestResult("This pass was refunded or cancelled and is no longer valid.");
+
+            var product = await _passes.GetProduct(pass.ProductId, _tenantContext.TenantId);
+            if (product is null) return new ApiResponses().BadRequestResult("Pass product missing — contact support.");
+
+            var ev = await _events.GetById(request.EventId, _tenantContext.TenantId);
+            if (ev is null || ev.Status != "scheduled")
+                return new ApiResponses().BadRequestResult("That event isn't available for check-in.");
+
+            // Walk-up only: the event must be running today in the tenant's timezone. Advance
+            // booking stays on the rider-facing Reserve endpoint.
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(_tenantContext.Tenant.Timezone);
+            var todayLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
+            var eventDayLocal = TimeZoneInfo.ConvertTimeFromUtc(
+                DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc), tz).Date;
+            if (eventDayLocal != todayLocal)
+                return new ApiResponses().BadRequestResult("That event isn't running today — walk-up redemption is same-day only.");
+
+            if (eventDayLocal < pass.ValidFromDate.Date)
+                return new ApiResponses().BadRequestResult($"This pass's season hasn't started yet — it's valid from {pass.ValidFromDate:MMM d, yyyy}.");
+            if (eventDayLocal > pass.ValidToDate.Date)
+                return new ApiResponses().BadRequestResult($"This pass's season ended {pass.ValidToDate:MMM d, yyyy}.");
+
+            if (product.Kind == "days_of_week" && product.ValidDaysOfWeek is { Length: > 0 })
+            {
+                var dow = (int)eventDayLocal.DayOfWeek;     // 0=Sun..6=Sat
+                if (!product.ValidDaysOfWeek.Contains(dow))
+                    return new ApiResponses().BadRequestResult("This pass isn't valid on this day of the week.");
+            }
+
+            // Registration gate (photo to verify the holder, product waiver when required),
+            // then the event's own rider waiver — same standards as reservation check-in.
+            var ctx = await _passes.GetPassForGateCheckIn(pass.Id, _tenantContext.TenantId);
+            if (ctx is not null)
+            {
+                var registrationBlock = await RegistrationBlockReason(ctx);
+                if (registrationBlock is not null) return new ApiResponses().BadRequestResult(registrationBlock);
+
+                if (ctx.WaiverSignatureId is null)
+                {
+                    var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, request.EventId,
+                        riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
+                    if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                }
+            }
+
+            // Serialize double-scans of the same pass; the pre-check below + the atomic
+            // burn/upsert in CreateGateCheckIn depend on it.
+            await using var redeemLock = await _db.AcquireAdvisoryLock($"season-pass-redeem:{pass.Id}");
+
+            var existing = await _passes.GetReservation(pass.Id, request.EventId);
+            if (existing is not null && existing.Status == "checked_in")
+            {
+                return new ApiResponses().OkResult(new
+                {
+                    ReservationId = existing.Id,
+                    AlreadyAdmitted = true,
+                    CheckedInAtUtc = existing.CheckedInAt is null
+                        ? null : (DateTime?)DateTime.SpecifyKind(existing.CheckedInAt.Value, DateTimeKind.Utc),
+                    pass.CreditsRemaining,
+                });
+            }
+            if (existing is not null && existing.Status == "reserved")
+            {
+                // Pre-booked via Reserve, which already burned the credit — just flip it.
+                var flipped = await _passes.UpdateReservationStatus(existing.Id, _tenantContext.TenantId, "checked_in", staffId);
+                if (flipped == 0)
+                    return new ApiResponses().BadRequestResult(
+                        "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
+                return new ApiResponses().OkResult(new
+                {
+                    ReservationId = existing.Id,
+                    AlreadyAdmitted = false,
+                    CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
+                    pass.CreditsRemaining,
+                });
+            }
+
+            var burnCredit = product.Kind == "credits";
+            var result = await _passes.CreateGateCheckIn(pass.Id, _tenantContext.TenantId, request.EventId, staffId, burnCredit);
+            if (result is null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
+            }
+            return new ApiResponses().OkResult(new
+            {
+                ReservationId = result.Value.ReservationId,
+                AlreadyAdmitted = false,
+                CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
+                CreditsRemaining = result.Value.CreditsRemaining,
+            });
+        }
+
+        /// <summary>
+        /// Admin support override of a credits pass's remaining rides. SalesRefund policy:
+        /// handing rides back is economically a refund-shaped action, and that policy carries
+        /// the right admin/manager blast radius.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
+        [HttpPut("Admin/Purchases/{id:guid}/Credits")]
+        public async Task<IActionResult> AdjustCredits(Guid id, [FromBody] AdjustSeasonPassCreditsRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (string.IsNullOrWhiteSpace(request.Reason))
+                return new ApiResponses().BadRequestResult("A reason is required — credit adjustments are audit-logged.");
+
+            var pass = await _passes.GetPurchase(id);
+            if (pass is null || pass.TenantId != _tenantContext.TenantId)
+                return new ApiResponses().NotFoundResult("Season pass not found.");
+            var product = await _passes.GetProduct(pass.ProductId, _tenantContext.TenantId);
+            if (product?.Kind != "credits")
+                return new ApiResponses().BadRequestResult("Only credit-based passes have an adjustable ride count.");
+
+            var previous = pass.CreditsRemaining;
+            var affected = await _passes.SetCredits(id, _tenantContext.TenantId, request.CreditsRemaining);
+            if (affected == 0)
+                return new ApiResponses().BadRequestResult("This pass's credits couldn't be updated — it may not be a credits pass.");
+
+            await _audit.Log(
+                action: "season_pass.credits_adjusted",
+                summary: $"Set credits on '{product.Name}' pass for {pass.PurchaserEmail} from {previous?.ToString() ?? "—"} to {request.CreditsRemaining}: {request.Reason.Trim()}",
+                targetKind: "season_pass_purchase",
+                targetId: id,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { previous, request.CreditsRemaining, reason = request.Reason.Trim() });
+
+            return new ApiResponses().OkResult(new { CreditsRemaining = request.CreditsRemaining });
+        }
+
         private bool TryGetUserId(out Guid userId)
         {
             var claim = User.FindFirst("UserId")?.Value;
@@ -952,6 +1302,10 @@ namespace webapi.Controllers
                     RiderPaidServiceChargeBps = p.RiderPaidServiceChargeBps,
                     IsActive = p.IsActive,
                     SortOrder = p.SortOrder,
+                    Slug = p.Slug,
+                    HeroImageUrl = p.HeroImageUrl,
+                    LandingHtml = p.LandingHtml,
+                    LandingPublished = p.LandingPublished,
                     // Legacy shape, still emitted for older clients. Percent benefits only —
                     // an 'amount' benefit has no faithful representation as a percent.
                     Perks = benefits

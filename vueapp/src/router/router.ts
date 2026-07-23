@@ -14,6 +14,8 @@ const routes = [
     { path: '/Waiver', name: 'Waiver', component: () => import('../views/Waiver.vue'), meta: { requiresAuth: true } },
     { path: '/EventUnsubscribe/:token', name: 'EventUnsubscribe', component: () => import('../views/EventUnsubscribe.vue') },
     { path: '/SeasonPasses', name: 'SeasonPasses', component: () => import('../views/BuySeasonPass.vue') },
+    // Per-product marketing landing page (admin-authored under Admin > Season Passes).
+    { path: '/SeasonPasses/:slug', name: 'SeasonPassLanding', component: () => import('../views/SeasonPassLanding.vue') },
     { path: '/GiftCard', name: 'BuyGiftCard', component: () => import('../views/BuyGiftCard.vue'), meta: { requiresAuth: true } },
     { path: '/Order', name: 'OrderFood', component: () => import('../views/OrderFood.vue'), meta: { requiresAuth: true } },
     {
@@ -394,6 +396,31 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
+        path: '/Admin/SignedWaivers',
+        name: 'AdminSignedWaivers',
+        component: () => import('../views/Admin/SignedWaivers.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'customers.view', hideFooter: true }
+    },
+    {
+        path: '/Admin/WaiverCompliance',
+        name: 'AdminWaiverCompliance',
+        component: () => import('../views/Admin/WaiverCompliance.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'customers.view', hideFooter: true }
+    },
+    {
+        path: '/Admin/WaiverRequests',
+        name: 'AdminWaiverRequests',
+        component: () => import('../views/Admin/WaiverRequests.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'customers.view', hideFooter: true }
+    },
+    {
+        // Public waiver signing, reached from the emailed link. No auth: the token is
+        // the credential, same posture as /SignRental and /PayDeposit.
+        path: '/SignWaiver/:token',
+        name: 'SignWaiver',
+        component: () => import('../views/SignWaiver.vue'),
+    },
+    {
         path: '/Admin/Purchases',
         name: 'AdminPurchases',
         component: () => import('../views/Admin/Purchases.vue'),
@@ -551,8 +578,9 @@ const routes = [
         component: () => import('../views/Event.vue'),
         meta: { hideNav: true, hideFooter: true, embed: true },
     },
-    // The whole season pass lineup, and a single pass. Both render the same landing page —
-    // the :id variant filters to that one product and titles itself after it.
+    // The whole season pass lineup, and a single pass. The :id variant renders the
+    // per-product landing view (admin-authored marketing content + checkout); passes
+    // without a landing fall back to the same view's plain facts + checkout.
     {
         path: '/embed/seasonpasses',
         name: 'EmbedSeasonPasses',
@@ -562,7 +590,7 @@ const routes = [
     {
         path: '/embed/seasonpass/:id',
         name: 'EmbedSeasonPass',
-        component: () => import('../views/BuySeasonPass.vue'),
+        component: () => import('../views/SeasonPassLanding.vue'),
         meta: { hideNav: true, hideFooter: true, embed: true },
     },
     {

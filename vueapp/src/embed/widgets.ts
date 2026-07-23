@@ -78,6 +78,24 @@ export const EMBED_WIDGETS: EmbedWidgetDef[] = [
             },
         ],
     },
+    {
+        key: 'seasonpasses',
+        label: 'Season passes',
+        description: 'The full season pass lineup with checkout inline.',
+        icon: 'mdi-wallet-membership',
+    },
+    {
+        key: 'seasonpass',
+        label: 'Single season pass',
+        description: 'Checkout for one specific season pass.',
+        icon: 'mdi-card-account-details-star',
+        params: [
+            {
+                attr: 'pass', label: 'Season pass ID', placeholder: '00000000-0000-0000-0000-000000000000',
+                required: true, hint: "The pass's ID (copy it from Admin > Season Passes).",
+            },
+        ],
+    },
 ]
 
 export function getEmbedWidget(key: string): EmbedWidgetDef | undefined {
@@ -95,6 +113,11 @@ export function buildEmbedPath(widgetKey: string, values: Record<string, string>
         const id = (values['event'] ?? '').trim()
         return id ? `/embed/event/${encodeURIComponent(id)}` : null
     }
+    if (widgetKey === 'seasonpass') {
+        const id = (values['pass'] ?? '').trim()
+        return id ? `/embed/seasonpass/${encodeURIComponent(id)}` : null
+    }
+    if (widgetKey === 'seasonpasses') return '/embed/seasonpasses'
     const base = widgetKey === 'calendar' ? '/embed/calendar' : '/embed/events'
     const qs: string[] = []
     const limit = (values['limit'] ?? '').trim()

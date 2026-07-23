@@ -1,4 +1,5 @@
 using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Data.WaiverData;
 
 namespace Services.Repositories.Interfaces
 {
@@ -39,5 +40,26 @@ namespace Services.Repositories.Interfaces
             string signatureDataUrl, string? signerEmail, string? signerName,
             string attendeeFirstName, string attendeeLastName, DateTime? attendeeBirthdate,
             bool signedByParent, string? parentName, string? parentPhone);
+
+        /// <summary>Admin Signed Waivers log: newest first, server-paged.
+        /// <paramref name="context"/> filters by signing context: "ticket", "rental", or
+        /// "account" (a bare account/kiosk signature with no purchase link).</summary>
+        Task<(List<WaiverSignatureRow> Rows, int Total)> ListSignatures(Guid tenantId,
+            string? search, DateTime? fromUtc, DateTime? toUtc, Guid? waiverId,
+            bool minorsOnly, string? context, int page, int pageSize);
+
+        /// <summary>Admin People view: signatures collapsed to person identities
+        /// (rider account when present, else name + birthdate). Status filter:
+        /// "current" / "outdated". agingOut = minors turning 18 within 90 days.</summary>
+        Task<(List<WaiverPersonRow> Rows, int Total)> ListPeople(Guid tenantId,
+            string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize);
+
+        /// <summary>Full detail for one signature (image, waiver, signing context) for the
+        /// admin drill-in / print view.</summary>
+        Task<WaiverSignatureDetailRow?> GetSignatureDetail(Guid id, Guid tenantId);
+
+        /// <summary>Compliance Today: everyone on site in the window (ticket scans, season
+        /// pass check-ins, active rentals, today's lesson rosters) with their waiver status.</summary>
+        Task<List<WaiverComplianceRow>> ComplianceToday(Guid tenantId, DateTime dayStartUtc, DateTime dayEndUtc);
     }
 }

@@ -35,8 +35,10 @@
             </div>
 
             <template v-else>
-                <ImpersonationBanner />
                 <NavBar v-if="!$route.meta.hideNav" />
+                <!-- Chromeless pages have no nav bar to host the impersonation pill;
+                     float it top-right so the state is never invisible. -->
+                <ImpersonationMenu v-else floating />
                 <v-main>
                     <div v-if="embedBlocked" class="embed-blocked">
                         <p class="text-body-2 text-medium-emphasis">{{ embedBlockedMessage }}</p>
@@ -55,8 +57,8 @@ import { onMounted, watch, watchEffect, computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import NavBar from './components/NavBar.vue'
+import ImpersonationMenu from './components/ImpersonationMenu.vue'
 import Footer from './components/Footer.vue'
-import ImpersonationBanner from './components/ImpersonationBanner.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { branding, loadBranding } from './stores/branding'
 import tenantHelper from './helpers/TenantHelper'

@@ -157,7 +157,13 @@
                                     <td>{{ formatWhen(s.createdAt) }}</td>
                                     <td>{{ s.validFromDate.substring(0, 10) }} → {{ s.validToDate.substring(0, 10) }}</td>
                                     <td class="text-right">${{ (s.amountCents / 100).toFixed(2) }}</td>
-                                    <td class="text-right">{{ s.creditsRemaining ?? '—' }}</td>
+                                    <td class="text-right">
+                                        {{ s.creditsRemaining ?? '—' }}
+                                        <!-- Non-null credits = a credits ("ride pack") pass; support can adjust. -->
+                                        <v-btn v-if="s.creditsRemaining !== null" icon="mdi-pencil" variant="text"
+                                            size="x-small" aria-label="Adjust credits"
+                                            @click="openAdjustCredits(s)"></v-btn>
+                                    </td>
                                     <td>
                                         <v-chip size="small" :color="statusColor(s.status)">{{ s.status }}</v-chip>
                                     </td>
@@ -198,6 +204,32 @@
                 </v-card-actions>
             </v-card>
         </v-dialog>
+
+        <!-- Adjust ride credits on a credits ("ride pack") season pass. Audit-logged server-side. -->
+        <v-dialog v-model="creditsDialog" max-width="420">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Adjust ride credits</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="creditsDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-text-field v-model.number="creditsInput" type="number" min="0" label="Credits remaining"
+                        density="compact" hide-details autofocus></v-text-field>
+                    <v-textarea v-model="creditsReason" label="Reason (required — audit-logged)" rows="2"
+                        density="compact" class="mt-4" hide-details></v-textarea>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="creditsSaving" @click="creditsDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="creditsSaving"
+                        :disabled="creditsInput === null || creditsInput < 0 || !creditsReason.trim()"
+                        @click="saveCredits">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
@@ -205,7 +237,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
-import { CustomerService, type CustomerDetailDto, type CustomerWaiverDto } from '@/services/CustomerService'
+import { CustomerService, type CustomerDetailDto, type CustomerSeasonPassDto, type CustomerWaiverDto } from '@/services/CustomerService'
+import { SeasonPassService } from '@/services/SeasonPassService'
 import ShopHistoryPanel from '@/components/ShopHistoryPanel.vue'
 import { branding } from '@/stores/branding'
 
@@ -261,5 +294,44 @@ function statusColor(status: string): string {
 function viewSignature(w: CustomerWaiverDto) {
     signatureUrl.value = w.signatureDataUrl
     signatureDialog.value = true
+}
+
+// ── Ride-credit adjustment (credits passes only) ─────────────────────────────
+const seasonPassService = new SeasonPassService()
+const creditsDialog = ref(false)
+const creditsTarget = ref<CustomerSeasonPassDto | null>(null)
+const creditsInput = ref<number | null>(null)
+const creditsReason = ref('')
+const creditsSaving = ref(false)
+
+const snackbar = ref(false)
+const snackbarText = ref('')
+const snackbarColor = ref<'success' | 'error'>('success')
+function flash(text: string, color: 'success' | 'error') {
+    snackbarText.value = text
+    snackbarColor.value = color
+    snackbar.value = true
+}
+
+function openAdjustCredits(s: CustomerSeasonPassDto) {
+    creditsTarget.value = s
+    creditsInput.value = s.creditsRemaining
+    creditsReason.value = ''
+    creditsDialog.value = true
+}
+
+async function saveCredits() {
+    if (!creditsTarget.value || creditsInput.value === null || creditsInput.value < 0) return
+    creditsSaving.value = true
+    try {
+        await seasonPassService.adjustCredits(creditsTarget.value.id, creditsInput.value, creditsReason.value.trim())
+        creditsTarget.value.creditsRemaining = creditsInput.value
+        creditsDialog.value = false
+        flash(`Credits set to ${creditsInput.value}.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t update the credits. Check the connection and try again.', 'error')
+    } finally {
+        creditsSaving.value = false
+    }
 }
 </script>

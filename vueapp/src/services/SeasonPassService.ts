@@ -35,6 +35,11 @@ export interface SeasonPassProduct {
     riderPaidServiceChargeBps: number
     isActive: boolean
     sortOrder: number
+    /** Landing-page fields (null slug = no landing page). Body is Tiptap HTML. */
+    slug: string | null
+    heroImageUrl: string | null
+    landingHtml: string | null
+    landingPublished: boolean
     /** @deprecated Legacy event-only shape. Read `benefits` instead; still emitted for older clients. */
     perks: SeasonPassPerk[]
     benefits: SeasonPassBenefit[]
@@ -53,6 +58,30 @@ export interface UpsertSeasonPassProduct {
     riderPaidServiceChargeBps: number
     isActive: boolean
     sortOrder: number
+    slug: string | null
+    heroImageUrl: string | null
+    landingHtml: string | null
+    landingPublished: boolean
+    benefits: SeasonPassBenefit[]
+}
+
+/** A pass product's landing page: authored content + live product facts. */
+export interface SeasonPassLanding {
+    id: string
+    name: string
+    description: string | null
+    priceCents: number
+    validFromDate: string
+    validToDate: string
+    kind: 'unlimited' | 'days_of_week' | 'credits'
+    validDaysOfWeek: number[] | null
+    totalCredits: number | null
+    requiresWaiver: boolean
+    riderPaidServiceChargeBps: number
+    slug: string | null
+    heroImageUrl: string | null
+    landingHtml: string | null
+    landingPublished: boolean
     benefits: SeasonPassBenefit[]
 }
 
@@ -118,6 +147,13 @@ export interface PassReservation {
     checkedInAtUtc: string | null
 }
 
+export interface PassTodayEvent {
+    id: string
+    title: string
+    startsAtUtc: string
+    endsAtUtc: string
+}
+
 export interface PassLookup {
     id: string
     purchaserName: string
@@ -133,8 +169,18 @@ export interface PassLookup {
     registrationComplete: boolean
     productName: string
     productKind: string
+    productTotalCredits: number | null
     validDaysOfWeek: number[] | null
+    /** Scheduled events running today (tenant tz) — walk-up redemption targets. */
+    todaysEvents: PassTodayEvent[]
     todaysReservations: PassReservation[]
+}
+
+export interface GateRedeemResult {
+    reservationId: string
+    alreadyAdmitted: boolean
+    checkedInAtUtc: string | null
+    creditsRemaining: number | null
 }
 
 export class SeasonPassService {
@@ -143,6 +189,16 @@ export class SeasonPassService {
 
     listActive() {
         return axios.get<{ data: SeasonPassProduct[] }>(`${this.apiUrl}/SeasonPass/Products`)
+    }
+    /** Landing page by slug (public URL) or product id (embed widget). */
+    getLanding(slugOrId: string) {
+        return axios.get<{ data: SeasonPassLanding }>(`${this.apiUrl}/SeasonPass/Landing/${encodeURIComponent(slugOrId)}`)
+    }
+    /** Landing hero / inline-body image upload; returns the stored image URL. */
+    uploadImage(file: File) {
+        const form = new FormData()
+        form.append('file', file)
+        return axios.post<{ data: { imageUrl: string } }>(`${this.apiUrl}/SeasonPass/Products/Image`, form)
     }
     listForAdmin() {
         return axios.get<{ data: SeasonPassProduct[] }>(`${this.apiUrl}/SeasonPass/Products/Admin`)
@@ -180,5 +236,14 @@ export class SeasonPassService {
     }
     checkIn(reservationId: string) {
         return axios.post(`${this.apiUrl}/SeasonPass/Reservations/${reservationId}/CheckIn`)
+    }
+    /** Walk-up gate admission for a scanned pass: burns one credit on credits passes. */
+    redeemAtGate(token: string, eventId: string) {
+        return axios.post<{ data: GateRedeemResult }>(`${this.apiUrl}/SeasonPass/Pass/${token}/Redeem`, { eventId })
+    }
+    /** Admin support override of a credits pass's remaining rides (audit-logged, reason required). */
+    adjustCredits(passPurchaseId: string, creditsRemaining: number, reason: string) {
+        return axios.put(`${this.apiUrl}/SeasonPass/Admin/Purchases/${passPurchaseId}/Credits`,
+            { creditsRemaining, reason })
     }
 }

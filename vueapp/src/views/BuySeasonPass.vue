@@ -115,6 +115,10 @@
                                     {{ accessLabel(p) }} · {{ validLabel(p) }}
                                 </div>
                                 <div v-if="p.description" class="text-body-2 mt-1">{{ p.description }}</div>
+                                <router-link v-if="p.landingPublished && p.slug" class="sp-link"
+                                    :to="`/SeasonPasses/${p.slug}`">
+                                    Learn more about {{ p.name }} &rarr;
+                                </router-link>
                             </div>
                         </section>
                     </v-col>
@@ -187,12 +191,7 @@ const aboutPhoto = computed(() => branding.secondaryHeroUrl || branding.heroImag
 const heroStyle = computed(() =>
     branding.heroImageUrl ? { backgroundImage: `url(${branding.heroImageUrl})` } : {})
 
-// A single-pass embed (/embed/seasonpass/:id) titles itself after that pass; everything else
-// is the lineup.
-const heroTitle = computed(() =>
-    singleProductId.value && products.value.length === 1 ? products.value[0].name : 'Season Passes')
-
-const singleProductId = computed(() => (route.params.id as string | undefined) || null)
+const heroTitle = 'Season Passes'
 
 const priceFromCents = computed(() =>
     products.value.length === 0 ? null : Math.min(...products.value.map(p => p.priceCents)))
@@ -318,13 +317,7 @@ onMounted(async () => {
     }
     try {
         const r = await service.listActive()
-        const all: SeasonPassProduct[] = (r.data as any).data ?? []
-        // The single-pass embed sells exactly one product. An unknown/inactive id yields an
-        // empty list, which renders the "no passes on sale" notice rather than quietly showing
-        // the whole lineup the embedding track didn't ask for.
-        products.value = singleProductId.value
-            ? all.filter(p => p.id === singleProductId.value)
-            : all
+        products.value = (r.data as any).data ?? []
     } catch (err: any) {
         loadError.value = err.response?.data?.error
             || 'Could not load season passes. Refresh to try again, or check your connection.'

@@ -42,6 +42,16 @@
                             <td>Registration + checkout for one specific event.</td>
                             <td>Race promo / landing page</td>
                         </tr>
+                        <tr>
+                            <td class="text-no-wrap">Season passes</td>
+                            <td>The full season pass lineup with checkout inline.</td>
+                            <td>"Season Passes" / pricing page</td>
+                        </tr>
+                        <tr>
+                            <td class="text-no-wrap">Single season pass</td>
+                            <td>One pass's landing content (admin-authored hero + copy) with checkout.</td>
+                            <td>Pass promo / landing page</td>
+                        </tr>
                     </tbody>
                 </v-table>
                 <ul class="text-body-2 ml-4 mb-4">

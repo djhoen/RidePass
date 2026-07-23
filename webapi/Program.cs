@@ -67,6 +67,7 @@ builder.Services.AddScoped<ITenantCreditRepository, TenantCreditRepository>();
 builder.Services.AddScoped<IWristbandRepository, WristbandRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IWaiverRepository, WaiverRepository>();
+builder.Services.AddScoped<IWaiverSignRequestRepository, WaiverSignRequestRepository>();
 builder.Services.AddScoped<IEventTicketTierRepository, EventTicketTierRepository>();
 builder.Services.AddScoped<IInstructorRepository, InstructorRepository>();
 builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRepository>();

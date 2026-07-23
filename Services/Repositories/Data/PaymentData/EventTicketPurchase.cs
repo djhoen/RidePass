@@ -19,6 +19,9 @@ namespace Services.Repositories.Data.PaymentData
         public int TaxRateBps { get; set; }
         public bool TaxInclusive { get; set; }
         public Guid? AppliedRewardRedemptionId { get; set; }
+        // Which "credits" season pass funded this ticket (one ride credit burned at checkout).
+        // Null for money-funded tickets; drives credit hand-back on refund / failed payment.
+        public Guid? AppliedSeasonPassPurchaseId { get; set; }
         public string PaymentMethod { get; set; } = "stripe";
         public string Status { get; set; } = "pending";
         public string PurchaserEmail { get; set; } = null!;

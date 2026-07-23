@@ -16,6 +16,14 @@ namespace Services.Repositories.Data.PaymentData
         public int RiderPaidServiceChargeBps { get; set; }
         public bool IsActive { get; set; }
         public int SortOrder { get; set; }
+
+        // Landing page (Script0228): a per-product marketing page at /SeasonPasses/{slug}.
+        // LandingHtml is raw Tiptap HTML, sanitized at render (RichTextView contract).
+        public string? Slug { get; set; }
+        public string? HeroImageUrl { get; set; }
+        public string? LandingHtml { get; set; }
+        public bool LandingPublished { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

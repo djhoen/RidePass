@@ -18,6 +18,10 @@ namespace Services.Repositories
             rider_paid_service_charge_bps AS RiderPaidServiceChargeBps,
             is_active AS IsActive,
             sort_order AS SortOrder,
+            slug,
+            hero_image_url AS HeroImageUrl,
+            landing_html AS LandingHtml,
+            landing_published AS LandingPublished,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string PurchaseColumns = @"
@@ -91,11 +95,13 @@ namespace Services.Repositories
                 INSERT INTO season_pass_product
                     (tenant_id, name, description, price_cents,
                      valid_from_date, valid_to_date, kind, valid_days_of_week, total_credits,
-                     requires_waiver, rider_paid_service_charge_bps, is_active, sort_order)
+                     requires_waiver, rider_paid_service_charge_bps, is_active, sort_order,
+                     slug, hero_image_url, landing_html, landing_published)
                 VALUES
                     (@TenantId, @Name, @Description, @PriceCents,
                      @ValidFromDate, @ValidToDate, @Kind, @ValidDaysOfWeek, @TotalCredits,
-                     @RequiresWaiver, @RiderPaidServiceChargeBps, @IsActive, @SortOrder)
+                     @RequiresWaiver, @RiderPaidServiceChargeBps, @IsActive, @SortOrder,
+                     @Slug, @HeroImageUrl, @LandingHtml, @LandingPublished)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, p)).First();
         }
@@ -110,9 +116,30 @@ namespace Services.Repositories
                     requires_waiver = @RequiresWaiver,
                     rider_paid_service_charge_bps = @RiderPaidServiceChargeBps,
                     is_active = @IsActive, sort_order = @SortOrder,
+                    slug = @Slug, hero_image_url = @HeroImageUrl,
+                    landing_html = @LandingHtml, landing_published = @LandingPublished,
                     updated_at = now()
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, p);
+        }
+
+        public async Task<SeasonPassProduct?> GetProductBySlug(string slug, Guid tenantId)
+        {
+            var sql = $@"
+                SELECT {ProductColumns} FROM season_pass_product
+                WHERE tenant_id = @tenantId AND slug IS NOT NULL AND lower(slug) = lower(@slug)
+                LIMIT 1";
+            return (await _db.Query<SeasonPassProduct>(sql, new { slug, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<bool> ProductSlugExists(string slug, Guid tenantId, Guid? excludeId)
+        {
+            const string sql = @"
+                SELECT EXISTS (
+                    SELECT 1 FROM season_pass_product
+                    WHERE tenant_id = @tenantId AND slug IS NOT NULL AND lower(slug) = lower(@slug)
+                      AND (@excludeId::uuid IS NULL OR id <> @excludeId))";
+            return (await _db.Query<bool>(sql, new { slug, tenantId, excludeId })).First();
         }
 
         public async Task DeleteProduct(Guid id, Guid tenantId)
@@ -236,12 +263,14 @@ namespace Services.Repositories
             // Without these a rider could buy an unregistered pass and immediately claim free entry
             // at a race their pass isn't valid for.
             //
-            // Credits products grant NOTHING here, deliberately. A credit pass is "N rides", so a
-            // benefit it grants has to burn a credit — and burning one safely means recording which
-            // pass paid for which ticket, so a failed or refunded charge hands the credit back.
-            // That accounting doesn't exist yet, and without it a 10-credit pass would hand out
-            // UNLIMITED free entry (the count never drops). Excluding them is the safe half: a
-            // credits pass simply offers no event benefit until the burn is wired.
+            // Credits products ("ride packs") grant ONLY a 100%-off EVENT benefit, and only while
+            // rides remain. The burn accounting lives in the event checkout: when a credits grant
+            // zeroes a ticket, one credit is atomically decremented (TryDecrementCredits) and the
+            // ticket row records the funding pass (applied_season_pass_purchase_id, Script0227) so
+            // a refund or failed payment hands the credit back (IncrementCredits). Partial
+            // discounts stay excluded — "half a ride" is not a coherent thing to burn — and
+            // non-event surfaces (retail/rental/F&B) never see credits grants: consuming them
+            // there would spend an admission on a sandwich.
             // Columns are spelled out rather than reusing BenefitColumns: the joins make the
             // shared names (id, tenant_id, quantity) ambiguous, and Dapper's splitOn needs the
             // benefit's own id to start the second object.
@@ -271,7 +300,11 @@ namespace Services.Repositories
                   AND (p.kind <> 'days_of_week'
                        OR p.valid_days_of_week IS NULL
                        OR EXTRACT(DOW FROM @onDate::date)::int = ANY(p.valid_days_of_week))
-                  AND p.kind <> 'credits'
+                  AND (p.kind <> 'credits'
+                       OR (b.benefit_type = 'event'
+                           AND b.discount_kind = 'percent'
+                           AND b.discount_value = 10000
+                           AND COALESCE(sp.credits_remaining, 0) > 0))
                   AND b.benefit_type = @benefitType
                   AND (b.scope_id = @scopeId OR b.scope_id IS NULL)
                 ORDER BY sp.created_at";
@@ -434,14 +467,98 @@ namespace Services.Repositories
             });
         }
 
-        public async Task DecrementCredits(Guid purchaseId)
+        public async Task<int> TryDecrementCredits(Guid purchaseId, Guid tenantId)
         {
-            // Guarded so we never go below zero from a race.
+            // Guarded so we never go below zero from a race; the caller must treat 0 rows as
+            // "no credit available" and abort whatever the credit was about to fund.
             const string sql = @"
                 UPDATE season_pass_purchase
                 SET credits_remaining = credits_remaining - 1, updated_at = now()
-                WHERE id = @purchaseId AND credits_remaining IS NOT NULL AND credits_remaining > 0";
-            await _db.Execute(sql, new { purchaseId });
+                WHERE id = @purchaseId AND tenant_id = @tenantId AND status = 'paid'
+                  AND credits_remaining IS NOT NULL AND credits_remaining > 0";
+            return await _db.Execute(sql, new { purchaseId, tenantId });
+        }
+
+        public async Task IncrementCredits(Guid purchaseId, Guid tenantId, int by = 1)
+        {
+            // Automatic hand-back (refund / failed payment). Capped at the product's
+            // total_credits — goodwill grants beyond that are an explicit admin action
+            // (SetCredits), not something a refund loop should be able to inflate.
+            // status = 'paid': handing rides back to a refunded pass would be meaningless.
+            const string sql = @"
+                UPDATE season_pass_purchase sp
+                SET credits_remaining = LEAST(sp.credits_remaining + @by, p.total_credits),
+                    updated_at = now()
+                FROM season_pass_product p
+                WHERE sp.id = @purchaseId AND sp.tenant_id = @tenantId
+                  AND p.id = sp.product_id AND sp.status = 'paid'
+                  AND sp.credits_remaining IS NOT NULL";
+            await _db.Execute(sql, new { purchaseId, tenantId, by });
+        }
+
+        public async Task<int> SetCredits(Guid purchaseId, Guid tenantId, int credits)
+        {
+            // credits_remaining IS NOT NULL keeps this off unlimited/day-of-week passes,
+            // whose NULL means "not a counted pass", not "zero left".
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET credits_remaining = @credits, updated_at = now()
+                WHERE id = @purchaseId AND tenant_id = @tenantId AND credits_remaining IS NOT NULL";
+            return await _db.Execute(sql, new { purchaseId, tenantId, credits });
+        }
+
+        public async Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId)
+        {
+            // Same projection as GetReservationForCheckIn minus the reservation join: the
+            // walk-up gate validates the pass BEFORE any reservation row exists.
+            const string sql = @"
+                SELECT p.purchaser_user_id AS HolderUserId,
+                       p.purchaser_email AS HolderEmail,
+                       p.purchaser_name AS HolderName,
+                       p.holder_first_name AS HolderFirstName,
+                       (p.photo_data_url IS NOT NULL) AS HasPhoto,
+                       p.waiver_signature_id AS WaiverSignatureId,
+                       pr.requires_waiver AS ProductRequiresWaiver
+                FROM season_pass_purchase p
+                JOIN season_pass_product pr ON pr.id = p.product_id
+                WHERE p.id = @passPurchaseId AND p.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<SeasonPassCheckInContext>(sql, new { passPurchaseId, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<(Guid ReservationId, int? CreditsRemaining)?> CreateGateCheckIn(
+            Guid passPurchaseId, Guid tenantId, Guid eventId, Guid? staffUserId, bool burnCredit)
+        {
+            // One statement so the credit burn and the check-in row commit or fail together —
+            // DbHelper opens a fresh connection per call, so multi-call transactions don't exist
+            // here. The burn CTE returns zero rows when the pass has no credits left (or isn't
+            // paid / isn't this tenant's), which suppresses the INSERT entirely.
+            //
+            // ON CONFLICT revives only a CANCELLED prior reservation for the same (pass, event);
+            // the caller pre-checks live rows under the per-pass advisory lock, so a live
+            // conflicting row can't appear between that check and this statement.
+            const string sql = @"
+                WITH burn AS (
+                    UPDATE season_pass_purchase
+                    SET credits_remaining = CASE WHEN @burnCredit THEN credits_remaining - 1
+                                                 ELSE credits_remaining END,
+                        updated_at = now()
+                    WHERE id = @passPurchaseId AND tenant_id = @tenantId AND status = 'paid'
+                      AND (NOT @burnCredit
+                           OR (credits_remaining IS NOT NULL AND credits_remaining > 0))
+                    RETURNING id, credits_remaining
+                )
+                INSERT INTO season_pass_reservation
+                    (season_pass_purchase_id, event_id, status, checked_in_at, checked_in_by_user_id)
+                SELECT id, @eventId, 'checked_in', now(), @staffUserId FROM burn
+                ON CONFLICT (season_pass_purchase_id, event_id) DO UPDATE
+                    SET status = 'checked_in', checked_in_at = now(),
+                        checked_in_by_user_id = EXCLUDED.checked_in_by_user_id
+                    WHERE season_pass_reservation.status = 'cancelled'
+                RETURNING id, (SELECT credits_remaining FROM burn)";
+            var row = (await _db.Query<(Guid Id, int? CreditsRemaining)>(sql,
+                new { passPurchaseId, tenantId, eventId, staffUserId, burnCredit })).FirstOrDefault();
+            return row.Id == Guid.Empty ? null : (row.Id, row.CreditsRemaining);
         }
 
         public async Task<Guid> CreateReservation(SeasonPassReservation r)

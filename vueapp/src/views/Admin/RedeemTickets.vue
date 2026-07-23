@@ -271,6 +271,94 @@
             </v-card-text>
         </v-card>
 
+        <!-- Season pass card: a scanned pass QR isn't an order — it's a person holding an
+             entitlement. Walk-up admission happens here; credits passes burn one ride. -->
+        <v-card v-if="pass" class="mb-4">
+            <v-card-title class="d-flex align-center flex-wrap ga-2 pt-4">
+                Season Pass
+                <v-chip size="small" variant="tonal" color="primary">{{ passKindLabel }}</v-chip>
+                <v-spacer></v-spacer>
+                <v-chip v-if="pass.status !== 'paid'" color="error" size="small">{{ pass.status }}</v-chip>
+            </v-card-title>
+            <v-card-text>
+                <div class="d-flex ga-4">
+                    <!-- The photo is the whole point of pass registration: staff verify the face. -->
+                    <v-avatar v-if="pass.photoDataUrl" size="96" rounded="lg">
+                        <v-img :src="pass.photoDataUrl" cover></v-img>
+                    </v-avatar>
+                    <v-avatar v-else size="96" rounded="lg" color="grey-lighten-3">
+                        <v-icon size="48" color="grey">mdi-account</v-icon>
+                    </v-avatar>
+                    <div class="flex-grow-1" style="min-width: 0">
+                        <div class="text-h6">{{ pass.holderName || pass.purchaserName }}</div>
+                        <div v-if="!pass.holderName" class="text-caption text-medium-emphasis">
+                            Buyer's name — this pass hasn't been registered to a holder yet.
+                        </div>
+                        <div class="text-body-2 text-medium-emphasis">{{ pass.productName }}</div>
+                        <div class="text-body-2 text-medium-emphasis">
+                            Valid {{ dayjs(pass.validFromDate).format('MMM D, YYYY') }}
+                            to {{ dayjs(pass.validToDate).format('MMM D, YYYY') }}
+                        </div>
+                        <div v-if="pass.productKind === 'credits'" class="text-subtitle-1 font-weight-bold mt-1">
+                            {{ pass.creditsRemaining ?? 0 }}<template v-if="pass.productTotalCredits">
+                                of {{ pass.productTotalCredits }}</template>
+                            {{ (pass.creditsRemaining ?? 0) === 1 ? 'ride' : 'rides' }} left
+                        </div>
+                    </div>
+                </div>
+
+                <v-alert v-if="!pass.registrationComplete" type="warning" variant="tonal"
+                    density="compact" class="mt-3">
+                    Not registered yet — the buyer must finish registration (holder details, photo,
+                    and any required waiver) before this pass can be used at the gate.
+                </v-alert>
+                <v-alert v-else-if="passWindowBlock" type="warning" variant="tonal" density="compact" class="mt-3">
+                    {{ passWindowBlock }}
+                </v-alert>
+
+                <template v-if="pass.todaysReservations.length > 0">
+                    <div class="text-caption text-medium-emphasis mt-4 mb-1">Today</div>
+                    <div v-for="r in pass.todaysReservations" :key="r.id" class="d-flex align-center ga-2 py-1">
+                        <v-icon size="18" :color="r.status === 'checked_in' ? 'success' : 'medium-emphasis'">
+                            {{ r.status === 'checked_in' ? 'mdi-check-circle' : 'mdi-clock-outline' }}
+                        </v-icon>
+                        <span class="text-body-2">{{ r.eventTitle }}</span>
+                        <v-chip size="x-small" :color="r.status === 'checked_in' ? 'success' : undefined" variant="tonal">
+                            {{ r.status === 'checked_in'
+                                ? `Checked in${r.checkedInAtUtc ? ' ' + formatInTenant(r.checkedInAtUtc) : ''}`
+                                : 'Reserved' }}
+                        </v-chip>
+                    </div>
+                </template>
+
+                <v-divider class="my-3"></v-divider>
+
+                <v-alert v-if="pass.todaysEvents.length === 0" type="info" variant="tonal" density="compact">
+                    No event is running today at this track, so the pass can't be redeemed right now.
+                </v-alert>
+                <template v-else>
+                    <v-radio-group v-if="pass.todaysEvents.length > 1" v-model="passEventId"
+                        density="compact" hide-details class="mb-2">
+                        <v-radio v-for="e in pass.todaysEvents" :key="e.id" :value="e.id"
+                            :label="`${e.title} (${formatInTenant(e.startsAtUtc)})`"></v-radio>
+                    </v-radio-group>
+                    <div v-else class="text-body-2 text-medium-emphasis mb-2">
+                        {{ pass.todaysEvents[0].title }}
+                    </div>
+                    <div class="d-flex align-center ga-2">
+                        <v-spacer></v-spacer>
+                        <span v-if="passAdmitBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock }}</span>
+                        <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock || !passEventId"
+                            @click="admitPass">
+                            {{ pass.productKind === 'credits'
+                                ? `Admit — uses 1 ride credit (${pass.creditsRemaining ?? 0} left)`
+                                : 'Admit' }}
+                        </v-btn>
+                    </div>
+                </template>
+            </v-card-text>
+        </v-card>
+
         <v-dialog v-model="signatureOpen" max-width="520">
             <v-card>
                 <v-card-title class="d-flex align-center">
@@ -336,9 +424,11 @@ import { TicketService, type OrderLookup, type OrderItem, type OrderWaiverAttend
     type GateSearchResult } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
 import { WristbandService } from '@/services/WristbandService'
+import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService'
 
 const service = new TicketService()
 const wristbands = new WristbandService()
+const seasonPasses = new SeasonPassService()
 
 const manualInput = ref('')
 const searchInput = ref('')
@@ -354,6 +444,13 @@ const loading = ref(false)
 const redeeming = ref(false)
 const scanning = ref(false)
 const tab = ref<'items' | 'waivers'>('items')
+
+// Season pass (walk-up gate redemption): populated when a scanned token turns out to be a
+// pass rather than an order. Mutually exclusive with `order`.
+const pass = ref<PassLookup | null>(null)
+const passToken = ref<string | null>(null)
+const passEventId = ref<string | null>(null)
+const admitting = ref(false)
 
 const signatureOpen = ref(false)
 const signature = ref<OrderSignature | null>(null)
@@ -534,6 +631,8 @@ async function loadOrder(token: string) {
         const r = await service.orderLookup(token)
         order.value = (r.data as any).data
         orderToken.value = token
+        pass.value = null
+        passToken.value = null
         idVerified.value = false   // re-attest per scan
         // Land on Waivers when someone still owes one: that's the thing staff must act on.
         tab.value = (order.value?.waiverMissingCount ?? 0) > 0 ? 'waivers' : 'items'
@@ -543,9 +642,12 @@ async function loadOrder(token: string) {
             .map(i => i.purchaseId) ?? []
         await loadBands()
     } catch (err: any) {
-        // Only a real 404 means the QR/token is invalid. A network blip or server error must NOT read
-        // as "not found" — that would turn away a paying customer holding a valid ticket.
+        // Only a real 404 means the QR/token is invalid — and even then it may be a SEASON PASS
+        // token, which lives in a different subsystem than orders. Try that before giving up.
+        // A network blip or server error must NOT read as "not found" — that would turn away a
+        // paying customer holding a valid ticket.
         const status = err.response?.status
+        if (status === 404 && await tryLoadPass(token)) return
         const msg = status === 404
             ? (err.response?.data?.error || 'Order not found. Double-check the code and rescan.')
             : (err.response?.data?.error || 'Couldn’t look up the order. Check the connection and rescan.')
@@ -555,6 +657,78 @@ async function loadOrder(token: string) {
         selectedIds.value = []
     } finally {
         loading.value = false
+    }
+}
+
+// Returns true when the token resolved to a season pass (card shown) OR the lookup failed in a
+// way we already surfaced — i.e. whenever the caller should NOT show its own "not found" message.
+async function tryLoadPass(token: string): Promise<boolean> {
+    try {
+        const r = await seasonPasses.lookupByToken(token)
+        pass.value = (r.data as any).data
+        passToken.value = token
+        order.value = null
+        orderToken.value = null
+        selectedIds.value = []
+        passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
+        return true
+    } catch (err: any) {
+        if (err.response?.status === 404) return false      // genuinely unknown token
+        flash(err.response?.data?.error || 'Couldn’t look up the pass. Check the connection and rescan.', 'error')
+        return true
+    }
+}
+
+const passKindLabel = computed(() => {
+    switch (pass.value?.productKind) {
+        case 'credits': return 'Ride credits'
+        case 'days_of_week': return 'Select days'
+        case 'unlimited': return 'Unlimited'
+        default: return pass.value?.productKind ?? ''
+    }
+})
+
+// Season-window problems staff should see before they hit the Admit button.
+const passWindowBlock = computed(() => {
+    if (!pass.value) return null
+    if (dayjs().isBefore(dayjs(pass.value.validFromDate), 'day'))
+        return `This pass isn't valid yet — its season starts ${dayjs(pass.value.validFromDate).format('MMM D, YYYY')}.`
+    if (dayjs().isAfter(dayjs(pass.value.validToDate), 'day'))
+        return `This pass's season ended ${dayjs(pass.value.validToDate).format('MMM D, YYYY')}.`
+    return null
+})
+
+// Why Admit is disabled, or null when it's allowed. The server re-validates all of this;
+// surfacing it up front just saves the gate line a failed round-trip.
+const passAdmitBlock = computed(() => {
+    if (!pass.value) return null
+    if (pass.value.status !== 'paid') return 'Pass is not active.'
+    if (!pass.value.registrationComplete) return 'Registration incomplete.'
+    if (passWindowBlock.value) return 'Outside the pass season.'
+    if (pass.value.productKind === 'credits' && (pass.value.creditsRemaining ?? 0) <= 0)
+        return 'No ride credits left.'
+    return null
+})
+
+async function admitPass() {
+    if (!pass.value || !passToken.value || !passEventId.value) return
+    admitting.value = true
+    try {
+        const r = await seasonPasses.redeemAtGate(passToken.value, passEventId.value)
+        const data = (r.data as any).data
+        if (data.alreadyAdmitted) {
+            flash(`Already admitted today${data.checkedInAtUtc ? ' at ' + formatInTenant(data.checkedInAtUtc) : ''}.`, 'warning')
+        } else if (pass.value.productKind === 'credits') {
+            const left = data.creditsRemaining ?? 0
+            flash(`Admitted — ${left} ${left === 1 ? 'ride' : 'rides'} left on this pass.`, 'success')
+        } else {
+            flash('Admitted.', 'success')
+        }
+        await tryLoadPass(passToken.value)   // refresh credits + today's check-in state
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t admit this pass. Check the connection and try again.', 'error')
+    } finally {
+        admitting.value = false
     }
 }
 

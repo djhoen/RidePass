@@ -341,6 +341,15 @@ namespace webapi.Payments
                         await _ticketPurchases.UpdateStatus(t.Id, "failed");
                     if (failedTickets.Count > 0)
                         await RestoreDiscountsFor("event_ticket", failedTickets.Select(t => t.Id).ToList());
+                    // Credit-funded tickets on a dead payment: hand the ride back to the funding
+                    // pass. ClearAppliedSeasonPass is single-winner, so a webhook/reconciler race
+                    // can't double-credit.
+                    foreach (var t in failedTickets.Where(t => t.AppliedSeasonPassPurchaseId.HasValue))
+                    {
+                        var cleared = await _ticketPurchases.ClearAppliedSeasonPass(t.Id, t.TenantId);
+                        if (cleared > 0)
+                            await _seasonPasses.IncrementCredits(t.AppliedSeasonPassPurchaseId!.Value, t.TenantId);
+                    }
                     foreach (var sp in seasonPasses.Where(p => p.Status == "pending"))
                         await _seasonPasses.UpdatePurchaseStatus(sp.Id, "failed");
                     // Hand back any store credit this checkout debited.
