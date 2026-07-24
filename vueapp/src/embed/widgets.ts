@@ -91,6 +91,18 @@ export const EMBED_WIDGETS: EmbedWidgetDef[] = [
         icon: 'mdi-bike-fast',
     },
     {
+        key: 'package',
+        label: 'Package (bundle) landing',
+        description: 'A bundled package landing + booking: day pass + coached session + bike + gear, sold in day-type tiers. Needs the package id.',
+        icon: 'mdi-package-variant-closed',
+        params: [
+            {
+                attr: 'package', label: 'Package ID', placeholder: '00000000-0000-0000-0000-000000000000',
+                required: true, hint: "The package's ID (from its admin page).",
+            },
+        ],
+    },
+    {
         key: 'giftcard',
         label: 'Gift cards',
         description: 'Sell gift cards from the track\'s own site. The form is open to everyone; buying signs in inline.',
@@ -176,6 +188,10 @@ export function buildEmbedPath(widgetKey: string, values: Record<string, string>
     if (widgetKey === 'status') return '/embed/status'
     if (widgetKey === 'shop') return '/embed/shop'
     if (widgetKey === 'rentals') return '/embed/rentals'
+    if (widgetKey === 'package') {
+        const id = (values['package'] ?? '').trim()
+        return id ? `/embed/package/${encodeURIComponent(id)}` : null
+    }
     if (widgetKey === 'giftcard') return '/embed/giftcard'
     if (widgetKey === 'membership') return '/embed/membership'
     if (widgetKey === 'feedback') return '/embed/feedback'

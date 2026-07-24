@@ -67,6 +67,14 @@
                 return { path: '/embed/shop' };
             case 'rentals':
                 return { path: '/embed/rentals' };
+            case 'package': {
+                var pkgId = el.getAttribute('data-package');
+                if (!pkgId) {
+                    console.warn('[ridepass] embed: data-package is required for the "package" widget');
+                    return null;
+                }
+                return { path: '/embed/package/' + encodeURIComponent(pkgId) };
+            }
             case 'giftcard':
                 return { path: '/embed/giftcard' };
             case 'membership':

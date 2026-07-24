@@ -36,6 +36,7 @@ namespace webapi.Payments
         private readonly IMembershipRepository _memberships;
         private readonly IConcessionRepository _concessions;
         private readonly IBikeShopRepository _shop;
+        private readonly IPackageRepository _packages;
         private readonly ITenantCreditRepository _credit;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
@@ -65,6 +66,7 @@ namespace webapi.Payments
             IMembershipRepository memberships,
             IConcessionRepository concessions,
             IBikeShopRepository shop,
+            IPackageRepository packages,
             ITenantCreditRepository credit,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
@@ -92,6 +94,7 @@ namespace webapi.Payments
             _memberships = memberships;
             _concessions = concessions;
             _shop = shop;
+            _packages = packages;
             _credit = credit;
             _suppression = suppression;
             _emailer = emailer;
@@ -117,6 +120,7 @@ namespace webapi.Payments
             var shopSale = await _shop.GetSaleByPaymentIntentId(paymentIntentId);
             var shopRental = await _shop.GetRentalByFeePaymentIntentId(paymentIntentId);
             var shopWoDeposit = await _shop.GetWorkOrderByDepositPaymentIntentId(paymentIntentId);
+            var packagePurchase = await _packages.GetPurchaseByPaymentIntent(paymentIntentId);
 
             // A rental security-deposit HOLD is a manual-capture PI on deposit_pi_id. Its whole
             // lifecycle (authorize at booking, capture-for-damage or cancel at return) is driven
@@ -130,7 +134,7 @@ namespace webapi.Payments
                 return;
             }
 
-            if (tickets.Count == 0 && seasonPasses.Count == 0 && giftCard is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null && shopSale is null && shopRental is null && shopWoDeposit is null)
+            if (tickets.Count == 0 && seasonPasses.Count == 0 && giftCard is null && waitlistPrepay is null && extras.Count == 0 && membership is null && concessionSale is null && shopSale is null && shopRental is null && shopWoDeposit is null && packagePurchase is null)
             {
                 _logger.LogWarning("Received Stripe event {EventType} for unknown payment_intent {IntentId}",
                     eventType, paymentIntentId);
@@ -313,6 +317,18 @@ namespace webapi.Payments
                     // Drop the dead PI so the customer's next visit to the link can start fresh.
                     await _shop.ClearWorkOrderDepositIntent(shopWoDeposit.Id, shopWoDeposit.TenantId);
                 }
+                return;
+            }
+
+            // Package bundle: one PI covers the whole package. The composed gate ticket and
+            // shop rental carry NO own fee PI, so only this branch settles them (splitting the
+            // Stripe fee, which the ticket half absorbs). The deposit hold is bound to the rental.
+            if (packagePurchase is not null)
+            {
+                if (eventType == "payment_intent.succeeded" && packagePurchase.Status == "pending")
+                    await OnPackagePaid(packagePurchase);
+                else if (eventType == "payment_intent.payment_failed" && packagePurchase.Status == "pending")
+                    await OnPackageFailed(packagePurchase);
                 return;
             }
 
@@ -814,6 +830,78 @@ namespace webapi.Payments
             }
         }
 
+
+        // Settle a package bundle: mark it paid, then settle its composed gate ticket and shop
+        // rental with their SPLIT shares of the price. The ticket half owns the Stripe fee (booked
+        // once); the rental books zero fee. Each row gets its own ledger entry so admission and
+        // rental revenue stay separated in reports.
+        private async Task OnPackagePaid(Services.Repositories.Data.PackageData.PackagePurchase pkg)
+        {
+            var orderNumber = await _shop.NextOrderNumber(pkg.TenantId);
+            if (!await _packages.TryMarkPurchasePaid(pkg.Id, pkg.TenantId, orderNumber)) return;
+
+            var isDirect = !string.IsNullOrEmpty(pkg.StripeConnectedAccountId);
+            var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(pkg.PaymentIntentId!) ?? 0);
+            var bundle = Math.Max(1, pkg.SubtotalCents);
+
+            // Gate ticket (day admission): mark paid so it scans, book its ledger share (owns fee).
+            if (pkg.EventTicketPurchaseId is not null)
+            {
+                var ticket = await _ticketPurchases.GetById(pkg.EventTicketPurchaseId.Value, pkg.TenantId);
+                if (ticket is not null && ticket.Status == "pending")
+                {
+                    await _ticketPurchases.UpdateStatus(ticket.Id, "paid");
+                    var svc = (int)((long)pkg.ServiceChargeCents * ticket.AmountCents / bundle);
+                    try
+                    {
+                        var calc = await _feeCalculator.Calculate(pkg.TenantId, ticket.AmountCents, stripeFee, svc, DateTime.UtcNow, isDirect);
+                        await _ledger.Insert(new TenantLedgerEntry
+                        {
+                            TenantId = pkg.TenantId, EntryKind = "sale", SourceKind = "event_ticket",
+                            SourceId = ticket.Id, OccurredAtUtc = DateTime.UtcNow, GrossCents = ticket.AmountCents,
+                            StripeFeeCents = stripeFee, RidepassCutCents = calc.RidepassCutCents,
+                            NetToTenantCents = calc.NetToTenantCents, StripePaymentIntentId = pkg.PaymentIntentId,
+                            PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                        });
+                    }
+                    catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { }
+                }
+            }
+
+            // Rental (bike + gear): mark paid, share the package order number, book its ledger share
+            // (zero Stripe fee, since the ticket absorbed it). Deposit stays a hold, not revenue.
+            if (pkg.ShopRentalId is not null)
+            {
+                var rental = await _shop.GetRental(pkg.ShopRentalId.Value, pkg.TenantId);
+                if (rental is not null && await _shop.TryMarkRentalPaid(rental.Id, pkg.TenantId))
+                {
+                    await _shop.SetRentalOrderNumber(rental.Id, orderNumber);
+                    var svc = pkg.ServiceChargeCents - (int)((long)pkg.ServiceChargeCents * (bundle - rental.TotalCents) / bundle);
+                    try
+                    {
+                        var calc = await _feeCalculator.Calculate(pkg.TenantId, rental.TotalCents, 0, Math.Max(0, svc), DateTime.UtcNow, isDirect);
+                        await _ledger.Insert(new TenantLedgerEntry
+                        {
+                            TenantId = pkg.TenantId, EntryKind = "sale", SourceKind = "shop_rental",
+                            SourceId = rental.Id, OccurredAtUtc = DateTime.UtcNow, GrossCents = rental.TotalCents,
+                            StripeFeeCents = 0, RidepassCutCents = calc.RidepassCutCents,
+                            NetToTenantCents = calc.NetToTenantCents, StripePaymentIntentId = pkg.PaymentIntentId,
+                            PaymentMethod = isDirect ? "stripe_direct" : "stripe",
+                        });
+                    }
+                    catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { }
+                }
+            }
+        }
+
+        private async Task OnPackageFailed(Services.Repositories.Data.PackageData.PackagePurchase pkg)
+        {
+            await _packages.MarkPurchaseFailed(pkg.Id);
+            if (pkg.EventTicketPurchaseId is not null)
+                await _ticketPurchases.UpdateStatus(pkg.EventTicketPurchaseId.Value, "failed");
+            if (pkg.ShopRentalId is not null)
+                await _shop.MarkRentalFailed(pkg.ShopRentalId.Value);
+        }
 
         private async Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
             string kind, int amountCents, DateTime? validOnDate, bool isGuest)

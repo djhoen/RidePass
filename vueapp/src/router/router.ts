@@ -19,6 +19,8 @@ const routes = [
     { path: '/GiftCard', name: 'BuyGiftCard', component: () => import('../views/BuyGiftCard.vue'), meta: { requiresAuth: true } },
     // Public: browse rentable gear anonymously; booking signs in inline (like Shop / Order).
     { path: '/Rentals', name: 'Rentals', component: () => import('../views/Rentals.vue') },
+    // Public bundled-package landing + booking.
+    { path: '/Packages/:slug', name: 'PackageLanding', component: () => import('../views/PackageLanding.vue') },
     { path: '/Order', name: 'OrderFood', component: () => import('../views/OrderFood.vue'), meta: { requiresAuth: true } },
     {
         path: '/Waitlist/Confirm/:token',
@@ -289,6 +291,12 @@ const routes = [
     },
     // Inventory moved into a tab on the Food & Beverage page; keep the old path working.
     { path: '/Admin/ConcessionInventory', redirect: '/Admin/Concessions' },
+    {
+        path: '/Admin/Packages',
+        name: 'AdminPackages',
+        component: () => import('../views/Admin/Packages.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
     {
         path: '/Admin/Instructors',
         name: 'AdminInstructors',
@@ -626,6 +634,12 @@ const routes = [
         path: '/embed/rentals',
         name: 'EmbedRentals',
         component: () => import('../views/Embed/EmbedRentals.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/package/:id',
+        name: 'EmbedPackage',
+        component: () => import('../views/Embed/EmbedPackage.vue'),
         meta: { hideNav: true, hideFooter: true, embed: true },
     },
     {

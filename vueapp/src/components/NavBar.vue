@@ -306,6 +306,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
+            { to: '/Admin/Packages',     icon: 'mdi-package-variant-closed', title: 'Packages',    perm: Perm.CatalogManage },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage, feature: 'extrasEnabled' },
         ],
     },
