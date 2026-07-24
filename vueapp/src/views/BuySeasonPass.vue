@@ -499,13 +499,14 @@ onMounted(async () => {
 
 /* ── Entry card (the item-selection container) ──────────────────────────────
    A very light gray surface on light themes (a little darker than the white page) and a
-   little LIGHTER than the background on dark themes, lifted with a soft drop shadow so the
-   pick-your-pass box reads as the actionable panel. on-surface alpha inverts per theme to
-   give both directions from one rule; !important beats Vuetify's flat variant, which forces
-   surface background + no elevation. */
+   little LIGHTER than the background on dark themes so the pick-your-pass box reads as the
+   actionable panel. A drop shadow looked harsh on the white page, so the panel is defined
+   by a hairline border instead: on-surface at 0.2 renders to exactly #cccccc on a white
+   page and stays a subtle hairline on dark themes. on-surface alpha inverts per theme to
+   give both directions from one rule; !important on the fill beats Vuetify's flat variant. */
 .sp-entry-card {
     border-radius: 14px;
     background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
 }
 </style>

@@ -346,10 +346,11 @@ onMounted(async () => {
    slightly-lighter-than-background tint on dark themes (on-surface alpha inverts per theme),
    lifted with a soft drop shadow. !important beats Vuetify's flat variant surface + no-elevation. */
 .pkg-book-card {
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+    /* Hairline border (0.2 on-surface = #cccccc on a white page) instead of a drop shadow,
+       which looked harsh against the white page. */
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
     border-radius: 12px;
     background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
 }
 .pkg-date { border: 1px solid rgba(var(--v-theme-on-surface), 0.3); border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%; background: rgb(var(--v-theme-surface)); color: rgb(var(--v-theme-on-surface)); }
 .pkg-price-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
