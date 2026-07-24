@@ -2,7 +2,7 @@
     <div class="sp-checkout">
         <!-- ── 1. Select passes ──────────────────────────────────────────── -->
         <template v-if="step === 'select'">
-            <h2 class="text-h5 font-weight-bold font-display mb-1">Buy a Season Pass</h2>
+            <h2 class="text-h5 font-weight-bold font-display mb-1">Choose Your Pass</h2>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 Buying for the family? Add one pass per rider — you'll name each holder after payment.
             </p>

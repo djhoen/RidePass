@@ -34,17 +34,16 @@
                 </div>
             </section>
 
-            <!-- ── EMBED HEADER ────────────────────────────────────────────── -->
-            <v-container v-else class="pt-3 pb-0">
-                <a v-if="embedCameFromWidget" class="sp-back sp-back-embed mb-2" role="button"
-                    @click.prevent="router.back()">
+            <!-- ── EMBED HEADER ──────────────────────────────────────────────
+                 No title/price here: the checkout panel already leads with "Choose
+                 Your Pass" and the host page carries its own "Season Passes" heading,
+                 so repeating it read as the phrase three times over. Only the (rare)
+                 back link, shown when the visitor arrived from another widget. -->
+            <v-container v-else-if="embedCameFromWidget" class="pt-3 pb-0">
+                <a class="sp-back sp-back-embed" role="button" @click.prevent="router.back()">
                     <v-icon icon="mdi-arrow-left" size="16"></v-icon>
                     <span>Back</span>
                 </a>
-                <h1 class="text-h6 font-weight-bold font-display">{{ heroTitle }}</h1>
-                <div v-if="priceFromCents !== null" class="text-caption text-medium-emphasis">
-                    From ${{ (priceFromCents / 100).toFixed(2) }}
-                </div>
             </v-container>
 
             <v-container :class="isEmbed ? 'py-4' : 'py-8'">
