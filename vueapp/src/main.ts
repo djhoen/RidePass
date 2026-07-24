@@ -77,7 +77,13 @@ const vuetify = createVuetify({
 // Axios interceptor: attach JWT and tenant subdomain
 axios.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem('token')
+        // Prefer the in-memory token over localStorage. In a third-party iframe (the embed
+        // widgets on a track's own site) storage writes can be blocked or partitioned, so an
+        // inline login sets authHelper's reactive state.token but the localStorage write is
+        // dropped. Reading localStorage-only here would then send no Authorization header and
+        // the request 401s ("Could not start checkout"). getToken() is seeded from localStorage
+        // on load, so the persisted-session case is unchanged; localStorage stays as a fallback.
+        const token = authHelper.getToken() ?? localStorage.getItem('token')
         if (token) {
             config.headers.Authorization = `Bearer ${token}`
         }
