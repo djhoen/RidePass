@@ -15,6 +15,9 @@ namespace webapi.Controllers.API.Data.Package
         public string? CoachingLabel { get; set; }
         public bool IsActive { get; set; }
         public int SortOrder { get; set; }
+        /// <summary>Whether the tenant offers a damage waiver on the included rental, and its label.</summary>
+        public bool InsuranceOffered { get; set; }
+        public string? InsuranceLabel { get; set; }
         public List<PackageTierResponse> Tiers { get; set; } = new();
         public List<PackageSlotResponse> Slots { get; set; } = new();
         public List<PackageItemResponse> Items { get; set; } = new();
@@ -50,6 +53,15 @@ namespace webapi.Controllers.API.Data.Package
         public string? Name { get; set; }
         public string? VariantLabel { get; set; }
         public int DepositCents { get; set; }
+        /// <summary>For bike items: selectable size variants. Empty for gear.</summary>
+        public List<PackageBikeSizeOptionResponse> SizeOptions { get; set; } = new();
+    }
+
+    public class PackageBikeSizeOptionResponse
+    {
+        public Guid VariantId { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public int DepositCents { get; set; }
     }
 
     /// <summary>Availability + price for a chosen date and tier.</summary>
@@ -59,6 +71,8 @@ namespace webapi.Controllers.API.Data.Package
         public string? Reason { get; set; }
         public int PriceCents { get; set; }
         public int DepositCents { get; set; }
+        /// <summary>Damage-waiver price for the resolved gear on this date; 0 when not offered.</summary>
+        public int InsuranceCents { get; set; }
         /// <summary>Bookable coached session times for the date, as "HH:mm", with remaining capacity.</summary>
         public List<PackageSlotAvailability> Sessions { get; set; } = new();
     }

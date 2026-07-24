@@ -72,6 +72,16 @@ namespace Services.Repositories.Data.PackageData
         public string? VariantName { get; set; }
         public string? VariantLabel { get; set; }
         public int DepositCents { get; set; }
+        // For bike items: the selectable size variants (siblings of the same product). Empty for gear.
+        public List<PackageBikeSizeOption> SizeOptions { get; set; } = new();
+    }
+
+    /// <summary>A selectable bike size for a package bike item (a rentable sibling variant).</summary>
+    public class PackageBikeSizeOption
+    {
+        public Guid VariantId { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public int DepositCents { get; set; }
     }
 
     /// <summary>One composed package sale (a gate ticket + a rental + a session).</summary>

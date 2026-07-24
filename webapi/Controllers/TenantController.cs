@@ -278,8 +278,11 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("The renter's share must be between 0% and 100%.");
             if (request.TaxBps is < 0 or > 10000)
                 return new ApiResponses().BadRequestResult("The rental tax rate must be between 0% and 100%.");
+            if (request.RentalInsuranceBps is < 0 or > 10000)
+                return new ApiResponses().BadRequestResult("The damage-protection rate must be between 0% and 100%.");
             await _tenants.UpdateRentalSettings(
-                _tenantContext.TenantId, request.RiderPaidBps, request.TaxBps, request.ServiceChargeTaxable);
+                _tenantContext.TenantId, request.RiderPaidBps, request.TaxBps, request.ServiceChargeTaxable,
+                request.RentalInsuranceEnabled, request.RentalInsuranceLabel, request.RentalInsuranceBps);
             InvalidateTenantCache();
             return await GetBranding();
         }
@@ -512,6 +515,9 @@ namespace webapi.Controllers
                 RentalRiderPaidServiceChargeBps = tenant.RentalRiderPaidServiceChargeBps,
                 RentalTaxBps = tenant.RentalTaxBps,
                 RentalTaxServiceChargeTaxable = tenant.RentalTaxServiceChargeTaxable,
+                RentalInsuranceEnabled = tenant.RentalInsuranceEnabled,
+                RentalInsuranceLabel = tenant.RentalInsuranceLabel,
+                RentalInsuranceBps = tenant.RentalInsuranceBps,
                 ShippingName = tenant.ShippingName,
                 AboutHtml = tenant.AboutHtml,
                 HoursJson = tenant.HoursJson,

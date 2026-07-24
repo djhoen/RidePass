@@ -72,6 +72,10 @@ export interface BrandingState {
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
     bikeShopEnabled: boolean
+    rentalInsuranceEnabled: boolean
+    rentalInsuranceLabel: string
+    // Percent of rental value, in basis points (1500 = 15%).
+    rentalInsuranceBps: number
     // Days after pickup to email a shop service reminder; 0 = off.
     shopServiceReminderDays: number
     shopReadyNotifyEmail: boolean
@@ -180,6 +184,9 @@ const defaults: BrandingState = {
     seasonPassesEnabled: true,
     concessionsEnabled: false,
     bikeShopEnabled: false,
+    rentalInsuranceEnabled: false,
+    rentalInsuranceLabel: 'Damage Protection',
+    rentalInsuranceBps: 0,
     shopServiceReminderDays: 0,
     shopReadyNotifyEmail: true,
     shopReadyNotifySms: false,
@@ -330,6 +337,9 @@ export async function loadBranding(): Promise<void> {
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
         branding.bikeShopEnabled = !!data.bikeShopEnabled
+        branding.rentalInsuranceEnabled = !!data.rentalInsuranceEnabled
+        branding.rentalInsuranceLabel = data.rentalInsuranceLabel ?? 'Damage Protection'
+        branding.rentalInsuranceBps = data.rentalInsuranceBps ?? 0
         branding.shopServiceReminderDays = data.shopServiceReminderDays ?? 0
         branding.shopReadyNotifyEmail = data.shopReadyNotifyEmail !== false
         branding.shopReadyNotifySms = !!data.shopReadyNotifySms

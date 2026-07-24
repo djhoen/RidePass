@@ -28,7 +28,16 @@ export class TenantService {
 
     // Rentals -> Settings: who funds the service fee. riderPaidBps 10000 = renter pays all,
     // 0 = the track absorbs it. The RATE is the tenant service charge and is not set here.
-    async updateRentalSettings(req: { riderPaidBps: number; taxBps: number | null; serviceChargeTaxable: boolean }) {
+    // rentalInsurance* fields configure the optional damage-protection waiver: enabled toggles it,
+    // label is the customer-facing name, bps is the rate (in basis points) of the rental value.
+    async updateRentalSettings(req: {
+        riderPaidBps: number
+        taxBps: number | null
+        serviceChargeTaxable: boolean
+        rentalInsuranceEnabled?: boolean
+        rentalInsuranceLabel?: string
+        rentalInsuranceBps?: number
+    }) {
         return axios.put(`${this.apiUrl}/Tenant/RentalSettings`, req)
     }
 

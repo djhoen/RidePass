@@ -11,5 +11,12 @@ namespace webapi.Controllers.API.Data.Tenant
         public int RiderPaidBps { get; set; }
         public int? TaxBps { get; set; }
         public bool ServiceChargeTaxable { get; set; } = true;
+
+        /// <summary>Tenant-wide rental damage-waiver. When on, an optional add-on at checkout
+        /// charges RentalInsuranceBps of the rental value and waives the refundable deposit.</summary>
+        public bool RentalInsuranceEnabled { get; set; }
+        public string? RentalInsuranceLabel { get; set; }
+        /// <summary>Percent of the rented gear value, in basis points (1500 = 15%).</summary>
+        public int RentalInsuranceBps { get; set; }
     }
 }

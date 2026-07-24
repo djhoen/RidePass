@@ -2725,4 +2725,81 @@ BEGIN
     RAISE NOTICE 'Seeded Find Your Ride package %', v_pkg;
 END $hl_fyr$;
 
+-- ============================================================================
+-- Highland Bike Park - rental damage protection (insurance) + fleet top-up so
+-- every serialized rental bike variant has real bookable units. Rerunnable:
+-- the insurance settings are a plain UPDATE, and the unit top-up only inserts
+-- as many units as are missing (skips a variant that already has enough).
+-- ============================================================================
+DO $hl_insurance$
+DECLARE
+    v_tenant_id  uuid;
+    v_target     int := 4;
+    r            record;
+    v_variant_id uuid;
+    v_have       int;
+    v_next       int;
+    v_need       int;
+    v_added      int := 0;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+
+    -- ── Damage protection (rental insurance): on, 15%, labeled for the demo ──
+    UPDATE tenant SET
+        rental_insurance_enabled = true,
+        rental_insurance_label = 'Damage Protection',
+        rental_insurance_bps = 1500
+    WHERE id = v_tenant_id;
+
+    -- ── Top up serialized rental units so every fleet variant is actually
+    -- bookable. Serialized rental availability comes from shop_item rows, not
+    -- shop_variant.stock_on_hand; GetFreeSerializedUnits (BikeShopRepository)
+    -- treats status IN ('available','rented_out') as the live fleet, so a
+    -- freshly seeded unit needs status = 'available' to count as free to book
+    -- right now (it has no rental_line yet, so the overlap check passes). ────
+    FOR r IN
+        SELECT * FROM (VALUES
+            ('HL-TR275-S',    'Giant Reign Enduro - Small',  180000),
+            ('HL-TR275-M',    'Giant Reign Enduro - Medium', 180000),
+            ('HL-TR275-L',    'Giant Reign Enduro - Large',  180000),
+            ('HL-DH29-M',     'Santa Cruz V10 DH - Medium',  280000),
+            ('HL-DH29-L',     'Santa Cruz V10 DH - Large',   280000),
+            ('HL-KIDS24-STD', 'Norco Fluid 24 Kids',          45000)
+        ) AS t(sku, label_prefix, acquired_cost_cents)
+    LOOP
+        SELECT id INTO v_variant_id FROM shop_variant WHERE tenant_id = v_tenant_id AND sku = r.sku;
+        IF v_variant_id IS NULL THEN
+            RAISE NOTICE 'Highland insurance/fleet seed: variant sku % not found, skipping', r.sku;
+            CONTINUE;
+        END IF;
+
+        SELECT count(*) FILTER (WHERE status = 'available') INTO v_have
+            FROM shop_item WHERE tenant_id = v_tenant_id AND variant_id = v_variant_id;
+        v_need := v_target - v_have;
+        IF v_need <= 0 THEN
+            CONTINUE;
+        END IF;
+
+        -- Number new units past the highest existing "-NN" serial suffix for this
+        -- variant, so a rerun never collides with a unit already on file.
+        SELECT COALESCE(MAX((regexp_match(serial, '-(\d+)$'))[1]::int), 0) INTO v_next
+            FROM shop_item WHERE tenant_id = v_tenant_id AND variant_id = v_variant_id;
+
+        INSERT INTO shop_item (tenant_id, variant_id, label, serial, acquired_cost_cents, status)
+        SELECT v_tenant_id, v_variant_id,
+               r.label_prefix || ' #' || (v_next + n),
+               r.sku || '-' || lpad((v_next + n)::text, 2, '0'),
+               r.acquired_cost_cents, 'available'
+        FROM generate_series(1, v_need) AS n;
+
+        v_added := v_added + v_need;
+    END LOOP;
+
+    RAISE NOTICE 'Highland insurance/fleet seed: damage protection enabled (15%%, "Damage Protection"); % serialized units added to reach % available per variant',
+        v_added, v_target;
+END $hl_insurance$;
+
 COMMIT;

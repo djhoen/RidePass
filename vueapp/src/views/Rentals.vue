@@ -92,7 +92,20 @@
                     <v-divider class="my-3" />
                     <div class="d-flex justify-space-between text-body-2"><span>Rental</span><span>{{ money(cartRentalTotal) }}</span></div>
                     <div class="d-flex justify-space-between text-body-2 text-medium-emphasis mt-1">
-                        <span>Refundable deposit (held, not charged)</span><span>{{ money(cartDepositTotal) }}</span>
+                        <span>Refundable deposit (held, not charged)</span>
+                        <span>
+                            <span v-if="insurance" class="text-decoration-line-through mr-1">{{ money(cartDepositTotal) }}</span>
+                            {{ insurance ? money(0) : money(cartDepositTotal) }}
+                        </span>
+                    </div>
+                    <v-checkbox v-if="branding.rentalInsuranceEnabled && branding.rentalInsuranceBps > 0"
+                        v-model="insurance" density="compact" hide-details class="mt-2">
+                        <template #label>
+                            <span class="text-body-2">{{ branding.rentalInsuranceLabel }} (+{{ money(insuranceCents) }})</span>
+                        </template>
+                    </v-checkbox>
+                    <div v-if="insurance" class="text-caption text-medium-emphasis mt-1">
+                        The refundable deposit is waived.
                     </div>
                     <p class="text-caption text-medium-emphasis mt-3 mb-0">
                         Taxes and any service fee are calculated at checkout. Your gear is reserved once payment
@@ -227,6 +240,10 @@ function addToCart(p: RentalCatalogProduct) {
 const cartRentalTotal = computed(() => cart.value.reduce((s, l) => s + l.rateCents * days.value * l.qty, 0))
 const cartDepositTotal = computed(() => cart.value.reduce((s, l) => s + l.depositCents * l.qty, 0))
 
+// Optional damage-protection add-on. Preview only; the server computes the actual charge.
+const insurance = ref(false)
+const insuranceCents = computed(() => Math.round(cartRentalTotal.value * branding.rentalInsuranceBps / 10000))
+
 const startUtc = computed(() => dayjs.tz(startDate.value, tz()).startOf('day').utc().toISOString())
 // Whole-day rental: the window is [pickup 00:00, return 24:00) so an inclusive same-day
 // booking is one day. Half-open end = return date + 1 day at midnight.
@@ -299,6 +316,7 @@ async function doBook() {
             lines: cart.value.map(l => ({ variantId: l.variantId, quantity: l.qty })),
             startsAt: startUtc.value,
             endsAt: endUtc.value,
+            insurance: insurance.value,
         })
         const d = r.data.data
         pendingTotal.value = d.totalCents
@@ -370,6 +388,7 @@ async function payCurrent() {
 function finish() {
     payOpen.value = false
     cart.value = []
+    insurance.value = false
     doneOpen.value = true
     refreshAvailability()
 }

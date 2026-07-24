@@ -267,7 +267,16 @@ namespace webapi.Controllers
                     userId, TenantId, benefitType: "rental", scopeId: null, onDateUtc: startsAt);
                 benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(amount));
             }
-            var subtotal = amount - benefitDiscount;
+            var netRental = amount - benefitDiscount;
+
+            // Optional damage waiver ("insurance"): a non-refundable add-on = rate * gross rental
+            // value. When taken it waives the refundable deposit. It rides in the rental subtotal so
+            // it is fee'd and taxed like the rest of the rental.
+            var insuranceCents = req.Insurance && tenant.RentalInsuranceEnabled && tenant.RentalInsuranceBps > 0
+                ? (int)((long)amount * tenant.RentalInsuranceBps / 10_000L)
+                : 0;
+            var subtotal = netRental + insuranceCents;
+            var depositCents = insuranceCents > 0 ? 0 : depositTotal;
 
             // Service fee + tax, identical to the counter. Deposit is never in either base.
             var serviceChargeCents = (int)((long)subtotal * tenant.ServiceChargeBps / 10_000L);
@@ -291,12 +300,12 @@ namespace webapi.Controllers
                 StartsAt = startsAt,
                 EndsAt = endsAt,
                 Status = "pending",
-                AmountCents = amount,
+                AmountCents = amount + insuranceCents,
                 TaxCents = taxCents,
                 TotalCents = total,
                 ServiceChargeCents = serviceChargeCents,
                 RidersRequired = Math.Max(1, riders),
-                DepositCents = depositTotal,
+                DepositCents = depositCents,
                 PaymentMethod = "stripe",
                 SoldByUserId = null,   // self-serve online booking; no counter operator
             };
@@ -319,10 +328,10 @@ namespace webapi.Controllers
                 await _shop.SetRentalPaymentIntent(rentalId, intent.IntentId);
                 if (plan.IsDirect) await _shop.MarkRentalDirectCharge(rentalId, TenantId, plan.ConnectedAccountId!);
 
-                if (depositTotal > 0)
+                if (depositCents > 0)
                 {
                     var holdMeta = new Dictionary<string, string>(metadata) { ["sale_kind"] = "shop_rental_deposit_hold" };
-                    var hold = await _payments.CreateHoldPaymentIntentAsync(depositTotal, "usd", holdMeta,
+                    var hold = await _payments.CreateHoldPaymentIntentAsync(depositCents, "usd", holdMeta,
                         rental.RenterEmail, connectedAccountId: plan.ConnectedAccountId, ct: ct);
                     await _shop.SetRentalDepositIntent(rentalId, hold.IntentId);
                     depositClientSecret = hold.ClientSecret;

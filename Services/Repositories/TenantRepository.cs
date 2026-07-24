@@ -28,6 +28,9 @@ namespace Services.Repositories
             rental_rider_paid_service_charge_bps AS RentalRiderPaidServiceChargeBps,
             rental_tax_bps AS RentalTaxBps,
             rental_tax_service_charge_taxable AS RentalTaxServiceChargeTaxable,
+            rental_insurance_enabled AS RentalInsuranceEnabled,
+            rental_insurance_label AS RentalInsuranceLabel,
+            rental_insurance_bps AS RentalInsuranceBps,
             monthly_service_charge_cap_cents AS MonthlyServiceChargeCapCents,
             shipping_name AS ShippingName,
             about_html AS AboutHtml,
@@ -453,13 +456,17 @@ namespace Services.Repositories
 
         // Only the split moves here. The rate is service_charge_bps, shared with events, and is not
         // editable from the rentals screen.
-        public async Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable)
+        public async Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable,
+            bool insuranceEnabled, string? insuranceLabel, int insuranceBps)
         {
             const string sql = @"
                 UPDATE tenant
                 SET rental_rider_paid_service_charge_bps = @riderPaidBps,
                     rental_tax_bps = @taxBps,
-                    rental_tax_service_charge_taxable = @serviceChargeTaxable
+                    rental_tax_service_charge_taxable = @serviceChargeTaxable,
+                    rental_insurance_enabled = @insuranceEnabled,
+                    rental_insurance_label = @insuranceLabel,
+                    rental_insurance_bps = @insuranceBps
                 WHERE id = @tenantId";
             await _db.Execute(sql, new
             {
@@ -468,6 +475,9 @@ namespace Services.Repositories
                 // Null stays null: it is what distinguishes "never set" from "deliberately 0%".
                 taxBps = taxBps.HasValue ? Math.Clamp(taxBps.Value, 0, 10000) : (int?)null,
                 serviceChargeTaxable,
+                insuranceEnabled,
+                insuranceLabel = string.IsNullOrWhiteSpace(insuranceLabel) ? null : insuranceLabel.Trim(),
+                insuranceBps = Math.Clamp(insuranceBps, 0, 10000),
             });
         }
 

@@ -5,6 +5,7 @@ using Services.Payments;
 using Services.Repositories.Data.BikeShopData;
 using Services.Repositories.Data.PackageData;
 using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Data.TenantData;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Package;
@@ -147,8 +148,9 @@ namespace webapi.Controllers
                 return new ApiResponses().OkResult(resp);
             }
 
-            var (variants, deposit, availErr) = await ResolveItems(p, rideDate);
+            var (variants, deposit, rentalGross, availErr) = await ResolveItems(p, rideDate);
             resp.DepositCents = deposit;
+            resp.InsuranceCents = InsuranceFor(rentalGross);
             if (availErr is not null) { resp.Available = false; resp.Reason = availErr; return new ApiResponses().OkResult(resp); }
 
             if (p.IncludesDayTicket && await FindGateTier(p, rideDate) is null)
@@ -232,6 +234,20 @@ namespace webapi.Controllers
                 if (gateTier is null) return new ApiResponses().BadRequestResult("No admission is scheduled for that date.");
             }
 
+            // Optional bike-size choice: swap the (first) bike item to the chosen sibling variant.
+            if (req.BikeVariantId is Guid chosenBikeVariant)
+            {
+                var bikeItem = p.Items.FirstOrDefault(i => i.ItemType == "bike");
+                if (bikeItem is not null && bikeItem.VariantId != chosenBikeVariant)
+                {
+                    var chosen = await _shop.GetVariant(chosenBikeVariant, TenantId);
+                    var current = await _shop.GetVariant(bikeItem.VariantId, TenantId);
+                    if (chosen is null || current is null || chosen.ProductId != current.ProductId || chosen.DailyRateCents is null)
+                        return new ApiResponses().BadRequestResult("That bike size isn't available.");
+                    bikeItem.VariantId = chosenBikeVariant;
+                }
+            }
+
             // Included gear, priced and reserved for the day window.
             var dayStart = ToUtc(rideDate, TimeSpan.Zero, tenant.Timezone);
             var dayEnd = dayStart.AddDays(1);
@@ -281,20 +297,26 @@ namespace webapi.Controllers
                 }
             }
 
+            // Optional damage waiver: a non-refundable add-on = rate * gross rental value, booked as
+            // rental revenue, that waives the refundable deposit hold.
+            var insuranceCents = req.Insurance ? InsuranceFor(rentalAlaCarte) : 0;
+            var effectiveDeposit = insuranceCents > 0 ? 0 : deposit;
+
             // Split the bundle price across the admission and the rental by their a-la-carte
             // value, so each row books its real share of revenue.
             var bundle = tier.PriceCents;
             var ticketAlaCarte = gateTier?.PriceCents ?? 0;
             var alaCarte = ticketAlaCarte + rentalAlaCarte;
             var ticketShare = alaCarte > 0 ? (int)((long)bundle * ticketAlaCarte / alaCarte) : (gateTier is not null ? bundle : 0);
-            var rentalShare = bundle - ticketShare;
+            var rentalShare = bundle - ticketShare + insuranceCents;   // insurance rides with the rental
 
-            // Fee + tax on the bundle, using the rental fee/tax config (packages are rental-heavy).
-            var serviceChargeCents = (int)((long)bundle * tenant.ServiceChargeBps / 10_000L);
+            // Fee + tax on the bundle plus insurance, using the rental fee/tax config (packages are rental-heavy).
+            var chargeSubtotal = bundle + insuranceCents;
+            var serviceChargeCents = (int)((long)chargeSubtotal * tenant.ServiceChargeBps / 10_000L);
             var renterFeeCents = (int)((long)serviceChargeCents * tenant.RentalRiderPaidServiceChargeBps / 10_000L);
-            var taxableBase = bundle + (tenant.RentalTaxServiceChargeTaxable ? renterFeeCents : 0);
+            var taxableBase = chargeSubtotal + (tenant.RentalTaxServiceChargeTaxable ? renterFeeCents : 0);
             var taxCents = (int)Math.Round((decimal)taxableBase * (tenant.RentalTaxBps ?? 0) / 10_000m, MidpointRounding.AwayFromZero);
-            var total = bundle + renterFeeCents + taxCents;
+            var total = chargeSubtotal + renterFeeCents + taxCents;
             if (total < 50) return new ApiResponses().BadRequestResult("A package must total at least 50 cents.");
             if (tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(tenant.StripeConnectAccountId))
                 return new ApiResponses().BadRequestResult("This track can't take online payments yet.");
@@ -306,8 +328,8 @@ namespace webapi.Controllers
                 BuyerName = $"{user.FirstName} {user.LastName}".Trim(), BuyerEmail = user.Email,
                 RideDate = req.RideDate.Date, SessionStartAt = sessionStartUtc, SlotId = slot?.Id,
                 InstructorId = slot?.InstructorId, Status = "pending",
-                SubtotalCents = bundle, TaxCents = taxCents, TotalCents = total,
-                DepositCents = deposit, ServiceChargeCents = serviceChargeCents,
+                SubtotalCents = chargeSubtotal, TaxCents = taxCents, TotalCents = total,
+                DepositCents = effectiveDeposit, ServiceChargeCents = serviceChargeCents,
             };
             var purchaseId = await _packages.CreatePurchase(purchase);
 
@@ -333,7 +355,7 @@ namespace webapi.Controllers
                     RenterName = purchase.BuyerName, RenterEmail = user.Email, RenterPhone = user.Phone,
                     StartsAt = dayStart, EndsAt = dayEnd, Status = "pending",
                     AmountCents = rentalShare, TaxCents = 0, TotalCents = rentalShare, ServiceChargeCents = 0,
-                    RidersRequired = Math.Max(1, riders), DepositCents = deposit,
+                    RidersRequired = Math.Max(1, riders), DepositCents = effectiveDeposit,
                     PaymentMethod = "stripe", SoldByUserId = null,
                 };
                 var (rid, _) = await _shop.CreateRental(rental, lines);
@@ -361,10 +383,10 @@ namespace webapi.Controllers
                 // the "package" finalizer branch settles them and splits the fee.
                 if (rentalId is not null && plan.IsDirect) await _shop.MarkRentalDirectCharge(rentalId.Value, TenantId, plan.ConnectedAccountId!);
 
-                if (deposit > 0)
+                if (effectiveDeposit > 0)
                 {
                     var holdMeta = new Dictionary<string, string>(metadata) { ["sale_kind"] = "package_deposit_hold" };
-                    var hold = await _payments.CreateHoldPaymentIntentAsync(deposit, "usd", holdMeta, user.Email,
+                    var hold = await _payments.CreateHoldPaymentIntentAsync(effectiveDeposit, "usd", holdMeta, user.Email,
                         connectedAccountId: plan.ConnectedAccountId, ct: ct);
                     await _packages.SetPurchasePaymentIntent(purchaseId, intent.IntentId, hold.IntentId, plan.IsDirect ? plan.ConnectedAccountId : null);
                     // Bind the hold to the rental so the existing return-time capture/release works.
@@ -416,25 +438,33 @@ namespace webapi.Controllers
             return null;
         }
 
-        private async Task<(List<Guid> variantIds, int deposit, string? error)> ResolveItems(PackageProduct p, DateOnly rideDate)
+        private async Task<(List<Guid> variantIds, int deposit, int rentalGross, string? error)> ResolveItems(PackageProduct p, DateOnly rideDate)
         {
             var tz = _tenantContext.Tenant.Timezone;
             var dayStart = ToUtc(rideDate, TimeSpan.Zero, tz);
             var dayEnd = dayStart.AddDays(1);
             var ids = new List<Guid>();
             var deposit = 0;
+            var rentalGross = 0;
             foreach (var item in p.Items)
             {
                 var variant = await _shop.GetVariant(item.VariantId, TenantId);
-                if (variant is null || variant.DailyRateCents is null) return (ids, deposit, "An included rental is no longer available.");
+                if (variant is null || variant.DailyRateCents is null) return (ids, deposit, rentalGross, "An included rental is no longer available.");
                 var free = variant.TrackingKind == "serialized"
                     ? (await _shop.GetFreeSerializedUnits(item.VariantId, TenantId, dayStart, dayEnd)).Count
                     : await _shop.GetPoolAvailability(item.VariantId, TenantId, dayStart, dayEnd);
-                if (free < item.Quantity) return (ids, deposit, $"\"{item.VariantName ?? "A rental"}\" isn't available on that date.");
+                if (free < item.Quantity) return (ids, deposit, rentalGross, $"\"{item.VariantName ?? "A rental"}\" isn't available on that date.");
                 deposit += variant.DepositCents * item.Quantity;
+                rentalGross += variant.DailyRateCents.Value * item.Quantity;
                 ids.Add(item.VariantId);
             }
-            return (ids, deposit, null);
+            return (ids, deposit, rentalGross, null);
+        }
+
+        private int InsuranceFor(int rentalGross)
+        {
+            var t = _tenantContext.Tenant;
+            return InsuranceOffered(t) ? (int)((long)rentalGross * t.RentalInsuranceBps / 10_000L) : 0;
         }
 
         private async Task SaveChildren(Guid id, UpsertPackageRequest req)
@@ -478,11 +508,13 @@ namespace webapi.Controllers
             return p;
         }
 
-        private static PackageResponse ToResponse(PackageProduct p) => new()
+        private PackageResponse ToResponse(PackageProduct p) => new()
         {
             Id = p.Id, Name = p.Name, Slug = p.Slug, Summary = p.Summary, Description = p.Description,
             HeroImageUrl = p.HeroImageUrl, LandingPublished = p.LandingPublished, IncludesDayTicket = p.IncludesDayTicket,
             CoachingMinutes = p.CoachingMinutes, CoachingLabel = p.CoachingLabel, IsActive = p.IsActive, SortOrder = p.SortOrder,
+            InsuranceOffered = InsuranceOffered(_tenantContext.Tenant),
+            InsuranceLabel = InsuranceLabel(_tenantContext.Tenant),
             Tiers = p.Tiers.Select(t => new PackageTierResponse
             {
                 Id = t.Id, Name = t.Name, PriceCents = t.PriceCents, DayScope = t.DayScope,
@@ -497,7 +529,15 @@ namespace webapi.Controllers
             {
                 Id = it.Id, ItemType = it.ItemType, VariantId = it.VariantId, Quantity = it.Quantity,
                 Name = it.VariantName, VariantLabel = it.VariantLabel, DepositCents = it.DepositCents,
+                SizeOptions = it.SizeOptions.Select(o => new PackageBikeSizeOptionResponse
+                {
+                    VariantId = o.VariantId, Label = o.Label, DepositCents = o.DepositCents,
+                }).ToList(),
             }).ToList(),
         };
+
+        private static bool InsuranceOffered(Tenant t) => t.RentalInsuranceEnabled && t.RentalInsuranceBps > 0;
+        private static string? InsuranceLabel(Tenant t) =>
+            InsuranceOffered(t) ? (string.IsNullOrWhiteSpace(t.RentalInsuranceLabel) ? "Damage Protection" : t.RentalInsuranceLabel) : null;
     }
 }

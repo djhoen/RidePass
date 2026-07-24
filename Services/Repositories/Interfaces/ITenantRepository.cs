@@ -83,7 +83,8 @@ namespace Services.Repositories.Interfaces
         /// <summary>Shop supply fee on repair bills: basis points of labor, an optional cap, and
         /// the label the customer reads. bps = 0 turns it off.</summary>
         /// <summary>Rentals -> Settings: fee split, tax rate (null = unset), and whether the fee is taxed.</summary>
-        Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable);
+        Task UpdateRentalSettings(Guid tenantId, int riderPaidBps, int? taxBps, bool serviceChargeTaxable,
+            bool insuranceEnabled, string? insuranceLabel, int insuranceBps);
 
         Task UpdateShopSupplyFee(Guid tenantId, int bps, int? capCents, string label);
         Task UpdateShopLaborRate(Guid tenantId, int? rateCents);

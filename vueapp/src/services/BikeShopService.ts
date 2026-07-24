@@ -858,7 +858,11 @@ export class BikeShopService {
             params: { variantId, startsAt, endsAt },
         })
     }
-    storeBookRental(req: { lines: { variantId: string; quantity: number }[]; startsAt: string; endsAt: string }) {
+    storeBookRental(req: {
+        lines: { variantId: string; quantity: number }[]; startsAt: string; endsAt: string
+        // Optional damage-protection add-on; omit or false when the tenant doesn't offer it.
+        insurance?: boolean
+    }) {
         return axios.post<{ data: RentalBookResult }>(`${this.apiUrl}/ShopStore/BookRental`, req)
     }
     storeOrder(req: { lines: { variantId: string; quantity: number }[]; couponCode?: string | null; creditCents?: number }) {

@@ -37,6 +37,11 @@ namespace webapi.Controllers.API.Data.Tenant
         /// <summary>Rental sales tax rate (bps). NULL = never configured; the admin UI warns.</summary>
         public int? RentalTaxBps { get; set; }
         public bool RentalTaxServiceChargeTaxable { get; set; } = true;
+        /// <summary>Rental damage-waiver ("insurance"): whether it is offered, its label, and the
+        /// rate (bps of rental value). Lets the rental/package checkout render the optional add-on.</summary>
+        public bool RentalInsuranceEnabled { get; set; }
+        public string? RentalInsuranceLabel { get; set; }
+        public int RentalInsuranceBps { get; set; }
         public string? ShippingName { get; set; }
         public string? AboutHtml { get; set; }
         public string? HoursJson { get; set; }

@@ -17,6 +17,11 @@ export interface PackageSlot {
     capacity: number
     instructorId: string | null
 }
+export interface PackageItemSizeOption {
+    variantId: string
+    label: string
+    depositCents: number
+}
 export interface PackageItem {
     id: string
     itemType: 'bike' | 'gear'
@@ -25,6 +30,7 @@ export interface PackageItem {
     name: string | null
     variantLabel: string | null
     depositCents: number
+    sizeOptions: PackageItemSizeOption[]
 }
 export interface PackageProduct {
     id: string
@@ -39,6 +45,8 @@ export interface PackageProduct {
     coachingLabel: string | null
     isActive: boolean
     sortOrder: number
+    insuranceOffered: boolean
+    insuranceLabel: string | null
     tiers: PackageTier[]
     slots: PackageSlot[]
     items: PackageItem[]
@@ -50,6 +58,7 @@ export interface PackageAvailability {
     reason: string | null
     priceCents: number
     depositCents: number
+    insuranceCents: number
     sessions: PackageSlotAvailability[]
 }
 export interface PackageBookResult {
@@ -97,7 +106,7 @@ export class PackageService {
             params: { package: pkg, date: dateIso, tierId },
         })
     }
-    book(req: { packageId: string; tierId: string; rideDate: string; slotId?: string | null }) {
+    book(req: { packageId: string; tierId: string; rideDate: string; slotId?: string | null; bikeVariantId?: string | null; insurance?: boolean }) {
         return axios.post<{ data: PackageBookResult }>(`${this.apiUrl}/Package/Book`, req)
     }
 

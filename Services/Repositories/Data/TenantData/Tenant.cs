@@ -66,6 +66,14 @@ namespace Services.Repositories.Data.TenantData
 
         /// <summary>Is the renter-paid service fee part of the rental taxable base.</summary>
         public bool RentalTaxServiceChargeTaxable { get; set; } = true;
+
+        /// <summary>Tenant-wide rental damage-waiver ("insurance"): an optional add-on at rental
+        /// checkout. When bought, the renter pays RentalInsuranceBps of the rental value and the
+        /// refundable deposit hold is waived. Off by default.</summary>
+        public bool RentalInsuranceEnabled { get; set; }
+        public string? RentalInsuranceLabel { get; set; }
+        /// <summary>Percent of the rented gear value, in basis points (1500 = 15%).</summary>
+        public int RentalInsuranceBps { get; set; }
         public int? MonthlyServiceChargeCapCents { get; set; }
         public string? ShippingName { get; set; }
         public string? AboutHtml { get; set; }

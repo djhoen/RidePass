@@ -66,6 +66,12 @@
                                 <div class="text-caption text-medium-emphasis mb-1">Date</div>
                                 <input type="date" v-model="rideDate" :min="today" class="pkg-date mb-4" @change="refreshAvailability" />
 
+                                <template v-if="bikeSizeItem">
+                                    <div class="text-caption text-medium-emphasis mb-1">Bike size</div>
+                                    <v-select v-model="bikeVariantId" :items="bikeSizeItem.sizeOptions" item-title="label" item-value="variantId"
+                                        density="compact" hide-details class="mb-4" />
+                                </template>
+
                                 <template v-if="pkg.coachingMinutes">
                                     <div class="text-caption text-medium-emphasis mb-1">Session time</div>
                                     <v-select v-model="slotId" :items="sessionItems" item-title="title" item-value="slotId"
@@ -78,10 +84,15 @@
                                 </v-alert>
 
                                 <div v-if="avail?.available" class="pkg-price-row mb-2">
-                                    <span class="text-h5 font-weight-bold">{{ money(avail.priceCents) }}</span>
-                                    <span v-if="avail.depositCents > 0" class="text-caption text-medium-emphasis">
+                                    <span class="text-h5 font-weight-bold">{{ money(insurance && avail ? avail.priceCents + avail.insuranceCents : avail.priceCents) }}</span>
+                                    <span v-if="!insurance && avail.depositCents > 0" class="text-caption text-medium-emphasis">
                                         + {{ money(avail.depositCents) }} refundable deposit hold
                                     </span>
+                                </div>
+
+                                <div v-if="pkg.insuranceOffered" class="mb-3">
+                                    <v-checkbox v-model="insurance" :label="insuranceLabel" hide-details density="compact" class="mt-0"></v-checkbox>
+                                    <div v-if="insurance" class="text-caption text-medium-emphasis">The refundable deposit is waived.</div>
                                 </div>
 
                                 <v-alert v-if="bookError" type="error" variant="tonal" density="compact" class="mb-3">{{ bookError }}</v-alert>
@@ -165,6 +176,8 @@ const today = dayjs().tz(tz()).format('YYYY-MM-DD')
 const rideDate = ref(dayjs().tz(tz()).add(1, 'day').format('YYYY-MM-DD'))
 const tierId = ref<string | null>(null)
 const slotId = ref<string | null>(null)
+const bikeVariantId = ref<string | null>(null)
+const insurance = ref(false)
 
 const avail = ref<PackageAvailability | null>(null)
 const availLoading = ref(false)
@@ -174,6 +187,14 @@ function formatDay(d: string) { return dayjs(d).format('ddd, MMM D') }
 
 const heroStyle = computed(() => pkg.value?.heroImageUrl
     ? { backgroundImage: `url(${absoluteUrl(pkg.value.heroImageUrl)})` } : {})
+
+// The bike item (if any) that has rider-selectable sizes; drives the "Bike size" picker.
+const bikeSizeItem = computed(() => pkg.value?.items.find(it => it.itemType === 'bike' && it.sizeOptions.length > 0) ?? null)
+
+const insuranceLabel = computed(() => {
+    const base = pkg.value?.insuranceLabel || 'Damage Protection'
+    return avail.value && avail.value.insuranceCents > 0 ? `${base} (+${money(avail.value.insuranceCents)})` : base
+})
 
 const sessionItems = computed(() => (avail.value?.sessions ?? []).map(s => ({
     slotId: s.slotId,
@@ -190,6 +211,7 @@ async function load() {
         const r = await service.getLanding(slugOrId.value)
         pkg.value = r.data.data
         tierId.value = pkg.value.tiers[0]?.id ?? null
+        bikeVariantId.value = bikeSizeItem.value?.sizeOptions[0]?.variantId ?? null
         await refreshAvailability()
     } catch (err: any) {
         if (err.response?.status === 404) notFound.value = true
@@ -214,7 +236,7 @@ async function refreshAvailability() {
         if (avail.value.sessions.length === 1) slotId.value = avail.value.sessions[0].slotId
     } catch (err: any) {
         if (seq !== availSeq) return
-        avail.value = { available: false, reason: err.response?.data?.error || 'Could not check availability.', priceCents: 0, depositCents: 0, sessions: [] }
+        avail.value = { available: false, reason: err.response?.data?.error || 'Could not check availability.', priceCents: 0, depositCents: 0, insuranceCents: 0, sessions: [] }
     } finally {
         if (seq === availSeq) availLoading.value = false
     }
@@ -258,6 +280,8 @@ async function doBook() {
             tierId: tierId.value,
             rideDate: dayjs.tz(rideDate.value, tz()).startOf('day').toISOString(),
             slotId: slotId.value,
+            bikeVariantId: bikeSizeItem.value ? bikeVariantId.value : null,
+            insurance: insurance.value,
         })
         const d = r.data.data
         pendingTotal.value = d.totalCents

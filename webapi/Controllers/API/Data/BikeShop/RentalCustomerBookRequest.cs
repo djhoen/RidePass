@@ -13,6 +13,9 @@ namespace webapi.Controllers.API.Data.BikeShop
         [Required, MinLength(1)] public List<RentalCustomerBookLine> Lines { get; set; } = new();
         [Required] public DateTime StartsAt { get; set; }
         [Required] public DateTime EndsAt { get; set; }
+        /// <summary>Opt into the tenant's damage waiver: a non-refundable add-on that waives the
+        /// refundable deposit hold. Ignored when the tenant hasn't enabled it.</summary>
+        public bool Insurance { get; set; }
     }
 
     public class RentalCustomerBookLine

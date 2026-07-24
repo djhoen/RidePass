@@ -60,6 +60,18 @@ namespace Services.Repositories
                 JOIN shop_variant v ON v.id = pi.variant_id
                 JOIN shop_product sp ON sp.id = v.product_id
                 WHERE pi.package_id = @id ORDER BY pi.sort_order", new { id = p.Id })).ToList();
+
+            // Selectable bike sizes = the rentable sibling variants of each bike item's product.
+            foreach (var bike in p.Items.Where(i => i.ItemType == "bike"))
+                bike.SizeOptions = (await _db.Query<PackageBikeSizeOption>(@"
+                    SELECT v.id AS VariantId,
+                           COALESCE(NULLIF(TRIM(CONCAT_WS(' / ', v.size, v.color)), ''), 'One size') AS Label,
+                           COALESCE(v.deposit_cents, 0) AS DepositCents
+                    FROM shop_variant v
+                    WHERE v.tenant_id = @tenantId
+                      AND v.product_id = (SELECT product_id FROM shop_variant WHERE id = @variantId AND tenant_id = @tenantId)
+                      AND v.daily_rate_cents IS NOT NULL
+                    ORDER BY v.size", new { tenantId = p.TenantId, variantId = bike.VariantId })).ToList();
         }
 
         public async Task<Guid> Create(PackageProduct p)
