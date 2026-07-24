@@ -10,7 +10,11 @@ ALTER TABLE tenant
 -- One-shot backfill: only meaningful the first time the column appears. Re-running
 -- later must not stomp an MTB tenant that deliberately turned the feature on, so
 -- the update is fenced by a journal check on this script's own name.
-DO $mig$
+--
+-- Anonymous $$ quoting only: DbUp's variable preprocessor parses a NAMED tag like
+-- $mig$ as a substitution variable ("Variable mig has no value defined") and the
+-- whole migration run dies before executing anything.
+DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM schemaversions
@@ -19,4 +23,4 @@ BEGIN
         UPDATE tenant SET trackside_export_enabled = false
         WHERE tenant_type = 'mountain_bike';
     END IF;
-END $mig$;
+END $$;
