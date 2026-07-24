@@ -257,7 +257,7 @@ namespace webapi.Controllers
         // Date-range roll call across every event in the window: tickets + season-pass
         // reservations with check-in state, linked wristband, and waiver coverage.
         // Server-capped; the UI narrows the range when truncated.
-        private const int RiderReportCap = 1000;
+        private const int RiderReportCap = 10000;
 
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
         [HttpGet("Admin/Riders")]

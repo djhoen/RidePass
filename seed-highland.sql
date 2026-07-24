@@ -2636,4 +2636,93 @@ BEGIN
     UPDATE shop_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/shop-a3ad4999a8e64853b4def538815b64ae.jpg' WHERE tenant_id = v_tenant_id AND name = 'Norco Fluid 24 Kids';
 END $hl_bike_images$;
 
+-- ============================================================================
+-- Highland Find Your Ride package (bundled product: day pass + coached session +
+-- bike + gear). Requires Script0231 package tables + the rental fleet above.
+-- ============================================================================
+-- Highland "Find Your Ride" package: day pass + a 60-min coached session + a bike
+-- + gear, sold in day-type tiers, with a landing page. Rerunnable.
+DO $hl_fyr$
+DECLARE
+    v_tenant_id uuid;
+    v_cat_rental uuid;
+    v_helmet_v uuid;
+    v_pads_v uuid;
+    v_bike_v uuid;
+    v_instr uuid;
+    v_pkg uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN RAISE EXCEPTION 'tenant "highland" not found'; END IF;
+
+    SELECT id INTO v_cat_rental FROM shop_category WHERE tenant_id = v_tenant_id AND name = 'Rental Bikes';
+
+    -- ── Rentable gear (pool-tracked) so the package can include a helmet + pads ──
+    DELETE FROM package_item WHERE tenant_id = v_tenant_id AND variant_id IN (
+        SELECT v.id FROM shop_variant v JOIN shop_product p ON p.id = v.product_id
+        WHERE p.tenant_id = v_tenant_id AND p.name IN ('Full-Face Helmet (Rental)', 'Protective Pad Set (Rental)'));
+    DELETE FROM shop_product WHERE tenant_id = v_tenant_id
+        AND name IN ('Full-Face Helmet (Rental)', 'Protective Pad Set (Rental)');
+
+    INSERT INTO shop_product (tenant_id, category_id, name, description, is_sellable, is_rentable, is_published)
+    VALUES
+        (v_tenant_id, v_cat_rental, 'Full-Face Helmet (Rental)', 'ASTM downhill-rated full-face helmet. Required in the bike park.', false, true, true),
+        (v_tenant_id, v_cat_rental, 'Protective Pad Set (Rental)', 'Knee and elbow pad set.', false, true, true);
+
+    INSERT INTO shop_variant (tenant_id, product_id, sku, sale_price_cents, daily_rate_cents, deposit_cents, cost_cents, stock_on_hand, low_stock_threshold, tracking_kind)
+        SELECT v_tenant_id, id, 'HL-RENT-FF', NULL, 1500, 5000, 4000, 20, 3, 'pool'
+        FROM shop_product WHERE tenant_id = v_tenant_id AND name = 'Full-Face Helmet (Rental)';
+    INSERT INTO shop_variant (tenant_id, product_id, sku, sale_price_cents, daily_rate_cents, deposit_cents, cost_cents, stock_on_hand, low_stock_threshold, tracking_kind)
+        SELECT v_tenant_id, id, 'HL-RENT-PADS', NULL, 1000, 3000, 2500, 20, 3, 'pool'
+        FROM shop_product WHERE tenant_id = v_tenant_id AND name = 'Protective Pad Set (Rental)';
+
+    SELECT v.id INTO v_helmet_v FROM shop_variant v JOIN shop_product p ON p.id = v.product_id
+        WHERE p.tenant_id = v_tenant_id AND p.name = 'Full-Face Helmet (Rental)' LIMIT 1;
+    SELECT v.id INTO v_pads_v FROM shop_variant v JOIN shop_product p ON p.id = v.product_id
+        WHERE p.tenant_id = v_tenant_id AND p.name = 'Protective Pad Set (Rental)' LIMIT 1;
+    SELECT v.id INTO v_bike_v FROM shop_variant v JOIN shop_product p ON p.id = v.product_id
+        WHERE p.tenant_id = v_tenant_id AND p.name = 'Giant Reign Enduro' AND v.size = 'Medium' LIMIT 1;
+    IF v_bike_v IS NULL THEN
+        SELECT v.id INTO v_bike_v FROM shop_variant v JOIN shop_product p ON p.id = v.product_id
+            WHERE p.tenant_id = v_tenant_id AND p.name = 'Giant Reign Enduro' LIMIT 1;
+    END IF;
+    SELECT id INTO v_instr FROM instructor WHERE tenant_id = v_tenant_id AND email = 'sam.instructor@highland.test' LIMIT 1;
+
+    -- ── The package (rerunnable: wipe prior by slug, children cascade) ──────────
+    DELETE FROM package_product WHERE tenant_id = v_tenant_id AND slug = 'find-your-ride';
+
+    INSERT INTO package_product (tenant_id, name, slug, summary, description, hero_image_url,
+        landing_published, includes_day_ticket, day_ticket_event_type_code, coaching_minutes, coaching_label,
+        is_active, sort_order)
+    VALUES (v_tenant_id, 'Find Your Ride', 'find-your-ride',
+        'Everything you need for your first lift-served day: pass, coaching, bike, and gear.',
+        '<p>New to the bike park? Find Your Ride is the easiest way to start. One booking covers your lift ticket, a coached session to get you Park Ready, a dialed rental bike, and full protective gear. All you bring is shoes and water.</p><p>Your coach meets you at your session time, sizes you to your bike, and gets you comfortable on the green flow trails and the pump track. Most first-timers are linking berms by lunch.</p>',
+        '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-632d75f1cc2c4915badefd3bcb75eeac.jpg',
+        true, true, 'open_ride', 60, 'Park Ready session', true, 10)
+    RETURNING id INTO v_pkg;
+
+    INSERT INTO package_tier (package_id, tenant_id, name, price_cents, day_scope, afternoon_only, session_count, sort_order)
+    VALUES
+        (v_pkg, v_tenant_id, 'Midweek', 14900, 'weekday', false, 1, 10),
+        (v_pkg, v_tenant_id, 'Weekend', 15900, 'weekend', false, 1, 20),
+        (v_pkg, v_tenant_id, 'Afternoon', 9900, 'any', true, 1, 30);
+
+    INSERT INTO package_session_slot (package_id, tenant_id, day_scope, start_time, is_afternoon, capacity, instructor_id, sort_order)
+    VALUES
+        (v_pkg, v_tenant_id, 'weekday', TIME '10:00', false, 8, v_instr, 10),
+        (v_pkg, v_tenant_id, 'weekday', TIME '11:30', false, 8, v_instr, 20),
+        (v_pkg, v_tenant_id, 'weekday', TIME '13:00', true,  8, v_instr, 30),
+        (v_pkg, v_tenant_id, 'weekend', TIME '09:00', false, 8, v_instr, 40),
+        (v_pkg, v_tenant_id, 'weekend', TIME '10:30', false, 8, v_instr, 50),
+        (v_pkg, v_tenant_id, 'weekend', TIME '13:00', true,  8, v_instr, 60);
+
+    INSERT INTO package_item (package_id, tenant_id, item_type, variant_id, quantity, sort_order)
+    VALUES
+        (v_pkg, v_tenant_id, 'bike', v_bike_v, 1, 10),
+        (v_pkg, v_tenant_id, 'gear', v_helmet_v, 1, 20),
+        (v_pkg, v_tenant_id, 'gear', v_pads_v, 1, 30);
+
+    RAISE NOTICE 'Seeded Find Your Ride package %', v_pkg;
+END $hl_fyr$;
+
 COMMIT;

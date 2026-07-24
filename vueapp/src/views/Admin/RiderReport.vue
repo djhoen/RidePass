@@ -41,10 +41,14 @@
                 @update:model-value="debouncedLoad" />
         </div>
 
-        <v-alert v-if="data?.truncated" type="warning" variant="tonal" class="mb-4">
-            This range matched more rows than the report can show at once. Narrow the dates or search.
-        </v-alert>
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
+
+        <v-snackbar v-model="cappedToast" :timeout="6000" color="warning" location="top">
+            Showing the first {{ rowCap.toLocaleString() }} rows. Narrow the date range or search to see the rest.
+            <template #actions>
+                <v-btn variant="text" @click="cappedToast = false">Dismiss</v-btn>
+            </template>
+        </v-snackbar>
 
         <v-card variant="outlined">
             <v-table density="compact" hover>
@@ -188,6 +192,9 @@ const eventFilter = ref<string | null>(
 const data = ref<RiderReportResponse | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+// Kept in sync with RiderReportCap on the server; only used for the "results capped" toast copy.
+const rowCap = 10000
+const cappedToast = ref(false)
 
 const eventOptions = computed(() => {
     const seen = new Map<string, string>()
@@ -214,6 +221,7 @@ async function load() {
         const res = await service.getRiders(fromUtc, toUtc, search.value || undefined, audience)
         if (s !== seq) return
         data.value = res.data.data
+        if (data.value.truncated) cappedToast.value = true
         // Drop a stale event filter when the new range no longer contains that event.
         if (eventFilter.value && !data.value.rows.some(r => r.eventId === eventFilter.value)) {
             eventFilter.value = null

@@ -364,7 +364,7 @@ namespace Services.Repositories
                        OR lower(COALESCE(r.Email, '')) LIKE @search
                        OR lower(COALESCE(r.WristbandCode, '')) LIKE @search)";
             var sql = RiderRowsCteFor(audience)
-                .Replace("{EVENT_WINDOW}", "e.starts_at >= @fromUtc AND e.starts_at < @toUtc") + $@"
+                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= @fromUtc AND e.starts_at < @toUtc") + $@"
                 SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
                 FROM rows r
                 WHERE true{searchSql}
@@ -381,7 +381,7 @@ namespace Services.Repositories
         public async Task<List<RiderReportRow>> GetRiderRegistrations(Guid tenantId, Guid? userId, string? email)
         {
             var sql = RiderRowsCteFor("all")
-                .Replace("{EVENT_WINDOW}", "e.starts_at >= now() - INTERVAL '365 days'") + $@"
+                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= now() - INTERVAL '365 days'") + $@"
                 SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
                 FROM rows r
                 WHERE ((@userId::uuid IS NOT NULL AND r.UserId = @userId)
