@@ -270,6 +270,8 @@ import { buildEmbedSnippet } from '@/embed/widgets'
 import tenantHelper from '@/helpers/TenantHelper'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import RichTextView from '@/components/RichTextView.vue'
+// Crash-safe absolutizer (the old local `new URL(url, base)` threw on a relative hero path).
+import { absoluteUrl } from '@/helpers/ImageUrl'
 
 const service = new SeasonPassService()
 const eventTypeService = new EventTypeService()
@@ -331,13 +333,6 @@ function slugify(input: string): string {
 const slugPreview = computed(() => slugify(form.value.slug || form.value.name))
 const landingUrl = computed(() =>
     slugPreview.value ? `${window.location.origin}/SeasonPasses/${slugPreview.value}` : '')
-
-function absoluteUrl(url: string | null): string | null {
-    if (!url) return null
-    if (/^https?:\/\//i.test(url)) return url
-    const base = import.meta.env.VITE_API_ENDPOINT ?? ''
-    return base ? new URL(url, base).toString() : url
-}
 
 function pickHero() { heroInput.value?.click() }
 

@@ -128,6 +128,10 @@ import { SeasonPassService, type SeasonPassLanding, type SeasonPassProduct, type
 import { branding } from '@/stores/branding'
 import SeasonPassCheckout from '@/components/SeasonPassCheckout.vue'
 import RichTextView from '@/components/RichTextView.vue'
+// Shared, crash-safe absolutizer. The old local copy did `new URL(url, base)` with
+// base = VITE_API_ENDPOINT (which is "/api", a RELATIVE value) and threw "Invalid base
+// URL" the instant a relative hero path was present, taking the whole page down.
+import { absoluteUrl } from '@/helpers/ImageUrl'
 
 const route = useRoute()
 const service = new SeasonPassService()
@@ -147,13 +151,6 @@ const slugOrId = computed(() => String(route.params.slug ?? route.params.id ?? '
 // fields plus content, so pad the two list-only fields it never reads meaningfully here.
 const checkoutProducts = computed<SeasonPassProduct[]>(() =>
     landing.value ? [{ ...landing.value, isActive: true, sortOrder: 0, perks: [] }] : [])
-
-function absoluteUrl(url: string | null): string | null {
-    if (!url) return null
-    if (/^https?:\/\//i.test(url)) return url
-    const base = import.meta.env.VITE_API_ENDPOINT ?? ''
-    return base ? new URL(url, base).toString() : url
-}
 
 const heroStyle = computed(() => {
     const url = absoluteUrl(landing.value?.heroImageUrl ?? null) || branding.heroImageUrl
