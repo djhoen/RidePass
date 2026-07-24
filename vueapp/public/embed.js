@@ -126,6 +126,13 @@
         iframe.style.border = '0';
         iframe.style.display = 'block';
         iframe.style.minHeight = '400px';
+        // No inner scrollbar: the iframe auto-resizes to its content (below), so a
+        // scrollbar would be both redundant and a giveaway that the widget is framed.
+        // scrolling="no" is the only cross-browser way to suppress it from OUT here;
+        // the embedded app also hides it from the inside (App.vue rp-embed styles) so
+        // the two don't have to agree on which one wins.
+        iframe.setAttribute('scrolling', 'no');
+        iframe.style.overflow = 'hidden';
         el.appendChild(iframe);
 
         // Only trust resize messages from this iframe's own origin AND frame id.

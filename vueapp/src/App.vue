@@ -78,6 +78,15 @@ router.isReady().catch(() => {}).finally(() => { routerReady.value = true })
 // Embed mode: chromeless widget framed on a track's own site (via embed.js).
 const isEmbed = computed(() => !!route.meta.embed)
 
+// Scrollbars belong to the DOCUMENT element, which sits outside this component's
+// tree, so the class has to be stamped on <html> rather than styled from the
+// template. The widget iframe auto-resizes to its content, so nothing is reachable
+// only by scrolling — the bar is pure noise (and on Windows, with its arrows, an
+// obvious "this is an iframe" tell on someone else's site).
+watchEffect(() => {
+    document.documentElement.classList.toggle('rp-embed', isEmbed.value)
+})
+
 // Best-effort client-side origin guard. The authoritative protection is the
 // `frame-ancestors` CSP header served on /embed (added at deploy); this just
 // gives a clean message when embedding is off or the framing site isn't allowed.
@@ -371,5 +380,42 @@ watchEffect(() => {
    theme primary if the variable hasn't been set yet. */
 .v-btn.text-primary {
     color: var(--rp-primary-text-on-light, rgb(var(--v-theme-primary))) !important;
+}
+
+/* ── Embedded widgets (html.rp-embed, stamped by the watchEffect in the script) ──
+   Nothing inside a widget may size itself from the VIEWPORT. The host iframe's height
+   is driven by this document's scrollHeight (postEmbedHeight), and inside an iframe
+   100vh IS the iframe's own height, so a viewport-based min-height feeds back on
+   itself: the reported height can never fall below the current iframe height, so every
+   widget latches to a viewport-sized block (~1000px of dead space under short widgets)
+   and a widget whose real content is taller ends up scrolling inside a too-short frame.
+   Vuetify ships exactly that on .v-application__wrap, so neutralize it here and let the
+   measurement be pure content. */
+html.rp-embed,
+html.rp-embed body {
+    height: auto;
+    min-height: 0;
+    /* Body margin would be added to scrollHeight on every resize round-trip. */
+    margin: 0;
+}
+html.rp-embed .v-application,
+html.rp-embed .v-application__wrap {
+    min-height: 0 !important;
+}
+
+/* No scrollbar inside the frame: the iframe auto-sizes to the content above, so the
+   bar is redundant, and on Windows its arrows are an obvious "this is an iframe" tell
+   on the track's own site. Wheel/touch/programmatic scrolling still work. Pairs with
+   scrolling="no" in embed.js (some engines ignore one or the other). */
+html.rp-embed,
+html.rp-embed body {
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* legacy Edge */
+}
+html.rp-embed::-webkit-scrollbar,
+html.rp-embed body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;                  /* Chrome / Safari */
 }
 </style>
