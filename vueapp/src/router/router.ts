@@ -48,6 +48,13 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        // Shop purchases: the order number here is what the counter asks for at pickup.
+        path: '/User/MyOrders',
+        name: 'MyOrders',
+        component: () => import('../views/User/MyOrders.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/User/Upcoming',
         name: 'UserUpcoming',
         component: () => import('../views/User/Upcoming.vue'),

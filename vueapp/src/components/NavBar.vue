@@ -64,6 +64,10 @@
                         <v-list-item v-if="!isSuperAdmin" to="/User/MyPasses" prepend-icon="mdi-ticket-account">
                             <v-list-item-title>My Passes</v-list-item-title>
                         </v-list-item>
+                        <v-list-item v-if="!isSuperAdmin && branding.bikeShopEnabled" to="/User/MyOrders"
+                            prepend-icon="mdi-package-variant-closed">
+                            <v-list-item-title>My Orders</v-list-item-title>
+                        </v-list-item>
                         <v-list-item v-if="!isSuperAdmin" to="/User/Rewards" prepend-icon="mdi-trophy">
                             <v-list-item-title>Rewards</v-list-item-title>
                         </v-list-item>
@@ -144,6 +148,8 @@
                         <v-list-item to="/User/Upcoming" prepend-icon="mdi-calendar-clock" title="My Events"></v-list-item>
                         <v-list-item to="/User/Profile" prepend-icon="mdi-account" title="Profile"></v-list-item>
                         <v-list-item to="/User/MyPasses" prepend-icon="mdi-ticket-account" title="My Passes"></v-list-item>
+                        <v-list-item v-if="branding.bikeShopEnabled" to="/User/MyOrders"
+                            prepend-icon="mdi-package-variant-closed" title="My Orders"></v-list-item>
                         <v-list-item to="/User/Rewards" prepend-icon="mdi-trophy" title="Rewards"></v-list-item>
                         <v-list-item prepend-icon="mdi-logout" title="Logout" @click="logout"></v-list-item>
                     </v-list-group>

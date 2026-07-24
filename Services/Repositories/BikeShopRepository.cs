@@ -27,6 +27,10 @@ namespace Services.Repositories
             is_active AS IsActive, sort_order AS SortOrder,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
+        private const string ProductImageCols = @"
+            id, tenant_id AS TenantId, product_id AS ProductId, image_url AS ImageUrl,
+            caption, sort_order AS SortOrder, created_at AS CreatedAt";
+
         // AvailableCount resolves per tracking kind: cached count for pool, live available-item
         // count for serialized. Used everywhere a variant is read so callers never special-case it.
         private const string VariantCols = @"
@@ -267,6 +271,73 @@ namespace Services.Repositories
             product.Variants = (await _db.Query<ShopVariantWithStock>(vSql, new { id, tenantId })).ToList();
             return product;
         }
+
+        // ── Product gallery (Script0230) ──────────────────────────────────────────
+        public async Task<List<ShopProductImage>> ListProductImages(Guid productId, Guid tenantId) =>
+            (await _db.Query<ShopProductImage>($@"
+                SELECT {ProductImageCols} FROM shop_product_image
+                WHERE product_id = @productId AND tenant_id = @tenantId
+                ORDER BY sort_order, created_at", new { productId, tenantId })).ToList();
+
+        public async Task<Dictionary<Guid, List<ShopProductImage>>> ListImagesForProducts(
+            IEnumerable<Guid> productIds, Guid tenantId)
+        {
+            var ids = productIds.ToArray();
+            if (ids.Length == 0) return new Dictionary<Guid, List<ShopProductImage>>();
+            var rows = await _db.Query<ShopProductImage>($@"
+                SELECT {ProductImageCols} FROM shop_product_image
+                WHERE product_id = ANY(@ids) AND tenant_id = @tenantId
+                ORDER BY sort_order, created_at", new { ids, tenantId });
+            return rows.GroupBy(i => i.ProductId).ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        public async Task<ShopProductImage?> GetProductImage(Guid imageId, Guid tenantId) =>
+            (await _db.Query<ShopProductImage>($@"
+                SELECT {ProductImageCols} FROM shop_product_image
+                WHERE id = @imageId AND tenant_id = @tenantId", new { imageId, tenantId })).FirstOrDefault();
+
+        public Task<int> CountProductImages(Guid productId, Guid tenantId) => _db.ExecuteScalar(
+            "SELECT count(*) FROM shop_product_image WHERE product_id = @productId AND tenant_id = @tenantId",
+            new { productId, tenantId });
+
+        public async Task<ShopProductImage> AddProductImage(ShopProductImage image)
+        {
+            // Position is computed server-side (max + 10) so two admins uploading at the same
+            // time can't both claim the same slot from a stale client-side count.
+            var sql = $@"
+                INSERT INTO shop_product_image (tenant_id, product_id, image_url, caption, sort_order)
+                SELECT @TenantId, @ProductId, @ImageUrl, @Caption,
+                       CASE WHEN @SortOrder > 0 THEN @SortOrder
+                            ELSE COALESCE((SELECT max(sort_order) FROM shop_product_image
+                                            WHERE product_id = @ProductId AND tenant_id = @TenantId), 0) + 10
+                       END
+                RETURNING {ProductImageCols}";
+            return (await _db.Query<ShopProductImage>(sql, image)).First();
+        }
+
+        public Task<int> UpdateProductImageCaption(Guid imageId, Guid tenantId, string? caption) => _db.Execute(
+            "UPDATE shop_product_image SET caption = @caption WHERE id = @imageId AND tenant_id = @tenantId",
+            new { imageId, tenantId, caption });
+
+        public Task<int> DeleteProductImage(Guid imageId, Guid tenantId) => _db.Execute(
+            "DELETE FROM shop_product_image WHERE id = @imageId AND tenant_id = @tenantId",
+            new { imageId, tenantId });
+
+        public Task ReorderProductImages(Guid productId, Guid tenantId, IEnumerable<(Guid Id, int SortOrder)> order) =>
+            // One transaction: a half-renumbered gallery is worse than a failed reorder.
+            // product_id is re-asserted so an id from another product can't be renumbered in.
+            _db.ExecuteBatch(order.Select(o => (
+                @"UPDATE shop_product_image SET sort_order = @sortOrder
+                  WHERE id = @id AND product_id = @productId AND tenant_id = @tenantId",
+                (object?)new { id = o.Id, sortOrder = o.SortOrder, productId, tenantId })).ToList());
+
+        public async Task<bool> IsImageUrlReferenced(Guid tenantId, string imageUrl, Guid exceptImageId) =>
+            (await _db.Query<bool>(@"
+                SELECT EXISTS (SELECT 1 FROM shop_product_image
+                                WHERE tenant_id = @tenantId AND image_url = @imageUrl AND id <> @exceptImageId)
+                    OR EXISTS (SELECT 1 FROM shop_product
+                                WHERE tenant_id = @tenantId AND image_url = @imageUrl)",
+                new { tenantId, imageUrl, exceptImageId })).First();
 
         public async Task<Guid> CreateProduct(ShopProduct p)
         {
@@ -3118,6 +3189,29 @@ namespace Services.Repositories
             foreach (var s in sales) s.Lines = lines.GetValueOrDefault(s.Id) ?? new();
             page.Rows = sales;
             return page;
+        }
+
+        public async Task<List<ShopSaleWithLines>> ListSalesForBuyer(Guid tenantId, Guid userId, int limit)
+        {
+            // work_order_id IS NULL: a repair bill-out is a sale against the customer's account,
+            // but its lines are parts and labor; it reads wrong under "Orders".
+            // status: 'pending' is an abandoned or in-flight checkout and must never look like a
+            // purchase; 'refunded' IS included so a rider can see the refund happened rather than
+            // watching the order silently vanish.
+            var sales = (await _db.Query<ShopSaleWithLines>($@"
+                SELECT {SaleCols} FROM shop_sale
+                WHERE tenant_id = @tenantId AND buyer_user_id = @userId
+                  AND work_order_id IS NULL
+                  AND status IN ('paid', 'refunded')
+                ORDER BY created_at DESC LIMIT @limit", new { tenantId, userId, limit })).ToList();
+            if (sales.Count == 0) return sales;
+
+            var ids = sales.Select(s => s.Id).ToArray();
+            var lines = (await _db.Query<ShopSaleLine>(
+                $"SELECT {SaleLineCols} FROM shop_sale_line WHERE sale_id = ANY(@ids) ORDER BY created_at",
+                new { ids })).GroupBy(l => l.SaleId).ToDictionary(g => g.Key, g => g.ToList());
+            foreach (var s in sales) s.Lines = lines.GetValueOrDefault(s.Id) ?? new();
+            return sales;
         }
 
         // ── Stock takes ───────────────────────────────────────────────────────────

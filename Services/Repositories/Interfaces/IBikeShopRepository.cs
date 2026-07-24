@@ -27,6 +27,28 @@ namespace Services.Repositories.Interfaces
         Task<Guid> CreateProduct(ShopProduct p);
         Task<int> UpdateProduct(ShopProduct p);
 
+        // ── Product gallery (Script0230) ──────────────────────────────────────────
+        // shop_product.image_url stays the cover; these are the ADDITIONAL photos.
+        Task<List<ShopProductImage>> ListProductImages(Guid productId, Guid tenantId);
+
+        /// <summary>Galleries for many products at once, keyed by product id, so the
+        /// storefront catalog stays a fixed number of queries.</summary>
+        Task<Dictionary<Guid, List<ShopProductImage>>> ListImagesForProducts(IEnumerable<Guid> productIds, Guid tenantId);
+        Task<ShopProductImage?> GetProductImage(Guid imageId, Guid tenantId);
+        Task<int> CountProductImages(Guid productId, Guid tenantId);
+
+        /// <summary>Appends at max(sort_order)+10 when SortOrder is 0, so two admins
+        /// uploading at once cannot collide on a client-guessed position.</summary>
+        Task<ShopProductImage> AddProductImage(ShopProductImage image);
+        Task<int> UpdateProductImageCaption(Guid imageId, Guid tenantId, string? caption);
+        Task<int> DeleteProductImage(Guid imageId, Guid tenantId);
+        Task ReorderProductImages(Guid productId, Guid tenantId, IEnumerable<(Guid Id, int SortOrder)> order);
+
+        /// <summary>True when this blob is still referenced by a product cover or another
+        /// gallery row in this tenant. Guards blob deletion, because "Make cover" copies
+        /// a url rather than moving it.</summary>
+        Task<bool> IsImageUrlReferenced(Guid tenantId, string imageUrl, Guid exceptImageId);
+
         Task<ShopVariant?> GetVariant(Guid id, Guid tenantId);
         Task<Guid> CreateVariant(ShopVariant v);
         Task<int> UpdateVariant(ShopVariant v);
@@ -330,6 +352,11 @@ namespace Services.Repositories.Interfaces
         /// sale look like the sale does not exist.
         /// </summary>
         Task<ShopSalesPage> SearchSales(Guid tenantId, ShopSaleQuery query);
+
+        /// <summary>The signed-in rider's own shop purchases, for My Orders. Excludes repair
+        /// bill-outs (parts and labor on a work order are not an "order") and pending rows
+        /// (an abandoned checkout must never read as a purchase).</summary>
+        Task<List<ShopSaleWithLines>> ListSalesForBuyer(Guid tenantId, Guid userId, int limit);
 
         // ── CSV import + variant matrix ───────────────────────────────────────────
         /// <summary>One-transaction validated catalog import; creates categories/suppliers by

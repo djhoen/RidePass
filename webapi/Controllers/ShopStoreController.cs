@@ -59,15 +59,24 @@ namespace webapi.Controllers
 
             var categories = (await _shop.ListCategories(TenantId, activeOnly: true))
                 .Select(c => new { id = c.Id, name = c.Name, sortOrder = c.SortOrder });
-            var products = (await _shop.ListProducts(TenantId, activeOnly: true))
+            var sellable = (await _shop.ListProducts(TenantId, activeOnly: true))
                 .Where(p => p.IsSellable && p.IsPublished)
+                .ToList();
+            // Galleries in one grouped query (not folded into ListProducts, which the register
+            // and the CSV import also use and neither wants the extra round trip). Carrying them
+            // in the catalog payload keeps opening a product's detail view instant.
+            var galleries = await _shop.ListImagesForProducts(sellable.Select(p => p.Id), TenantId);
+            var products = sellable
                 .Select(p => new
                 {
                     id = p.Id,
                     name = p.Name,
                     description = p.Description,
                     brand = p.Brand,
-                    imageUrl = p.ImageUrl,
+                    // Fall back to the first gallery photo so clearing the cover never blanks a card.
+                    imageUrl = p.ImageUrl ?? galleries.GetValueOrDefault(p.Id)?.FirstOrDefault()?.ImageUrl,
+                    images = (galleries.GetValueOrDefault(p.Id) ?? new())
+                        .Select(i => new { id = i.Id, url = i.ImageUrl, caption = i.Caption, sortOrder = i.SortOrder }),
                     categoryId = p.CategoryId,
                     sortOrder = p.SortOrder,
                     variants = p.Variants
@@ -278,5 +287,63 @@ namespace webapi.Controllers
                 totalCents = total, creditAppliedCents = creditApplied, dueCents = due,
             });
         }
+
+        /// <summary>
+        /// The rider's own shop orders (My Orders). The order number is the proof of purchase:
+        /// it is what the confirmation email tells them to show and what the counter searches by.
+        /// </summary>
+        [Authorize]
+        [HttpGet("MyOrders")]
+        public async Task<IActionResult> MyOrders()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+                return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var orders = await _shop.ListSalesForBuyer(TenantId, userId, 50);
+            return new ApiResponses().OkResult(orders.Select(ToMyOrder));
+        }
+
+        /// <summary>
+        /// One of the rider's own orders. Used right after a card payment to pick up the order
+        /// number once the webhook has settled the sale (MyOrders can't serve that: it hides
+        /// pending rows, so it cannot tell "still settling" apart from "does not exist").
+        /// </summary>
+        [Authorize]
+        [HttpGet("Order/{saleId:guid}")]
+        public async Task<IActionResult> OrderStatus(Guid saleId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+                return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var sale = await _shop.GetSale(saleId, TenantId);
+            // Someone else's order is reported as missing rather than forbidden: a guessable id
+            // must not confirm that an order exists. Ownership is the authorization here.
+            if (sale is null || sale.BuyerUserId != userId)
+                return new ApiResponses().NotFoundResult("Order not found.");
+            return new ApiResponses().OkResult(ToMyOrder(sale));
+        }
+
+        private static object ToMyOrder(Services.Repositories.Data.BikeShopData.ShopSaleWithLines o) => new
+        {
+            saleId = o.Id,
+            orderNumber = o.OrderNumber,
+            status = o.Status,
+            orderChannel = o.OrderChannel,
+            // SpecifyKind matters: the client parses these as UTC before converting to the
+            // tenant's timezone, and a Kind-unspecified value serializes without the Z.
+            pickedUpAtUtc = o.PickedUpAt is null ? null : (DateTime?)DateTime.SpecifyKind(o.PickedUpAt.Value, DateTimeKind.Utc),
+            createdAtUtc = DateTime.SpecifyKind(o.CreatedAt, DateTimeKind.Utc),
+            totalCents = o.TotalCents,
+            creditAppliedCents = o.CreditAppliedCents,
+            lines = o.Lines.Select(l => new
+            {
+                name = l.NameSnapshot,
+                variantLabel = l.VariantLabel,
+                quantity = l.Quantity,
+                unitPriceCents = l.UnitPriceCents,
+            }),
+        };
     }
 }

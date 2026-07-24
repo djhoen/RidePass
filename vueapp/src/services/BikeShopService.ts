@@ -816,6 +816,35 @@ export class BikeShopService {
     }
 
     // ── Public storefront (catalog is anonymous; ordering needs a signed-in rider) ──
+    // ── Product gallery (admin) ──────────────────────────────────────────────
+    listProductImages(productId: string) {
+        return axios.get<{ data: ShopProductImage[] }>(`${this.apiUrl}/BikeShop/Products/${productId}/Images`)
+    }
+    addProductImage(productId: string, file: File, caption?: string) {
+        const form = new FormData()
+        form.append('file', file)
+        if (caption) form.append('caption', caption)
+        return axios.post<{ data: ShopProductImage }>(`${this.apiUrl}/BikeShop/Products/${productId}/Images`, form)
+    }
+    updateProductImage(imageId: string, caption: string | null) {
+        return axios.put(`${this.apiUrl}/BikeShop/ProductImages/${imageId}`, { caption })
+    }
+    deleteProductImage(imageId: string) {
+        return axios.delete(`${this.apiUrl}/BikeShop/ProductImages/${imageId}`)
+    }
+    reorderProductImages(productId: string, items: { id: string; sortOrder: number }[]) {
+        return axios.post(`${this.apiUrl}/BikeShop/Products/${productId}/Images/Reorder`, { items })
+    }
+
+    // ── Rider-facing orders ──────────────────────────────────────────────────
+    myShopOrders() {
+        return axios.get<{ data: MyShopOrder[] }>(`${this.apiUrl}/ShopStore/MyOrders`)
+    }
+    /** One own order; used to pick up the order number after a card payment settles. */
+    storeOrderStatus(saleId: string) {
+        return axios.get<{ data: MyShopOrder }>(`${this.apiUrl}/ShopStore/Order/${saleId}`)
+    }
+
     storeCatalog() {
         return axios.get<{ data: StoreCatalog }>(`${this.apiUrl}/ShopStore/Catalog`)
     }
@@ -916,13 +945,51 @@ export interface ShopSalesPage {
 }
 
 // ── Public storefront ────────────────────────────────────────────────────────
+/** One extra photo in a product's gallery. The product's own imageUrl is the cover. */
+export interface ShopProductImage {
+    id: string
+    imageUrl: string
+    caption: string | null
+    sortOrder: number
+}
+
+/** Gallery photo as the public catalog serves it (shorter field name on the wire). */
+export interface StoreProductImage {
+    id: string
+    url: string
+    caption: string | null
+    sortOrder: number
+}
+
+export interface StoreCatalogVariant {
+    id: string; size: string | null; color: string | null; salePriceCents: number
+    trackingKind: 'pool' | 'serialized'; available: number
+}
+
+export interface StoreCatalogProduct {
+    id: string; name: string; description: string | null; brand: string | null
+    imageUrl: string | null; categoryId: string | null; sortOrder: number
+    /** Additional photos; the detail view renders [cover, ...images] de-duplicated. */
+    images: StoreProductImage[]
+    variants: StoreCatalogVariant[]
+}
+
 export interface StoreCatalog {
     categories: { id: string; name: string; sortOrder: number }[]
-    products: {
-        id: string; name: string; description: string | null; brand: string | null
-        imageUrl: string | null; categoryId: string | null; sortOrder: number
-        variants: { id: string; size: string | null; color: string | null; salePriceCents: number; trackingKind: 'pool' | 'serialized'; available: number }[]
-    }[]
+    products: StoreCatalogProduct[]
+}
+
+/** One of the rider's own shop orders (My Orders). */
+export interface MyShopOrder {
+    saleId: string
+    orderNumber: number | null
+    status: 'pending' | 'paid' | 'failed' | 'refunded'
+    orderChannel: 'counter' | 'online'
+    pickedUpAtUtc: string | null
+    createdAtUtc: string
+    totalCents: number
+    creditAppliedCents: number
+    lines: { name: string; variantLabel: string | null; quantity: number; unitPriceCents: number }[]
 }
 
 export interface ShopStockCountLine {

@@ -18,10 +18,15 @@
                 <v-chip v-for="c in visibleCategories" :key="c.id" :value="c.id" filter variant="tonal">{{ c.name }}</v-chip>
             </v-chip-group>
 
-            <v-row>
+            <!-- Embedded widget: the detail REPLACES the grid (see isEmbed in the script). -->
+            <v-card v-if="isEmbed && detailProduct" variant="outlined" class="mb-4">
+                <ProductDetail :product="detailProduct" @add="addFromDetail" @close="detailProduct = null" />
+            </v-card>
+
+            <v-row v-if="!(isEmbed && detailProduct)">
                 <v-col v-for="p in filteredProducts" :key="p.id" cols="12" sm="6" md="4" lg="3">
-                    <v-card class="d-flex flex-column" height="100%">
-                        <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)" height="160" cover></v-img>
+                    <v-card class="d-flex flex-column shop-card" height="100%" @click="openDetail(p)">
+                        <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)!" height="160" cover></v-img>
                         <v-card-text class="flex-grow-1">
                             <div class="text-caption text-medium-emphasis">{{ p.brand || '' }}</div>
                             <div class="font-weight-medium">{{ p.name }}</div>
@@ -35,10 +40,11 @@
                             <template v-else>
                                 <v-select v-if="p.variants.length > 1" v-model="picked[p.id]" :items="variantItems(p)"
                                     item-title="title" item-value="id" density="compact" hide-details
-                                    label="Option" class="mr-2" style="max-width: 170px"></v-select>
+                                    label="Option" class="mr-2" style="max-width: 170px"
+                                    @click.stop></v-select>
                                 <v-spacer></v-spacer>
                                 <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-cart-plus"
-                                    :disabled="!canAdd(p)" @click="addToCart(p)">
+                                    :disabled="!canAdd(p)" @click.stop="addToCart(p)">
                                     {{ canAdd(p) ? 'Add' : 'Out of stock' }}
                                 </v-btn>
                             </template>
@@ -132,28 +138,38 @@
             </v-card>
         </v-dialog>
 
+        <!-- Hosted site: the detail opens as a modal. -->
+        <v-dialog v-if="!isEmbed" v-model="detailOpen" max-width="900" scrollable>
+            <v-card v-if="detailProduct">
+                <ProductDetail :product="detailProduct" @add="addFromDetail" @close="detailProduct = null" />
+            </v-card>
+        </v-dialog>
+
         <InlineAuthDialog v-model="authDialogOpen" @authed="onAuthed" />
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { BikeShopService, type StoreCatalog } from '@/services/BikeShopService'
+import { useRoute } from 'vue-router'
+import { BikeShopService, type StoreCatalog, type StoreCatalogProduct, type StoreCatalogVariant } from '@/services/BikeShopService'
 import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
+import ProductDetail from '@/components/bikeshop/ProductDetail.vue'
+import { absoluteUrl } from '@/helpers/ImageUrl'
 import { CreditService } from '@/services/CreditService'
 import { branding } from '@/stores/branding'
 import authHelper from '@/helpers/AuthHelper'
 import { getStripe } from '@/helpers/StripeHelper'
 
-type CatalogProduct = StoreCatalog['products'][number]
+type CatalogProduct = StoreCatalogProduct
 
 const service = new BikeShopService()
+const route = useRoute()
 
-// Product images come back as a relative /uploads/... path; prefix with the API host so they
-// resolve when the API is a different origin than the SPA (local dev / split deployment).
-function absoluteUrl(u: string): string {
-    return u.startsWith('http') ? u : `${import.meta.env.VITE_API_ENDPOINT?.replace(/\/api$/, '') ?? ''}${u}`
-}
+// Embedded widget: the iframe is sized to its content and cannot scroll itself, so a
+// fixed-position dialog would center against the full iframe height and land off the
+// visitor's screen. Show the detail in place of the grid instead.
+const isEmbed = computed(() => !!route.meta.embed)
 
 const catalog = ref<StoreCatalog>({ categories: [], products: [] })
 const loading = ref(true)
@@ -204,23 +220,41 @@ const cartOpen = ref(false)
 const cartCount = computed(() => cart.value.reduce((s, l) => s + l.qty, 0))
 const cartTotal = computed(() => cart.value.reduce((s, l) => s + l.priceCents * l.qty, 0))
 
-function addToCart(p: CatalogProduct) {
-    const v = pickedVariant(p)
-    if (!v) return
+// One cart-add path for both the card's quick Add and the detail view's quantity stepper,
+// so the two can never drift on clamping or de-duplication.
+function addLine(p: CatalogProduct, v: StoreCatalogVariant | null, qty: number) {
+    if (!v || qty < 1) return
     const existing = cart.value.find(l => l.variantId === v.id)
     if (existing) {
-        if (existing.qty < v.available) existing.qty++
+        existing.qty = Math.min(existing.qty + qty, v.available)
     } else {
         cart.value.push({
             variantId: v.id,
             name: p.name,
             label: [v.size, v.color].filter(Boolean).join(' / '),
             priceCents: v.salePriceCents,
-            qty: 1,
+            qty: Math.min(qty, v.available),
             available: v.available,
         })
     }
     cartOpen.value = true
+}
+function addToCart(p: CatalogProduct) {
+    addLine(p, pickedVariant(p), 1)
+}
+
+// ── Product detail ─────────────────────────────────────────────────────────
+const detailProduct = ref<CatalogProduct | null>(null)
+const detailOpen = computed({
+    get: () => detailProduct.value !== null,
+    set: (v: boolean) => { if (!v) detailProduct.value = null },
+})
+function openDetail(p: CatalogProduct) { detailProduct.value = p }
+function addFromDetail(payload: { variantId: string; qty: number }) {
+    const p = detailProduct.value
+    if (!p) return
+    addLine(p, p.variants.find(v => v.id === payload.variantId) ?? null, payload.qty)
+    detailProduct.value = null
 }
 function changeQty(i: number, delta: number) {
     const l = cart.value[i]
@@ -239,6 +273,10 @@ const paying = ref(false)
 const payError = ref('')
 const stripeReady = ref(false)
 const pendingDue = ref(0)
+// Kept from the order response so the card path can look the order number up after the
+// payment settles, and can decrement the displayed credit balance by what was actually used.
+const pendingSaleId = ref<string | null>(null)
+const pendingCredit = ref(0)
 const doneOpen = ref(false)
 const doneOrderNumber = ref<number | null>(null)
 let stripe: any = null
@@ -268,6 +306,8 @@ async function placeOrder() {
             creditCents: useCredit.value ? myCreditCents.value : 0,
         })
         const data = r.data.data
+        pendingSaleId.value = data.saleId ?? null
+        pendingCredit.value = data.creditAppliedCents ?? 0
         if (data.status === 'paid') {
             // Store credit covered the whole order.
             finishOrder(data.orderNumber ?? null, data.creditAppliedCents ?? 0)
@@ -303,15 +343,34 @@ async function confirmPay() {
         if (error) {
             payError.value = error.message || 'Payment failed. Check the card and try again.'
         } else if (paymentIntent?.status === 'succeeded') {
-            try { await service.confirmIntent(paymentIntent.id) } catch { /* webhook finalizes */ }
+            try { await service.confirmIntent(paymentIntent.id) } catch { /* webhook is the backstop */ }
             payOpen.value = false
-            finishOrder(null, 0)
+            // The order number is assigned when the sale is finalized, which may land a beat
+            // after the card confirms. Poll briefly so the customer sees the number they are
+            // told to show at the counter, instead of only getting it by email.
+            const num = await pollOrderNumber(pendingSaleId.value)
+            finishOrder(num, pendingCredit.value)
         } else {
             payError.value = 'The payment has not settled yet. It will complete shortly; watch your email for the order number.'
         }
     } catch (e: any) {
         payError.value = e?.message || 'Payment failed. Please try again.'
     } finally { paying.value = false }
+}
+
+// Up to ~8s of polling: the webhook usually settles in well under a second, and a null
+// return simply falls back to the "watch your email" copy in the success dialog.
+async function pollOrderNumber(saleId: string | null): Promise<number | null> {
+    if (!saleId) return null
+    for (let i = 0; i < 8; i++) {
+        try {
+            const r = await service.storeOrderStatus(saleId)
+            const o = r.data.data
+            if (o.status === 'paid' && o.orderNumber != null) return o.orderNumber
+        } catch { /* keep polling; the email carries the number regardless */ }
+        await new Promise(res => setTimeout(res, 1000))
+    }
+    return null
 }
 
 function finishOrder(orderNumber: number | null, creditUsed: number) {
@@ -350,4 +409,6 @@ onMounted(async () => {
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+/* The whole card opens the detail view; the option select and Add button stop the click. */
+.shop-card { cursor: pointer; }
 </style>

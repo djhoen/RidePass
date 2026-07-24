@@ -302,8 +302,17 @@ namespace webapi.Controllers
         public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            if (file is null || file.Length == 0) return new ApiResponses().BadRequestResult("File is required.");
-            if (file.Length > 5 * 1024 * 1024) return new ApiResponses().BadRequestResult("File exceeds 5 MB limit.");
+            var (ext, error) = ValidateImage(file);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, TenantId, "shop", ext!, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
+        }
+
+        private static (string? ext, string? error) ValidateImage(IFormFile file)
+        {
+            if (file is null || file.Length == 0) return (null, "File is required.");
+            if (file.Length > 5 * 1024 * 1024) return (null, "File exceeds 5 MB limit.");
             var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["image/png"] = ".png",
@@ -311,10 +320,104 @@ namespace webapi.Controllers
                 ["image/webp"] = ".webp",
             };
             if (!allowed.TryGetValue(file.ContentType, out var ext))
-                return new ApiResponses().BadRequestResult($"Unsupported content type: {file.ContentType}.");
+                return (null, $"Unsupported content type: {file.ContentType}.");
+            return (ext, null);
+        }
+
+        // ── Product gallery ───────────────────────────────────────────────────────
+        // The product's own image_url is the cover (uploaded above); these are the extra
+        // photos the storefront detail view shows. By-id routes are ProductImages/{id} so
+        // they can't collide with the cover-upload route.
+        private const int MaxProductImages = 12;
+
+        [HttpGet("Products/{productId:guid}/Images")]
+        public async Task<IActionResult> ListProductImages(Guid productId)
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var product = await _shop.GetProduct(productId, TenantId);
+            if (product is null) return new ApiResponses().NotFoundResult("Product not found.");
+            return new ApiResponses().OkResult(await _shop.ListProductImages(productId, TenantId));
+        }
+
+        [HttpPost("Products/{productId:guid}/Images")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> AddProductImage(Guid productId, IFormFile file,
+            [FromForm] string? caption, CancellationToken ct)
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var product = await _shop.GetProduct(productId, TenantId);
+            if (product is null) return new ApiResponses().NotFoundResult("Product not found.");
+            var (ext, error) = ValidateImage(file);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+
+            // Cap BEFORE storing the file, so a rejected upload never leaves an orphan blob.
+            if (await _shop.CountProductImages(productId, TenantId) >= MaxProductImages)
+            {
+                return new ApiResponses().BadRequestResult(
+                    $"You can attach up to {MaxProductImages} photos per product. Remove one first.");
+            }
+
             await using var stream = file.OpenReadStream();
-            var url = await _imageStorage.SaveAsync(stream, TenantId, "shop", ext, ct);
-            return new ApiResponses().OkResult(new { imageUrl = url });
+            var url = await _imageStorage.SaveAsync(stream, TenantId, "shop", ext!, ct);
+            try
+            {
+                var saved = await _shop.AddProductImage(new ShopProductImage
+                {
+                    TenantId = TenantId,
+                    ProductId = productId,
+                    ImageUrl = url,
+                    Caption = string.IsNullOrWhiteSpace(caption) ? null : caption.Trim(),
+                });
+                return new ApiResponses().OkResult(saved);
+            }
+            catch
+            {
+                // The row is the authority; a stored file with no row is litter, so best-effort
+                // clean it up before surfacing the failure.
+                try { await _imageStorage.DeleteAsync(url, ct); } catch { /* storage is best-effort */ }
+                throw;
+            }
+        }
+
+        [HttpPut("ProductImages/{imageId:guid}")]
+        public async Task<IActionResult> UpdateProductImage(Guid imageId,
+            [FromBody] UpdateShopProductImageRequest req)
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var affected = await _shop.UpdateProductImageCaption(imageId, TenantId,
+                string.IsNullOrWhiteSpace(req.Caption) ? null : req.Caption.Trim());
+            if (affected == 0) return new ApiResponses().NotFoundResult("Photo not found.");
+            return new ApiResponses().OkResult();
+        }
+
+        [HttpDelete("ProductImages/{imageId:guid}")]
+        public async Task<IActionResult> DeleteProductImage(Guid imageId, CancellationToken ct)
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var image = await _shop.GetProductImage(imageId, TenantId);
+            if (image is null) return new ApiResponses().NotFoundResult("Photo not found.");
+
+            await _shop.DeleteProductImage(imageId, TenantId);
+            // Only bin the file once nothing else points at it: "Make cover" copies a url, so a
+            // cover and a gallery row legitimately share one blob.
+            if (!await _shop.IsImageUrlReferenced(TenantId, image.ImageUrl, image.Id))
+            {
+                try { await _imageStorage.DeleteAsync(image.ImageUrl, ct); }
+                catch { /* the row is gone; a stranded file must not fail the request */ }
+            }
+            return new ApiResponses().OkResult();
+        }
+
+        [HttpPost("Products/{productId:guid}/Images/Reorder")]
+        public async Task<IActionResult> ReorderProductImages(Guid productId,
+            [FromBody] ShopImageReorderRequest req)
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var product = await _shop.GetProduct(productId, TenantId);
+            if (product is null) return new ApiResponses().NotFoundResult("Product not found.");
+            await _shop.ReorderProductImages(productId, TenantId,
+                req.Items.Select(i => (i.Id, i.SortOrder)));
+            return new ApiResponses().OkResult();
         }
 
         // ── Variants ──────────────────────────────────────────────────────────────

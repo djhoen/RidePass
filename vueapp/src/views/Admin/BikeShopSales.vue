@@ -137,6 +137,11 @@
                             {{ itemsLabel(s) }}
                             <v-chip v-if="s.workOrderId" size="x-small" class="ml-1" variant="tonal">repair</v-chip>
                             <v-chip v-if="isAwaiting(s)" size="x-small" class="ml-1" color="warning" variant="tonal">pickup</v-chip>
+                            <v-tooltip v-else-if="s.pickedUpAt" :text="`Collected ${formatDate(s.pickedUpAt)}`" location="top">
+                                <template #activator="{ props: tp }">
+                                    <v-chip v-bind="tp" size="x-small" class="ml-1" variant="tonal">picked up</v-chip>
+                                </template>
+                            </v-tooltip>
                             <v-chip v-else-if="s.orderChannel === 'online'" size="x-small" class="ml-1" variant="tonal">online</v-chip>
                         </td>
                         <td class="text-right">{{ money(s.totalCents) }}</td>
@@ -232,6 +237,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import dayjs from 'dayjs'
+import { tenantDayjs } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopSale, type ShopSalesQuery } from '@/services/BikeShopService'
 
 const service = new BikeShopService()
@@ -377,8 +383,10 @@ const snackbar = ref(false); const snackText = ref(''); const snackColor = ref<'
 function flash(t: string, c: 'success' | 'error' = 'success') { snackText.value = t; snackColor.value = c; snackbar.value = true }
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
 // The list now spans arbitrary date ranges, so an older sale has to show its year.
+// Tenant timezone, not the browser's: a manager checking the till from another timezone
+// must still read the track's own clock.
 function formatDate(iso: string): string {
-    const d = dayjs(iso)
+    const d = tenantDayjs(iso)
     return d.year() === dayjs().year() ? d.format('MMM D, h:mm A') : d.format('MMM D YYYY, h:mm A')
 }
 function itemsLabel(s: ShopSale): string {
