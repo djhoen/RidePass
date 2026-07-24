@@ -848,6 +848,19 @@ export class BikeShopService {
     storeCatalog() {
         return axios.get<{ data: StoreCatalog }>(`${this.apiUrl}/ShopStore/Catalog`)
     }
+
+    // ── Rentals (customer self-serve) ────────────────────────────────────────
+    rentalCatalog() {
+        return axios.get<{ data: RentalCatalog }>(`${this.apiUrl}/ShopStore/RentalCatalog`)
+    }
+    storeRentalAvailability(variantId: string, startsAt: string, endsAt: string) {
+        return axios.get<{ data: RentalAvailability }>(`${this.apiUrl}/ShopStore/RentalAvailability`, {
+            params: { variantId, startsAt, endsAt },
+        })
+    }
+    storeBookRental(req: { lines: { variantId: string; quantity: number }[]; startsAt: string; endsAt: string }) {
+        return axios.post<{ data: RentalBookResult }>(`${this.apiUrl}/ShopStore/BookRental`, req)
+    }
     storeOrder(req: { lines: { variantId: string; quantity: number }[]; couponCode?: string | null; creditCents?: number }) {
         return axios.post<{ data: RingUpResult & { creditAppliedCents?: number; dueCents?: number } }>(
             `${this.apiUrl}/ShopStore/Order`, req)
@@ -972,6 +985,50 @@ export interface StoreCatalogProduct {
     /** Additional photos; the detail view renders [cover, ...images] de-duplicated. */
     images: StoreProductImage[]
     variants: StoreCatalogVariant[]
+}
+
+export interface RentalCatalogVariant {
+    id: string
+    size: string | null
+    color: string | null
+    dailyRateCents: number
+    depositCents: number
+    trackingKind: 'pool' | 'serialized'
+    onFloor: number
+}
+export interface RentalCatalogProduct {
+    id: string
+    name: string
+    description: string | null
+    brand: string | null
+    imageUrl: string | null
+    categoryId: string | null
+    sortOrder: number
+    variants: RentalCatalogVariant[]
+}
+export interface RentalCatalog {
+    categories: { id: string; name: string; sortOrder: number }[]
+    products: RentalCatalogProduct[]
+}
+export interface RentalAvailability {
+    available: number
+    days: number
+    dailyRateCents: number
+    depositCents: number
+    lineRateCents: number
+}
+export interface RentalBookResult {
+    rentalId: string
+    receiptToken: string
+    status: string
+    clientSecret: string | null
+    depositClientSecret: string | null
+    subtotalCents: number
+    feeCents: number
+    taxCents: number
+    totalCents: number
+    depositCents: number
+    days: number
 }
 
 export interface StoreCatalog {

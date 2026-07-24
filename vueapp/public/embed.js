@@ -65,6 +65,8 @@
                 return { path: '/embed/status' };
             case 'shop':
                 return { path: '/embed/shop' };
+            case 'rentals':
+                return { path: '/embed/rentals' };
             case 'giftcard':
                 return { path: '/embed/giftcard' };
             case 'membership':

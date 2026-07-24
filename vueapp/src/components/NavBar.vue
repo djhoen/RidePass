@@ -23,6 +23,7 @@
             <v-btn v-if="branding.membershipEnabled" to="/Membership" variant="text">Membership</v-btn>
             <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
             <v-btn v-if="branding.bikeShopEnabled" to="/Shop" variant="text" prepend-icon="mdi-bike">Shop</v-btn>
+            <v-btn v-if="branding.bikeShopEnabled" to="/Rentals" variant="text" prepend-icon="mdi-bike-fast">Rentals</v-btn>
             <!-- Standalone /Rentals retired — rentals are booked at the Bike Shop counter now. -->
 
             <v-btn v-if="showOrderFood" to="/Order" variant="text" prepend-icon="mdi-silverware-fork-knife">Order Food</v-btn>
@@ -120,6 +121,7 @@
                     <v-list-item v-if="branding.membershipEnabled" to="/Membership" title="Membership" prepend-icon="mdi-card-account-details"></v-list-item>
                     <v-list-item v-if="branding.giftCardsEnabled" to="/GiftCard" title="Gift Cards" prepend-icon="mdi-gift"></v-list-item>
                     <v-list-item v-if="branding.bikeShopEnabled" to="/Shop" title="Shop" prepend-icon="mdi-bike"></v-list-item>
+                    <v-list-item v-if="branding.bikeShopEnabled" to="/Rentals" title="Rentals" prepend-icon="mdi-bike-fast"></v-list-item>
                     <v-list-item v-if="showOrderFood" to="/Order" title="Order Food" prepend-icon="mdi-silverware-fork-knife"></v-list-item>
                     <v-list-item v-if="branding.blogEnabled" to="/Blog" title="Blog" prepend-icon="mdi-post"></v-list-item>
                     <v-list-item v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" :title="p.label"

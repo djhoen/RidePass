@@ -1154,18 +1154,18 @@ BEGIN
     -- Training groups (each IS a ticket tier - Script0201_LessonGroups).
     INSERT INTO event_ticket_tier
         (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active,
-         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience)
+         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience, kind)
     VALUES
         (v_tenant_id, v_evt_id, 'Beginner Group (Green Circle)', 14900, 8, 10, true,
          (SELECT id FROM instructor WHERE tenant_id = v_tenant_id AND email = 'sam.instructor@highland.test'),
          'Green Circle', 'Trail',
          (v_ny_midnight + INTERVAL '9 days' + TIME '09:00') AT TIME ZONE 'America/New_York',
-         (v_ny_midnight + INTERVAL '9 days' + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider'),
+         (v_ny_midnight + INTERVAL '9 days' + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider', 'gate_fee'),
         (v_tenant_id, v_evt_id, 'Intermediate Group (Blue Square)', 15900, 6, 20, true,
          (SELECT id FROM instructor WHERE tenant_id = v_tenant_id AND email = 'jo.coach@highland.test'),
          'Blue Square', 'Downhill',
          (v_ny_midnight + INTERVAL '9 days' + TIME '11:30') AT TIME ZONE 'America/New_York',
-         (v_ny_midnight + INTERVAL '9 days' + TIME '13:30') AT TIME ZONE 'America/New_York', 'rider');
+         (v_ny_midnight + INTERVAL '9 days' + TIME '13:30') AT TIME ZONE 'America/New_York', 'rider', 'gate_fee');
 
     -- Optional bike-with-lesson add-on (shop_lesson_rentable - the shop_* successor
     -- to the retired event_rental_eligibility), priced below the full day rate since
@@ -1604,11 +1604,11 @@ BEGIN
 
     INSERT INTO event_ticket_tier
         (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active,
-         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience)
+         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience, kind)
     SELECT v_tenant_id, e.id, t.name, t.price, t.inv, t.so, true,
            CASE t.so WHEN 10 THEN v_instr_sam WHEN 20 THEN v_instr_jo ELSE NULL END,
            t.skill, t.equip,
-           e.starts_at + t.ofs_start, e.starts_at + t.ofs_end, 'rider'
+           e.starts_at + t.ofs_start, e.starts_at + t.ofs_end, 'rider', 'gate_fee'
     FROM event e
     CROSS JOIN (VALUES
         ('Beginner Group (Green Circle)',    14900, 8, 10, 'Green Circle', 'Trail',    INTERVAL '0 hours', INTERVAL '2 hours'),
@@ -2120,20 +2120,20 @@ BEGIN
         (v_evt_clinic, v_instr_sam), (v_evt_clinic, v_instr_jo);
     INSERT INTO event_ticket_tier
         (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active,
-         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience)
+         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience, kind)
     VALUES
         (v_tenant_id, v_evt_clinic, 'Beginner Group (Green Circle)', 14900, 8, 10, true,
          v_instr_sam, 'Green Circle', 'Trail',
          (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
-         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider'),
+         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider', 'gate_fee'),
         (v_tenant_id, v_evt_clinic, 'Intermediate Group (Blue Square)', 15900, 6, 20, true,
          v_instr_jo, 'Blue Square', 'Downhill',
          (v_tomorrow + TIME '11:30') AT TIME ZONE 'America/New_York',
-         (v_tomorrow + TIME '13:30') AT TIME ZONE 'America/New_York', 'rider'),
+         (v_tomorrow + TIME '13:30') AT TIME ZONE 'America/New_York', 'rider', 'gate_fee'),
         (v_tenant_id, v_evt_clinic, 'Private Lesson (2hr)', 21900, 3, 30, true,
          NULL, NULL, NULL,
          (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
-         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider');
+         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider', 'gate_fee');
 
     -- The base fragment's upcoming Saturday event gets advance sales too.
     SELECT id INTO v_evt_sat FROM event

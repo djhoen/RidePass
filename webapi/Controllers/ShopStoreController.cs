@@ -95,6 +95,254 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { categories, products });
         }
 
+        // ── Rentals: browse + book online ────────────────────────────────────────
+        // Public rentable catalog: rentable products with a daily rate, trimmed like the sale
+        // catalog. Serialized bikes report whether any unit exists on the floor (real availability
+        // is per-window, checked at RentalAvailability); pool gear reports free-now-agnostic here.
+        [HttpGet("RentalCatalog")]
+        public async Task<IActionResult> RentalCatalog()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!_tenantContext.Tenant.BikeShopEnabled)
+                return new ApiResponses().OkResult(new { categories = Array.Empty<object>(), products = Array.Empty<object>() });
+
+            var categories = (await _shop.ListCategories(TenantId, activeOnly: true))
+                .Select(c => new { id = c.Id, name = c.Name, sortOrder = c.SortOrder });
+            var rentable = (await _shop.ListProducts(TenantId, activeOnly: true))
+                .Where(p => p.IsRentable && p.IsPublished)
+                .ToList();
+            var galleries = await _shop.ListImagesForProducts(rentable.Select(p => p.Id), TenantId);
+            var products = rentable
+                .Select(p => new
+                {
+                    id = p.Id,
+                    name = p.Name,
+                    description = p.Description,
+                    brand = p.Brand,
+                    imageUrl = p.ImageUrl ?? galleries.GetValueOrDefault(p.Id)?.FirstOrDefault()?.ImageUrl,
+                    categoryId = p.CategoryId,
+                    sortOrder = p.SortOrder,
+                    variants = p.Variants
+                        .Where(v => v.IsActive && v.DailyRateCents is not null)
+                        .Select(v => new
+                        {
+                            id = v.Id,
+                            size = v.Size,
+                            color = v.Color,
+                            dailyRateCents = v.DailyRateCents,
+                            depositCents = v.DepositCents,
+                            trackingKind = v.TrackingKind,
+                            // Whether any unit exists at all; the per-window count comes from RentalAvailability.
+                            onFloor = v.AvailableCount,
+                        }),
+                })
+                .Where(p => p.variants.Any());
+            return new ApiResponses().OkResult(new { categories, products });
+        }
+
+        // Public per-window availability for one rentable variant. Returns a count only; the
+        // specific serialized units are never exposed to customers (the server assigns one at
+        // booking). Availability is not PII, so this is anonymous like the catalog.
+        [HttpGet("RentalAvailability")]
+        public async Task<IActionResult> RentalAvailability([FromQuery] Guid variantId,
+            [FromQuery] DateTime startsAt, [FromQuery] DateTime endsAt)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var s = startsAt.ToUniversalTime();
+            var e = endsAt.ToUniversalTime();
+            if (e <= s) return new ApiResponses().BadRequestResult("The return time must be after the start time.");
+            var variant = await _shop.GetVariant(variantId, TenantId);
+            if (variant is null || variant.DailyRateCents is null)
+                return new ApiResponses().NotFoundResult("That rental isn't available.");
+            var available = variant.TrackingKind == "serialized"
+                ? (await _shop.GetFreeSerializedUnits(variantId, TenantId, s, e)).Count
+                : await _shop.GetPoolAvailability(variantId, TenantId, s, e);
+            var days = Math.Max(1, (int)Math.Ceiling((e - s).TotalDays));
+            return new ApiResponses().OkResult(new
+            {
+                available,
+                days,
+                dailyRateCents = variant.DailyRateCents,
+                depositCents = variant.DepositCents,
+                lineRateCents = variant.DailyRateCents.Value * days,
+            });
+        }
+
+        // Book a rental online as the signed-in rider. Mirrors the counter Book (same re-pricing,
+        // season-pass discount, service fee, tax, deposit hold) but takes identity from the token,
+        // is always card, always holds the deposit, and auto-assigns free serialized units so the
+        // customer never picks a serial number. Settles through the same shop_rental webhook.
+        [Authorize]
+        [HttpPost("BookRental")]
+        public async Task<IActionResult> BookRental([FromBody] RentalCustomerBookRequest req, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenant = _tenantContext.Tenant;
+            if (!tenant.BikeShopEnabled)
+                return new ApiResponses().BadRequestResult("The bike shop isn't available at this track.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+            var user = await _users.GetById(userId);
+            if (user is null) return new ApiResponses().BadRequestResult("User not found.");
+
+            var startsAt = req.StartsAt.ToUniversalTime();
+            var endsAt = req.EndsAt.ToUniversalTime();
+            if (endsAt <= startsAt) return new ApiResponses().BadRequestResult("The return time must be after the start time.");
+            if (startsAt < DateTime.UtcNow.AddHours(-1))
+                return new ApiResponses().BadRequestResult("The rental window starts in the past.");
+
+            var days = Math.Max(1, (int)Math.Ceiling((endsAt - startsAt).TotalDays));
+            var infos = (await _shop.GetVariantsForSale(req.Lines.Select(l => l.VariantId), TenantId))
+                .ToDictionary(v => v.Id);
+
+            var lines = new List<ShopRentalLine>();
+            int amount = 0, depositTotal = 0, riders = 0;
+            foreach (var line in req.Lines)
+            {
+                var variant = await _shop.GetVariant(line.VariantId, TenantId);
+                if (variant is null || !infos.ContainsKey(line.VariantId))
+                    return new ApiResponses().BadRequestResult("An item in your booking is no longer available.");
+                if (variant.DailyRateCents is null)
+                    return new ApiResponses().BadRequestResult($"\"{infos[line.VariantId].ProductName}\" isn't set up for rental.");
+                var info = infos[line.VariantId];
+                var label = string.Join(" / ", new[] { info.Size, info.Color, info.Gender }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                var perDay = variant.DailyRateCents.Value;
+
+                if (variant.TrackingKind == "serialized")
+                {
+                    // Auto-assign: pick the first `quantity` free units for the window so the
+                    // customer never sees serial numbers. One rental line per assigned unit.
+                    var free = await _shop.GetFreeSerializedUnits(line.VariantId, TenantId, startsAt, endsAt);
+                    if (free.Count < line.Quantity)
+                        return new ApiResponses().BadRequestResult(
+                            $"Only {free.Count} of \"{info.ProductName}\" free for those dates. Pick fewer or a different window.");
+                    foreach (var unit in free.Take(line.Quantity))
+                    {
+                        var lineAmount = perDay * days;
+                        amount += lineAmount;
+                        depositTotal += variant.DepositCents;
+                        riders += 1;
+                        lines.Add(new ShopRentalLine
+                        {
+                            VariantId = line.VariantId,
+                            ItemId = unit.Id,
+                            Quantity = 1,
+                            NameSnapshot = info.ProductName,
+                            VariantLabel = string.IsNullOrWhiteSpace(label) ? null : label,
+                            DailyRateCentsFrozen = perDay,
+                            DepositCentsFrozen = variant.DepositCents,
+                            LineAmountCents = lineAmount,
+                        });
+                    }
+                }
+                else
+                {
+                    var available = await _shop.GetPoolAvailability(line.VariantId, TenantId, startsAt, endsAt);
+                    if (line.Quantity > available)
+                        return new ApiResponses().BadRequestResult(
+                            $"Only {available} of \"{info.ProductName}\" free for those dates. Pick fewer or a different window.");
+                    var lineAmount = perDay * days * line.Quantity;
+                    amount += lineAmount;
+                    depositTotal += variant.DepositCents * line.Quantity;
+                    riders += line.Quantity;
+                    lines.Add(new ShopRentalLine
+                    {
+                        VariantId = line.VariantId,
+                        ItemId = null,
+                        Quantity = line.Quantity,
+                        NameSnapshot = info.ProductName,
+                        VariantLabel = string.IsNullOrWhiteSpace(label) ? null : label,
+                        DailyRateCentsFrozen = perDay,
+                        DepositCentsFrozen = variant.DepositCents,
+                        LineAmountCents = lineAmount,
+                    });
+                }
+            }
+
+            // Season-pass rental benefit (valid on the START date), same as the counter.
+            var benefitDiscount = 0;
+            if (amount > 0)
+            {
+                var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
+                    userId, TenantId, benefitType: "rental", scopeId: null, onDateUtc: startsAt);
+                benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(amount));
+            }
+            var subtotal = amount - benefitDiscount;
+
+            // Service fee + tax, identical to the counter. Deposit is never in either base.
+            var serviceChargeCents = (int)((long)subtotal * tenant.ServiceChargeBps / 10_000L);
+            var renterFeeCents = (int)((long)serviceChargeCents * tenant.RentalRiderPaidServiceChargeBps / 10_000L);
+            var taxableBase = subtotal + (tenant.RentalTaxServiceChargeTaxable ? renterFeeCents : 0);
+            var taxCents = (int)Math.Round(
+                (decimal)taxableBase * (tenant.RentalTaxBps ?? 0) / 10_000m, MidpointRounding.AwayFromZero);
+            var total = subtotal + renterFeeCents + taxCents;
+
+            if (total < 50) return new ApiResponses().BadRequestResult("An online rental must total at least 50 cents.");
+            if (tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(tenant.StripeConnectAccountId))
+                return new ApiResponses().BadRequestResult("This track can't take online payments yet.");
+
+            var rental = new ShopRental
+            {
+                TenantId = TenantId,
+                RenterUserId = userId,
+                RenterName = $"{user.FirstName} {user.LastName}".Trim(),
+                RenterEmail = user.Email,
+                RenterPhone = user.Phone,
+                StartsAt = startsAt,
+                EndsAt = endsAt,
+                Status = "pending",
+                AmountCents = amount,
+                TaxCents = taxCents,
+                TotalCents = total,
+                ServiceChargeCents = serviceChargeCents,
+                RidersRequired = Math.Max(1, riders),
+                DepositCents = depositTotal,
+                PaymentMethod = "stripe",
+                SoldByUserId = null,   // self-serve online booking; no counter operator
+            };
+            var (rentalId, receipt) = await _shop.CreateRental(rental, lines);
+
+            var metadata = new Dictionary<string, string>
+            {
+                ["tenant_id"] = TenantId.ToString(),
+                ["sale_kind"] = "shop_rental",
+                ["shop_rental_id"] = rentalId.ToString(),
+            };
+            string? depositClientSecret = null;
+            PaymentIntentCreated intent;
+            ChargePlan plan;
+            try
+            {
+                plan = _chargeRouter.Plan(tenant, serviceFeeCents: serviceChargeCents, chargeAmountCents: total);
+                intent = await _payments.CreatePaymentIntentAsync(total, "usd", metadata, rental.RenterEmail,
+                    connectedAccountId: plan.ConnectedAccountId, applicationFeeCents: plan.ApplicationFeeCents, ct: ct);
+                await _shop.SetRentalPaymentIntent(rentalId, intent.IntentId);
+                if (plan.IsDirect) await _shop.MarkRentalDirectCharge(rentalId, TenantId, plan.ConnectedAccountId!);
+
+                if (depositTotal > 0)
+                {
+                    var holdMeta = new Dictionary<string, string>(metadata) { ["sale_kind"] = "shop_rental_deposit_hold" };
+                    var hold = await _payments.CreateHoldPaymentIntentAsync(depositTotal, "usd", holdMeta,
+                        rental.RenterEmail, connectedAccountId: plan.ConnectedAccountId, ct: ct);
+                    await _shop.SetRentalDepositIntent(rentalId, hold.IntentId);
+                    depositClientSecret = hold.ClientSecret;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                await _shop.MarkRentalFailed(rentalId);
+                return new ApiResponses().BadRequestResult(ex.Message);
+            }
+
+            return new ApiResponses().OkResult(new
+            {
+                rentalId, receiptToken = receipt, status = "pending",
+                clientSecret = intent.ClientSecret, depositClientSecret,
+                subtotalCents = subtotal, feeCents = renterFeeCents, taxCents,
+                totalCents = total, depositCents = depositTotal, days,
+            });
+        }
+
         // Buy online, pick up in store. Signed-in riders only (the account carries the pickup
         // identity, pass benefits, and store credit). Pool variants only; the server re-prices
         // everything and the finalizer settles it exactly like a counter card sale.

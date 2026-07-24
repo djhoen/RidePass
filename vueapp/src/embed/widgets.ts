@@ -85,6 +85,12 @@ export const EMBED_WIDGETS: EmbedWidgetDef[] = [
         icon: 'mdi-storefront-outline',
     },
     {
+        key: 'rentals',
+        label: 'Rental booking',
+        description: 'Reserve rental bikes online: pick gear and dates, pay the fee and deposit hold, sign in inline. Waiver + pickup at the shop.',
+        icon: 'mdi-bike-fast',
+    },
+    {
         key: 'giftcard',
         label: 'Gift cards',
         description: 'Sell gift cards from the track\'s own site. The form is open to everyone; buying signs in inline.',
@@ -169,6 +175,7 @@ export function buildEmbedPath(widgetKey: string, values: Record<string, string>
     if (widgetKey === 'order') return '/embed/order'
     if (widgetKey === 'status') return '/embed/status'
     if (widgetKey === 'shop') return '/embed/shop'
+    if (widgetKey === 'rentals') return '/embed/rentals'
     if (widgetKey === 'giftcard') return '/embed/giftcard'
     if (widgetKey === 'membership') return '/embed/membership'
     if (widgetKey === 'feedback') return '/embed/feedback'

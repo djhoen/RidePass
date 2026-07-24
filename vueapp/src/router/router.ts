@@ -17,6 +17,8 @@ const routes = [
     // Per-product marketing landing page (admin-authored under Admin > Season Passes).
     { path: '/SeasonPasses/:slug', name: 'SeasonPassLanding', component: () => import('../views/SeasonPassLanding.vue') },
     { path: '/GiftCard', name: 'BuyGiftCard', component: () => import('../views/BuyGiftCard.vue'), meta: { requiresAuth: true } },
+    // Public: browse rentable gear anonymously; booking signs in inline (like Shop / Order).
+    { path: '/Rentals', name: 'Rentals', component: () => import('../views/Rentals.vue') },
     { path: '/Order', name: 'OrderFood', component: () => import('../views/OrderFood.vue'), meta: { requiresAuth: true } },
     {
         path: '/Waitlist/Confirm/:token',
@@ -618,6 +620,12 @@ const routes = [
         path: '/embed/shop',
         name: 'EmbedShop',
         component: () => import('../views/Embed/EmbedShop.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/rentals',
+        name: 'EmbedRentals',
+        component: () => import('../views/Embed/EmbedRentals.vue'),
         meta: { hideNav: true, hideFooter: true, embed: true },
     },
     {
