@@ -300,6 +300,11 @@ BEGIN
         UPDATE season_pass_product SET
             slug = '3-ride-pass',
             landing_published = true,
+            -- Hero banner (uploaded to the stage droplet's /uploads disk, which survives a
+            -- reseed; the path is tenant-scoped to Highland, so it's stable). Re-set here so a
+            -- reseed doesn't blank the DB pointer. On a fresh droplet with no such file it would
+            -- 404, but this seed only ever runs against the Highland demo tenant on stage.
+            hero_image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/passes-5a7d9b8609d44ed8bdb5efb3861cbe87.jpg',
             landing_html =
                 '<h2>Three days. One season. Zero pressure.</h2>'
              || '<p>One day at Highland gets you hooked. Three days is where it clicks: day one you '
@@ -2609,7 +2614,26 @@ BEGIN
         RAISE EXCEPTION 'tenant "highland" not found';
     END IF;
 
-    INSERT INTO season_pass_product (tenant_id, name, description, price_cents, valid_from_date, valid_to_date, kind, total_credits, sort_order, slug, landing_published, hero_image_url, landing_html) SELECT v_tenant_id, '3 Ride Pass', 'Three lift-served ride days, any open day this season. One rider, no blackout dates.', 21900, CURRENT_DATE, (CURRENT_DATE + INTERVAL '9 months')::date, 'credits', 3, 100, '3-ride-pass', 't', NULL, '<h2>Three days. One season. Zero pressure.</h2><p>One day at Highland gets you hooked. Three days is where it clicks: day one you explore the mountain, day two you start linking sections, and by day three you''re riding trails top to bottom with real flow.</p><ul><li><strong>Three full lift-served ride days</strong> to use any open day this season</li><li><strong>No blackout dates</strong> - weekends, holidays, race weekends, all fair game</li><li><strong>No advance booking</strong> - show your pass at the gate whenever you''re ready</li><li><strong>One rider, all season</strong> - your pass, your progression</li></ul><p>Cheaper than three day tickets, with none of the commitment of a full season pass. When the forecast looks perfect, just come ride.</p>' WHERE NOT EXISTS (SELECT 1 FROM season_pass_product WHERE tenant_id = v_tenant_id AND slug = '3-ride-pass');
+    INSERT INTO season_pass_product (tenant_id, name, description, price_cents, valid_from_date, valid_to_date, kind, total_credits, sort_order, slug, landing_published, hero_image_url, landing_html) SELECT v_tenant_id, '3 Ride Pass', 'Three lift-served ride days, any open day this season. One rider, no blackout dates.', 21900, CURRENT_DATE, (CURRENT_DATE + INTERVAL '9 months')::date, 'credits', 3, 100, '3-ride-pass', 't', '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/passes-5a7d9b8609d44ed8bdb5efb3861cbe87.jpg', '<h2>Three days. One season. Zero pressure.</h2><p>One day at Highland gets you hooked. Three days is where it clicks: day one you explore the mountain, day two you start linking sections, and by day three you''re riding trails top to bottom with real flow.</p><ul><li><strong>Three full lift-served ride days</strong> to use any open day this season</li><li><strong>No blackout dates</strong> - weekends, holidays, race weekends, all fair game</li><li><strong>No advance booking</strong> - show your pass at the gate whenever you''re ready</li><li><strong>One rider, all season</strong> - your pass, your progression</li></ul><p>Cheaper than three day tickets, with none of the commitment of a full season pass. When the forecast looks perfect, just come ride.</p>' WHERE NOT EXISTS (SELECT 1 FROM season_pass_product WHERE tenant_id = v_tenant_id AND slug = '3-ride-pass');
 END $hl_threeride$;
+
+-- ============================================================================
+-- Highland Bike Park - rental fleet images (freely-licensed Wikimedia Commons
+-- side-view bike photos, uploaded once via the admin API; files persist on the
+-- droplet). Re-points the reseeded shop_product rows at them.
+-- ============================================================================
+DO $hl_bike_images$
+DECLARE
+    v_tenant_id uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+
+    UPDATE shop_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/shop-e437e2bfcbc64c0ebf005b238e82c13e.jpg' WHERE tenant_id = v_tenant_id AND name = 'Giant Reign Enduro';
+    UPDATE shop_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/shop-ea2f96f368a24ef3b2de482b3fb4eff1.jpg' WHERE tenant_id = v_tenant_id AND name = 'Santa Cruz V10 DH';
+    UPDATE shop_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/shop-a3ad4999a8e64853b4def538815b64ae.jpg' WHERE tenant_id = v_tenant_id AND name = 'Norco Fluid 24 Kids';
+END $hl_bike_images$;
 
 COMMIT;
