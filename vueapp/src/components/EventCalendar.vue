@@ -143,10 +143,13 @@ function timeLabel(ev: EventDto): string {
 }
 
 .cal-cell {
+    /* min-height keeps empty weeks from collapsing, but cells must be allowed to GROW:
+       overflow:hidden with a fixed height sliced the event entries on busy days (three
+       or more events). The grid row stretches to its tallest cell, and the embed iframe
+       auto-resizes to the taller widget, so growth is safe in both hosts. */
     min-height: 104px;
     border: 1px solid rgba(0, 0, 0, 0.06);
     padding: 4px;
-    overflow: hidden;
 }
 
 .cal-cell--muted {
