@@ -127,11 +127,11 @@
         iframe.style.width = '100%';
         iframe.style.border = '0';
         iframe.style.display = 'block';
-        // Pre-load placeholder only. It must NOT be a min-height: now that widgets report
-        // their true content height, a floor would leave dead space under every short one
-        // (the membership widget is ~330px). The resize handler clamps to 200px, so this
-        // can only ever be replaced by a sane value.
-        iframe.style.height = '400px';
+        // Pre-load placeholder only, replaced by the first resize message. Not a min-height:
+        // widgets report their true content height, so a floor would strand dead space under a
+        // short one. The compact strip widgets start small so they don't flash a tall box and
+        // collapse; everything else starts at a roomy default.
+        iframe.style.height = (type === 'status') ? '60px' : '400px';
         // No inner scrollbar: the iframe auto-resizes to its content (below), so a
         // scrollbar would be both redundant and a giveaway that the widget is framed.
         // scrolling="no" is the only cross-browser way to suppress it from OUT here;
@@ -154,7 +154,9 @@
             // script creates is given an rpfid, so a message without a matching id is never
             // ours.
             if (d.frameId !== fid) return;
-            iframe.style.height = Math.max(200, Math.ceil(d.height)) + 'px';
+            // Floor low enough for a compact strip (the current-conditions widget is ~50px);
+            // it only exists to stop a transient 0-height message collapsing the frame mid-load.
+            iframe.style.height = Math.max(40, Math.ceil(d.height)) + 'px';
         });
     }
 

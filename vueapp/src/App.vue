@@ -150,10 +150,19 @@ const embedFrameId: string | null = (() => {
 
 // Auto-resize: report content height up to the embedding page so embed.js can
 // size the iframe (no inner scrollbar). Height-only message; safe to broadcast.
+//
+// Measure BODY, not documentElement: the ROOT element's scrollHeight is floored at the
+// viewport (iframe) height by every browser, so a widget shorter than its frame (the
+// status strip is ~50px) would report the full iframe height straight back and stay
+// stuck tall. body.scrollHeight tracks true content in both directions — verified 50px
+// for the status strip and ~1089px for the calendar. The html.rp-embed reset removes the
+// viewport-filling min-heights so the body box is honest. (An earlier attempt used
+// body.getBoundingClientRect().height, which raced late-loading content; scrollHeight is
+// the content height and the ResizeObserver below re-posts when it grows.)
 function postEmbedHeight() {
     if (!isEmbed.value) return
     window.parent?.postMessage(
-        { type: 'ridepass:resize', height: document.documentElement.scrollHeight, frameId: embedFrameId }, '*')
+        { type: 'ridepass:resize', height: document.body.scrollHeight, frameId: embedFrameId }, '*')
 }
 let resizeObserver: ResizeObserver | null = null
 
