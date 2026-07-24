@@ -85,7 +85,7 @@
                              Rendered whenever any pass has benefits; a pass with none is simply
                              omitted rather than shown as an empty card. -->
                         <section v-if="passesWithPerks.length" class="mb-8">
-                            <h2 class="text-h5 font-weight-bold font-display mb-4">What's Included</h2>
+                            <h2 class="text-h5 font-weight-bold font-display mb-4">Pass Options</h2>
                             <div v-for="p in passesWithPerks" :key="p.id" class="sp-perk-block mb-4">
                                 <div v-if="passesWithPerks.length > 1" class="sp-section-subtitle mb-2">
                                     {{ p.name }}
