@@ -570,7 +570,10 @@ function flash(text: string, color: 'success' | 'error') {
 }
 .sp-login,
 .sp-reg {
-    background: rgba(var(--v-theme-on-surface), 0.03);
+    /* Surface (white on light themes) with a hairline border so these nested panels stay
+       distinct against the light-gray selection card that now wraps the checkout. */
+    background: rgb(var(--v-theme-surface));
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
     border-radius: 8px;
 }
 </style>

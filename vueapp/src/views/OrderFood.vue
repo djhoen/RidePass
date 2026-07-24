@@ -687,7 +687,14 @@ async function pollOrderNumber(saleId: string): Promise<number | null> {
 }
 .of-card__price { font-weight: 700; margin-top: 6px; }
 
-.of-cart { position: sticky; top: 16px; }
+/* Cart = the item-selection container: a very light gray tint on light themes / a little
+   lighter than the background on dark themes (on-surface alpha inverts per theme), lifted
+   with a soft drop shadow. Already sits on the right of the menu. */
+.of-cart {
+    position: sticky; top: 16px;
+    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+}
 
 .of-bottombar {
     position: fixed;

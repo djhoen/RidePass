@@ -29,9 +29,12 @@
             </v-container>
 
             <v-container :class="isEmbed ? 'py-4' : 'py-8'">
+                <!-- Item selection (the booking card) sits on the RIGHT, marketing info on
+                     the LEFT. In embed the mobile stack leads with the booking card (order 1
+                     below md); md+ restores info-left / selection-right (order-md). -->
                 <v-row>
-                    <!-- Marketing + what's included -->
-                    <v-col cols="12" md="7" :order="isEmbed ? 2 : undefined">
+                    <!-- Marketing + what's included (info, left) -->
+                    <v-col cols="12" md="7" :order="isEmbed ? 2 : undefined" :order-md="isEmbed ? 1 : undefined">
                         <div v-if="pkg.description" class="pkg-body mb-6" v-html="pkg.description"></div>
                         <h2 class="text-h5 font-weight-bold font-display mb-3">What's included</h2>
                         <ul class="pkg-checklist mb-6">
@@ -328,7 +331,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.pkg-page { min-height: 60vh; }
+/* Plain theme background (no gray tint) so the widget blends into the host site. */
+.pkg-page { min-height: 60vh; background: rgb(var(--v-theme-background)); }
 .pkg-hero { min-height: 340px; background-size: cover; background-position: center; background-color: #1d1d1d; }
 .pkg-hero-overlay { min-height: 340px; display: flex; align-items: flex-end; background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.1)); }
 .pkg-hero-inner { padding-bottom: 32px; }
@@ -338,7 +342,15 @@ onMounted(async () => {
 .pkg-checklist { list-style: none; padding: 0; }
 .pkg-checklist li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .pkg-check { color: rgb(var(--v-theme-primary)); }
-.pkg-book-card { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 12px; }
+/* Booking card = the item-selection container: a very light gray tint on light themes and a
+   slightly-lighter-than-background tint on dark themes (on-surface alpha inverts per theme),
+   lifted with a soft drop shadow. !important beats Vuetify's flat variant surface + no-elevation. */
+.pkg-book-card {
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+    border-radius: 12px;
+    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+}
 .pkg-date { border: 1px solid rgba(var(--v-theme-on-surface), 0.3); border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%; background: rgb(var(--v-theme-surface)); color: rgb(var(--v-theme-on-surface)); }
 .pkg-price-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .rp-powered { color: rgba(var(--v-theme-on-surface), 0.6); text-decoration: none; font-size: 13px; }

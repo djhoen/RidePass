@@ -51,12 +51,14 @@
                     No season passes are on sale right now. Check back soon.
                 </v-alert>
 
-                <!-- In embed mode the checkout column leads (order 2/1 swap): when the iframe is
-                     narrow and the columns stack, buyers land on the buy box instead of scrolling
-                     past the details to find it. -->
+                <!-- Item selection (the checkout card) sits on the RIGHT, the descriptive
+                     info on the LEFT, on both the hosted page and the embed. In embed, the
+                     mobile stack still leads with the checkout box (order 1 below md) so a
+                     narrow iframe lands buyers on the buy box rather than scrolling past the
+                     details; md+ restores info-left / selection-right (order-md). -->
                 <v-row v-else>
-                    <!-- ── Pass details ────────────────────────────────────── -->
-                    <v-col cols="12" md="6" :order="isEmbed ? 2 : undefined">
+                    <!-- ── Pass details (info, left) ─────────────────────────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 2 : undefined" :order-md="isEmbed ? 1 : undefined">
                         <section class="mb-8">
                             <h2 class="text-h5 font-weight-bold font-display mb-4">Why a Season Pass</h2>
                             <ul class="sp-checklist mb-4">
@@ -122,8 +124,8 @@
                         </section>
                     </v-col>
 
-                    <!-- ── Checkout, then about ────────────────────────────── -->
-                    <v-col cols="12" md="6" :order="isEmbed ? 1 : undefined">
+                    <!-- ── Checkout (item selection, right), then about ──────── -->
+                    <v-col cols="12" md="6" :order="isEmbed ? 1 : undefined" :order-md="isEmbed ? 2 : undefined">
                         <v-card class="sp-entry-card" variant="flat">
                             <v-card-text class="pa-5">
                                 <SeasonPassCheckout :products="products" />
@@ -328,11 +330,10 @@ onMounted(async () => {
 
 <style scoped>
 /* Theme-aware surface + text colors so dark-mode tenants (theme_mode = 'dark') get a dark page
-   with light text instead of inheriting invisible headings. */
+   with light text instead of inheriting invisible headings. The page is the plain theme
+   background (no gray tint overlay) so the widget blends into the host site it's embedded on. */
 .sp-page {
-    background:
-        linear-gradient(rgba(var(--v-theme-on-surface), 0.04), rgba(var(--v-theme-on-surface), 0.04)),
-        rgb(var(--v-theme-background));
+    background: rgb(var(--v-theme-background));
     min-height: 100vh;
 }
 
@@ -496,6 +497,15 @@ onMounted(async () => {
 }
 .rich-text-body :deep(*) { max-width: 100%; }
 
-/* ── Entry card ─────────────────────────────────────────────────────────── */
-.sp-entry-card { border-radius: 14px; }
+/* ── Entry card (the item-selection container) ──────────────────────────────
+   A very light gray surface on light themes (a little darker than the white page) and a
+   little LIGHTER than the background on dark themes, lifted with a soft drop shadow so the
+   pick-your-pass box reads as the actionable panel. on-surface alpha inverts per theme to
+   give both directions from one rule; !important beats Vuetify's flat variant, which forces
+   surface background + no elevation. */
+.sp-entry-card {
+    border-radius: 14px;
+    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+}
 </style>
