@@ -2594,4 +2594,22 @@ BEGIN
      'published', false, now() - INTERVAL '24 days');
 END $hl_blog$;
 
+-- ============================================================================
+-- Highland Bike Park - preserve the hand-built 3 Ride Pass (credits pass with a
+-- published landing page at /SeasonPasses/3-ride-pass). The ticketing block wipes
+-- all season pass products on reseed; this re-inserts it, values captured from
+-- the live stage row. The demo site 3 Ride Pass menu link points at its landing.
+-- ============================================================================
+DO $hl_threeride$
+DECLARE
+    v_tenant_id uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+
+    INSERT INTO season_pass_product (tenant_id, name, description, price_cents, valid_from_date, valid_to_date, kind, total_credits, sort_order, slug, landing_published, hero_image_url, landing_html) SELECT v_tenant_id, '3 Ride Pass', 'Three lift-served ride days, any open day this season. One rider, no blackout dates.', 21900, CURRENT_DATE, (CURRENT_DATE + INTERVAL '9 months')::date, 'credits', 3, 100, '3-ride-pass', 't', NULL, '<h2>Three days. One season. Zero pressure.</h2><p>One day at Highland gets you hooked. Three days is where it clicks: day one you explore the mountain, day two you start linking sections, and by day three you''re riding trails top to bottom with real flow.</p><ul><li><strong>Three full lift-served ride days</strong> to use any open day this season</li><li><strong>No blackout dates</strong> - weekends, holidays, race weekends, all fair game</li><li><strong>No advance booking</strong> - show your pass at the gate whenever you''re ready</li><li><strong>One rider, all season</strong> - your pass, your progression</li></ul><p>Cheaper than three day tickets, with none of the commitment of a full season pass. When the forecast looks perfect, just come ride.</p>' WHERE NOT EXISTS (SELECT 1 FROM season_pass_product WHERE tenant_id = v_tenant_id AND slug = '3-ride-pass');
+END $hl_threeride$;
+
 COMMIT;

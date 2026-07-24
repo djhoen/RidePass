@@ -249,14 +249,15 @@
         </v-dialog>
 
         <v-snackbar v-model="snack.show" color="error" timeout="5000">{{ snack.text }}</v-snackbar>
+        <InlineAuthDialog v-model="authDialogOpen" @authed="onAuthed" />
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
 import authHelper from '@/helpers/AuthHelper'
+import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import { CreditService } from '@/services/CreditService'
 import {
     ConcessionService,
@@ -274,8 +275,13 @@ interface CartLine {
 }
 
 const svc = new ConcessionService()
-const route = useRoute()
-const router = useRouter()
+const authDialogOpen = ref(false)
+// A fresh session just landed (inline sign-in/up): load the account-side bits the
+// anonymous mount skipped, then resume the checkout the visitor was attempting.
+function onAuthed() {
+    refreshOrders()
+    checkout()
+}
 const products = ref<ConcessionProduct[]>([])
 const myOrders = ref<RiderOrder[]>([])
 const loading = ref(true)
@@ -572,10 +578,10 @@ let currentSaleId: string | null = null
 
 async function checkout() {
     // Anonymous browsing is allowed (menu is public), but placing an order needs an
-    // account. Bounce through login and land back here, cart intact in this session
-    // (works inside the embedded widget's iframe too: the login happens same-origin).
+    // account. Sign in / sign up happens inline (no navigation), then checkout resumes
+    // with the cart intact: essential inside the embedded widget's iframe.
     if (!authHelper.isAuthenticated()) {
-        router.push({ path: '/Login', query: { next: route.fullPath } })
+        authDialogOpen.value = true
         return
     }
     placing.value = true

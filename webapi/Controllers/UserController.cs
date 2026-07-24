@@ -283,10 +283,17 @@ namespace webapi.Controllers
                 await _userRepository.MarkEmailVerified(user.Id);
             }
 
+            // Sign the new account straight in: checkout flows create accounts inline and
+            // must continue to payment without a login round-trip. The verification email
+            // (when SMTP is up) still goes out, and the unverified-rider gate still applies
+            // to later manual sign-ins; this token just covers the current session.
+            var signupToken = _jwtIssuer.IssueForUser(user, null);
+
             return new ApiResponses().OkResult(new
             {
                 user.Id, user.Email, user.FirstName, user.LastName, user.Role,
                 emailVerificationSent,
+                Token = signupToken,
             });
         }
 

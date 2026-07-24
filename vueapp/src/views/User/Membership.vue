@@ -113,21 +113,24 @@
         </template>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
+        <InlineAuthDialog v-model="authDialogOpen" @authed="onAuthed" />
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import authHelper from '@/helpers/AuthHelper'
+import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import { MembershipService, type MembershipStatus } from '@/services/MembershipService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 
 const route = useRoute()
-const router = useRouter()
 const service = new MembershipService()
+const authDialogOpen = ref(false)
+function onAuthed() { createIntent() }
 
 const status = ref<MembershipStatus | null>(null)
 const loading = ref(true)
@@ -193,10 +196,9 @@ async function load() {
 
 async function createIntent() {
     // The price card renders for anonymous visitors (status endpoint is public);
-    // buying needs an account, so bounce through login and come back. Works inside
-    // the embedded widget's iframe too (same-origin login).
+    // buying needs an account, so sign in / sign up inline and resume the purchase.
     if (!authHelper.isAuthenticated()) {
-        router.push({ path: '/Login', query: { next: route.fullPath } })
+        authDialogOpen.value = true
         return
     }
     creating.value = true

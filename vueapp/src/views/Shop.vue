@@ -131,13 +131,15 @@
                 <v-btn color="primary" class="mt-2" @click="doneOpen = false">Done</v-btn>
             </v-card>
         </v-dialog>
+
+        <InlineAuthDialog v-model="authDialogOpen" @authed="onAuthed" />
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
 import { BikeShopService, type StoreCatalog } from '@/services/BikeShopService'
+import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import { CreditService } from '@/services/CreditService'
 import { branding } from '@/stores/branding'
 import authHelper from '@/helpers/AuthHelper'
@@ -145,7 +147,6 @@ import { getStripe } from '@/helpers/StripeHelper'
 
 type CatalogProduct = StoreCatalog['products'][number]
 
-const router = useRouter()
 const service = new BikeShopService()
 
 // Product images come back as a relative /uploads/... path; prefix with the API host so they
@@ -244,7 +245,17 @@ let stripe: any = null
 let elements: any = null
 
 function goLogin() {
-    router.push('/Login')
+    // Inline sign in / sign up: no navigation, so the cart survives and the flow
+    // works identically inside the embedded storefront widget.
+    authDialogOpen.value = true
+}
+
+const authDialogOpen = ref(false)
+async function onAuthed() {
+    isAuthed.value = true
+    // Mirror the authed part of mount: the credit offer only shows for accounts.
+    try { myCreditCents.value = (await new CreditService().mine()).data.data.balanceCents }
+    catch { /* offer stays hidden */ }
 }
 
 async function placeOrder() {

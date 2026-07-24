@@ -103,21 +103,22 @@
         </template>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000" location="top">{{ snackbarText }}</v-snackbar>
+        <InlineAuthDialog v-model="authDialogOpen" @authed="onAuthed" />
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import authHelper from '@/helpers/AuthHelper'
+import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import dayjs from 'dayjs'
 import { GiftCardService } from '@/services/GiftCardService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 
 const service = new GiftCardService()
-const route = useRoute()
-const router = useRouter()
+const authDialogOpen = ref(false)
+function onAuthed() { createIntent() }
 
 const presetAmounts = computed(() => {
     const min = branding.giftCardMinCents / 100
@@ -187,9 +188,9 @@ function sendAnother() {
 async function createIntent() {
     if (!canContinue.value) return
     // Anonymous browsing is fine (the form is config-driven), but buying needs an
-    // account: bounce through login and come back (works inside the embed iframe too).
+    // account: sign in / sign up inline, then the purchase resumes with the form intact.
     if (!authHelper.isAuthenticated()) {
-        router.push({ path: '/Login', query: { next: route.fullPath } })
+        authDialogOpen.value = true
         return
     }
     if (amountCents.value < branding.giftCardMinCents || amountCents.value > branding.giftCardMaxCents) {

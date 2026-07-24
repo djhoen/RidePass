@@ -101,6 +101,9 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
     display: flex;
     gap: var(--rp-gap);
     overflow-x: auto;
+    /* Headroom for the date badge's 6px overhang above the card edge: this
+       scroller's overflow clipping applies vertically too. */
+    padding-top: 8px;
     scroll-snap-type: x mandatory;
     /* Swipe/trackpad still scrolls; the visible scrollbar is just chrome the widget
        doesn't need (the overlay arrows + snap are the affordance). */
@@ -128,7 +131,9 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
 .rp-carousel-prev { left: 4px; }
 .rp-carousel-next { right: 4px; }
 
-.embed-event-card { transition: transform 0.15s ease; }
+/* overflow: visible overrides v-card's default clipping so the date badge can
+   overhang the top edge, exactly how the hosted home page's up-card does it. */
+.embed-event-card { overflow: visible; transition: transform 0.15s ease; }
 .embed-event-card:hover { transform: translateY(-2px); }
 .embed-event-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .embed-event-image {
@@ -141,16 +146,16 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
 }
 .embed-event-datebadge {
     position: absolute;
-    /* Flush with the card's top edge, hanging downward like a tab. It must sit fully
-       INSIDE the card: v-card ships overflow:hidden (to crop media to its rounded
-       corners), so anything poking above the edge (the old top: -6px) gets sliced. */
-    top: 0;
+    /* Overhangs the card's top edge like the hosted home page's card. Needs BOTH
+       overflow: visible on .embed-event-card (v-card clips by default) and the
+       scroller's padding-top headroom, or the overhang gets sliced off. */
+    top: -6px;
     left: 12px;
     background: #000;
     color: #fff;
     padding: 6px 10px 5px;
     text-align: center;
-    border-radius: 0 0 4px 4px;
+    border-radius: 4px;
     line-height: 1;
     min-width: 44px;
     box-shadow: 1px 2px 5px 0 rgba(0, 0, 0, 0.34);

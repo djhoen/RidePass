@@ -103,13 +103,17 @@
                             </v-card-text>
                         </v-card>
 
-                        <div v-if="isEmbed" class="text-center mt-2">
-                            <a class="rp-powered" href="https://ridepass.io" target="_blank" rel="noopener">
-                                Powered by <strong>RidePass</strong>
-                            </a>
-                        </div>
                     </v-col>
                 </v-row>
+
+                <!-- Badge sits at the true bottom of the widget. It used to live inside the
+                     checkout column, which in embed order (checkout first, content second)
+                     stranded it mid-widget above the marketing copy. -->
+                <div v-if="isEmbed" class="text-center mt-4">
+                    <a class="rp-powered" href="https://ridepass.io" target="_blank" rel="noopener">
+                        Powered by <strong>RidePass</strong>
+                    </a>
+                </div>
             </v-container>
         </template>
     </div>
