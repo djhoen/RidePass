@@ -118,8 +118,13 @@ namespace Services.Repositories
             var pSql = $@"SELECT {ProductCols} FROM shop_product
                          WHERE tenant_id = @tenantId {(activeOnly ? "AND is_active = true" : "")}
                          ORDER BY sort_order, name";
-            var products = (await _db.Query<ShopProduct>(pSql, new { tenantId })).ToList();
-            if (products.Count == 0) return new List<ShopProductWithVariants>();
+            // Materialize the derived type straight from ProductCols. ShopProductWithVariants
+            // adds no columns of its own, so Dapper fills every product field automatically —
+            // and, unlike a hand-written copy, cannot silently drop one when a column is added.
+            // (It did: the old Combine() omitted IsPublished, which defaults true, so unpublished
+            // products stayed visible on the public storefront.)
+            var products = (await _db.Query<ShopProductWithVariants>(pSql, new { tenantId })).ToList();
+            if (products.Count == 0) return products;
 
             // One query for every variant across the returned products (no N+1).
             var ids = products.Select(p => p.Id).ToArray();
@@ -129,7 +134,8 @@ namespace Services.Repositories
             var variants = (await _db.Query<ShopVariantWithStock>(vSql, new { ids, tenantId })).ToList();
             var byProduct = variants.GroupBy(v => v.ProductId).ToDictionary(g => g.Key, g => g.ToList());
 
-            return products.Select(p => Combine(p, byProduct.GetValueOrDefault(p.Id) ?? new())).ToList();
+            foreach (var p in products) p.Variants = byProduct.GetValueOrDefault(p.Id) ?? new();
+            return products;
         }
 
         // The available-quantity expression, shared by the variant projection and the valuation
@@ -231,7 +237,7 @@ namespace Services.Repositories
                           WHERE {whereSql}
                           ORDER BY p.sort_order, p.name
                           LIMIT @limit OFFSET @offset";
-            var products = (await _db.Query<ShopProduct>(pSql, args)).ToList();
+            var products = (await _db.Query<ShopProductWithVariants>(pSql, args)).ToList();
             if (products.Count == 0) return new ShopCatalogPage { Total = counts.Total, Totals = totals };
 
             // Variants for this page only (no N+1, and no loading the whole catalog's variants).
@@ -242,9 +248,10 @@ namespace Services.Repositories
             var variants = (await _db.Query<ShopVariantWithStock>(vSql, new { ids, tenantId })).ToList();
             var byProduct = variants.GroupBy(v => v.ProductId).ToDictionary(g => g.Key, g => g.ToList());
 
+            foreach (var p in products) p.Variants = byProduct.GetValueOrDefault(p.Id) ?? new();
             return new ShopCatalogPage
             {
-                Rows = products.Select(p => Combine(p, byProduct.GetValueOrDefault(p.Id) ?? new())).ToList(),
+                Rows = products,
                 Total = counts.Total,
                 Totals = totals,
             };
@@ -253,22 +260,13 @@ namespace Services.Repositories
         public async Task<ShopProductWithVariants?> GetProduct(Guid id, Guid tenantId)
         {
             var pSql = $"SELECT {ProductCols} FROM shop_product WHERE id = @id AND tenant_id = @tenantId";
-            var product = (await _db.Query<ShopProduct>(pSql, new { id, tenantId })).FirstOrDefault();
+            var product = (await _db.Query<ShopProductWithVariants>(pSql, new { id, tenantId })).FirstOrDefault();
             if (product is null) return null;
             var vSql = $@"SELECT {VariantCols} FROM shop_variant v
                          WHERE v.product_id = @id AND v.tenant_id = @tenantId ORDER BY v.created_at";
-            var variants = (await _db.Query<ShopVariantWithStock>(vSql, new { id, tenantId })).ToList();
-            return Combine(product, variants);
+            product.Variants = (await _db.Query<ShopVariantWithStock>(vSql, new { id, tenantId })).ToList();
+            return product;
         }
-
-        private static ShopProductWithVariants Combine(ShopProduct p, List<ShopVariantWithStock> variants) => new()
-        {
-            Id = p.Id, TenantId = p.TenantId, CategoryId = p.CategoryId, SupplierId = p.SupplierId,
-            Name = p.Name, Description = p.Description, Brand = p.Brand, ImageUrl = p.ImageUrl,
-            IsSellable = p.IsSellable, IsRentable = p.IsRentable, IsActive = p.IsActive,
-            SortOrder = p.SortOrder, CreatedAt = p.CreatedAt, UpdatedAt = p.UpdatedAt,
-            Variants = variants,
-        };
 
         public async Task<Guid> CreateProduct(ShopProduct p)
         {
@@ -779,23 +777,16 @@ namespace Services.Repositories
 
         public async Task<ShopSaleWithLines?> GetSale(Guid id, Guid tenantId)
         {
-            var sale = (await _db.Query<ShopSale>($"SELECT {SaleCols} FROM shop_sale WHERE id = @id AND tenant_id = @tenantId",
+            // Dapper materializes the derived type from SaleCols directly; ShopSaleWithLines adds
+            // no columns of its own. The hand-written copy this replaces omitted OrderChannel and
+            // PickedUpAt (both default to the counter/never-collected values), which silently
+            // disabled the admin's whole online-pickup workflow.
+            var sale = (await _db.Query<ShopSaleWithLines>($"SELECT {SaleCols} FROM shop_sale WHERE id = @id AND tenant_id = @tenantId",
                 new { id, tenantId })).FirstOrDefault();
             if (sale is null) return null;
-            var lines = (await _db.Query<ShopSaleLine>($"SELECT {SaleLineCols} FROM shop_sale_line WHERE sale_id = @id ORDER BY created_at",
+            sale.Lines = (await _db.Query<ShopSaleLine>($"SELECT {SaleLineCols} FROM shop_sale_line WHERE sale_id = @id ORDER BY created_at",
                 new { id })).ToList();
-            return new ShopSaleWithLines
-            {
-                Id = sale.Id, TenantId = sale.TenantId, BuyerUserId = sale.BuyerUserId, BuyerEmail = sale.BuyerEmail,
-                BuyerName = sale.BuyerName, Status = sale.Status, SubtotalCents = sale.SubtotalCents,
-                DiscountCents = sale.DiscountCents, TaxCents = sale.TaxCents, TipCents = sale.TipCents,
-                TotalCents = sale.TotalCents, PricesIncludeTax = sale.PricesIncludeTax, PaymentMethod = sale.PaymentMethod,
-                StripePaymentIntentId = sale.StripePaymentIntentId, StripeConnectedAccountId = sale.StripeConnectedAccountId,
-                OrderNumber = sale.OrderNumber, SoldByUserId = sale.SoldByUserId, WorkOrderId = sale.WorkOrderId,
-                ReceiptToken = sale.ReceiptToken,
-                RefundedAt = sale.RefundedAt, RefundNote = sale.RefundNote, CreatedAt = sale.CreatedAt,
-                UpdatedAt = sale.UpdatedAt, Lines = lines,
-            };
+            return sale;
         }
 
         // Online order collected at the counter. Guarded so only a paid online sale flips, once.
@@ -1043,14 +1034,14 @@ namespace Services.Repositories
         /// can never surface a rental from another track.</summary>
         public async Task<ShopRentalWithLines?> GetRentalBySignatureToken(Guid token, Guid tenantId)
         {
-            var rental = (await _db.Query<ShopRental>(
+            var rental = (await _db.Query<ShopRentalWithLines>(
                 $"SELECT {RentalCols} FROM shop_rental WHERE signature_request_token = @token AND tenant_id = @tenantId",
                 new { token, tenantId })).FirstOrDefault();
             if (rental is null) return null;
-            var lines = (await _db.Query<ShopRentalLine>(
+            rental.Lines = (await _db.Query<ShopRentalLine>(
                 $"SELECT {RentalLineCols} FROM shop_rental_line WHERE rental_id = @id ORDER BY created_at",
                 new { id = rental.Id })).ToList();
-            return ToRentalWithLines(rental, lines);
+            return rental;
         }
 
         public Task MarkRentalSignatureRequestSent(Guid rentalId, Guid tenantId) => _db.Execute(
@@ -1967,14 +1958,14 @@ namespace Services.Repositories
 
         public async Task<ShopRentalWithLines?> GetRental(Guid id, Guid tenantId)
         {
-            var rental = (await _db.Query<ShopRental>(
+            var rental = (await _db.Query<ShopRentalWithLines>(
                 $"SELECT {RentalCols} FROM shop_rental WHERE id = @id AND tenant_id = @tenantId",
                 new { id, tenantId })).FirstOrDefault();
             if (rental is null) return null;
-            var lines = (await _db.Query<ShopRentalLine>(
+            rental.Lines = (await _db.Query<ShopRentalLine>(
                 $"SELECT {RentalLineCols} FROM shop_rental_line WHERE rental_id = @id ORDER BY created_at",
                 new { id })).ToList();
-            return ToRentalWithLines(rental, lines);
+            return rental;
         }
 
         public async Task<List<ShopRentalWithLines>> ListRentals(Guid tenantId, bool activeOnly, int limit)
@@ -1983,13 +1974,14 @@ namespace Services.Repositories
                         WHERE tenant_id = @tenantId
                         {(activeOnly ? "AND status IN ('pending','paid','out')" : "")}
                         ORDER BY starts_at DESC LIMIT @limit";
-            var rentals = (await _db.Query<ShopRental>(sql, new { tenantId, limit })).ToList();
-            if (rentals.Count == 0) return new List<ShopRentalWithLines>();
+            var rentals = (await _db.Query<ShopRentalWithLines>(sql, new { tenantId, limit })).ToList();
+            if (rentals.Count == 0) return rentals;
             var ids = rentals.Select(r => r.Id).ToArray();
             var lines = (await _db.Query<ShopRentalLine>(
                 $"SELECT {RentalLineCols} FROM shop_rental_line WHERE rental_id = ANY(@ids) ORDER BY created_at",
                 new { ids })).GroupBy(l => l.RentalId).ToDictionary(g => g.Key, g => g.ToList());
-            return rentals.Select(r => ToRentalWithLines(r, lines.GetValueOrDefault(r.Id) ?? new())).ToList();
+            foreach (var r in rentals) r.Lines = lines.GetValueOrDefault(r.Id) ?? new();
+            return rentals;
         }
 
         public async Task<List<ShopRentalWithLines>> ListRentalsForUser(Guid userId, Guid tenantId, int limit)
@@ -1998,28 +1990,15 @@ namespace Services.Repositories
                         WHERE tenant_id = @tenantId AND renter_user_id = @userId
                           AND status IN ('pending','paid','out','returned','damaged')
                         ORDER BY starts_at DESC LIMIT @limit";
-            var rentals = (await _db.Query<ShopRental>(sql, new { tenantId, userId, limit })).ToList();
-            if (rentals.Count == 0) return new List<ShopRentalWithLines>();
+            var rentals = (await _db.Query<ShopRentalWithLines>(sql, new { tenantId, userId, limit })).ToList();
+            if (rentals.Count == 0) return rentals;
             var ids = rentals.Select(r => r.Id).ToArray();
             var lines = (await _db.Query<ShopRentalLine>(
                 $"SELECT {RentalLineCols} FROM shop_rental_line WHERE rental_id = ANY(@ids) ORDER BY created_at",
                 new { ids })).GroupBy(l => l.RentalId).ToDictionary(g => g.Key, g => g.ToList());
-            return rentals.Select(r => ToRentalWithLines(r, lines.GetValueOrDefault(r.Id) ?? new())).ToList();
+            foreach (var r in rentals) r.Lines = lines.GetValueOrDefault(r.Id) ?? new();
+            return rentals;
         }
-
-        private static ShopRentalWithLines ToRentalWithLines(ShopRental r, List<ShopRentalLine> lines) => new()
-        {
-            Id = r.Id, TenantId = r.TenantId, RenterUserId = r.RenterUserId, RenterName = r.RenterName,
-            RenterEmail = r.RenterEmail, RenterPhone = r.RenterPhone, WaiverSignatureId = r.WaiverSignatureId,
-            StartsAt = r.StartsAt, EndsAt = r.EndsAt, Status = r.Status, AmountCents = r.AmountCents,
-            TaxCents = r.TaxCents, TotalCents = r.TotalCents, DepositCents = r.DepositCents,
-            DepositPiId = r.DepositPiId, DepositCapturedCents = r.DepositCapturedCents,
-            PaymentMethod = r.PaymentMethod, StripePaymentIntentId = r.StripePaymentIntentId,
-            StripeConnectedAccountId = r.StripeConnectedAccountId, OrderNumber = r.OrderNumber,
-            SoldByUserId = r.SoldByUserId, ReceiptToken = r.ReceiptToken, CheckedOutAt = r.CheckedOutAt,
-            ReturnedAt = r.ReturnedAt, ConditionNotes = r.ConditionNotes, EventId = r.EventId,
-            CreatedAt = r.CreatedAt, UpdatedAt = r.UpdatedAt, Lines = lines,
-        };
 
         public async Task<ShopRental?> GetRentalByFeePaymentIntentId(string paymentIntentId) =>
             (await _db.Query<ShopRental>(
@@ -3124,7 +3103,8 @@ namespace Services.Repositories
             if (t.Total == 0) return page;
 
             // Unqualified columns in SaleCols resolve against the single aliased table.
-            var sales = (await _db.Query<ShopSale>(
+            // See GetSale: query the derived type so no sale field can be dropped in transit.
+            var sales = (await _db.Query<ShopSaleWithLines>(
                 $@"SELECT {SaleCols}
                    FROM shop_sale s WHERE {whereSql}
                    ORDER BY {sortCol} {sortDir} NULLS LAST, s.created_at DESC
@@ -3135,18 +3115,8 @@ namespace Services.Repositories
             var lines = (await _db.Query<ShopSaleLine>(
                 $"SELECT {SaleLineCols} FROM shop_sale_line WHERE sale_id = ANY(@ids) ORDER BY created_at",
                 new { ids })).GroupBy(l => l.SaleId).ToDictionary(g => g.Key, g => g.ToList());
-            page.Rows = sales.Select(s => new ShopSaleWithLines
-            {
-                Id = s.Id, TenantId = s.TenantId, BuyerUserId = s.BuyerUserId, BuyerEmail = s.BuyerEmail,
-                BuyerName = s.BuyerName, Status = s.Status, SubtotalCents = s.SubtotalCents,
-                DiscountCents = s.DiscountCents, TaxCents = s.TaxCents, TipCents = s.TipCents,
-                TotalCents = s.TotalCents, PricesIncludeTax = s.PricesIncludeTax, PaymentMethod = s.PaymentMethod,
-                StripePaymentIntentId = s.StripePaymentIntentId, StripeConnectedAccountId = s.StripeConnectedAccountId,
-                OrderNumber = s.OrderNumber, SoldByUserId = s.SoldByUserId, WorkOrderId = s.WorkOrderId,
-                ReceiptToken = s.ReceiptToken, RefundedAt = s.RefundedAt, RefundNote = s.RefundNote,
-                CreatedAt = s.CreatedAt, UpdatedAt = s.UpdatedAt,
-                Lines = lines.GetValueOrDefault(s.Id) ?? new(),
-            }).ToList();
+            foreach (var s in sales) s.Lines = lines.GetValueOrDefault(s.Id) ?? new();
+            page.Rows = sales;
             return page;
         }
 
