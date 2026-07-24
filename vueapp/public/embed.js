@@ -141,7 +141,13 @@
             if (ev.origin !== iframeOrigin) return;
             var d = ev.data;
             if (!d || d.type !== 'ridepass:resize' || typeof d.height !== 'number') return;
-            if (d.frameId && d.frameId !== fid) return;   // a sibling widget's message
+            // Strict frame-id match. A message carrying no frameId used to be treated as
+            // "meant for me", which made EVERY widget on the page adopt it: one hand-rolled
+            // iframe (no rpfid in its src) broadcasting its own height resized all the
+            // managed widgets to that height, clipping the taller ones. Every iframe this
+            // script creates is given an rpfid, so a message without a matching id is never
+            // ours.
+            if (d.frameId !== fid) return;
             iframe.style.height = Math.max(200, Math.ceil(d.height)) + 'px';
         });
     }
