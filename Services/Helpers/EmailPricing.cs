@@ -7,13 +7,18 @@ namespace Services.Helpers
     /// </summary>
     public static class EmailPricing
     {
-        // (upTo, cents per email). Rates drop as monthly volume climbs.
+        // (upTo, cents per email). Rates drop as monthly volume climbs. Calibrated to sit just
+        // under Mailchimp Essentials 2026 contact-tier anchors for a list emailed ~once a month
+        // ($26.50 @ 1k, $45 @ 2.5k, $75 @ 5k, $110 @ 10k): cumulative cost is $25 @ 1k,
+        // $44.50 @ 2.5k, $74.50 @ 5k, $109.50 @ 10k.
         private static readonly (long UpTo, double CentsPerEmail)[] Tiers =
         {
-            (2_000, 1.0),
-            (10_000, 0.6),
-            (50_000, 0.4),
-            (long.MaxValue, 0.25),
+            (1_000, 2.5),
+            (2_500, 1.3),
+            (5_000, 1.2),
+            (10_000, 0.7),
+            (50_000, 0.5),
+            (long.MaxValue, 0.3),
         };
 
         // Cost in (fractional) cents for `count` emails, walking the tiers cumulatively.
