@@ -137,11 +137,64 @@ export interface PlatformAnalyticsSummary {
     tenantBreakdown: TenantBreakdownRow[]
 }
 
+export interface RiderReportItem {
+    purchaseId: string
+    source: 'ticket' | 'season_pass'
+    eventId: string
+    eventTitle: string
+    eventStartsAtUtc: string
+    riderName: string
+    email: string | null
+    userId: string | null
+    itemName: string
+    checkedIn: boolean
+    checkedInAtUtc: string | null
+    wristbandCode: string | null
+    waiverSigned: boolean
+}
+
+export interface RiderReportResponse {
+    rows: RiderReportItem[]
+    truncated: boolean
+    totalRows: number
+    totalCheckedIn: number
+    totalMissingWaiver: number
+}
+
+export interface RiderWaiverItem {
+    id: string
+    waiverName: string
+    waiverVersion: number
+    signedAtUtc: string
+    signedByParent: boolean
+    parentName: string | null
+    waiverIsCurrent: boolean
+}
+
+export interface RiderDetailResponse {
+    riderName: string
+    email: string | null
+    registrations: RiderReportItem[]
+    waivers: RiderWaiverItem[]
+}
+
 export class ReportsService {
     private apiUrl: string
 
     constructor() {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
+    }
+
+    getRiders(fromUtc: string, toUtc: string, search?: string, audience: 'rider' | 'spectator' = 'rider') {
+        return axios.get<{ data: RiderReportResponse }>(`${this.apiUrl}/Reports/Admin/Riders`, {
+            params: { fromUtc, toUtc, search: search || undefined, audience },
+        })
+    }
+
+    getRiderDetail(params: { userId?: string | null; email?: string | null; name?: string | null }) {
+        return axios.get<{ data: RiderDetailResponse }>(`${this.apiUrl}/Reports/Admin/RiderDetail`, {
+            params: { userId: params.userId || undefined, email: params.email || undefined, name: params.name || undefined },
+        })
     }
 
     getTenantSummary(fromUtc: string, toUtc: string) {

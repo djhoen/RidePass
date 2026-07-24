@@ -177,13 +177,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopValuationRow, type ShopSalesReportRow, type ShopDeadStockRow, type ShopLaborTimeRow } from '@/services/BikeShopService'
 
 const service = new BikeShopService()
 const report = ref<'valuation' | 'sales' | 'labortime' | 'dead'>('valuation')
 
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
-function formatDate(iso: string): string { return dayjs(iso).format('MMM D, YYYY') }
+function formatDate(iso: string): string { return formatTenantDate(iso, 'MMM D, YYYY') }
 function fmtMins(m: number): string {
     if (!m) return '0m'
     if (m < 60) return `${m}m`

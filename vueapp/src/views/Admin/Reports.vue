@@ -19,7 +19,7 @@
             <v-col cols="12" md="9" lg="10">
                 <KeepAlive>
                     <component :is="activeComponent"
-                        :initial-event-id="(selected === 'event-riders' || selected === 'waiver-signatures') ? activeEventId : undefined"
+                        :initial-event-id="selected === 'waiver-signatures' ? activeEventId : undefined"
                         @select-event="onSelectEvent" />
                 </KeepAlive>
             </v-col>
@@ -31,7 +31,6 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SalesSummary from './Reports/SalesSummary.vue'
-import EventRiders from './Reports/EventRiders.vue'
 import WaiverSignatures from './Reports/WaiverSignatures.vue'
 import DailyEvents from './Reports/DailyEvents.vue'
 import ConcessionProfitability from './Reports/ConcessionProfitability.vue'
@@ -40,11 +39,10 @@ import ConcessionStaff from './Reports/ConcessionStaff.vue'
 import BikeShopReports from '@/components/bikeshop/ReportsTab.vue'
 import { branding } from '@/stores/branding'
 
-type ReportKey = 'sales-summary' | 'event-riders' | 'waiver-signatures' | 'daily-events' | 'fnb-profit' | 'comps' | 'fnb-staff' | 'bike-shop'
+type ReportKey = 'sales-summary' | 'waiver-signatures' | 'daily-events' | 'fnb-profit' | 'comps' | 'fnb-staff' | 'bike-shop'
 
 const allReports: { key: ReportKey; title: string; subtitle: string; icon: string }[] = [
     { key: 'sales-summary', title: 'Sales Summary', subtitle: 'Revenue, top products, top events', icon: 'mdi-chart-line' },
-    { key: 'event-riders',  title: 'Event Riders',  subtitle: 'Roll call + check-in for an event', icon: 'mdi-account-group' },
     { key: 'waiver-signatures', title: 'Waivers', subtitle: 'Who has signed for an event',         icon: 'mdi-file-sign' },
     { key: 'daily-events',  title: 'Daily Events',  subtitle: 'All events on a chosen date',       icon: 'mdi-calendar-today' },
     { key: 'fnb-profit',    title: 'F&B Profit',     subtitle: 'Food & Beverage margin by item',    icon: 'mdi-silverware-fork-knife' },
@@ -70,7 +68,7 @@ const selected = ref<ReportKey>(parseReport(route.query.report as string | undef
 const activeEventId = ref<string | null>(parseEventId(route.query.eventId as string | undefined))
 
 function parseReport(v: string | undefined): ReportKey {
-    if (v === 'event-riders' || v === 'waiver-signatures' || v === 'daily-events' || v === 'sales-summary' || v === 'fnb-profit' || v === 'comps' || v === 'fnb-staff' || v === 'bike-shop') return v
+    if (v === 'waiver-signatures' || v === 'daily-events' || v === 'sales-summary' || v === 'fnb-profit' || v === 'comps' || v === 'fnb-staff' || v === 'bike-shop') return v
     return 'sales-summary'
 }
 function parseEventId(v: string | undefined): string | null {
@@ -79,7 +77,6 @@ function parseEventId(v: string | undefined): string | null {
 
 const activeComponent = computed(() => {
     switch (selected.value) {
-        case 'event-riders': return EventRiders
         case 'waiver-signatures': return WaiverSignatures
         case 'daily-events': return DailyEvents
         case 'fnb-profit': return ConcessionProfitability
@@ -95,15 +92,14 @@ function selectReport(key: ReportKey) {
     selected.value = key
     // Preserve eventId on the URL only when it's relevant to the current report.
     const query: Record<string, string> = { report: key }
-    if ((key === 'event-riders' || key === 'waiver-signatures') && activeEventId.value) query.eventId = activeEventId.value
+    if (key === 'waiver-signatures' && activeEventId.value) query.eventId = activeEventId.value
     router.replace({ path: route.path, query })
 }
 
-// Daily Events row click → jump to Event Riders for that event.
-function onSelectEvent(eventId: string) {
-    activeEventId.value = eventId
-    selected.value = 'event-riders'
-    router.replace({ path: route.path, query: { report: 'event-riders', eventId } })
+// Daily Events row click → jump to the standalone Rider Report (Admission), pre-filtered
+// to that event's day + event.
+function onSelectEvent(eventId: string, date?: string) {
+    router.push({ path: '/Admin/RiderReport', query: date ? { date, eventId } : { eventId } })
 }
 
 // A deep link to a feature-hidden report (stale bookmark, feature turned off later) falls
@@ -123,6 +119,13 @@ watch(() => route.query, (q) => {
 })
 
 onMounted(() => {
+    // Old deep links to the retired Event Riders pane land on its successor, the
+    // standalone Rider Report page, keeping any eventId they carried.
+    if (route.query.report === 'event-riders') {
+        router.replace({ path: '/Admin/RiderReport',
+            query: activeEventId.value ? { eventId: activeEventId.value } : {} })
+        return
+    }
     // Make sure the URL is canonical even when we landed without a ?report= param.
     if (!route.query.report) {
         router.replace({ path: route.path, query: { ...route.query, report: selected.value } })

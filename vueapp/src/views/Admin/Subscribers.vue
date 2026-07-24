@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { NewsletterService, type SubscriberListItem } from '@/services/NewsletterService'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -203,7 +203,7 @@ async function deleteSubscriber(s: SubscriberListItem) {
 }
 
 function formatDate(utc: string): string {
-    return dayjs.utc(utc).local().format('YYYY-MM-DD HH:mm')
+    return formatTenantDateTime(utc, 'YYYY-MM-DD HH:mm')
 }
 
 function flash(text: string, color: 'success' | 'error') {

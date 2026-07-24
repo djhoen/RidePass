@@ -1,3 +1,5 @@
+import { formatTenantDate, formatTenantDateTime } from '@/helpers/TenantTime'
+
 export default {
     currency(value: number): string {
         if (!value && value !== 0) return ''
@@ -6,14 +8,12 @@ export default {
 
     date(value: string): string {
         if (!value) return ''
-        const date = new Date(value)
-        return date.toLocaleDateString()
+        return formatTenantDate(value)
     },
 
     dateTime(value: string): string {
         if (!value) return ''
-        const date = new Date(value)
-        return date.toLocaleString()
+        return formatTenantDateTime(value, 'MMM D, YYYY h:mm A')
     },
 
     truncate(value: string, length: number): string {

@@ -89,7 +89,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BlogService, type BlogPostListItem } from '@/services/BlogService'
 import { branding, loadBranding } from '@/stores/branding'
 import { useConfirm } from '@/composables/useConfirm'
@@ -115,7 +115,7 @@ function absoluteUrl(url: string | null | undefined): string {
 }
 
 function formatDate(iso: string): string {
-    return dayjs(iso).format('MMM D, YYYY')
+    return formatTenantDate(iso, 'MMM D, YYYY')
 }
 
 function featureTooltip(p: BlogPostListItem): string {

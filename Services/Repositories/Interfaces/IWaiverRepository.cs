@@ -46,7 +46,7 @@ namespace Services.Repositories.Interfaces
         /// "account" (a bare account/kiosk signature with no purchase link).</summary>
         Task<(List<WaiverSignatureRow> Rows, int Total)> ListSignatures(Guid tenantId,
             string? search, DateTime? fromUtc, DateTime? toUtc, Guid? waiverId,
-            bool minorsOnly, string? context, int page, int pageSize);
+            bool minorsOnly, string? context, int page, int pageSize, string? personKey = null);
 
         /// <summary>Admin People view: signatures collapsed to person identities
         /// (rider account when present, else name + birthdate). Status filter:

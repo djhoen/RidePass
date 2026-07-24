@@ -116,6 +116,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { CouponService, type Coupon, type UpsertCoupon } from '@/services/CouponService'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -172,7 +173,7 @@ function scopeLabel(s: string): string {
     return scopeOptions.find(o => o.value === s)?.label ?? s
 }
 function formatDate(iso: string): string {
-    return dayjs(iso).format('MMM D, YYYY')
+    return formatTenantDate(iso, 'MMM D, YYYY')
 }
 
 async function load() {

@@ -34,7 +34,7 @@
                     @click="openMessageDialog">
                     Send message ({{ selectedRows.length }})
                 </v-btn>
-                <v-btn variant="tonal" prepend-icon="mdi-export"
+                <v-btn v-if="branding.tracksideExportEnabled" variant="tonal" prepend-icon="mdi-export"
                     :loading="exportingCsv" :disabled="!selectedEventId" @click="exportTracksideCsv">
                     Export Trackside CSV
                 </v-btn>

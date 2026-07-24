@@ -81,6 +81,9 @@ export interface BrandingState {
     shopSupplyFeeLabel: string
     shopLaborRateCents: number | null
     wristbandsEnabled: boolean
+    tracksideExportEnabled: boolean
+    /// The tenant has ever configured a spectator ticket tier; drives Spectator Report visibility.
+    sellsSpectatorPasses: boolean
     blogEnabled: boolean
     // Published, nav-visible custom pages, in sort order. Rendered as top-level links
     // (public top bar + drawer) alongside the built-in Blog link.
@@ -185,6 +188,8 @@ const defaults: BrandingState = {
     shopSupplyFeeLabel: 'Shop supplies',
     shopLaborRateCents: null,
     wristbandsEnabled: false,
+    tracksideExportEnabled: false,
+    sellsSpectatorPasses: false,
     blogEnabled: false,
     navPages: [],
     dynamicPricingEnabled: false,
@@ -333,6 +338,8 @@ export async function loadBranding(): Promise<void> {
         branding.shopSupplyFeeLabel = data.shopSupplyFeeLabel ?? 'Shop supplies'
         branding.shopLaborRateCents = data.shopLaborRateCents ?? null
         branding.wristbandsEnabled = !!data.wristbandsEnabled
+        branding.tracksideExportEnabled = !!data.tracksideExportEnabled
+        branding.sellsSpectatorPasses = !!data.sellsSpectatorPasses
         branding.blogEnabled = !!data.blogEnabled
         branding.navPages = Array.isArray(data.navPages) ? data.navPages : []
         branding.dynamicPricingEnabled = !!data.dynamicPricingEnabled

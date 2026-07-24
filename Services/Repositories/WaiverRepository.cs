@@ -239,13 +239,22 @@ namespace Services.Repositories
 
         public async Task<(List<WaiverSignatureRow> Rows, int Total)> ListSignatures(Guid tenantId,
             string? search, DateTime? fromUtc, DateTime? toUtc, Guid? waiverId,
-            bool minorsOnly, string? context, int page, int pageSize)
+            bool minorsOnly, string? context, int page, int pageSize, string? personKey = null)
         {
             var where = new List<string> { "s.tenant_id = @tenantId" };
             if (!string.IsNullOrWhiteSpace(search))
                 where.Add($@"(lower({SignerNameExpr}) LIKE @search
                     OR lower(COALESCE({SignerEmailExpr}, '')) LIKE @search
                     OR lower(COALESCE(s.parent_name, '')) LIKE @search)");
+            // Exact person filter for the merged Signed Waivers page: an expanded person row
+            // lists exactly that person's signatures. The expression MUST stay identical to
+            // ListPeople's person_key.
+            if (!string.IsNullOrWhiteSpace(personKey))
+                where.Add($@"COALESCE(s.user_id::text,
+                    lower(COALESCE(
+                        NULLIF(TRIM(COALESCE(s.spectator_first_name,'') || ' ' || COALESCE(s.spectator_last_name,'')), ''),
+                        s.signer_name, s.signer_email, s.id::text))
+                    || '|' || COALESCE({BirthdateExpr}::text, '')) = @personKey");
             if (fromUtc.HasValue) where.Add("s.signed_at >= @fromUtc");
             if (toUtc.HasValue) where.Add("s.signed_at < @toUtc");
             if (waiverId.HasValue) where.Add("s.waiver_id = @waiverId");
@@ -272,6 +281,7 @@ namespace Services.Repositories
                 fromUtc,
                 toUtc,
                 waiverId,
+                personKey,
                 pageSize,
                 offset = (page - 1) * pageSize,
             };
@@ -426,65 +436,71 @@ namespace Services.Repositories
         public async Task<List<WaiverComplianceRow>> ComplianceToday(Guid tenantId,
             DateTime dayStartUtc, DateTime dayEndUtc)
         {
-            // Four on-site populations, unioned then annotated with an account-level
-            // "has a signature on a currently active waiver" check by user id or email.
-            // Lesson rosters exclude already-scanned tickets (those appear as scans).
+            // EVERYONE EXPECTED TODAY, not just people who have already come through the
+            // gate: every live ticket on an event running today (scanned or not), every
+            // pass reservation on today's events, and every rental overlapping today.
+            // Rows are annotated with the person's newest signature on a currently-active
+            // waiver (SignedAt) so the screen can show when they signed, and with their
+            // check-in moment when it has happened (CheckedInAt null = not here yet).
+            // Tickets scanned today for an event on ANOTHER day (rare walk-up edge) are
+            // kept via the redeemed_at leg of the ticket predicate.
             const string sql = @"
                 WITH onsite AS (
-                    SELECT 'scan' AS Source, e.title AS Label,
+                    SELECT CASE WHEN tet.code = 'lesson' THEN 'lesson' ELSE 'ticket' END AS Source,
+                           e.title AS Label,
                            COALESCE(NULLIF(TRIM(COALESCE(p.rider_first_name,'') || ' ' || COALESCE(p.rider_last_name,'')), ''),
                                     p.purchaser_name, '(unknown)') AS PersonName,
                            p.purchaser_email AS Email, p.purchaser_user_id AS UserId,
-                           p.redeemed_at_utc AS At,
-                           (p.waiver_signature_id IS NOT NULL) AS SignedForThis
+                           COALESCE(p.redeemed_at_utc, e.starts_at) AS At,
+                           p.redeemed_at_utc AS CheckedInAt,
+                           (p.waiver_signature_id IS NOT NULL) AS SignedForThis,
+                           (SELECT ws0.signed_at FROM rider_waiver_signature ws0
+                             WHERE ws0.id = p.waiver_signature_id) AS OwnSignedAt
                     FROM event_ticket_purchase p
                     JOIN event_ticket_tier t ON t.id = p.tier_id
                     JOIN event e ON e.id = t.event_id
-                    WHERE p.tenant_id = @tenantId AND p.status = 'paid'
-                      AND p.redeemed_at_utc >= @dayStartUtc AND p.redeemed_at_utc < @dayEndUtc
+                    JOIN tenant_event_type tet ON tet.id = e.event_type_id
+                    WHERE p.tenant_id = @tenantId AND p.status IN ('paid', 'redeemed')
+                      AND ((e.starts_at < @dayEndUtc AND e.ends_at > @dayStartUtc)
+                           OR (p.redeemed_at_utc >= @dayStartUtc AND p.redeemed_at_utc < @dayEndUtc))
 
                     UNION ALL
                     SELECT 'pass', e.title,
                            COALESCE(NULLIF(TRIM(COALESCE(sp.holder_first_name,'') || ' ' || COALESCE(sp.holder_last_name,'')), ''),
                                     sp.purchaser_name, '(unknown)'),
                            sp.purchaser_email, sp.purchaser_user_id,
-                           r.checked_in_at, false
+                           COALESCE(r.checked_in_at, e.starts_at),
+                           r.checked_in_at,
+                           (sp.waiver_signature_id IS NOT NULL),
+                           (SELECT ws0.signed_at FROM rider_waiver_signature ws0
+                             WHERE ws0.id = sp.waiver_signature_id)
                     FROM season_pass_reservation r
                     JOIN season_pass_purchase sp ON sp.id = r.season_pass_purchase_id
                     JOIN event e ON e.id = r.event_id
                     WHERE sp.tenant_id = @tenantId
-                      AND r.checked_in_at >= @dayStartUtc AND r.checked_in_at < @dayEndUtc
+                      AND r.status <> 'cancelled'
+                      AND ((e.starts_at < @dayEndUtc AND e.ends_at > @dayStartUtc)
+                           OR (r.checked_in_at >= @dayStartUtc AND r.checked_in_at < @dayEndUtc))
 
                     UNION ALL
                     SELECT 'rental', 'Rental pickup',
                            COALESCE(r.renter_name, '(unnamed)'),
                            r.renter_email, NULL::uuid,
                            COALESCE(r.checked_out_at, r.starts_at),
+                           r.checked_out_at,
                            ((SELECT COUNT(*) FROM shop_rental_waiver rw WHERE rw.rental_id = r.id)
-                                >= GREATEST(COALESCE(r.riders_required, 1), 1))
+                                >= GREATEST(COALESCE(r.riders_required, 1), 1)),
+                           (SELECT MAX(ws0.signed_at) FROM shop_rental_waiver rw
+                             JOIN rider_waiver_signature ws0 ON ws0.id = rw.signature_id
+                             WHERE rw.rental_id = r.id)
                     FROM shop_rental r
                     WHERE r.tenant_id = @tenantId
                       AND r.status IN ('pending', 'paid', 'out')
                       AND r.starts_at < @dayEndUtc AND r.ends_at > @dayStartUtc
-
-                    UNION ALL
-                    SELECT 'lesson', e.title,
-                           COALESCE(NULLIF(TRIM(COALESCE(p.rider_first_name,'') || ' ' || COALESCE(p.rider_last_name,'')), ''),
-                                    p.purchaser_name, '(unknown)'),
-                           p.purchaser_email, p.purchaser_user_id,
-                           e.starts_at,
-                           (p.waiver_signature_id IS NOT NULL)
-                    FROM event_ticket_purchase p
-                    JOIN event_ticket_tier t ON t.id = p.tier_id
-                    JOIN event e ON e.id = t.event_id
-                    JOIN tenant_event_type tet ON tet.id = e.event_type_id AND tet.code = 'lesson'
-                    WHERE p.tenant_id = @tenantId AND p.status = 'paid'
-                      AND p.redeemed_at_utc IS NULL
-                      AND e.starts_at >= @dayStartUtc AND e.starts_at < @dayEndUtc
                 )
                 SELECT o.*,
-                       EXISTS (
-                           SELECT 1
+                       COALESCE(o.OwnSignedAt, (
+                           SELECT MAX(ws.signed_at)
                            FROM rider_waiver_signature ws
                            JOIN tenant_waiver tw ON tw.id = ws.waiver_id
                            WHERE ws.tenant_id = @tenantId
@@ -493,9 +509,9 @@ namespace Services.Repositories
                                OR (o.Email IS NOT NULL AND o.Email <> '' AND
                                     (lower(ws.signer_email) = lower(o.Email)
                                      OR ws.user_id IN (SELECT uu.id FROM users uu WHERE lower(uu.email) = lower(o.Email)))))
-                       ) AS HasCurrentWaiver
+                       )) AS SignedAt
                 FROM onsite o
-                ORDER BY o.At DESC";
+                ORDER BY o.CheckedInAt DESC NULLS LAST, o.At";
             var rows = await _db.Query<WaiverComplianceRow>(sql, new { tenantId, dayStartUtc, dayEndUtc });
             return rows.ToList();
         }

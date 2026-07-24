@@ -73,7 +73,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopStockCount, type ShopStockCountLine } from '@/services/BikeShopService'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -88,7 +88,7 @@ const detail = ref<ShopStockCount | null>(null)
 const detailError = ref('')
 const completing = ref(false)
 
-function formatDate(iso: string): string { return dayjs(iso).format('MMM D, YYYY h:mm A') }
+function formatDate(iso: string): string { return formatTenantDateTime(iso, 'MMM D, YYYY h:mm A') }
 function varianceLabel(l: ShopStockCountLine): string {
     if (l.countedQty == null) return '—'
     const d = l.countedQty - l.expectedQty

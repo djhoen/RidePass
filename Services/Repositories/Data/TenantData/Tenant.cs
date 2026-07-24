@@ -126,6 +126,9 @@ namespace Services.Repositories.Data.TenantData
         /// take a typed price. When set, a labor line entered by hours bills hours * this rate.</summary>
         public int? ShopLaborRateCents { get; set; }
         public bool WristbandsEnabled { get; set; } = false;
+        /// <summary>Trackside handout export on the rider reports. A motocross-race
+        /// artifact: defaults on for motocross tenants, off for mountain-bike.</summary>
+        public bool TracksideExportEnabled { get; set; } = true;
         public bool BlogEnabled { get; set; } = false;
         // Stepped event-ticket price ladders (price rises by date or sales volume).
         // Gates CONFIGURING steps; already-configured ladders keep resolving.

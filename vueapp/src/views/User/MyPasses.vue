@@ -265,6 +265,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { TicketService, type MyPurchase, type MyCoupon } from '@/services/TicketService'
 import SocialShare from '@/components/SocialShare.vue'
 import { BikeShopService, type MyShopRental } from '@/services/BikeShopService'
@@ -396,7 +397,7 @@ const bikeShopService = new BikeShopService()
 function rentalTitle(r: MyShopRental): string {
     return r.lines.map(l => `${l.nameSnapshot}${l.variantLabel ? ' (' + l.variantLabel + ')' : ''}${l.quantity > 1 ? ' ×' + l.quantity : ''}`).join(', ') || 'Rental'
 }
-function formatRentalDate(d: string): string { return dayjs(d).format('MMM D, h:mm A') }
+function formatRentalDate(d: string): string { return formatTenantDateTime(d, 'MMM D, h:mm A') }
 function rentalStatusColor(s: string): string {
     if (s === 'paid') return 'primary'
     if (s === 'out') return 'warning'

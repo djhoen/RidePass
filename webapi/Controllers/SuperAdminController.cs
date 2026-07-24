@@ -256,6 +256,9 @@ namespace webapi.Controllers
                 AllowSelfCancel = request.AllowSelfCancel,
                 DynamicPricingEnabled = request.DynamicPricingEnabled,
                 BundledCouponsEnabled = request.BundledCouponsEnabled,
+                // Trackside handout is a motocross-race artifact; MTB tenants start with it off
+                // (they can flip it on in Settings > Features).
+                TracksideExportEnabled = request.TenantType != "mountain_bike",
             };
             tenant.Id = await _tenants.Create(tenant);
             // The DB triggers (seed_default_event_types, seed_initial_waiver,

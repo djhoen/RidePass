@@ -108,12 +108,16 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import authHelper from '@/helpers/AuthHelper'
 import dayjs from 'dayjs'
 import { GiftCardService } from '@/services/GiftCardService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 
 const service = new GiftCardService()
+const route = useRoute()
+const router = useRouter()
 
 const presetAmounts = computed(() => {
     const min = branding.giftCardMinCents / 100
@@ -182,6 +186,12 @@ function sendAnother() {
 
 async function createIntent() {
     if (!canContinue.value) return
+    // Anonymous browsing is fine (the form is config-driven), but buying needs an
+    // account: bounce through login and come back (works inside the embed iframe too).
+    if (!authHelper.isAuthenticated()) {
+        router.push({ path: '/Login', query: { next: route.fullPath } })
+        return
+    }
     if (amountCents.value < branding.giftCardMinCents || amountCents.value > branding.giftCardMaxCents) {
         amountError.value = `Amount must be between $${(branding.giftCardMinCents/100).toFixed(0)} and $${(branding.giftCardMaxCents/100).toFixed(0)}.`
         return

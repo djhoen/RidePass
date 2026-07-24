@@ -317,6 +317,14 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("TracksideExportEnabled")]
+        public async Task<IActionResult> UpdateTracksideExportEnabled([FromBody] UpdateTracksideExportEnabledRequest request)
+        {
+            await _tenants.UpdateTracksideExportEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("ConcessionsEnabled")]
         public async Task<IActionResult> UpdateConcessionsEnabled([FromBody] UpdateConcessionsEnabledRequest request)
         {
@@ -543,6 +551,8 @@ namespace webapi.Controllers
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BikeShopEnabled = tenant.BikeShopEnabled,
                 WristbandsEnabled = tenant.WristbandsEnabled,
+                TracksideExportEnabled = tenant.TracksideExportEnabled,
+                SellsSpectatorPasses = await _tenants.HasSpectatorTiers(tenant.Id),
                 BlogEnabled = tenant.BlogEnabled,
                 DynamicPricingEnabled = tenant.DynamicPricingEnabled,
                 BundledCouponsEnabled = tenant.BundledCouponsEnabled,

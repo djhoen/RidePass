@@ -79,7 +79,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { SuppressionService, type SuppressionItem } from '@/services/SuppressionService'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -160,7 +160,7 @@ async function reEnable(s: SuppressionItem) {
 }
 
 function formatDate(utc: string): string {
-    return dayjs.utc(utc).local().format('YYYY-MM-DD HH:mm')
+    return formatTenantDateTime(utc, 'YYYY-MM-DD HH:mm')
 }
 
 function flash(text: string, color: 'success' | 'error') {

@@ -289,7 +289,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate, formatTenantDateTime } from '@/helpers/TenantTime'
 import {
     SmsSettingsService,
     type SmsStatus,
@@ -606,11 +606,11 @@ async function toggleEnabled(next: boolean) {
 }
 
 function formatDate(utc: string): string {
-    return dayjs.utc(utc).local().format('MMM D, YYYY')
+    return formatTenantDate(utc, 'MMM D, YYYY')
 }
 
 function formatDateTime(utc: string): string {
-    return dayjs.utc(utc).local().format('MMM D, YYYY h:mm A')
+    return formatTenantDateTime(utc, 'MMM D, YYYY h:mm A')
 }
 
 function flash(text: string, color: 'success' | 'error') {

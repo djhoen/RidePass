@@ -118,13 +118,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
+import authHelper from '@/helpers/AuthHelper'
 import { MembershipService, type MembershipStatus } from '@/services/MembershipService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 
 const route = useRoute()
+const router = useRouter()
 const service = new MembershipService()
 
 const status = ref<MembershipStatus | null>(null)
@@ -190,6 +192,13 @@ async function load() {
 }
 
 async function createIntent() {
+    // The price card renders for anonymous visitors (status endpoint is public);
+    // buying needs an account, so bounce through login and come back. Works inside
+    // the embedded widget's iframe too (same-origin login).
+    if (!authHelper.isAuthenticated()) {
+        router.push({ path: '/Login', query: { next: route.fullPath } })
+        return
+    }
     creating.value = true
     try {
         const r = await service.buy()

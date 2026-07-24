@@ -64,7 +64,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BlogService, type BlogPostDetail } from '@/services/BlogService'
 import RichTextView from '@/components/RichTextView.vue'
 
@@ -89,7 +89,7 @@ function absoluteUrl(url: string | null | undefined): string {
 }
 
 function formatDate(iso: string): string {
-    return dayjs(iso).format('MMMM D, YYYY')
+    return formatTenantDate(iso, 'MMMM D, YYYY')
 }
 
 function openViewer(index: number) {

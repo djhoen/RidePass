@@ -178,7 +178,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { UserService, type TenantUserListItem } from '@/services/UserService'
 import { ASSIGNABLE_ROLES } from '@/helpers/TenantPermissions'
 import { useConfirm } from '@/composables/useConfirm'
@@ -360,7 +360,7 @@ function roleColor(role: string): string {
 }
 
 function formatDate(utc: string): string {
-    return dayjs.utc(utc).local().format('YYYY-MM-DD')
+    return formatTenantDate(utc, 'YYYY-MM-DD')
 }
 
 function flash(text: string, color: 'success' | 'error') {

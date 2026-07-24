@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BlogService, type PublicBlogListItem } from '@/services/BlogService'
 
 const blogService = new BlogService()
@@ -59,7 +59,7 @@ function absoluteUrl(url: string | null | undefined): string {
 }
 
 function formatDate(iso: string): string {
-    return dayjs(iso).format('MMMM D, YYYY')
+    return formatTenantDate(iso, 'MMMM D, YYYY')
 }
 
 onMounted(async () => {

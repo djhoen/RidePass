@@ -115,6 +115,8 @@ export interface AdminWaiverSignatureDetail {
 
 export interface ListSignaturesParams {
     search?: string
+    /** Exact person filter (People-row expansion on the merged Signed Waivers page). */
+    personKey?: string
     fromUtc?: string
     toUtc?: string
     waiverId?: string
@@ -134,11 +136,16 @@ export interface ListPeopleParams {
 }
 
 export interface WaiverComplianceItem {
-    source: 'scan' | 'pass' | 'rental' | 'lesson'
+    source: 'ticket' | 'pass' | 'rental' | 'lesson'
     label: string
     personName: string
     email: string | null
+    /** Sort anchor (check-in when it happened, else event start). */
     atUtc: string
+    /** When they signed their current waiver; null = nothing on file. */
+    signedAtUtc: string | null
+    /** When they came through the gate today; null = not checked in yet. */
+    checkedInAtUtc: string | null
     waiverStatus: 'signed' | 'missing'
 }
 

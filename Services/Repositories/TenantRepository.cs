@@ -66,6 +66,7 @@ namespace Services.Repositories
             shop_supply_fee_label AS ShopSupplyFeeLabel,
             shop_labor_rate_cents AS ShopLaborRateCents,
             wristbands_enabled AS WristbandsEnabled,
+            trackside_export_enabled AS TracksideExportEnabled,
             blog_enabled AS BlogEnabled,
             dynamic_pricing_enabled AS DynamicPricingEnabled,
             bundled_coupons_enabled AS BundledCouponsEnabled,
@@ -122,13 +123,15 @@ namespace Services.Repositories
                     external_home_url, external_events_url, embed_event_target,
                     gift_cards_enabled, rentals_enabled, extras_enabled, season_passes_enabled,
                     concessions_enabled, bike_shop_enabled, blog_enabled, dynamic_pricing_enabled, bundled_coupons_enabled,
-                    membership_enabled, waitlist_enabled, waitlist_prepay_enabled, allow_self_cancel)
+                    membership_enabled, waitlist_enabled, waitlist_prepay_enabled, allow_self_cancel,
+                    trackside_export_enabled)
                 VALUES (@Subdomain, @DisplayName, @Status, @TenantType, @VenueCategory, @Timezone,
                     @ClientType, @CustomDomain, @CustomDomainVerified, @EmbedEnabled, @EmbedAllowedOrigins,
                     @ExternalHomeUrl, @ExternalEventsUrl, @EmbedEventTarget,
                     @GiftCardsEnabled, @RentalsEnabled, @ExtrasEnabled, @SeasonPassesEnabled,
                     @ConcessionsEnabled, @BikeShopEnabled, @BlogEnabled, @DynamicPricingEnabled, @BundledCouponsEnabled,
-                    @MembershipEnabled, @WaitlistEnabled, @WaitlistPrepayEnabled, @AllowSelfCancel)
+                    @MembershipEnabled, @WaitlistEnabled, @WaitlistPrepayEnabled, @AllowSelfCancel,
+                    @TracksideExportEnabled)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, tenant);
             return result.First();
@@ -512,6 +515,25 @@ namespace Services.Repositories
         public async Task UpdateBikeShopEnabled(Guid tenantId, bool enabled)
         {
             const string sql = "UPDATE tenant SET bike_shop_enabled = @enabled WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task<bool> HasSpectatorTiers(Guid tenantId)
+        {
+            // "Has ever sold spectator passes": any spectator-audience or spectator-pass
+            // tier on any of the tenant's events, active or not. Drives the Spectator
+            // Report nav visibility, so it deliberately never un-shows once true.
+            const string sql = @"
+                SELECT EXISTS (
+                    SELECT 1 FROM event_ticket_tier
+                    WHERE tenant_id = @tenantId
+                      AND (audience = 'spectator' OR kind = 'spectator_pass'))";
+            return (await _db.Query<bool>(sql, new { tenantId })).First();
+        }
+
+        public async Task UpdateTracksideExportEnabled(Guid tenantId, bool enabled)
+        {
+            const string sql = "UPDATE tenant SET trackside_export_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
         }
 

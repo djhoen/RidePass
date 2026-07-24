@@ -330,6 +330,7 @@
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
+import { formatTenantDate, formatTenantTime } from '@/helpers/TenantTime'
 import { TicketService, type TicketTier, type TicketRedemption } from '@/services/TicketService'
 import { UserService } from '@/services/UserService'
 import { CreditService } from '@/services/CreditService'
@@ -679,7 +680,7 @@ function groupBands(t: TicketTier): string {
 // A group's own time inside the event, shown only when it differs from the event's window.
 function groupTimeLabel(t: TicketTier): string {
     if (!t.startsAt || !t.endsAt) return ''
-    return `${dayjs(t.startsAt).format('h:mm A')} to ${dayjs(t.endsAt).format('h:mm A')}`
+    return `${formatTenantTime(t.startsAt, 'h:mm A')} to ${formatTenantTime(t.endsAt, 'h:mm A')}`
 }
 
 // Buy-page hint for a price-ladder step: where the price goes next.
@@ -687,7 +688,7 @@ function stepHint(t: TicketTier): string {
     if (t.nextPriceCents == null) return ''
     const next = priceLabel(t.nextPriceCents)
     if (t.nextChangeKind === 'date' && t.nextChangeAtUtc) {
-        return `rises to ${next} on ${new Date(t.nextChangeAtUtc).toLocaleDateString()}`
+        return `rises to ${next} on ${formatTenantDate(t.nextChangeAtUtc)}`
     }
     return `then ${next}`
 }

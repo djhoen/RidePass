@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopWorkOrder, type ShopRental } from '@/services/BikeShopService'
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 
@@ -70,7 +70,7 @@ const subjectSubtitle = computed(() => {
     }
     const r = rental.value
     if (!r) return ''
-    const when = `${dayjs(r.startsAt).format('MMM D')} to ${dayjs(r.endsAt).format('MMM D')}`
+    const when = `${formatTenantDate(r.startsAt, 'MMM D')} to ${formatTenantDate(r.endsAt, 'MMM D')}`
     return [r.renterName || 'Walk-in', when, r.status].filter(Boolean).join(' · ')
 })
 

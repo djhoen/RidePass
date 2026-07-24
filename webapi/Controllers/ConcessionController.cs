@@ -1233,7 +1233,7 @@ namespace webapi.Controllers
         }
 
         // Live online-ordering status for the rider app (poll). Readable by any authenticated tenant user.
-        [Authorize]
+        // Anonymous for the same reason as GET Menu: open/closed + wait quote, no PII.
         [HttpGet("OrderingStatus")]
         public async Task<IActionResult> OrderingStatus()
         {
@@ -1405,9 +1405,9 @@ namespace webapi.Controllers
         }
 
         // ── Combo definition (shared, tenant-level) ─────────────────────────────────
-        // Read the "make it a combo" config (tiers + slots). Available to the POS and the rider menu so
-        // they can render the upgrade; any authenticated tenant user (matches the other menu reads).
-        [Authorize]
+        // Read the "make it a combo" config (tiers + slots). Anonymous, matching the other
+        // menu reads (GET Menu / OrderingStatus): the public order page and the embedded
+        // F&B widget render the upgrade before anyone signs in. Catalog data only.
         [HttpGet("Combo")]
         public async Task<IActionResult> GetCombo()
         {
@@ -2315,7 +2315,9 @@ namespace webapi.Controllers
         }
 
         // ── Rider online ordering (any logged-in user; pays online via the Payment Element) ─────────
-        [Authorize]
+        // Anonymous: the menu is a marketing surface (rendered by the public order page
+        // and the embedded F&B widget). Catalog data only, no PII; placing an order
+        // still requires an account.
         [HttpGet("Menu")]
         public async Task<IActionResult> RiderMenu()
         {

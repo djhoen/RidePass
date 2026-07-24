@@ -141,13 +141,16 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
 }
 .embed-event-datebadge {
     position: absolute;
-    top: -6px;
+    /* Flush with the card's top edge, hanging downward like a tab. It must sit fully
+       INSIDE the card: v-card ships overflow:hidden (to crop media to its rounded
+       corners), so anything poking above the edge (the old top: -6px) gets sliced. */
+    top: 0;
     left: 12px;
     background: #000;
     color: #fff;
     padding: 6px 10px 5px;
     text-align: center;
-    border-radius: 4px;
+    border-radius: 0 0 4px 4px;
     line-height: 1;
     min-width: 44px;
     box-shadow: 1px 2px 5px 0 rgba(0, 0, 0, 0.34);

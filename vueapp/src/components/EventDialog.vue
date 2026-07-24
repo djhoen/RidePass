@@ -309,6 +309,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { EventService, type EventDto } from '@/services/EventService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { ExtraService, type ExtraProduct } from '@/services/ExtraService'
@@ -415,7 +416,7 @@ function waiverItem(w: WaiverDto) {
     return {
         value: w.id,
         title: w.expiresAtUtc
-            ? `${w.name} (expires ${new Date(w.expiresAtUtc).toLocaleDateString()})`
+            ? `${w.name} (expires ${formatTenantDate(w.expiresAtUtc)})`
             : w.name,
     }
 }

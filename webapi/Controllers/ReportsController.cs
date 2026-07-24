@@ -253,6 +253,82 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(report);
         }
 
+        // ── Rider Report (Admission) ────────────────────────────────────────
+        // Date-range roll call across every event in the window: tickets + season-pass
+        // reservations with check-in state, linked wristband, and waiver coverage.
+        // Server-capped; the UI narrows the range when truncated.
+        private const int RiderReportCap = 1000;
+
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/Riders")]
+        public async Task<IActionResult> GetRiders([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc,
+            [FromQuery] string? search, [FromQuery] string audience = "rider")
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("The date range is empty.");
+            if (audience is not ("rider" or "spectator"))
+                return new ApiResponses().BadRequestResult("audience must be 'rider' or 'spectator'.");
+            var rows = await _reports.GetRidersByRange(_tenantContext.TenantId,
+                fromUtc.ToUniversalTime(), toUtc.ToUniversalTime(), search, RiderReportCap + 1, audience);
+            var truncated = rows.Count > RiderReportCap;
+            if (truncated) rows = rows.Take(RiderReportCap).ToList();
+            return new ApiResponses().OkResult(new RiderReportResponse
+            {
+                Rows = rows.Select(ToRiderItem).ToList(),
+                Truncated = truncated,
+                TotalRows = rows.Count,
+                TotalCheckedIn = rows.Count(r => r.CheckedIn),
+                TotalMissingWaiver = rows.Count(r => !r.WaiverSigned),
+            });
+        }
+
+        // Drill-in for one rider (identified by account id and/or email from a report row):
+        // what they're registered for (last year + upcoming) and the waivers they've signed.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/RiderDetail")]
+        public async Task<IActionResult> GetRiderDetail([FromQuery] Guid? userId, [FromQuery] string? email,
+            [FromQuery] string? name)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (userId is null && string.IsNullOrWhiteSpace(email))
+                return new ApiResponses().BadRequestResult("A rider account or email is required to look up details.");
+            var regs = await _reports.GetRiderRegistrations(_tenantContext.TenantId, userId, email);
+            var waivers = await _reports.GetRiderWaivers(_tenantContext.TenantId, userId, email);
+            return new ApiResponses().OkResult(new RiderDetailResponse
+            {
+                RiderName = name ?? regs.FirstOrDefault()?.RiderName ?? email ?? "",
+                Email = email,
+                Registrations = regs.Select(ToRiderItem).ToList(),
+                Waivers = waivers.Select(w => new RiderWaiverItem
+                {
+                    Id = w.Id,
+                    WaiverName = w.WaiverName,
+                    WaiverVersion = w.WaiverVersion,
+                    SignedAtUtc = DateTime.SpecifyKind(w.SignedAtUtc, DateTimeKind.Utc),
+                    SignedByParent = w.SignedByParent,
+                    ParentName = w.ParentName,
+                    WaiverIsCurrent = w.WaiverIsCurrent,
+                }).ToList(),
+            });
+        }
+
+        private static RiderReportItem ToRiderItem(Services.Repositories.Data.ReportData.RiderReportRow r) => new()
+        {
+            PurchaseId = r.PurchaseId,
+            Source = r.Source,
+            EventId = r.EventId,
+            EventTitle = r.EventTitle,
+            EventStartsAtUtc = DateTime.SpecifyKind(r.EventStartsAtUtc, DateTimeKind.Utc),
+            RiderName = r.RiderName,
+            Email = r.Email,
+            UserId = r.UserId,
+            ItemName = r.ItemName,
+            CheckedIn = r.CheckedIn,
+            CheckedInAtUtc = r.CheckedInAtUtc.HasValue ? DateTime.SpecifyKind(r.CheckedInAtUtc.Value, DateTimeKind.Utc) : null,
+            WristbandCode = r.WristbandCode,
+            WaiverSigned = r.WaiverSigned,
+        };
+
         // ── Event Riders ────────────────────────────────────────────────────
         // Roll-call for one event: every paid registrant across pass / ticket /
         // season-pass-reservation, with their check-in status. Used for the gate
@@ -609,6 +685,10 @@ namespace webapi.Controllers
         [HttpGet("Admin/EventRiders/{eventId:guid}/Export/Trackside")]
         public async Task<IActionResult> ExportTrackside(Guid eventId)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!_tenantContext.Tenant.TracksideExportEnabled)
+                return new ApiResponses().BadRequestResult(
+                    "Trackside export is turned off for this venue. Enable it under Settings > Features first.");
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var ev = await _events.GetById(eventId, _tenantContext.TenantId);
             if (ev is null) return new ApiResponses().NotFoundResult("Event not found.");

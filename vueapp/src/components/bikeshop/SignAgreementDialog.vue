@@ -67,7 +67,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import SignaturePad from '@/components/SignaturePad.vue'
 import { BikeShopService, type ShopAgreement, type ShopAgreementSignature } from '@/services/BikeShopService'
 
@@ -154,7 +154,7 @@ async function submit() {
     }
 }
 
-function formatWhen(iso: string): string { return dayjs(iso).format('MMM D, YYYY h:mm A') }
+function formatWhen(iso: string): string { return formatTenantDateTime(iso, 'MMM D, YYYY h:mm A') }
 
 // Load quietly on mount so the button can show signed state without being opened.
 watch(() => [props.workOrderId, props.rentalId, props.kind], load, { immediate: true })

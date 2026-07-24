@@ -225,6 +225,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { TenantService, type GalleryImage, type TrackGraphic } from '@/services/TenantService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding, loadBranding } from '@/stores/branding'
@@ -565,7 +566,7 @@ function flash(text: string, color: 'success' | 'error') {
 
 function formatLocal(iso: string): string {
     try {
-        return new Date(iso).toLocaleString()
+        return formatTenantDateTime(iso, 'MMM D, YYYY h:mm A') || iso
     } catch {
         return iso
     }

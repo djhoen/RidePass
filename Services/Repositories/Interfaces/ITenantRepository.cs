@@ -91,6 +91,9 @@ namespace Services.Repositories.Interfaces
         Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled);
         Task UpdateBikeShopEnabled(Guid tenantId, bool enabled);
         Task UpdateWristbandsEnabled(Guid tenantId, bool enabled);
+        Task UpdateTracksideExportEnabled(Guid tenantId, bool enabled);
+        /// <summary>Any spectator ticket tier on any event, ever (drives Spectator Report visibility).</summary>
+        Task<bool> HasSpectatorTiers(Guid tenantId);
         Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
         Task UpdateBlogEnabled(Guid tenantId, bool enabled);
         Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, int waitlistConfirmWindowMinutes);

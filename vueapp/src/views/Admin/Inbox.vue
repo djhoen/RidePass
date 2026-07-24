@@ -189,6 +189,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { InboxService, type ConversationListItem, type ConversationDetail } from '@/services/InboxService'
 
 dayjs.extend(relativeTime)
@@ -329,7 +330,7 @@ function formatRelative(utc: string): string {
 }
 
 function formatDateTime(utc: string): string {
-    return dayjs.utc(utc).local().format('MMM D, h:mm A')
+    return formatTenantDateTime(utc, 'MMM D, h:mm A')
 }
 
 function flash(text: string, color: 'success' | 'error') {

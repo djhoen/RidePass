@@ -80,7 +80,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import draggable from 'vuedraggable'
 import { PageService, type PageListItem } from '@/services/PageService'
 import { useConfirm } from '@/composables/useConfirm'
@@ -107,7 +107,7 @@ function absoluteUrl(url: string | null | undefined): string {
 }
 
 function formatDate(iso: string): string {
-    return dayjs(iso).format('MMM D, YYYY')
+    return formatTenantDate(iso, 'MMM D, YYYY')
 }
 
 // Drag-drop reorder of the page list (same composable every admin sort list uses).

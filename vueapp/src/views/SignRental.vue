@@ -116,6 +116,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import SignaturePad from '@/components/SignaturePad.vue'
 import { BikeShopService } from '@/services/BikeShopService'
 
@@ -213,7 +214,7 @@ async function submitWaiver() {
 }
 
 function money(c: number): string { return `$${(c / 100).toFixed(2)}` }
-function formatWhen(iso: string): string { return dayjs(iso).format('MMM D, h:mm A') }
+function formatWhen(iso: string): string { return formatTenantDateTime(iso, 'MMM D, h:mm A') }
 
 onMounted(load)
 </script>

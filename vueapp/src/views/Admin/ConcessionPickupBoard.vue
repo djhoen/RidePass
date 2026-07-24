@@ -35,6 +35,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ConcessionService, type BoardEntry } from '@/services/ConcessionService'
+import { tenantDayjs } from '@/helpers/TenantTime'
 import { branding } from '@/stores/branding'
 import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
 
@@ -45,7 +46,7 @@ const now = ref(Date.now())
 let timer: number | undefined
 let clockTimer: number | undefined
 
-const clock = computed(() => new Date(now.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+const clock = computed(() => tenantDayjs(now.value).format('h:mm A'))
 
 onMounted(() => {
     // A dedicated lobby tablet can pin a chromeless "Pickup" icon that reopens this screen.

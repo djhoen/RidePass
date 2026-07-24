@@ -30,7 +30,7 @@
                 <tbody>
                     <tr v-for="o in orders" :key="o.saleId" style="cursor: pointer" @click="openDetail(o.saleId)">
                         <td class="font-weight-bold">#{{ o.orderNumber ?? '—' }}</td>
-                        <td>{{ new Date(o.createdAtUtc).toLocaleString() }}</td>
+                        <td>{{ formatTenantDateTime(o.createdAtUtc, 'MMM D, YYYY h:mm A') }}</td>
                         <td>
                             {{ o.customerName || (o.orderChannel === 'online' ? 'Online customer' : 'Walk-up') }}
                             <v-icon v-if="o.isRush" color="error" size="x-small" class="ml-1">mdi-flash</v-icon>
@@ -74,7 +74,7 @@
                 </v-card-title>
                 <v-card-text>
                     <div class="text-caption text-medium-emphasis mb-3">
-                        {{ new Date(detail.createdAtUtc).toLocaleString() }} ·
+                        {{ formatTenantDateTime(detail.createdAtUtc, 'MMM D, YYYY h:mm A') }} ·
                         {{ detail.orderChannel === 'online' ? 'Online' : 'Counter' }} ·
                         {{ detail.paymentMethod === 'cash' ? 'Cash' : 'Card' }}
                         <template v-if="detail.customerName"> · {{ detail.customerName }}</template>
@@ -135,6 +135,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ConcessionService, type OrderSummary, type OrderDetail, type OrderDetailLine } from '@/services/ConcessionService'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 
 const svc = new ConcessionService()
 const orders = ref<OrderSummary[]>([])

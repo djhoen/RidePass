@@ -58,6 +58,23 @@
                 }
                 return { path: '/embed/seasonpass/' + encodeURIComponent(pid) };
             }
+            case 'order': {
+                return { path: '/embed/order' };
+            }
+            case 'status':
+                return { path: '/embed/status' };
+            case 'shop':
+                return { path: '/embed/shop' };
+            case 'giftcard':
+                return { path: '/embed/giftcard' };
+            case 'membership':
+                return { path: '/embed/membership' };
+            case 'feedback':
+                return { path: '/embed/feedback' };
+            case 'blog': {
+                var blimit = el.getAttribute('data-limit');
+                return { path: '/embed/blog' + (blimit ? '?limit=' + encodeURIComponent(blimit) : '') };
+            }
             case 'calendar': {
                 var cqs = [];
                 var climit = el.getAttribute('data-limit');

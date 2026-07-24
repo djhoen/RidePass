@@ -167,7 +167,7 @@
                         <v-table density="compact">
                             <tbody>
                                 <tr v-for="h in bikeHistory" :key="h.workOrderId">
-                                    <td class="text-caption">{{ formatDate(h.createdAt) }}</td>
+                                    <td class="text-caption">{{ formatTsDate(h.createdAt) }}</td>
                                     <td><v-chip size="x-small" :color="statusColor(h.status)">{{ statusLabel(h.status) }}</v-chip></td>
                                     <td class="text-caption">{{ h.intakeNotes || '—' }}</td>
                                     <td class="text-caption text-right">{{ money(h.totalCents) }}</td>
@@ -201,7 +201,7 @@
                             <tbody>
                                 <tr v-for="ins in bikeInspections" :key="ins.id" class="insp-link"
                                     @click="openInspection(ins.id)">
-                                    <td class="text-caption">{{ formatDate(ins.performedAt) }}</td>
+                                    <td class="text-caption">{{ formatTsDate(ins.performedAt) }}</td>
                                     <td>
                                         <v-chip size="x-small" :color="ins.status === 'complete' ? 'success' : 'grey'">
                                             {{ ins.status === 'complete' ? 'Complete' : 'Draft' }}
@@ -641,6 +641,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate, formatTenantDateTime } from '@/helpers/TenantTime'
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
 import SignAgreementDialog from '@/components/bikeshop/SignAgreementDialog.vue'
@@ -671,7 +672,10 @@ const includeClosed = ref(false)
 const snackbar = ref(false); const snackText = ref(''); const snackColor = ref<'success' | 'error'>('success')
 function flash(t: string, c: 'success' | 'error' = 'success') { snackText.value = t; snackColor.value = c; snackbar.value = true }
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
+// Date-only fields (promisedAt): no zone, format as stored.
 function formatDate(iso: string): string { return dayjs(iso).format('MMM D') }
+// UTC timestamps: render in the tenant's timezone.
+function formatTsDate(iso: string): string { return formatTenantDate(iso, 'MMM D') }
 // ── Repair-order aging ────────────────────────────────────────────────────────────────
 // Closed orders stop aging: a picked-up job from March isn't "146 days old", it's done.
 function ageDays(o: ShopWorkOrder): number | null {
@@ -1192,7 +1196,7 @@ async function setQc(userId: string | null) {
 // ── Internal notes thread ───────────────────────────────────────────────────
 const newNote = ref('')
 const addingNote = ref(false)
-function noteTime(iso: string): string { return dayjs(iso).format('MMM D, h:mm A') }
+function noteTime(iso: string): string { return formatTenantDateTime(iso, 'MMM D, h:mm A') }
 
 async function addNote() {
     const body = newNote.value.trim()
@@ -1459,7 +1463,7 @@ function printClaimTag() {
         <div class="tag">#${o.id.slice(0, 8).toUpperCase()}</div>
         <div><strong>${esc(o.customerName)}</strong>${o.customerPhone ? ' · ' + esc(o.customerPhone) : ''}</div>
         <div>${esc(o.customerBikeDesc || '(shop unit)')}</div>
-        <div class="muted">Taken in ${dayjs(o.createdAt).format('MMM D, YYYY')}${o.promisedAt ? ' · promised ' + dayjs(o.promisedAt).format('MMM D') : ''}</div>
+        <div class="muted">Taken in ${formatTenantDate(o.createdAt, 'MMM D, YYYY')}${o.promisedAt ? ' · promised ' + dayjs(o.promisedAt).format('MMM D') : ''}</div>
         ${o.intakeNotes ? `<div class="muted" style="margin-top:6px">${esc(o.intakeNotes)}</div>` : ''}
         ${o.customerNotes ? `<div style="margin-top:6px">${esc(o.customerNotes)}</div>` : ''}`)
 }

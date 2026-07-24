@@ -445,6 +445,20 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'sales.counter', hideFooter: true }
     },
     {
+        path: '/Admin/RiderReport',
+        name: 'AdminRiderReport',
+        component: () => import('../views/Admin/RiderReport.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
+        // Same component as the Rider Report, filtered to spectator-audience tiers.
+        path: '/Admin/SpectatorReport',
+        name: 'AdminSpectatorReport',
+        component: () => import('../views/Admin/RiderReport.vue'),
+        props: { audience: 'spectator' },
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
         path: '/Admin/RedeemTickets',
         name: 'AdminRedeemTickets',
         component: () => import('../views/Admin/RedeemTickets.vue'),
@@ -581,6 +595,48 @@ const routes = [
     // The whole season pass lineup, and a single pass. The :id variant renders the
     // per-product landing view (admin-authored marketing content + checkout); passes
     // without a landing fall back to the same view's plain facts + checkout.
+    {
+        path: '/embed/order',
+        name: 'EmbedOrder',
+        component: () => import('../views/Embed/EmbedOrder.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/status',
+        name: 'EmbedStatus',
+        component: () => import('../views/Embed/EmbedStatus.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/shop',
+        name: 'EmbedShop',
+        component: () => import('../views/Embed/EmbedShop.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/giftcard',
+        name: 'EmbedGiftCard',
+        component: () => import('../views/Embed/EmbedGiftCard.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/membership',
+        name: 'EmbedMembership',
+        component: () => import('../views/Embed/EmbedMembership.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/blog',
+        name: 'EmbedBlog',
+        component: () => import('../views/Embed/EmbedBlog.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
+    {
+        path: '/embed/feedback',
+        name: 'EmbedFeedback',
+        component: () => import('../views/Embed/EmbedFeedback.vue'),
+        meta: { hideNav: true, hideFooter: true, embed: true },
+    },
     {
         path: '/embed/seasonpasses',
         name: 'EmbedSeasonPasses',

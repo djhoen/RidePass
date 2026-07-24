@@ -67,6 +67,54 @@ export const EMBED_WIDGETS: EmbedWidgetDef[] = [
         ],
     },
     {
+        key: 'order',
+        label: 'Food & beverage ordering',
+        description: 'The full order-ahead F&B menu with cart and payment. Visitors browse the menu freely; signing in happens inline at checkout.',
+        icon: 'mdi-silverware-fork-knife',
+    },
+    {
+        key: 'status',
+        label: 'Daily status strip',
+        description: 'A slim open/closed banner with the day\'s status message and today\'s hours. Made for the top of the track\'s own homepage.',
+        icon: 'mdi-list-status',
+    },
+    {
+        key: 'shop',
+        label: 'Bike shop storefront',
+        description: 'The retail storefront: browse products anonymously, sign in at checkout.',
+        icon: 'mdi-storefront-outline',
+    },
+    {
+        key: 'giftcard',
+        label: 'Gift cards',
+        description: 'Sell gift cards from the track\'s own site. The form is open to everyone; buying signs in inline.',
+        icon: 'mdi-wallet-giftcard',
+    },
+    {
+        key: 'membership',
+        label: 'Membership signup',
+        description: 'The membership price card and purchase flow. Visitors see the offer; buying signs in inline.',
+        icon: 'mdi-card-account-details',
+    },
+    {
+        key: 'blog',
+        label: 'News feed',
+        description: 'Latest published blog posts as cards; each opens the full article on the hosted site.',
+        icon: 'mdi-post',
+        params: [
+            {
+                attr: 'limit', label: 'Max posts (optional)', placeholder: '6',
+                hint: 'Cap how many posts show. Defaults to 6.',
+            },
+        ],
+    },
+    {
+        key: 'feedback',
+        label: 'Feedback form',
+        description: 'The public feedback / contact form.',
+        icon: 'mdi-message-text',
+    },
+    {
         key: 'event',
         label: 'Single event',
         description: 'Registration + checkout for one specific event.',
@@ -118,6 +166,16 @@ export function buildEmbedPath(widgetKey: string, values: Record<string, string>
         return id ? `/embed/seasonpass/${encodeURIComponent(id)}` : null
     }
     if (widgetKey === 'seasonpasses') return '/embed/seasonpasses'
+    if (widgetKey === 'order') return '/embed/order'
+    if (widgetKey === 'status') return '/embed/status'
+    if (widgetKey === 'shop') return '/embed/shop'
+    if (widgetKey === 'giftcard') return '/embed/giftcard'
+    if (widgetKey === 'membership') return '/embed/membership'
+    if (widgetKey === 'feedback') return '/embed/feedback'
+    if (widgetKey === 'blog') {
+        const limit = (values['limit'] ?? '').trim()
+        return '/embed/blog' + (limit ? `?limit=${encodeURIComponent(limit)}` : '')
+    }
     const base = widgetKey === 'calendar' ? '/embed/calendar' : '/embed/events'
     const qs: string[] = []
     const limit = (values['limit'] ?? '').trim()

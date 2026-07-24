@@ -167,4 +167,38 @@
         public int CheckedIn { get; set; }
         public long RevenueCents { get; set; }
     }
+
+    /// <summary>
+    /// One registrant row on the date-range Rider Report (tickets + season-pass
+    /// reservations across every event in the range), with the gate-day extras:
+    /// linked wristband and waiver coverage.
+    /// </summary>
+    public class RiderReportRow
+    {
+        public Guid PurchaseId { get; set; }
+        public string Source { get; set; } = null!;          // 'ticket' | 'season_pass'
+        public Guid EventId { get; set; }
+        public string EventTitle { get; set; } = null!;
+        public DateTime EventStartsAtUtc { get; set; }
+        public string RiderName { get; set; } = null!;
+        public string? Email { get; set; }
+        public Guid? UserId { get; set; }
+        public string ItemName { get; set; } = null!;
+        public bool CheckedIn { get; set; }
+        public DateTime? CheckedInAtUtc { get; set; }
+        public string? WristbandCode { get; set; }
+        public bool WaiverSigned { get; set; }
+    }
+
+    /// <summary>One signed waiver on the rider drill-in.</summary>
+    public class RiderWaiverRow
+    {
+        public Guid Id { get; set; }
+        public string WaiverName { get; set; } = null!;
+        public int WaiverVersion { get; set; }
+        public DateTime SignedAtUtc { get; set; }
+        public bool SignedByParent { get; set; }
+        public string? ParentName { get; set; }
+        public bool WaiverIsCurrent { get; set; }
+    }
 }

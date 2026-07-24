@@ -190,6 +190,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate, formatTenantDateTime } from '@/helpers/TenantTime'
 import { WaiverService, type WaiverDto, type WaiverEventAssociation } from '@/services/WaiverService'
 import { EventService, type EventDto } from '@/services/EventService'
 import { branding } from '@/stores/branding'
@@ -253,14 +254,14 @@ const availableEvents = computed(() => {
         .filter(e => !attached.has(e.id))
         .map(e => ({
             id: e.id,
-            label: `${e.title} — ${dayjs(e.startsAtUtc).format('MMM D, YYYY')}`,
+            label: `${e.title} — ${formatTenantDate(e.startsAtUtc, 'MMM D, YYYY')}`,
             startsAtUtc: e.startsAtUtc,
         }))
         .sort((a, b) => a.startsAtUtc.localeCompare(b.startsAtUtc))
 })
 
 function formatAssocDate(iso: string): string {
-    return dayjs(iso).format('MMM D, YYYY · h:mm A')
+    return formatTenantDateTime(iso, 'MMM D, YYYY · h:mm A')
 }
 
 async function loadAssociatedEvents() {
@@ -429,7 +430,7 @@ function formatExpires(iso: string | null): string {
     if (!iso) return ''
     const d = new Date(iso)
     if (isNaN(d.getTime())) return ''
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    return formatTenantDate(iso)
 }
 function isExpired(row: WaiverDto): boolean {
     if (!row.expiresAtUtc) return false

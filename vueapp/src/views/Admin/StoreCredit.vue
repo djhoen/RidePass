@@ -101,7 +101,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { CreditService, type CreditAccount, type CreditEntry } from '@/services/CreditService'
 
 const service = new CreditService()
@@ -116,7 +116,7 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 const snackbar = ref(false); const snackText = ref(''); const snackColor = ref<'success' | 'error'>('success')
 function flash(t: string, c: 'success' | 'error' = 'success') { snackText.value = t; snackColor.value = c; snackbar.value = true }
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
-function formatDate(iso: string): string { return dayjs(iso).format('MMM D, h:mm a') }
+function formatDate(iso: string): string { return formatTenantDateTime(iso, 'MMM D, h:mm a') }
 function kindLabel(kind: CreditEntry['kind']): string {
     switch (kind) {
         case 'deposit_excess': return 'Deposit overage'

@@ -65,7 +65,7 @@
                         </thead>
                         <tbody>
                             <tr v-for="c in counts" :key="c.id">
-                                <td>{{ new Date(c.createdAtUtc).toLocaleString() }}</td>
+                                <td>{{ formatTenantDateTime(c.createdAtUtc, 'MMM D, YYYY h:mm A') }}</td>
                                 <td>{{ c.note || '(none)' }}</td>
                                 <td class="text-right" :class="c.varianceCents < 0 ? 'text-error' : 'text-success'">{{ money(c.varianceCents) }}</td>
                                 <td><v-btn variant="text" size="small" @click="openCountDetail(c.id)">View</v-btn></td>
@@ -198,6 +198,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ConcessionService, type ConcessionInventoryItem, type InventoryCountSummary, type InventoryCountDetail } from '@/services/ConcessionService'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { useConfirm } from '@/composables/useConfirm'
 
 // Lets the parent Food & Beverage page badge the Inventory tab with the live low-stock count.

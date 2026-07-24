@@ -100,7 +100,7 @@
                                         <template #activator="{ props }">
                                             <v-btn v-bind="props" icon="mdi-account-group" variant="text"
                                                 size="small"
-                                                :to="`/Admin/Reports?report=event-riders&eventId=${e.id}`"></v-btn>
+                                                :to="`/Admin/RiderReport?date=${riderReportDate(e.startsAtUtc)}&eventId=${e.id}`"></v-btn>
                                         </template>
                                     </v-tooltip>
                                 </template>
@@ -380,6 +380,11 @@ watch(customizeOpen, isOpen => {
 
 function formatWhen(utc: string): string {
     return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('MMM D, h:mm A')
+}
+// The Rider Report defaults to today; deep links pass the event's own day so the
+// report opens on the right date regardless of when the admin clicks.
+function riderReportDate(utc: string): string {
+    return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD')
 }
 
 // Pretty labels for the v_recent_sales discriminator. Anything we forget to map

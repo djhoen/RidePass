@@ -24,6 +24,21 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>All registrants for an event — pass purchasers, ticket purchasers, and season-pass holders who reserved.</summary>
         Task<List<EventRiderRow>> GetEventRiders(Guid tenantId, Guid eventId);
+
+        /// <summary>Date-range Rider Report: registrants (tickets + season-pass reservations)
+        /// across every event starting in [fromUtc, toUtc), with linked wristband and waiver
+        /// coverage. Search matches name, email, or wristband code (case-insensitive).
+        /// Returns at most <paramref name="cap"/> rows; callers pass cap+1 to detect overflow.</summary>
+        /// <param name="audience">"rider" (default) or "spectator"; spectators are ticket-only.</param>
+        Task<List<RiderReportRow>> GetRidersByRange(Guid tenantId, DateTime fromUtc, DateTime toUtc,
+            string? search, int cap, string audience = "rider");
+
+        /// <summary>Everything one rider is registered for (last year + upcoming), matched by
+        /// user id and/or email. Same row shape as the range report.</summary>
+        Task<List<RiderReportRow>> GetRiderRegistrations(Guid tenantId, Guid? userId, string? email);
+
+        /// <summary>Waivers this rider has signed, newest first, matched by user id and/or email.</summary>
+        Task<List<RiderWaiverRow>> GetRiderWaivers(Guid tenantId, Guid? userId, string? email);
         Task<List<EventWaiverSignatureRow>> GetEventWaiverSignatures(Guid tenantId, Guid eventId);
 
         /// <summary>One row per scheduled event in [fromUtc, toUtc) with registered/checked-in/revenue aggregates.</summary>

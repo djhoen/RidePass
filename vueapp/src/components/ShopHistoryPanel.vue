@@ -54,7 +54,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopCustomerHistory } from '@/services/BikeShopService'
 
 const props = defineProps<{
@@ -68,7 +68,7 @@ const loading = ref(false)
 const error = ref('')
 
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
-function formatDate(iso: string): string { return dayjs(iso).format('MMM D, YYYY') }
+function formatDate(iso: string): string { return formatTenantDate(iso, 'MMM D, YYYY') }
 
 async function load() {
     if (!props.userId && !props.query?.trim()) { history.value = null; return }

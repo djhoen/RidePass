@@ -55,7 +55,7 @@
                         </td>
                         <td class="text-right">
                             <v-btn variant="text" size="small" prepend-icon="mdi-account-group"
-                                @click="emit('selectEvent', r.eventId)">
+                                @click="emit('selectEvent', r.eventId, localDate)">
                                 Riders
                             </v-btn>
                         </td>
@@ -79,7 +79,7 @@ import dayjs from 'dayjs'
 import { ReportsService, type DailyEventReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
 
-const emit = defineEmits<{ (e: 'selectEvent', eventId: string): void }>()
+const emit = defineEmits<{ (e: 'selectEvent', eventId: string, date: string): void }>()
 
 const reportsService = new ReportsService()
 

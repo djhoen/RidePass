@@ -533,6 +533,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopProduct, type ShopRental, type ShopTaxCategory } from '@/services/BikeShopService'
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
@@ -572,7 +573,7 @@ const snackbar = ref(false); const snackText = ref(''); const snackColor = ref<'
 function flash(t: string, c: 'success' | 'error' = 'success') { snackText.value = t; snackColor.value = c; snackbar.value = true }
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
 function windowLabel(r: ShopRental): string {
-    return `${dayjs(r.startsAt).format('MMM D h:mm A')} – ${dayjs(r.endsAt).format('MMM D h:mm A')}`
+    return `${formatTenantDateTime(r.startsAt, 'MMM D h:mm A')} – ${formatTenantDateTime(r.endsAt, 'MMM D h:mm A')}`
 }
 function itemsLabel(r: ShopRental): string {
     return r.lines.map(l => `${l.nameSnapshot}${l.quantity > 1 ? ' ×' + l.quantity : ''}`).join(', ')
@@ -742,7 +743,7 @@ function scheduleFor(p: ShopProduct) {
             if (!variantIds.has(l.variantId)) continue
             out.push({
                 key: `${r.id}:${l.id}`,
-                window: `${dayjs(r.startsAt).format('MMM D h:mm A')} – ${dayjs(r.endsAt).format('MMM D h:mm A')}`,
+                window: `${formatTenantDateTime(r.startsAt, 'MMM D h:mm A')} – ${formatTenantDateTime(r.endsAt, 'MMM D h:mm A')}`,
                 renter: r.renterName || r.renterEmail || 'Walk-up',
                 unit: l.variantLabel || (l.quantity > 1 ? `×${l.quantity}` : ''),
                 status: r.status,

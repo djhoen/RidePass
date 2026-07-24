@@ -467,6 +467,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { CounterService, type CounterRider } from '@/services/CounterService'
 import { PassService, type WaiverDto } from '@/services/PassService'
 import type { EligibleExtra, EligibleExtraVariant, EventDto, EligibleRental } from '@/services/EventService'
@@ -610,7 +611,7 @@ const lessonTiers = ref<TicketTier[]>([])
 const loadingLessonDetail = ref(false)
 const lessonOptions = computed(() => lessonEvents.value.map(e => ({
     value: e.id,
-    title: `${e.title} — ${new Date(e.startsAtUtc).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`,
+    title: `${e.title} — ${formatTenantDateTime(e.startsAtUtc, 'MMM D, YYYY, h:mm A')}`,
 })))
 const lessonBikes = computed<EligibleRental[]>(() => lessonDetail.value?.eligibleRentals ?? [])
 const activeLessonTiers = computed(() => lessonTiers.value.filter(t => t.isActive))

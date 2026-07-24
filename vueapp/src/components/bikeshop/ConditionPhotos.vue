@@ -51,7 +51,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import dayjs from 'dayjs'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopConditionPhoto } from '@/services/BikeShopService'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -158,7 +158,7 @@ async function remove(p: ShopConditionPhoto) {
     }
 }
 
-function formatWhen(iso: string): string { return dayjs(iso).format('MMM D, YYYY h:mm A') }
+function formatWhen(iso: string): string { return formatTenantDateTime(iso, 'MMM D, YYYY h:mm A') }
 
 watch(() => [props.workOrderId, props.rentalId, props.stage], load, { immediate: true })
 defineExpose({ reload: load })

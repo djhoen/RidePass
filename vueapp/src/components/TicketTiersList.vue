@@ -265,6 +265,7 @@
 import { ref, watch, computed } from 'vue'
 import draggable from 'vuedraggable'
 import { useDragReorder } from '@/composables/useDragReorder'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { useConfirm } from '@/composables/useConfirm'
 import { branding } from '@/stores/branding'
@@ -680,7 +681,7 @@ function toLocalInput(iso: string): string {
 function stepTriggerLabel(t: TicketTier): string {
     if (t.minSold != null) return `after ${t.minSold} sold`
     if (t.effectiveDaysBefore != null) return `${t.effectiveDaysBefore}d before event`
-    if (t.effectiveAtUtc != null) return `from ${new Date(t.effectiveAtUtc).toLocaleDateString()}`
+    if (t.effectiveAtUtc != null) return `from ${formatTenantDate(t.effectiveAtUtc)}`
     return 'base price'
 }
 

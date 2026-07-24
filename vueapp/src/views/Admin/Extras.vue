@@ -316,6 +316,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
 import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import { ExtraService, type ExtraProduct, type ExtraVariant, DEFAULT_EXTRA_KINDS, kindIcon, kindLabel } from '@/services/ExtraService'
 import { branding } from '@/stores/branding'
 import { useConfirm } from '@/composables/useConfirm'
@@ -340,7 +341,7 @@ function formatExpires(iso: string | null): string {
     if (!iso) return ''
     const d = new Date(iso)
     if (isNaN(d.getTime())) return ''
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    return formatTenantDate(iso)
 }
 function isExpired(row: ExtraProduct): boolean {
     if (!row.expiresAt) return false

@@ -82,6 +82,10 @@ namespace webapi.Controllers.API.Data.Tenant
         /// <summary>Default shop labor rate in cents/hour; null = no rate set.</summary>
         public int? ShopLaborRateCents { get; set; }
         public bool WristbandsEnabled { get; set; }
+        public bool TracksideExportEnabled { get; set; }
+        /// <summary>The tenant has ever configured a spectator ticket tier; drives the
+        /// Spectator Report nav visibility.</summary>
+        public bool SellsSpectatorPasses { get; set; }
         public bool BlogEnabled { get; set; }
         // Stepped price ladders / bundled share-coupons (super-admin toggles). The tenant
         // admin UI hides the corresponding tier-editor sections when these are off.

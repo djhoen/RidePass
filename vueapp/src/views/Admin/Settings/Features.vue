@@ -213,6 +213,18 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
+        // A motocross-race artifact (MyLaps Trackside import CSV); defaults off for
+        // mountain-bike venues but any tenant can flip it here.
+        key: 'trackside-export',
+        title: 'Trackside export',
+        description: 'Export event rider lists as a MyLaps Trackside import CSV for race timing.',
+        icon: 'mdi-timer-outline',
+        enabled: branding.tracksideExportEnabled,
+        apply: async (next) => {
+            await tenantService.updateTracksideExportEnabled({ enabled: next })
+        },
+    },
+    {
         key: 'blog',
         title: 'Blog',
         description: 'Publish posts with photos and feature one on your home page. Adds a Blog link to your public nav.',

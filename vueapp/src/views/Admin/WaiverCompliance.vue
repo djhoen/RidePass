@@ -10,7 +10,13 @@
             <v-card variant="tonal" class="stat-tile">
                 <v-card-text>
                     <div class="text-h5">{{ data?.totalOnSite ?? 0 }}</div>
-                    <div class="text-caption text-medium-emphasis">On site today</div>
+                    <div class="text-caption text-medium-emphasis">Expected today</div>
+                </v-card-text>
+            </v-card>
+            <v-card variant="tonal" class="stat-tile">
+                <v-card-text>
+                    <div class="text-h5">{{ checkedInCount }}</div>
+                    <div class="text-caption text-medium-emphasis">Checked in</div>
                 </v-card-text>
             </v-card>
             <v-card variant="tonal" :color="(data?.missingCount ?? 0) > 0 ? 'error' : 'success'" class="stat-tile">
@@ -33,27 +39,34 @@
             <v-table density="compact">
                 <thead>
                     <tr>
-                        <th>Time</th>
                         <th>Name</th>
                         <th>Email</th>
                         <th>Source</th>
-                        <th>Waiver</th>
+                        <th>Waiver signed</th>
+                        <th>Checked in</th>
                         <th class="text-right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="(r, i) in filtered" :key="i">
-                        <td class="text-no-wrap">{{ formatWhen(r.atUtc) }}</td>
                         <td>{{ r.personName }}</td>
                         <td>{{ r.email || '' }}</td>
                         <td>
                             <v-chip size="x-small" :color="sourceColor(r.source)">{{ sourceLabel(r.source) }}</v-chip>
                             <span class="text-caption text-medium-emphasis ml-1">{{ r.label }}</span>
                         </td>
-                        <td>
-                            <v-chip size="x-small" :color="r.waiverStatus === 'signed' ? 'success' : 'error'">
-                                {{ r.waiverStatus === 'signed' ? 'Signed' : 'Missing' }}
-                            </v-chip>
+                        <td class="text-no-wrap">
+                            <template v-if="r.waiverStatus === 'signed'">
+                                <v-chip size="x-small" color="success">Signed</v-chip>
+                                <span v-if="r.signedAtUtc" class="text-caption text-medium-emphasis ml-1">
+                                    {{ formatSigned(r.signedAtUtc) }}
+                                </span>
+                            </template>
+                            <v-chip v-else size="x-small" color="error">Missing</v-chip>
+                        </td>
+                        <td class="text-no-wrap">
+                            <span v-if="r.checkedInAtUtc">{{ formatWhen(r.checkedInAtUtc) }}</span>
+                            <span v-else class="text-caption text-medium-emphasis">Not yet</span>
                         </td>
                         <td class="text-right">
                             <v-tooltip v-if="r.waiverStatus === 'missing' && r.email" location="top">
@@ -72,7 +85,7 @@
                     </tr>
                     <tr v-if="!loading && !loadError && filtered.length === 0">
                         <td colspan="6" class="text-center text-medium-emphasis py-6">
-                            {{ (data?.items?.length ?? 0) === 0 ? 'Nobody has checked in, rented, or booked a lesson yet today.' : 'Nothing matches these filters.' }}
+                            {{ (data?.items?.length ?? 0) === 0 ? 'Nobody is expected today: no tickets, reservations, rentals, or lessons for events running today.' : 'Nothing matches these filters.' }}
                         </td>
                     </tr>
                 </tbody>
@@ -100,11 +113,14 @@ const snack = ref(false)
 const snackText = ref('')
 
 const sourceOptions = [
-    { title: 'Ticket scans', value: 'scan' },
-    { title: 'Season pass check-ins', value: 'pass' },
+    { title: 'Event tickets', value: 'ticket' },
+    { title: 'Season passes', value: 'pass' },
     { title: 'Rentals', value: 'rental' },
-    { title: 'Lesson rosters', value: 'lesson' },
+    { title: 'Lessons', value: 'lesson' },
 ]
+
+const checkedInCount = computed(() =>
+    (data.value?.items ?? []).filter(r => r.checkedInAtUtc).length)
 
 const filtered = computed(() => (data.value?.items ?? []).filter(r =>
     (!sourceFilter.value || r.source === sourceFilter.value)
@@ -140,13 +156,21 @@ async function sendLink(r: WaiverComplianceItem) {
 }
 
 function sourceLabel(s: string): string {
-    return s === 'scan' ? 'Scan' : s === 'pass' ? 'Pass' : s === 'rental' ? 'Rental' : 'Lesson'
+    return s === 'ticket' ? 'Ticket' : s === 'pass' ? 'Pass' : s === 'rental' ? 'Rental' : 'Lesson'
 }
 function sourceColor(s: string): string {
-    return s === 'scan' ? 'primary' : s === 'pass' ? 'purple' : s === 'rental' ? 'teal' : 'indigo'
+    return s === 'ticket' ? 'primary' : s === 'pass' ? 'purple' : s === 'rental' ? 'teal' : 'indigo'
 }
+// Same-day check-ins show time only; earlier ones (a mid-week camp check-in still
+// on site today) carry the date. Signatures can be months old, so they always
+// carry the date. Everything in the tenant's timezone.
 function formatWhen(utc: string): string {
-    return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('HH:mm')
+    const t = dayjs.utc(utc).tz(branding.timezone || 'UTC')
+    const today = dayjs().tz(branding.timezone || 'UTC')
+    return t.isSame(today, 'day') ? t.format('HH:mm') : t.format('MMM D HH:mm')
+}
+function formatSigned(utc: string): string {
+    return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD HH:mm')
 }
 
 onMounted(load)

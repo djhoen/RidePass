@@ -254,7 +254,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
+import authHelper from '@/helpers/AuthHelper'
 import { CreditService } from '@/services/CreditService'
 import {
     ConcessionService,
@@ -272,6 +274,8 @@ interface CartLine {
 }
 
 const svc = new ConcessionService()
+const route = useRoute()
+const router = useRouter()
 const products = ref<ConcessionProduct[]>([])
 const myOrders = ref<RiderOrder[]>([])
 const loading = ref(true)
@@ -363,13 +367,18 @@ function setLineQty(i: number, qty: number) {
 
 onMounted(async () => {
     if (!branding.loaded) await loadBranding()
-    await Promise.all([loadMenu(), refreshOrders(), refreshStatus()])
-    // Best-effort: no balance just means the credit offer doesn't show.
-    try { myCreditCents.value = (await new CreditService().mine()).data.data.balanceCents }
-    catch { /* offer stays hidden */ }
+    // Menu + open-state are anonymous; "your orders" and credit are account-only, so an
+    // anonymous visitor (the embedded widget's default state) skips them instead of 401ing.
+    const authed = authHelper.isAuthenticated()
+    await Promise.all([loadMenu(), refreshStatus(), ...(authed ? [refreshOrders()] : [])])
+    if (authed) {
+        // Best-effort: no balance just means the credit offer doesn't show.
+        try { myCreditCents.value = (await new CreditService().mine()).data.data.balanceCents }
+        catch { /* offer stays hidden */ }
+    }
     // Poll status + orders together: keeps "Ready!" live and the quote/open-state fresh as the kitchen
     // fills and drains.
-    timer = window.setInterval(() => { refreshOrders(); refreshStatus() }, 8000)
+    timer = window.setInterval(() => { if (authHelper.isAuthenticated()) refreshOrders(); refreshStatus() }, 8000)
 })
 onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
@@ -562,6 +571,13 @@ let elements: StripeElements | null = null
 let currentSaleId: string | null = null
 
 async function checkout() {
+    // Anonymous browsing is allowed (menu is public), but placing an order needs an
+    // account. Bounce through login and land back here, cart intact in this session
+    // (works inside the embedded widget's iframe too: the login happens same-origin).
+    if (!authHelper.isAuthenticated()) {
+        router.push({ path: '/Login', query: { next: route.fullPath } })
+        return
+    }
     placing.value = true
     try {
         const res = (await svc.placeOrder({

@@ -254,7 +254,7 @@ const superAdminLinks: SuperAdminLink[] = [
 // Platform features the super-admin gates per tenant. A link carrying one of these
 // is hidden unless the tenant has that feature enabled (so disabled features don't
 // show in the admin nav at all).
-type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled'
+type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled' | 'sellsSpectatorPasses'
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
 interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag }
 interface AdminGroup { value: string; title: string; icon: string; links: AdminLink[] }
@@ -292,6 +292,8 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Events', icon: 'mdi-calendar-month', title: 'Manage Events', perm: Perm.CatalogManage },
             { to: '/Admin/Counter', icon: 'mdi-cash-register', title: 'Gate Sale', perm: Perm.SalesCounter },
             { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan', title: 'Scan Tickets', perm: Perm.SalesRedeem },
+            { to: '/Admin/RiderReport', icon: 'mdi-account-group', title: 'Rider Report', perm: Perm.ReportsView },
+            { to: '/Admin/SpectatorReport', icon: 'mdi-account-eye', title: 'Spectator Report', perm: Perm.ReportsView, feature: 'sellsSpectatorPasses' },
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },

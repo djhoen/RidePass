@@ -279,6 +279,142 @@ namespace Services.Repositories
             return rows.ToList();
         }
 
+        // Shared body for the Rider/Spectator Reports and the rider drill-in: tickets (+
+        // season-pass reservations for riders) mapped to one row shape (event, rider identity,
+        // wristband, per-purchase waiver flag). The caller supplies the event-window predicate,
+        // audience filter, and identity filter. Spectator tiers are spectator_pass kind or
+        // gate_fee rows sold to the spectator audience; everything else is a rider.
+        private const string SpectatorTierExpr = "(tier.kind = 'spectator_pass' OR tier.audience = 'spectator')";
+
+        private const string RiderTicketBranch = @"
+                SELECT t.id AS PurchaseId,
+                       'ticket' AS Source,
+                       e.id AS EventId, e.title AS EventTitle, e.starts_at AS EventStartsAtUtc,
+                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', t.rider_first_name, t.rider_last_name)), ''),
+                                t.purchaser_name, '(unknown)') AS RiderName,
+                       t.purchaser_email AS Email,
+                       t.purchaser_user_id AS UserId,
+                       tier.name AS ItemName,
+                       (t.status = 'redeemed') AS CheckedIn,
+                       t.redeemed_at_utc AS CheckedInAtUtc,
+                       wb.code AS WristbandCode,
+                       (t.waiver_signature_id IS NOT NULL OR t.waiver_signed_at IS NOT NULL
+                            OR t.waiver_signature_data_url IS NOT NULL) AS SignedForThis
+                FROM event_ticket_purchase t
+                JOIN event_ticket_tier tier ON tier.id = t.tier_id
+                JOIN event e ON e.id = tier.event_id
+                LEFT JOIN event_wristband wb ON wb.ticket_id = t.id AND wb.tenant_id = t.tenant_id
+                WHERE t.tenant_id = @tenantId
+                  AND t.status <> 'cancelled'
+                  AND {AUDIENCE_FILTER}
+                  AND {EVENT_WINDOW}";
+
+        private const string RiderSeasonPassBranch = @"
+                SELECT spr.id, 'season_pass',
+                       e.id, e.title, e.starts_at,
+                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', spp.holder_first_name, spp.holder_last_name)), ''),
+                                spp.purchaser_name, '(unknown)'),
+                       spp.purchaser_email,
+                       spp.purchaser_user_id,
+                       sp.name,
+                       (spr.checked_in_at IS NOT NULL),
+                       spr.checked_in_at,
+                       NULL::text,
+                       false
+                FROM season_pass_reservation spr
+                JOIN season_pass_purchase spp ON spp.id = spr.season_pass_purchase_id
+                JOIN season_pass_product sp ON sp.id = spp.product_id
+                JOIN event e ON e.id = spr.event_id
+                WHERE spp.tenant_id = @tenantId
+                  AND spr.status <> 'cancelled'
+                  AND {EVENT_WINDOW}";
+
+        // Composes the CTE for one audience: spectators are ticket-only (a season pass
+        // reservation is always a rider), riders get both branches.
+        private static string RiderRowsCteFor(string audience) =>
+            "WITH rows AS (" + (audience switch
+            {
+                "spectator" => RiderTicketBranch.Replace("{AUDIENCE_FILTER}", SpectatorTierExpr),
+                "all" => RiderTicketBranch.Replace("{AUDIENCE_FILTER}", "true")
+                    + "\n                UNION ALL\n" + RiderSeasonPassBranch,
+                _ => RiderTicketBranch.Replace("{AUDIENCE_FILTER}", $"NOT {SpectatorTierExpr}")
+                    + "\n                UNION ALL\n" + RiderSeasonPassBranch,
+            })
+            + "\n            )";
+
+        // Account/email-level waiver coverage on a currently-active waiver, same matching the
+        // Compliance screen uses (account id first, else email against signer or account email).
+        private const string RiderWaiverCoverageExpr = @"
+            (r.SignedForThis OR EXISTS (
+                SELECT 1
+                FROM rider_waiver_signature ws
+                JOIN tenant_waiver tw ON tw.id = ws.waiver_id
+                WHERE ws.tenant_id = @tenantId
+                  AND tw.is_active AND (tw.expires_at IS NULL OR tw.expires_at > now())
+                  AND ((r.UserId IS NOT NULL AND ws.user_id = r.UserId)
+                    OR (r.Email IS NOT NULL AND r.Email <> '' AND
+                         (lower(ws.signer_email) = lower(r.Email)
+                          OR ws.user_id IN (SELECT uu.id FROM users uu WHERE lower(uu.email) = lower(r.Email)))))))";
+
+        public async Task<List<RiderReportRow>> GetRidersByRange(Guid tenantId, DateTime fromUtc, DateTime toUtc,
+            string? search, int cap, string audience = "rider")
+        {
+            var searchSql = string.IsNullOrWhiteSpace(search) ? "" : @"
+                  AND (lower(r.RiderName) LIKE @search
+                       OR lower(COALESCE(r.Email, '')) LIKE @search
+                       OR lower(COALESCE(r.WristbandCode, '')) LIKE @search)";
+            var sql = RiderRowsCteFor(audience)
+                .Replace("{EVENT_WINDOW}", "e.starts_at >= @fromUtc AND e.starts_at < @toUtc") + $@"
+                SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
+                FROM rows r
+                WHERE true{searchSql}
+                ORDER BY r.EventStartsAtUtc, r.RiderName
+                LIMIT @cap";
+            var rows = await _db.Query<RiderReportRow>(sql, new
+            {
+                tenantId, fromUtc, toUtc, cap,
+                search = $"%{search?.Trim().ToLowerInvariant()}%",
+            });
+            return rows.ToList();
+        }
+
+        public async Task<List<RiderReportRow>> GetRiderRegistrations(Guid tenantId, Guid? userId, string? email)
+        {
+            var sql = RiderRowsCteFor("all")
+                .Replace("{EVENT_WINDOW}", "e.starts_at >= now() - INTERVAL '365 days'") + $@"
+                SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
+                FROM rows r
+                WHERE ((@userId::uuid IS NOT NULL AND r.UserId = @userId)
+                    OR (@email IS NOT NULL AND lower(COALESCE(r.Email, '')) = lower(@email)))
+                ORDER BY r.EventStartsAtUtc DESC
+                LIMIT 100";
+            var rows = await _db.Query<RiderReportRow>(sql, new { tenantId, userId, email });
+            return rows.ToList();
+        }
+
+        public async Task<List<RiderWaiverRow>> GetRiderWaivers(Guid tenantId, Guid? userId, string? email)
+        {
+            const string sql = @"
+                SELECT s.id,
+                       w.name AS WaiverName,
+                       w.version AS WaiverVersion,
+                       s.signed_at AS SignedAtUtc,
+                       s.signed_by_parent AS SignedByParent,
+                       s.parent_name AS ParentName,
+                       (w.is_active AND (w.expires_at IS NULL OR w.expires_at > now())) AS WaiverIsCurrent
+                FROM rider_waiver_signature s
+                JOIN tenant_waiver w ON w.id = s.waiver_id
+                WHERE s.tenant_id = @tenantId
+                  AND ((@userId::uuid IS NOT NULL AND s.user_id = @userId)
+                    OR (@email IS NOT NULL AND
+                         (lower(COALESCE(s.signer_email, '')) = lower(@email)
+                          OR s.user_id IN (SELECT uu.id FROM users uu WHERE lower(uu.email) = lower(@email)))))
+                ORDER BY s.signed_at DESC
+                LIMIT 100";
+            var rows = await _db.Query<RiderWaiverRow>(sql, new { tenantId, userId, email });
+            return rows.ToList();
+        }
+
         // "Who has signed" report for one event: each event ticket's attendee and their waiver signing
         // status, read from the normalized rider_waiver_signature store via the ticket's link, so
         // counter and online sales report uniformly. Tenant- and event-scoped.

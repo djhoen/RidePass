@@ -57,6 +57,10 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/WristbandsEnabled`, req)
     }
 
+    async updateTracksideExportEnabled(req: { enabled: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/TracksideExportEnabled`, req)
+    }
+
     async updateConcessionsEnabled(req: { enabled: boolean }) {
         return axios.put(`${this.apiUrl}/Tenant/ConcessionsEnabled`, req)
     }

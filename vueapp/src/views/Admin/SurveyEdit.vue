@@ -277,6 +277,7 @@ import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import dayjs from 'dayjs'
+import { formatTenantDate } from '@/helpers/TenantTime'
 import {
     SurveyService,
     type SurveyAdminResponse,
@@ -601,7 +602,7 @@ async function loadEvents() {
             .sort((a: any, b: any) => (b.startsAtUtc ?? '').localeCompare(a.startsAtUtc ?? ''))
             .map((e: any) => ({
                 value: e.id,
-                title: `${e.title} (${e.startsAtUtc ? dayjs.utc(e.startsAtUtc).format('MMM D, YYYY') : 'no date'})`,
+                title: `${e.title} (${e.startsAtUtc ? formatTenantDate(e.startsAtUtc, 'MMM D, YYYY') : 'no date'})`,
             }))
     } catch (err: any) {
         flash(err.response?.data?.error ?? 'Couldn’t load events for the audience. Try again.', 'error')

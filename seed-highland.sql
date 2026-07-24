@@ -2031,4 +2031,567 @@ BEGIN
     RAISE NOTICE '  GRAND TOTAL:           $%', to_char((v_sum_tickets + v_sum_passes + v_sum_shop + v_sum_fnb) / 100.0, 'FM999,999,990.00');
 END $hl_sales_year$;
 
+
+-- ============================================================================
+-- Highland Bike Park -- TOMORROW (demo day): a busy Friday with advance sales.
+-- Creates a Friday Open Riding day + a Friday Skills Clinic for tomorrow, loads
+-- them with advance ticket sales (still 'paid' -- they check in at the gate),
+-- books season-pass reservations for tomorrow, tops up the base fragment's
+-- upcoming Saturday event with advance sales, and books tomorrow rentals.
+-- The waiver fragment below then signs ~everyone (a couple of deterministic
+-- holdouts stay unsigned so Compliance Today has real "Missing" rows).
+-- Rerunnable: wipes its own events/purchases/reservations/rentals by title +
+-- email-marker scope.
+-- ============================================================================
+
+DO $hl_upcoming$
+DECLARE
+    v_tenant_id  uuid;
+    v_open_ride  uuid;
+    v_lesson     uuid;
+    v_instr_sam  uuid;
+    v_instr_jo   uuid;
+    v_tomorrow   date;
+    v_evt_fri    uuid;
+    v_evt_clinic uuid;
+    v_evt_sat    uuid;
+    v_first constant text[] := ARRAY['Avery','Blake','Casey','Devon','Emerson','Finley','Gray','Harper',
+        'Indie','Jules','Kai','Logan','Marlow','Nico','Oakley','Parker','Quinn','Reese','Sawyer','Tatum',
+        'Uma','Vaughn','Wren','Xavier','Yara','Zane','Micah','Lena','Theo','Sasha','Colby','Dana'];
+    v_last constant text[] := ARRAY['Abbott','Barnes','Cortez','Dalton','Ellison','Fleming','Garner','Hayes',
+        'Ibarra','Jennings','Keller','Lawson','Merritt','Nolan','Osborne','Pratt','Quimby','Rowe','Sutton','Tran',
+        'Underwood','Vasquez','Whitaker','Xu','York','Zimmerman','Calloway','Drummond','Eastman','Forsythe','Granger','Holloway'];
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN RAISE EXCEPTION 'tenant "highland" not found'; END IF;
+    SELECT id INTO v_open_ride FROM tenant_event_type WHERE tenant_id = v_tenant_id AND code = 'open_ride';
+    SELECT id INTO v_lesson    FROM tenant_event_type WHERE tenant_id = v_tenant_id AND code = 'lesson';
+    SELECT id INTO v_instr_sam FROM instructor WHERE tenant_id = v_tenant_id AND email = 'sam.instructor@highland.test';
+    SELECT id INTO v_instr_jo  FROM instructor WHERE tenant_id = v_tenant_id AND email = 'jo.coach@highland.test';
+    IF v_instr_sam IS NULL OR v_instr_jo IS NULL THEN
+        RAISE EXCEPTION 'seed instructors missing - run the lessons fragment first';
+    END IF;
+
+    PERFORM setseed(0.9);
+    v_tomorrow := (now() AT TIME ZONE 'America/New_York')::date + 1;
+
+    -- ── Wipe (children first) ───────────────────────────────────────────────
+    DELETE FROM event_ticket_purchase
+     WHERE tenant_id = v_tenant_id
+       AND (purchaser_email LIKE '%.adv.hl@highland.test'
+            OR tier_id IN (SELECT tt.id FROM event_ticket_tier tt JOIN event e ON e.id = tt.event_id
+                            WHERE e.tenant_id = v_tenant_id
+                              AND e.title IN ('Friday Open Riding', 'Friday Skills Clinic')));
+    DELETE FROM season_pass_reservation r
+     USING season_pass_purchase sp, event e
+     WHERE r.season_pass_purchase_id = sp.id AND sp.tenant_id = v_tenant_id
+       AND r.event_id = e.id
+       AND (e.title IN ('Friday Open Riding', 'Friday Skills Clinic')
+            OR (r.status = 'reserved' AND e.starts_at > now() AND sp.purchaser_email LIKE '%.hl@highland.test'));
+    DELETE FROM event WHERE tenant_id = v_tenant_id AND title IN ('Friday Open Riding', 'Friday Skills Clinic');
+    DELETE FROM shop_rental_line WHERE rental_id IN (
+        SELECT id FROM shop_rental WHERE tenant_id = v_tenant_id AND renter_email LIKE '%.adv.hl@highland.test');
+    DELETE FROM shop_rental WHERE tenant_id = v_tenant_id AND renter_email LIKE '%.adv.hl@highland.test';
+
+    -- ── Tomorrow's Open Riding day (Friday = midweek pricing) ───────────────
+    INSERT INTO event (tenant_id, event_type_id, title, description, starts_at, ends_at, all_day, capacity, location_label, status)
+        VALUES (v_tenant_id, v_open_ride, 'Friday Open Riding',
+                'Lift-served trails open, all skill levels. Full-day, happy-hour, and junior tickets.',
+                (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
+                (v_tomorrow + TIME '17:00') AT TIME ZONE 'America/New_York',
+                false, 700, 'Lift Base Area', 'scheduled')
+        RETURNING id INTO v_evt_fri;
+    INSERT INTO event_ticket_tier (tenant_id, event_id, name, price_cents, inventory, sort_order, kind, audience)
+        VALUES
+            (v_tenant_id, v_evt_fri, 'Full Day Lift Ticket',          6800, 500, 10, 'gate_fee', 'rider'),
+            (v_tenant_id, v_evt_fri, 'Junior Lift Ticket (7-14)',     3400, 200, 20, 'gate_fee', 'rider'),
+            (v_tenant_id, v_evt_fri, 'Happy Hour Ticket (2pm-Close)', 4500, 300, 30, 'gate_fee', 'rider'),
+            (v_tenant_id, v_evt_fri, 'Junior Happy Hour (7-14)',      2500, 150, 40, 'gate_fee', 'rider');
+
+    -- ── Tomorrow's skills clinic (lesson type, instructor groups + private) ─
+    INSERT INTO event (tenant_id, event_type_id, title, description, starts_at, ends_at, all_day, capacity, location_label, status)
+        VALUES (v_tenant_id, v_lesson, 'Friday Skills Clinic',
+                'Coached group sessions split by ability, plus bookable private lessons.',
+                (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
+                (v_tomorrow + TIME '14:00') AT TIME ZONE 'America/New_York',
+                false, 20, 'Skills Zone / Progression Park', 'scheduled')
+        RETURNING id INTO v_evt_clinic;
+    INSERT INTO event_instructor (event_id, instructor_id) VALUES
+        (v_evt_clinic, v_instr_sam), (v_evt_clinic, v_instr_jo);
+    INSERT INTO event_ticket_tier
+        (tenant_id, event_id, name, price_cents, inventory, sort_order, is_active,
+         instructor_id, skill_level, equipment_label, starts_at, ends_at, audience)
+    VALUES
+        (v_tenant_id, v_evt_clinic, 'Beginner Group (Green Circle)', 14900, 8, 10, true,
+         v_instr_sam, 'Green Circle', 'Trail',
+         (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
+         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider'),
+        (v_tenant_id, v_evt_clinic, 'Intermediate Group (Blue Square)', 15900, 6, 20, true,
+         v_instr_jo, 'Blue Square', 'Downhill',
+         (v_tomorrow + TIME '11:30') AT TIME ZONE 'America/New_York',
+         (v_tomorrow + TIME '13:30') AT TIME ZONE 'America/New_York', 'rider'),
+        (v_tenant_id, v_evt_clinic, 'Private Lesson (2hr)', 21900, 3, 30, true,
+         NULL, NULL, NULL,
+         (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York',
+         (v_tomorrow + TIME '11:00') AT TIME ZONE 'America/New_York', 'rider');
+
+    -- The base fragment's upcoming Saturday event gets advance sales too.
+    SELECT id INTO v_evt_sat FROM event
+     WHERE tenant_id = v_tenant_id AND title = 'Saturday Open Riding' AND starts_at > now()
+     ORDER BY starts_at LIMIT 1;
+
+    -- ── Advance ticket sales (still 'paid': they check in at the gate) ──────
+    -- Friday: ~85 across the four tiers. Saturday: ~130 (weekend). Clinic: 13.
+    -- Two deterministic no-waiver holdouts land on tomorrow so Compliance Today
+    -- always has real Missing rows (the waiver fragment skips 'nowaiver%').
+    INSERT INTO event_ticket_purchase
+        (tenant_id, tier_id, amount_cents, status, purchaser_email, purchaser_name,
+         payment_method, created_at, updated_at)
+    SELECT v_tenant_id, x.tier_id, x.price_cents, 'paid',
+           lower(x.fn || '.' || x.ln || '.' || x.g || '.adv.hl@highland.test'),
+           x.fn || ' ' || x.ln, 'stripe', x.created_at, x.created_at
+    FROM (
+        SELECT tt.id AS tier_id, tt.price_cents, g.g,
+               v_first[1 + floor(random() * 32)::int] AS fn,
+               v_last [1 + floor(random() * 32)::int] AS ln,
+               now() - (1 + floor(random() * 9)) * INTERVAL '1 day'
+                     + (floor(random() * 700) * INTERVAL '1 minute') AS created_at
+        FROM event_ticket_tier tt
+        CROSS JOIN LATERAL generate_series(1,
+            CASE
+                WHEN tt.event_id = v_evt_fri AND tt.name = 'Full Day Lift Ticket'          THEN 45
+                WHEN tt.event_id = v_evt_fri AND tt.name = 'Junior Lift Ticket (7-14)'     THEN 12
+                WHEN tt.event_id = v_evt_fri AND tt.name = 'Happy Hour Ticket (2pm-Close)' THEN 20
+                WHEN tt.event_id = v_evt_fri AND tt.name = 'Junior Happy Hour (7-14)'      THEN 8
+                WHEN tt.event_id = v_evt_sat AND tt.name = 'Full Day Lift Ticket'          THEN 85
+                WHEN tt.event_id = v_evt_sat AND tt.name = 'Junior Lift Ticket (7-14)'     THEN 22
+                WHEN tt.event_id = v_evt_sat AND tt.name = 'Happy Hour Ticket (2pm-Close)' THEN 18
+                WHEN tt.event_id = v_evt_sat AND tt.name = 'Non-Riding Spectator Gate'     THEN 8
+                WHEN tt.event_id = v_evt_clinic AND tt.sort_order = 10                     THEN 6
+                WHEN tt.event_id = v_evt_clinic AND tt.sort_order = 20                     THEN 5
+                WHEN tt.event_id = v_evt_clinic AND tt.sort_order = 30                     THEN 2
+                ELSE 0
+            END) g(g)
+        WHERE tt.tenant_id = v_tenant_id
+          AND tt.event_id IN (v_evt_fri, v_evt_clinic, v_evt_sat)
+    ) x;
+
+    -- Deterministic Missing-waiver demo rows on tomorrow's events.
+    INSERT INTO event_ticket_purchase
+        (tenant_id, tier_id, amount_cents, status, purchaser_email, purchaser_name,
+         payment_method, created_at, updated_at)
+    VALUES
+        (v_tenant_id,
+         (SELECT id FROM event_ticket_tier WHERE event_id = v_evt_fri AND name = 'Full Day Lift Ticket'),
+         6800, 'paid', 'nowaiver.dana.frost.adv.hl@highland.test', 'Dana Frost', 'stripe',
+         now() - INTERVAL '2 days', now() - INTERVAL '2 days'),
+        (v_tenant_id,
+         (SELECT id FROM event_ticket_tier WHERE event_id = v_evt_clinic AND sort_order = 10),
+         14900, 'paid', 'nowaiver.remy.calder.adv.hl@highland.test', 'Remy Calder', 'stripe',
+         now() - INTERVAL '1 day', now() - INTERVAL '1 day');
+
+    -- ── Season-pass reservations for tomorrow (unlimited/teen passes only:
+    --    credits passes redeem walk-up at the gate, which is the live demo) ──
+    INSERT INTO season_pass_reservation (season_pass_purchase_id, event_id, status, reserved_at)
+    SELECT sp.id, v_evt_fri, 'reserved', now() - (floor(random() * 5) + 1) * INTERVAL '1 day'
+    FROM season_pass_purchase sp
+    JOIN season_pass_product p ON p.id = sp.product_id
+    WHERE sp.tenant_id = v_tenant_id AND sp.status = 'paid'
+      AND p.kind = 'unlimited'
+      AND sp.valid_to_date >= v_tomorrow
+      AND sp.purchaser_email LIKE '%.hl@highland.test'
+    ORDER BY random()
+    LIMIT 22;
+
+    -- ── Rentals booked for tomorrow (paid, not yet picked up) ───────────────
+    INSERT INTO shop_rental
+        (tenant_id, renter_name, renter_email, renter_phone, starts_at, ends_at, status,
+         amount_cents, tax_cents, total_cents, deposit_cents, payment_method, created_at, updated_at)
+    SELECT v_tenant_id, x.fn || ' ' || x.ln,
+           lower(x.fn || '.' || x.ln || '.r' || x.g || '.adv.hl@highland.test'),
+           '603-555-0' || lpad((300 + x.g)::text, 3, '0'),
+           (v_tomorrow + TIME '09:00') AT TIME ZONE 'America/New_York' + (x.g * INTERVAL '20 minutes'),
+           (v_tomorrow + TIME '17:00') AT TIME ZONE 'America/New_York',
+           'paid',
+           v.daily_rate_cents, 0, v.daily_rate_cents, v.deposit_cents, 'stripe',
+           now() - (x.g * INTERVAL '10 hours'), now() - (x.g * INTERVAL '10 hours')
+    FROM (
+        SELECT g.g,
+               v_first[1 + (g.g * 5) % 32] AS fn,
+               v_last [1 + (g.g * 11) % 32] AS ln,
+               (ARRAY['HL-DH29-M','HL-TR275-S','HL-TR275-M','HL-TR275-L','HL-KIDS24-STD','HL-DH29-L'])[g.g] AS sku
+        FROM generate_series(1, 6) g(g)
+    ) x
+    JOIN shop_variant v ON v.tenant_id = v_tenant_id AND v.sku = x.sku;
+
+    INSERT INTO shop_rental_line
+        (rental_id, variant_id, item_id, quantity, name_snapshot, variant_label,
+         daily_rate_cents_frozen, deposit_cents_frozen, line_amount_cents)
+    SELECT r.id, v.id, NULL, 1, p.name, v.size, v.daily_rate_cents, v.deposit_cents, v.daily_rate_cents
+    FROM shop_rental r
+    JOIN shop_variant v ON v.tenant_id = v_tenant_id
+        AND v.sku = (ARRAY['HL-DH29-M','HL-TR275-S','HL-TR275-M','HL-TR275-L','HL-KIDS24-STD','HL-DH29-L'])
+                    [CAST(substring(r.renter_email FROM '\.r(\d+)\.adv') AS int)]
+    JOIN shop_product p ON p.id = v.product_id
+    WHERE r.tenant_id = v_tenant_id AND r.renter_email LIKE '%.adv.hl@highland.test';
+
+    RAISE NOTICE 'Highland tomorrow-demo seed: Friday Open Riding + Skills Clinic on %, advance tickets, % pass reservations, rentals booked',
+        v_tomorrow, (SELECT count(*) FROM season_pass_reservation sr JOIN season_pass_purchase sp2 ON sp2.id = sr.season_pass_purchase_id
+                     WHERE sr.event_id = v_evt_fri AND sp2.tenant_id = v_tenant_id);
+END $hl_upcoming$;
+
+
+-- ============================================================================
+-- Highland Bike Park -- WAIVERS: real release text, per-event requirement, and
+-- signatures wired onto the seeded passes + tickets.
+--
+-- What this creates:
+--   * Real waiver content on the tenant's active tenant_waiver row.
+--   * requires_rider_waiver = true on every event (races/camps/clinics/open ride).
+--   * ONE rider_waiver_signature per registrant (the app's own model: checkout
+--     writes one row per person and links it from each of their tickets), with a
+--     generated cursive-SVG "drawn" signature image. Junior-tier and camp riders
+--     are minors signed by a parent (different rider first name, parent named).
+--   * ~96% of rider-audience tickets registered + signed (names, birthdates,
+--     waiver links, registration_complete); the rest left unsigned so the
+--     roster's missing-waiver alarm has something real to show.
+--   * Every pass purchase fully registered: signature + a generated initials-
+--     avatar photo, so the gate scanner's photo check and IsRegistered pass.
+--
+-- Rerunnable: clears all waiver linkage + signatures for this tenant (every
+-- signature on the demo tenant is seed-owned) and rebuilds. Runs LAST so it can
+-- cover both the base fragments' demo purchases and the year of history.
+-- ============================================================================
+
+DO $hl_waivers$
+DECLARE
+    v_tenant_id uuid;
+    v_waiver_id uuid;
+    -- Alternate first names for minor riders (the purchaser is the parent).
+    v_kid constant text[] := ARRAY['Riley','Rowan','Milo','Piper','Ellis','June','Cass','Arlo',
+        'Wren','Remy','Sage','Teddy','Nova','Beck','Lila','Otis'];
+    v_colors constant text[] := ARRAY['steelblue','indianred','seagreen','peru',
+        'slateblue','teal','maroon','darkslategray'];
+    v_sigs int; v_reg_tix int; v_unreg_tix int; v_reg_pass int;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found - create it first';
+    END IF;
+
+    -- ── Waiver content (the tenant-creation trigger seeds an empty active row) ──
+    SELECT id INTO v_waiver_id FROM tenant_waiver
+     WHERE tenant_id = v_tenant_id AND is_active ORDER BY version DESC LIMIT 1;
+    IF v_waiver_id IS NULL THEN
+        INSERT INTO tenant_waiver (tenant_id, version, name, title, body)
+            VALUES (v_tenant_id, 1, 'Rider Release', 'Release & Waiver of Liability', '')
+            RETURNING id INTO v_waiver_id;
+    END IF;
+    UPDATE tenant_waiver SET
+        name  = 'Rider Release & Waiver of Liability',
+        title = 'Highland Bike Park Release & Waiver of Liability',
+        body  = $body$ASSUMPTION OF RISK. Mountain biking, lift-served downhill riding, and the use of jumps, drops, and other trail features are HAZARDOUS ACTIVITIES that carry a risk of serious injury, paralysis, or death. Trail conditions change with weather and use. By signing, I acknowledge that I understand and freely accept these risks for myself or for the minor named below.
+
+RELEASE. In consideration of being permitted to ride at Highland Bike Park, I release and hold harmless Highland Bike Park, its owners, employees, and volunteers from any and all claims arising out of my participation, including claims of ordinary negligence, to the fullest extent permitted by law.
+
+RULES AND EQUIPMENT. I agree to obey posted trail signage and staff instructions, to ride trails within my ability, and to wear a helmet at all times while riding. Full-face helmets are required in the lift-served bike park.
+
+MEDICAL. I authorize Highland Bike Park staff to secure emergency medical treatment if needed, at my expense.
+
+MINORS. If signing for a rider under 18, I certify that I am the rider's parent or legal guardian and that I make this agreement on the minor's behalf.
+
+This release remains in effect for the full season in which it is signed.$body$
+    WHERE id = v_waiver_id;
+
+    -- ── Every event needs the rider waiver (spectators stay waiver-free) ─────
+    UPDATE event SET requires_rider_waiver = true WHERE tenant_id = v_tenant_id;
+
+    -- ── Wipe prior seed signatures + linkage (all tenant signatures are seed-owned;
+    --    ticket/pass FKs are ON DELETE SET NULL, but clear them explicitly so the
+    --    rebuild is deterministic; shop_rental_waiver is RESTRICT so it goes first) ──
+    DELETE FROM shop_rental_waiver WHERE signature_id IN
+        (SELECT id FROM rider_waiver_signature WHERE tenant_id = v_tenant_id);
+    UPDATE event_ticket_purchase
+       SET waiver_id = NULL, waiver_signed_at = NULL,
+           waiver_signature_data_url = NULL, waiver_signature_id = NULL
+     WHERE tenant_id = v_tenant_id AND waiver_signature_id IS NOT NULL;
+    UPDATE season_pass_purchase SET waiver_signature_id = NULL
+     WHERE tenant_id = v_tenant_id AND waiver_signature_id IS NOT NULL;
+    DELETE FROM rider_waiver_signature WHERE tenant_id = v_tenant_id;
+
+    PERFORM setseed(0.7);
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- PASSES: one signature + initials-avatar photo per paid pass, so every
+    -- pass reads as fully registered at the gate.
+    -- ══════════════════════════════════════════════════════════════════════
+    DROP TABLE IF EXISTS _hl_psig;
+    CREATE TEMP TABLE _hl_psig ON COMMIT DROP AS
+    SELECT sp.id AS pass_id,
+           gen_random_uuid() AS sig_id,
+           COALESCE(NULLIF(sp.holder_first_name, ''), split_part(sp.purchaser_name, ' ', 1)) AS fn,
+           COALESCE(NULLIF(sp.holder_last_name, ''),  split_part(sp.purchaser_name, ' ', 2)) AS ln,
+           sp.purchaser_user_id,
+           sp.purchaser_name,
+           sp.purchaser_email,
+           sp.created_at,
+           (p.name = 'Teen All-Access Season Pass') AS is_teen,
+           row_number() OVER (ORDER BY sp.id) AS rn
+    FROM season_pass_purchase sp
+    JOIN season_pass_product p ON p.id = sp.product_id
+    WHERE sp.tenant_id = v_tenant_id AND sp.status = 'paid'
+      AND lower(sp.purchaser_email) LIKE '%@highland.test';
+
+    INSERT INTO rider_waiver_signature
+        (id, tenant_id, user_id, waiver_id, signed_at, ip_address, signature_data_url,
+         signed_by_parent, parent_name, signer_name, signer_email,
+         spectator_first_name, spectator_last_name, spectator_birthdate)
+    SELECT s.sig_id, v_tenant_id, s.purchaser_user_id, v_waiver_id,
+           s.created_at + INTERVAL '4 minutes',
+           '203.0.113.' || (1 + s.rn % 250),
+           'data:image/svg+xml;utf8,' || replace(
+               $svg$<svg xmlns='http://www.w3.org/2000/svg' width='320' height='90'><text x='12' y='58' font-family='Segoe Script, Brush Script MT, cursive' font-size='34' font-style='italic' fill='rgb(24,32,68)'>$svg$
+               || CASE WHEN s.is_teen THEN s.purchaser_name ELSE s.fn || ' ' || s.ln END
+               || $svg$</text></svg>$svg$, ' ', '%20'),
+           s.is_teen,
+           CASE WHEN s.is_teen THEN s.purchaser_name END,
+           CASE WHEN s.is_teen THEN s.purchaser_name ELSE s.fn || ' ' || s.ln END,
+           s.purchaser_email,
+           s.fn, s.ln,
+           CASE WHEN s.is_teen
+                THEN CURRENT_DATE - ((4745 + (s.rn * 61) % 1460))::int     -- ages ~13-17
+                ELSE CURRENT_DATE - ((6570 + (s.rn * 137) % 12000))::int   -- ages ~18-50
+           END
+    FROM _hl_psig s;
+
+    UPDATE season_pass_purchase sp SET
+        waiver_signature_id = s.sig_id,
+        holder_birthdate = COALESCE(sp.holder_birthdate,
+            CASE WHEN s.is_teen
+                 THEN CURRENT_DATE - ((4745 + (s.rn * 61) % 1460))::int
+                 ELSE CURRENT_DATE - ((6570 + (s.rn * 137) % 12000))::int END),
+        photo_data_url = 'data:image/svg+xml;utf8,' || replace(
+            $svg$<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><rect width='200' height='200' fill='$svg$
+            || v_colors[1 + s.rn % 8]
+            || $svg$'/><text x='100' y='130' font-family='Arial' font-size='82' font-weight='bold' fill='white' text-anchor='middle'>$svg$
+            || upper(left(s.fn, 1) || left(s.ln, 1))
+            || $svg$</text></svg>$svg$, ' ', '%20')
+    FROM _hl_psig s
+    WHERE sp.id = s.pass_id;
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- TICKETS: one signature per registrant (distinct purchaser email across
+    -- rider-audience tickets), reused by every ticket that person holds -- the
+    -- same one-row-per-person model checkout uses. ~4% stay unsigned.
+    -- ══════════════════════════════════════════════════════════════════════
+    DROP TABLE IF EXISTS _hl_treg;
+    CREATE TEMP TABLE _hl_treg ON COMMIT DROP AS
+    SELECT lower(etp.purchaser_email) AS email,
+           gen_random_uuid() AS sig_id,
+           max(etp.purchaser_name) AS pname,
+           min(etp.created_at) AS first_at,
+           bool_or(tt.name LIKE 'Junior%' OR tt.name LIKE '%Camp%' OR tt.name LIKE 'CIT%') AS is_minor,
+           row_number() OVER () AS rn
+    FROM event_ticket_purchase etp
+    JOIN event_ticket_tier tt ON tt.id = etp.tier_id
+    WHERE etp.tenant_id = v_tenant_id
+      AND lower(etp.purchaser_email) LIKE '%@highland.test'
+      AND (tt.audience IS NULL OR tt.audience = 'rider')
+    GROUP BY lower(etp.purchaser_email);
+
+    ALTER TABLE _hl_treg ADD COLUMN signed boolean,
+        ADD COLUMN rider_fn text, ADD COLUMN rider_ln text, ADD COLUMN birthdate date;
+    UPDATE _hl_treg SET
+        -- 'nowaiver%' emails are the deterministic Compliance-Today "Missing" demo rows.
+        signed = (random() >= 0.04) AND email NOT LIKE 'nowaiver%',
+        rider_fn = CASE WHEN is_minor THEN v_kid[1 + rn % 16] ELSE split_part(pname, ' ', 1) END,
+        rider_ln = split_part(pname, ' ', 2),
+        birthdate = CASE WHEN is_minor
+                         THEN CURRENT_DATE - ((2920 + (rn * 53) % 2190))::int    -- ages ~8-14
+                         ELSE CURRENT_DATE - ((6570 + (rn * 131) % 14600))::int  -- ages ~18-58
+                    END;
+
+    INSERT INTO rider_waiver_signature
+        (id, tenant_id, user_id, waiver_id, signed_at, ip_address, signature_data_url,
+         signed_by_parent, parent_name, signer_name, signer_email,
+         spectator_first_name, spectator_last_name, spectator_birthdate)
+    SELECT r.sig_id, v_tenant_id, NULL, v_waiver_id,
+           r.first_at + INTERVAL '2 minutes',
+           '198.51.100.' || (1 + r.rn % 250),
+           'data:image/svg+xml;utf8,' || replace(
+               $svg$<svg xmlns='http://www.w3.org/2000/svg' width='320' height='90'><text x='12' y='58' font-family='Segoe Script, Brush Script MT, cursive' font-size='34' font-style='italic' fill='rgb(24,32,68)'>$svg$
+               || CASE WHEN r.is_minor THEN r.pname ELSE r.rider_fn || ' ' || r.rider_ln END
+               || $svg$</text></svg>$svg$, ' ', '%20'),
+           r.is_minor,
+           CASE WHEN r.is_minor THEN r.pname END,
+           CASE WHEN r.is_minor THEN r.pname ELSE r.rider_fn || ' ' || r.rider_ln END,
+           r.email,
+           r.rider_fn, r.rider_ln, r.birthdate
+    FROM _hl_treg r
+    WHERE r.signed;
+
+    -- Rider tickets: names + birthdate always; waiver linkage + completion when signed.
+    UPDATE event_ticket_purchase etp SET
+        rider_first_name = r.rider_fn,
+        rider_last_name = r.rider_ln,
+        rider_birthdate = r.birthdate,
+        parent_guardian_name = CASE WHEN r.is_minor THEN r.pname END,
+        registration_complete = r.signed,
+        waiver_id = CASE WHEN r.signed THEN v_waiver_id END,
+        waiver_signed_at = CASE WHEN r.signed THEN etp.created_at + INTERVAL '2 minutes' END,
+        waiver_signature_id = CASE WHEN r.signed THEN r.sig_id END
+    FROM _hl_treg r, event_ticket_tier tt
+    WHERE etp.tenant_id = v_tenant_id
+      AND tt.id = etp.tier_id
+      AND (tt.audience IS NULL OR tt.audience = 'rider')
+      AND lower(etp.purchaser_email) = r.email;
+
+    -- Spectator tickets need no rider waiver: they're complete as sold.
+    UPDATE event_ticket_purchase etp SET registration_complete = true
+    FROM event_ticket_tier tt
+    WHERE etp.tenant_id = v_tenant_id AND tt.id = etp.tier_id
+      AND tt.audience = 'spectator'
+      AND lower(etp.purchaser_email) LIKE '%@highland.test';
+
+    SELECT count(*) INTO v_sigs FROM rider_waiver_signature WHERE tenant_id = v_tenant_id;
+    SELECT count(*) INTO v_reg_pass FROM season_pass_purchase
+     WHERE tenant_id = v_tenant_id AND waiver_signature_id IS NOT NULL;
+    SELECT count(*) INTO v_reg_tix FROM event_ticket_purchase
+     WHERE tenant_id = v_tenant_id AND waiver_signature_id IS NOT NULL;
+    SELECT count(*) INTO v_unreg_tix FROM event_ticket_purchase etp
+     JOIN event_ticket_tier tt ON tt.id = etp.tier_id
+     WHERE etp.tenant_id = v_tenant_id AND NOT etp.registration_complete
+       AND (tt.audience IS NULL OR tt.audience = 'rider');
+
+    RAISE NOTICE 'Highland waiver seed: % signatures; % passes registered; % tickets signed; % rider tickets left unsigned',
+        v_sigs, v_reg_pass, v_reg_tix, v_unreg_tix;
+END $hl_waivers$;
+
+-- ============================================================================
+-- Highland Bike Park - F&B menu item images. The image files were uploaded once
+-- through the admin API and live on the stage droplet's /uploads disk, so they
+-- survive reseeds; this block just re-points the freshly reinserted products at
+-- them. Photos are freely licensed (Wikimedia Commons), demo use only.
+-- ============================================================================
+DO $hl_conc_images$
+DECLARE
+    v_tenant_id uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-acd051a6d95b4290ad479a6bc2456b5d.jpg' WHERE tenant_id = v_tenant_id AND name = 'Smash Burger';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-856d5c8feb3f417da827502b9f58c0ec.jpg' WHERE tenant_id = v_tenant_id AND name = 'Chicken Tenders';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-0ba0f19695f048a68b73b18160ddbfb0.jpg' WHERE tenant_id = v_tenant_id AND name = 'Vegan Burger';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-0fc7c206008a4869b7180d13405a533f.jpg' WHERE tenant_id = v_tenant_id AND name = 'Craft Cheese Pizza';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-b266e7788eda4d97b10f5c35c686126e.jpg' WHERE tenant_id = v_tenant_id AND name = 'Pepperoni Pizza';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-e33a1f3fb27742c79971f48fbceab447.jpg' WHERE tenant_id = v_tenant_id AND name = 'Fries';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-40e237fd29dd4a75bcc8ff3c7e355a45.jpg' WHERE tenant_id = v_tenant_id AND name = 'Pretzel';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-b76a80b2b43747dda9352263ceb54079.jpg' WHERE tenant_id = v_tenant_id AND name = 'Energy Bar';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-c4b620203d234c389227a584318a065c.jpg' WHERE tenant_id = v_tenant_id AND name = 'Trail Mix';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-92aee6f126d54cf3a47688e96dac20df.jpg' WHERE tenant_id = v_tenant_id AND name = 'Fountain Drink';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-7e7953af942b4533b2b732309c47e21d.jpg' WHERE tenant_id = v_tenant_id AND name = 'Bottled Water';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-b79bf4e7914541458683b93fc63c4beb.jpg' WHERE tenant_id = v_tenant_id AND name = 'Sports Drink';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-8ec3c6ffa4c34f39a10f7e65f885b301.jpg' WHERE tenant_id = v_tenant_id AND name = 'Canned Soda';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-ca0a99af612d47b08ab188070e39894e.jpg' WHERE tenant_id = v_tenant_id AND name = 'Hellion IPA (16oz)';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-3bb3f95dd97e4c65b12a0b696e8a53c1.jpg' WHERE tenant_id = v_tenant_id AND name = 'Coffee';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-d31f635649bc40d88dbe58d508f3ca9c.jpg' WHERE tenant_id = v_tenant_id AND name = 'Cold Brew';
+    UPDATE concession_product SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/concession-dcde31d0afb5488687395c34c205b056.jpg' WHERE tenant_id = v_tenant_id AND name = 'Hot Chocolate';
+
+    -- event images: uploaded once via the admin API (files persist on the droplet);
+    -- matched by title pattern so the year-history recurrences all get covered.
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-0841a4d0d3a44697bf5c652a704f417e.jpg' WHERE tenant_id = v_tenant_id AND title LIKE '%Open Riding%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-c95666f491004865987bd138cd37853a.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Wednesduro%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-632d75f1cc2c4915badefd3bcb75eeac.jpg' WHERE tenant_id = v_tenant_id AND title LIKE '%Skills Clinic%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-4b3f229509b9483bb8ed7d9fc6a2210d.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Women''s Gravity%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-b46b16e0da5b41cc9ae771d0a98ef86d.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Highland Race Series%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-b46b16e0da5b41cc9ae771d0a98ef86d.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Dual Slalom%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-75346b86e31043ab985d0d96e64a82f5.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Ayr Academy%';
+    UPDATE event SET image_url = '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-24521fccda7e4b159895bea5b5855639.jpg' WHERE tenant_id = v_tenant_id AND title LIKE 'Summer Ride Camp%';
+END $hl_conc_images$;
+
+-- ============================================================================
+-- Highland Bike Park - online-ordering settings: order any open day (no event-day
+-- gate) and kitchen capacity management on, so the customer order page/widget
+-- shows live wait quotes and the at-capacity stop during the demo.
+-- ============================================================================
+DO $hl_conc_settings$
+DECLARE
+    v_tenant_id uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+
+    INSERT INTO concession_menu_settings (tenant_id, require_event_day)
+    VALUES (v_tenant_id, false)
+    ON CONFLICT (tenant_id) DO UPDATE SET require_event_day = false;
+
+    INSERT INTO concession_ordering_capacity
+        (tenant_id, capacity_enabled, base_prep_minutes, max_active_orders, show_quote_times, online_paused)
+    VALUES (v_tenant_id, true, 10, 25, true, false)
+    ON CONFLICT (tenant_id) DO UPDATE SET capacity_enabled = true, base_prep_minutes = 10,
+        max_active_orders = 25, show_quote_times = true, online_paused = false;
+END $hl_conc_settings$;
+
+-- ============================================================================
+-- Highland Bike Park - blog + membership demo content (original demo copy; images
+-- are the freely-licensed uploads already on the tenant). Rerunnable via slug wipe.
+-- ============================================================================
+DO $hl_blog$
+DECLARE
+    v_tenant_id uuid;
+BEGIN
+    SELECT id INTO v_tenant_id FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found';
+    END IF;
+
+    UPDATE tenant SET
+        blog_enabled = true,
+        membership_enabled = true,
+        membership_name = 'Park Membership',
+        membership_price_cents = 4900,
+        membership_duration_kind = 'yearly',
+        membership_required_for_riders = false,
+        membership_required_for_spectators = false
+    WHERE id = v_tenant_id;
+
+    DELETE FROM blog_post WHERE tenant_id = v_tenant_id
+        AND slug IN ('new-to-the-park-start-here', 'camp-weeks', 'refer-a-friend-camp', 'team-riding-beyond-summer');
+
+    INSERT INTO blog_post (tenant_id, title, slug, excerpt, body_html, main_image_url, status, is_featured, published_at)
+    VALUES
+    (v_tenant_id,
+     'New to the Park? Start Here',
+     'new-to-the-park-start-here',
+     'First time on a lift-served trail? Here is exactly how to make day one easy.',
+     '<p>Your first day at a lift-served bike park is simpler than it looks. Book a Find Your Ride session and we pair you with a coach, a bike, and full protective gear, so all you bring is shoes and water.</p><p>Start on the green flow trails, session the pump track between laps, and let the chairlift do the climbing. Most first-timers are linking berms by lunch.</p><p>Rentals, tickets, and lessons are all bookable online, so the only line you stand in is the lift line.</p>',
+     '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-632d75f1cc2c4915badefd3bcb75eeac.jpg',
+     'published', true, now() - INTERVAL '3 days'),
+    (v_tenant_id,
+     'Why Camp Weeks Are Our Favorite Weeks',
+     'camp-weeks',
+     'Watching a camper clear their first tabletop never gets old.',
+     '<p>Every camp week follows the same arc: nervous drop-offs on Monday, unstoppable confidence by Friday. Our coaches build skills in small groups, and the progression parks let riders level up at their own pace.</p><p>Summer Ride Camp covers ages 8 to 13, and Ayr Academy takes teens deeper into technique, trail etiquette, and bike care. Both fill fast; day and overnight options are available.</p>',
+     '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-24521fccda7e4b159895bea5b5855639.jpg',
+     'published', false, now() - INTERVAL '10 days'),
+    (v_tenant_id,
+     'Refer a Friend to Camp, Earn Rewards',
+     'refer-a-friend-camp',
+     'Campers ride better with friends, and this season referrals earn you gear.',
+     '<p>New this season: refer a family to any camp session and you both earn rewards, from limited-edition park hoodies to gift cards good anywhere on the mountain.</p><p>There is no cap, so the more friends who ride, the more you earn. Ask at the front desk or mention your referral at registration.</p>',
+     '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-75346b86e31043ab985d0d96e64a82f5.jpg',
+     'published', false, now() - INTERVAL '17 days'),
+    (v_tenant_id,
+     'Training Beyond Summer: Team Riding',
+     'team-riding-beyond-summer',
+     'Our team program now runs past the summer season.',
+     '<p>Riders who want more than camp weeks can now train year-round. The team program extends coached sessions into spring and fall, with structured progressions, race preparation, and indoor training when the trails are resting.</p><p>Spots are limited by coaching capacity. Current campers get first access before open enrollment.</p>',
+     '/uploads/a31bc4c9-f35a-40f8-81a5-79c764781e68/event-b46b16e0da5b41cc9ae771d0a98ef86d.jpg',
+     'published', false, now() - INTERVAL '24 days');
+END $hl_blog$;
+
 COMMIT;

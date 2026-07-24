@@ -326,14 +326,15 @@ namespace webapi.Controllers
         public async Task<IActionResult> ListSignatures(
             [FromQuery] string? search, [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc,
             [FromQuery] Guid? waiverId, [FromQuery] bool minorsOnly = false,
-            [FromQuery] string? context = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+            [FromQuery] string? context = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50,
+            [FromQuery] string? personKey = null)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 200);
             var (rows, total) = await _repo.ListSignatures(_tenantContext.TenantId,
                 search, fromUtc?.ToUniversalTime(), toUtc?.ToUniversalTime(), waiverId,
-                minorsOnly, context, page, pageSize);
+                minorsOnly, context, page, pageSize, personKey);
             return new ApiResponses().OkResult(new WaiverSignaturesPageResponse
             {
                 Items = rows.Select(r => new WaiverSignatureItem
@@ -451,7 +452,9 @@ namespace webapi.Controllers
                 PersonName = r.PersonName,
                 Email = r.Email,
                 AtUtc = DateTime.SpecifyKind(r.At, DateTimeKind.Utc),
-                WaiverStatus = (r.SignedForThis || r.HasCurrentWaiver) ? "signed" : "missing",
+                SignedAtUtc = r.SignedAt is null ? null : DateTime.SpecifyKind(r.SignedAt.Value, DateTimeKind.Utc),
+                CheckedInAtUtc = r.CheckedInAt is null ? null : DateTime.SpecifyKind(r.CheckedInAt.Value, DateTimeKind.Utc),
+                WaiverStatus = (r.SignedForThis || r.SignedAt is not null) ? "signed" : "missing",
             }).ToList();
             return new ApiResponses().OkResult(new WaiverComplianceResponse
             {
