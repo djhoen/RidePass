@@ -61,6 +61,19 @@
                         <span>{{ days }} day{{ days === 1 ? '' : 's' }} × gear</span>
                         <span>{{ money(estimateCents) }}</span>
                     </div>
+                    <!-- Damage waiver, offered only when the track has it configured. Placed with
+                         the money, above the total, because taking it changes both the total and
+                         the deposit and the counter has to read the consequence in one glance. -->
+                    <div v-if="insuranceOffered" class="d-flex justify-space-between align-center text-body-2">
+                        <v-checkbox v-model="form.insurance" density="compact" hide-details
+                            class="ma-0 pa-0 flex-grow-0">
+                            <template #label>
+                                <span class="text-body-2">{{ insuranceLabel }}</span>
+                            </template>
+                        </v-checkbox>
+                        <span>{{ form.insurance ? money(estimateInsuranceCents) : '—' }}</span>
+                    </div>
+
                     <div v-if="estimateFeeCents > 0" class="d-flex justify-space-between text-body-2">
                         <span>Service fee</span>
                         <span>{{ money(estimateFeeCents) }}</span>
@@ -71,7 +84,7 @@
                     </div>
                     <div class="d-flex justify-space-between text-body-1 mt-1">
                         <strong>Total</strong>
-                        <strong>{{ money(estimateCents + estimateFeeCents + estimateTaxCents) }}</strong>
+                        <strong>{{ money(estimateTotalCents) }}</strong>
                     </div>
                     <p v-if="taxRateUnset" class="text-caption text-warning mt-1">
                         No rental tax rate is set, so nothing is being collected.
@@ -79,8 +92,20 @@
                     </p>
                     <div class="d-flex justify-space-between text-body-2 text-medium-emphasis mt-1">
                         <span>Refundable deposit (card hold)</span>
-                        <span>{{ money(estimateDepositCents) }}</span>
+                        <span>
+                            <!-- Struck through rather than hidden: the counter should see what the
+                                 waiver just saved the renter, and be able to say so. -->
+                            <span v-if="waiverTaken && estimateDepositBeforeWaiverCents > 0"
+                                class="text-decoration-line-through mr-1">
+                                {{ money(estimateDepositBeforeWaiverCents) }}
+                            </span>
+                            {{ money(estimateDepositCents) }}
+                        </span>
                     </div>
+                    <p v-if="waiverTaken" class="text-caption text-medium-emphasis mt-1">
+                        {{ insuranceLabel }} taken, so the refundable deposit is waived. The fee is
+                        not refundable.
+                    </p>
                     <p v-if="feeAbsorbed" class="text-caption text-medium-emphasis mt-1">
                         The track is absorbing the service fee on rentals.
                     </p>
@@ -193,6 +218,7 @@ const checkingAvailability = ref(false)
 const form = ref({
     startsAt: '', endsAt: '', lines: [] as BookLine[],
     ridersRequired: 1, renterName: '', renterEmail: '', renterPhone: '',
+    insurance: false,
 })
 
 const windowValid = computed(() => !!form.value.startsAt && !!form.value.endsAt
@@ -203,7 +229,28 @@ const days = computed(() => {
     return Math.max(1, Math.ceil(hours / 24))
 })
 const estimateCents = computed(() => form.value.lines.reduce((s, l) => s + l.dailyRateCents * days.value * l.quantity, 0))
-const estimateDepositCents = computed(() => form.value.lines.reduce((s, l) => s + l.depositCents * l.quantity, 0))
+
+// ── Damage waiver ───────────────────────────────────────────────────────────
+// Mirrors Services.Payments.RentalCharge exactly (see RentalInsuranceTests): the fee is a
+// percentage of the GROSS rental, it rides inside the subtotal so the service fee and tax apply
+// to it, and taking it waives the deposit outright.
+const insuranceOffered = computed(() =>
+    !!branding.rentalInsuranceEnabled && (branding.rentalInsuranceBps ?? 0) > 0)
+const insuranceLabel = computed(() => branding.rentalInsuranceLabel || 'Damage Protection')
+const waiverTaken = computed(() => insuranceOffered.value && form.value.insurance && estimateCents.value > 0)
+const estimateInsuranceCents = computed(() =>
+    waiverTaken.value
+        ? Math.floor((estimateCents.value * (branding.rentalInsuranceBps ?? 0)) / 10000)
+        : 0)
+
+/** What the deposit would be without the waiver, for the struck-through "you saved this". */
+const estimateDepositBeforeWaiverCents = computed(() =>
+    form.value.lines.reduce((s, l) => s + l.depositCents * l.quantity, 0))
+const estimateDepositCents = computed(() =>
+    estimateInsuranceCents.value > 0 ? 0 : estimateDepositBeforeWaiverCents.value)
+
+/** The rental subtotal the fee and tax are computed on: gear plus the waiver, never the deposit. */
+const estimateSubtotalCents = computed(() => estimateCents.value + estimateInsuranceCents.value)
 
 // Suggested rider count: the largest single line quantity. Two bikes means two riders, while a
 // bike plus a helmet is still one person. Staff can override; the server takes what we send.
@@ -219,18 +266,21 @@ watch(suggestedRiders, n => { if (!ridersTouched) form.value.ridersRequired = n 
 watch(() => form.value.ridersRequired, (n, old) => { if (old !== undefined && n !== suggestedRiders.value) ridersTouched = true })
 
 // Renter-paid service fee, mirroring the server's integer math exactly (floor the tenant charge,
-// then floor the renter's share) so the quoted total matches what the card is charged. The deposit
-// is never in the fee base: it's the renter's own money held against damage.
+// then floor the renter's share) so the quoted total matches what the card is charged. The base is
+// the rental PLUS the waiver, which is revenue for a service; the deposit is never in it, because
+// it's the renter's own money held against damage.
 const estimateFeeCents = computed(() => {
-    const serviceCharge = Math.floor((estimateCents.value * (branding.serviceChargeBps ?? 0)) / 10000)
+    const serviceCharge = Math.floor((estimateSubtotalCents.value * (branding.serviceChargeBps ?? 0)) / 10000)
     return Math.floor((serviceCharge * (branding.rentalRiderPaidServiceChargeBps ?? 10000)) / 10000)
 })
-// Sales tax, mirroring the server: the base is the rental plus the renter fee when the tenant
-// says the fee is taxable, and never the deposit.
+// Sales tax, mirroring the server: the base is the rental subtotal plus the renter fee when the
+// tenant says the fee is taxable, and never the deposit.
 const estimateTaxCents = computed(() => {
-    const base = estimateCents.value + (branding.rentalTaxServiceChargeTaxable ? estimateFeeCents.value : 0)
+    const base = estimateSubtotalCents.value + (branding.rentalTaxServiceChargeTaxable ? estimateFeeCents.value : 0)
     return Math.round((base * (branding.rentalTaxBps ?? 0)) / 10000)
 })
+const estimateTotalCents = computed(() =>
+    estimateSubtotalCents.value + estimateFeeCents.value + estimateTaxCents.value)
 const taxRateUnset = computed(() => branding.rentalTaxBps == null)
 // A fee is configured but the track is eating all of it, so the renter sees no line.
 const feeAbsorbed = computed(() =>
@@ -245,6 +295,9 @@ watch(() => props.modelValue, async open => {
         startsAt: p?.startsAt || dayjs().format('YYYY-MM-DDTHH:mm'),
         endsAt: p?.endsAt || dayjs().add(1, 'day').format('YYYY-MM-DDTHH:mm'),
         lines: [], ridersRequired: 1, renterName: '', renterEmail: '', renterPhone: '',
+        // Never carried over: the waiver is a decision the renter in front of you makes, and
+        // inheriting the last customer's answer is how someone gets charged for one silently.
+        insurance: false,
     }
     bookError.value = ''
     ridersTouched = false
@@ -320,6 +373,7 @@ async function book(method: 'cash' | 'card') {
             endsAt: new Date(form.value.endsAt).toISOString(),
             paymentMethod: method,
             takeDepositHold: true,
+            insurance: waiverTaken.value,
             renterName: form.value.renterName.trim() || null,
             renterEmail: form.value.renterEmail.trim() || null,
             renterPhone: form.value.renterPhone.trim() || null,
@@ -327,7 +381,14 @@ async function book(method: 'cash' | 'card') {
         const data = r.data.data
         if (method === 'cash') {
             close()
-            flash(`Rental booked${data.orderNumber != null ? ' — #' + data.orderNumber : ''}. Deposit ${money(data.depositCents)} to collect at the counter.`)
+            // The deposit clause is dropped when there's nothing to collect, which is the normal
+            // case once the damage waiver is taken. "Deposit $0.00 to collect" reads as a bug.
+            const booked = `Rental booked${data.orderNumber != null ? ' — #' + data.orderNumber : ''}.`
+            flash(data.depositCents > 0
+                ? `${booked} Deposit ${money(data.depositCents)} to collect at the counter.`
+                : (data.insuranceCents ?? 0) > 0
+                    ? `${booked} ${insuranceLabel.value} taken, so there's no deposit to collect.`
+                    : booked)
             emit('booked')
         } else {
             close()

@@ -27,6 +27,15 @@ namespace Services.Repositories.Data.BikeShopData
         public int ServiceChargeCents { get; set; }
         /// <summary>How many riders must each sign the waiver before check-out.</summary>
         public int RidersRequired { get; set; } = 1;
+        /// <summary>
+        /// Damage waiver fee charged on this rental, frozen at booking. Greater than zero IS the
+        /// record that the waiver was bought; DepositCents landing at 0 is a consequence of it,
+        /// not evidence for it (plenty of gear carries no deposit at all).
+        /// </summary>
+        public int InsuranceCents { get; set; }
+        /// <summary>What the renter was told they were buying, frozen so a later rename of the
+        /// tenant's label doesn't rewrite an old receipt.</summary>
+        public string? InsuranceLabelSnapshot { get; set; }
         public int DepositCents { get; set; }
         public string? DepositPiId { get; set; }
         public int DepositCapturedCents { get; set; }

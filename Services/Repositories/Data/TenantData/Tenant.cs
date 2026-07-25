@@ -147,6 +147,25 @@ namespace Services.Repositories.Data.TenantData
         /// take a typed price. When set, a labor line entered by hours bills hours * this rate.</summary>
         public int? ShopLaborRateCents { get; set; }
         public bool WristbandsEnabled { get; set; } = false;
+
+        // ── Staff access policy (Script0239) ──────────────────────────────────
+        /// <summary>0 = off (default), 1 = enforce. Gates whether the location and hours rules
+        /// below are applied to the money-moving permissions at all.</summary>
+        public int StaffAccessPolicyMode { get; set; }
+        /// <summary>Networks the track operates from, in CIDR form. Empty = no location rule.</summary>
+        public string[] StaffAllowedCidrs { get; set; } = Array.Empty<string>();
+        /// <summary>Tenant-LOCAL window operations are allowed in. Null (both) = no clock rule.
+        /// An end at or before the start means the window crosses midnight.</summary>
+        public TimeSpan? StaffHoursStart { get; set; }
+        public TimeSpan? StaffHoursEnd { get; set; }
+
+        // ── Staff alert tripwires (Script0240) ────────────────────────────────
+        /// <summary>Email the tenant's contact address when the previous day's staff activity
+        /// trips a rule. Off by default: alerts that fire on normal behavior get ignored.</summary>
+        public bool StaffAlertsEnabled { get; set; }
+        /// <summary>One staff member's total refunds in a single local day, above which the
+        /// digest flags them. Default 50000 ($500).</summary>
+        public int StaffAlertRefundCents { get; set; } = 50000;
         /// <summary>Trackside handout export on the rider reports. A motocross-race
         /// artifact: defaults on for motocross tenants, off for mountain-bike.</summary>
         public bool TracksideExportEnabled { get; set; } = true;

@@ -9,18 +9,13 @@
     All clock math is in the TENANT's timezone. Timestamps are stored UTC and staff read the track's
     own clock, so every boundary is built with dayjs.tz(..., branding.timezone) and every label goes
     through tenantDayjs.
+
+    A panel, not a page: it lives as the first tab of the Rentals screen, which owns the heading and
+    the New rental button. `openBlankBooking` is exposed so that button can drive this panel's
+    booking dialog rather than the tab hosting a second copy of it.
 -->
 <template>
-    <v-container fluid>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Rental Board</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" prepend-icon="mdi-format-list-bulleted" to="/Admin/BikeShop/Rentals">
-                All bookings
-            </v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openBlankBooking">New rental</v-btn>
-        </div>
-
+    <div>
         <!-- ── Controls ─────────────────────────────────────────────────── -->
         <v-card class="pa-3 mb-4">
             <div class="d-flex ga-3 align-center flex-wrap">
@@ -350,16 +345,16 @@
         </v-dialog>
 
         <BookRentalDialog v-model="bookOpen" :rentable-variants="rentableVariants" :preset="bookPreset"
-            @booked="onBooked" @notify="flash" />
+            @booked="refresh" @notify="flash" />
 
         <ReturnRentalDialog v-model="returnOpen" :rental="returning" @returned="onReturned" />
 
         <v-snackbar v-model="snackbar" :color="snackColor" :timeout="4000">{{ snackText }}</v-snackbar>
-    </v-container>
+    </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime, tenantDayjs } from '@/helpers/TenantTime'
 import {
@@ -809,6 +804,11 @@ function openBlankBooking() {
     bookOpen.value = true
 }
 
+// The host page owns the "New rental" button (it sits in the page header, above the tabs), so it
+// drives this panel's dialog rather than mounting a second one that would fight over the same
+// Stripe element.
+defineExpose({ openBlankBooking })
+
 /** A UTC instant as the tenant-local "YYYY-MM-DDTHH:mm" a datetime-local input expects. */
 function localInput(ms: number): string {
     return tenantDayjs(new Date(ms)).format('YYYY-MM-DDTHH:mm')
@@ -841,8 +841,14 @@ const rentableVariants = computed<RentableVariantOption[]>(() => {
     return [...byVariant.values()].sort((a, b) => a.title.localeCompare(b.title))
 })
 
-async function onBooked() {
+// Anything that changes a booking is announced, so the sibling All Bookings tab doesn't go stale
+// behind a rental the user just created, checked out, returned, or cancelled from the board.
+// Reloading the board alone would leave the other tab showing the world as it was.
+const emit = defineEmits<{ (e: 'changed'): void }>()
+
+async function refresh() {
     await load()
+    emit('changed')
 }
 
 // ── Rental detail from a bar ───────────────────────────────────────────────
@@ -920,7 +926,7 @@ async function checkOut(r: ShopRental) {
         await service.checkOutRental(r.id)
         flash('Checked out — gear is on its way.')
         rentalOpen.value = false
-        await load()
+        await refresh()
     } catch (e: any) {
         flash(e.response?.data?.error || 'Could not check out this rental. It may still need a signature.', 'error')
     } finally { actionBusy.value = false }
@@ -937,7 +943,7 @@ async function onReturned(capturedCents: number) {
         ? `Returned — ${money(capturedCents)} kept from the deposit.`
         : 'Returned — deposit released in full.')
     rentalOpen.value = false
-    await load()
+    await refresh()
 }
 
 async function cancel(r: ShopRental) {
@@ -953,7 +959,7 @@ async function cancel(r: ShopRental) {
         await service.cancelRental(r.id)
         flash('Rental cancelled.')
         rentalOpen.value = false
-        await load()
+        await refresh()
     } catch (e: any) {
         flash(e.response?.data?.error || 'Could not cancel this rental. Please try again.', 'error')
     }
@@ -967,6 +973,19 @@ onMounted(() => {
     load()
     nowTimer = window.setInterval(() => { nowMs.value = Date.now() }, 60_000)
 })
+
+// The host keeps this panel alive across tab switches, so coming back does NOT remount it and
+// would otherwise show whatever the board looked like when you left. On a gate screen a stale
+// board is worse than a slow one: it can show a bike as free that someone booked five minutes ago.
+//
+// onActivated also fires on the initial mount, right after onMounted has already kicked a load.
+// The flag skips exactly that one, rather than inferring it from whether data has arrived yet.
+let activatedBefore = false
+onActivated(() => {
+    if (activatedBefore) load()
+    activatedBefore = true
+})
+
 onBeforeUnmount(() => {
     if (nowTimer) window.clearInterval(nowTimer)
     window.removeEventListener('mousemove', onDragMove)

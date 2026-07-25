@@ -14,6 +14,7 @@ namespace webapi.Controllers
     public class ReportsController : ControllerBase
     {
         private readonly IReportsRepository _reports;
+        private readonly Services.Audit.IAuditLogger _audit;
         private readonly IConcessionRepository _concessions;
         private readonly IEventRepository _events;
         private readonly IWaiverRepository _waivers;
@@ -40,8 +41,10 @@ namespace webapi.Controllers
             IScheduledTaskRepository scheduledTasks,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext,
-            ITenantTaxRepository tax)
+            ITenantTaxRepository tax,
+            Services.Audit.IAuditLogger audit)
         {
+            _audit = audit;
             _reports = reports;
             _concessions = concessions;
             _events = events;
@@ -796,6 +799,19 @@ namespace webapi.Controllers
             }
             var safeTitle = string.Concat((ev.Title ?? "event").Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'));
             var filename = $"trackside-{safeTitle}-{DateTime.UtcNow:yyyyMMdd}.csv";
+
+            // Bulk PII leaves the building here: name, email, phone and hometown for every racer at
+            // an event, in a file. Individual report VIEWS are deliberately not audited (they are
+            // high-volume and low-signal), but a download that can be forwarded or taken to a
+            // competitor is worth a row, including how many people were in it.
+            await _audit.Log(
+                "report.export_trackside",
+                $"Exported {rows.Count} rider records (name, email, phone) for \"{ev.Title}\"",
+                targetKind: "event",
+                targetId: eventId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { eventTitle = ev.Title, rowCount = rows.Count, filename });
+
             return File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", filename);
         }
 

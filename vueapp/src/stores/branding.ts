@@ -30,6 +30,15 @@ export interface BrandingState {
     requireReservationForPasses: boolean
     /** Season pass gate admission mode: 1 = event sign-up required, 2 = walk-up. */
     seasonPassAdmissionTypeId: number
+    /** Staff access policy: 0 = off, 1 = enforce location/hours on money-moving actions. */
+    staffAccessPolicyMode: number
+    staffAllowedCidrs: string[]
+    /** Tenant-local "HH:mm", or null when there is no hours rule. */
+    staffHoursStart: string | null
+    staffHoursEnd: string | null
+    /** Daily staff alert digest to the tenant contact address. */
+    staffAlertsEnabled: boolean
+    staffAlertRefundCents: number
     requireEmergencyContact: boolean
     allowEventSubscriptions: boolean
     requireIdAtCheckin: boolean
@@ -146,6 +155,12 @@ const defaults: BrandingState = {
     stripePublishableKey: null,
     requireReservationForPasses: false,
     seasonPassAdmissionTypeId: 2,
+    staffAccessPolicyMode: 0,
+    staffAllowedCidrs: [],
+    staffHoursStart: null,
+    staffHoursEnd: null,
+    staffAlertsEnabled: false,
+    staffAlertRefundCents: 50000,
     requireEmergencyContact: false,
     allowEventSubscriptions: true,
     requireIdAtCheckin: false,
@@ -302,6 +317,12 @@ export async function loadBranding(): Promise<void> {
         // Default 2 (walk-up) matches the tenant column default, so any rollout skew where the
         // API predates this field resolves to today's behavior rather than locking the gate.
         branding.seasonPassAdmissionTypeId = data.seasonPassAdmissionTypeId ?? 2
+        branding.staffAccessPolicyMode = data.staffAccessPolicyMode ?? 0
+        branding.staffAllowedCidrs = data.staffAllowedCidrs ?? []
+        branding.staffHoursStart = data.staffHoursStart ?? null
+        branding.staffHoursEnd = data.staffHoursEnd ?? null
+        branding.staffAlertsEnabled = !!data.staffAlertsEnabled
+        branding.staffAlertRefundCents = data.staffAlertRefundCents ?? 50000
         branding.requireEmergencyContact = !!data.requireEmergencyContact
         branding.allowEventSubscriptions = !!data.allowEventSubscriptions
         branding.requireIdAtCheckin = !!data.requireIdAtCheckin

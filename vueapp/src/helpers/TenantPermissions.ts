@@ -28,6 +28,10 @@ export const Perm = {
     CashTurnIn: 'cash.turnin',
     CashReconcile: 'cash.reconcile',
     AccountingManage: 'accounting.manage',
+    // Read the staff activity log (who did what, when, from where). Admin only, deliberately not
+    // in MANAGER: it exposes every colleague's actions including the owner's. Seeing your OWN
+    // activity needs no permission.
+    AuditView: 'audit.view',
 } as const
 
 export type Permission = typeof Perm[keyof typeof Perm]

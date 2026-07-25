@@ -579,6 +579,9 @@ const extrasAsEligible = computed<EligibleExtra[]>(() =>
             sold: 0,
             remaining: -1,
             requiresWaiver: p.requiresWaiver,
+            // Carried from the product, not defaulted: this decides whether the buyer or the
+            // track funds the service charge on the sale, so a stand-in value would mis-charge.
+            riderPaidServiceChargeBps: p.riderPaidServiceChargeBps,
             variants: (p.variants ?? [])
                 .filter(v => v.isActive)
                 .map<EligibleExtraVariant>(v => ({

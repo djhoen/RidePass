@@ -236,6 +236,8 @@ namespace Services.Repositories.Interfaces
         Task<(Guid Id, Guid ReceiptToken)> CreateRental(ShopRental rental, IEnumerable<ShopRentalLine> lines);
         Task<ShopRentalWithLines?> GetRental(Guid id, Guid tenantId);
         Task<List<ShopRentalWithLines>> ListRentals(Guid tenantId, bool activeOnly, int limit);
+        /// <summary>One filtered page of bookings (past and future) for the All Bookings screen.</summary>
+        Task<ShopRentalPage> SearchRentals(Guid tenantId, ShopRentalQuery query);
         Task<List<ShopRentalWithLines>> ListRentalsForUser(Guid userId, Guid tenantId, int limit);
         Task<ShopRental?> GetRentalByFeePaymentIntentId(string paymentIntentId);
         Task<ShopRental?> GetRentalByDepositPaymentIntentId(string paymentIntentId);

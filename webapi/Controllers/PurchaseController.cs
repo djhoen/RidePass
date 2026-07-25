@@ -33,6 +33,7 @@ namespace webapi.Controllers
         private readonly IRewardRepository _rewards;
         private readonly ITenantLedgerRepository _ledger;
         private readonly ITenantCreditRepository _credit;
+        private readonly Services.Audit.IAuditLogger _audit;
         private readonly ICouponRepository _coupons;
         private readonly ICouponValidator _couponValidator;
         private readonly IGiftCardRepository _giftCards;
@@ -85,8 +86,10 @@ namespace webapi.Controllers
             ISeasonPassRepository seasonPasses,
             ITenantTaxRepository tax,
             Services.Payments.IFeeCalculator feeCalculator,
-            ITenantCreditRepository credit)
+            ITenantCreditRepository credit,
+            Services.Audit.IAuditLogger audit)
         {
+            _audit = audit;
             _credit = credit;
             _waivers = waivers;
             _users = users;
@@ -1933,6 +1936,11 @@ namespace webapi.Controllers
                     ? "This purchase is checked in; refunding it requires elevated permission."
                     : "Only a paid purchase can be refunded.", 0, null);
 
+            // Snapshot before the refund rewrites it: the audit entry at the end of this method
+            // reports what the purchase was BEFORE being refunded, and "already checked in" is the
+            // detail a reviewer cares about most.
+            var wasRedeemed = status == "redeemed";
+
             // fullAmount (whole-order) refunds everything including the service charge; otherwise the
             // explicit amount, else the single-refund default (amount minus the service charge).
             var refundCents = amountCents ?? (fullAmount ? amount : Math.Max(0, amount - serviceCharge));
@@ -2067,6 +2075,41 @@ namespace webapi.Controllers
             {
                 // Idempotent — duplicate refund row for this source.
             }
+
+            // Every refund path (Refund, RefundOrder, RefundLines) funnels through here, so this is
+            // the one place that sees them all. Written after the refund has fully committed, and
+            // best-effort by contract, so a failed audit write can never fail a completed refund.
+            //
+            // The metadata is chosen for after-the-fact review of staff behavior, not for debugging:
+            // a cash refund carries no Stripe refund id and leaves no trace with the processor, so
+            // (paymentMethod = cash, stripeRefundId = null) is the shape worth watching. Refunding a
+            // purchase that was already checked in is the other one: the customer already rode.
+            await _audit.Log(
+                "purchase.refund",
+                $"Refunded ${refundCents / 100m:0.00} on a {kind.Replace('_', ' ')} "
+                    + $"({paymentMethod}{(wasRedeemed ? ", already checked in" : "")})",
+                targetKind: kind,
+                targetId: purchaseId,
+                tenantId: tenantId,
+                metadata: new
+                {
+                    kind,
+                    refundCents,
+                    originalAmountCents = amount,
+                    serviceChargeCents = serviceCharge,
+                    // The tender the customer originally paid with. A cash refund is money out of
+                    // the till with no processor record.
+                    paymentMethod,
+                    // Null for cash/manual refunds; present for anything Stripe actually reversed.
+                    stripeRefundId = refundId,
+                    // Set when the sale ran on the tenant's own connected account (direct charge).
+                    connectedAccount,
+                    // True when staff refunded a purchase that had already been redeemed, which
+                    // requires the sales.refund.override permission.
+                    wasCheckedIn = wasRedeemed,
+                    fullAmount,
+                    reason,
+                });
 
             return (true, false, null, refundCents, refundId);
         }
@@ -2307,6 +2350,23 @@ namespace webapi.Controllers
             {
                 _ = _waitlistPromoter.PromoteNext(tier.EventId, existing.TierId, tier.LadderGroup);
             }
+
+            // Cancelling voids a paid sale without moving money through Stripe, so it is the other
+            // way to make a sale disappear and belongs in the same review surface as refunds.
+            await _audit.Log(
+                "purchase.cancel",
+                $"Cancelled a paid ticket worth ${existing.AmountCents / 100m:0.00}",
+                targetKind: "event_ticket",
+                targetId: id,
+                tenantId: _tenantContext.TenantId,
+                metadata: new
+                {
+                    kind = "event_ticket",
+                    amountCents = existing.AmountCents,
+                    paymentMethod = existing.PaymentMethod,
+                    reason = request.Reason,
+                });
+
             return new ApiResponses().OkResult(new { id, status = "cancelled" });
         }
 

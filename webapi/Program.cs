@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
@@ -137,6 +138,7 @@ builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationPreferenceRepository, NotificationPreferenceRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+builder.Services.AddScoped<IStaffAlertScanRepository, StaffAlertScanRepository>();
 builder.Services.AddScoped<IRewardRepository, RewardRepository>();
 builder.Services.AddScoped<IRewardEngine, RewardEngine>();
 builder.Services.AddScoped<IEventSubscriptionRepository, EventSubscriptionRepository>();
@@ -364,6 +366,28 @@ builder.Services.AddAuthentication(auth =>
 
 var app = builder.Build();
 
+// Recover the real client IP from nginx. Without this every request appears to come from
+// 127.0.0.1 (the proxy, which runs on the same host and proxy_passes to loopback), which is
+// exactly what audit_log recorded for its entire history: every row's ip_address was the
+// loopback address, so the log could never answer "where was this action taken from?".
+//
+// Only XForwardedFor is processed on purpose. XForwardedProto would rewrite Request.Scheme
+// and XForwardedHost would rewrite the Host, and the subdomain-based tenant resolution and
+// URL generation currently work without either; changing them here would be an unrelated
+// behavioral risk for no benefit.
+//
+// Trust is limited to the loopback proxy (the ASP.NET default KnownNetworks already covers
+// 127.0.0.0/8 and ::1, which is precisely our nginx). ForwardLimit 1 matches the single hop,
+// so a client cannot spoof its own address by sending its own X-Forwarded-For: only the
+// last hop, written by our nginx, is honored. If a CDN or load balancer is ever put in
+// front, raise ForwardLimit and add its ranges to KnownProxies, or this silently starts
+// trusting a client-supplied value.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor,
+    ForwardLimit = 1,
+});
+
 // Global exception handling. Must run early so it wraps the rest of the
 // pipeline. In Development, WebApplication wires the developer exception page
 // automatically (full stack traces). In every other environment we convert an
@@ -431,6 +455,10 @@ app.UseMiddleware<SlidingSessionMiddleware>();
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/api/health"),
     branch => branch.UseMiddleware<TenantResolutionMiddleware>());
+
+// Must wrap UseAuthorization so it sees the 403 that authorization produces, and so the marker
+// the permission handler leaves in HttpContext.Items is still there when the response comes back.
+app.UseMiddleware<StaffAccessDenialMiddleware>();
 
 app.UseAuthorization();
 

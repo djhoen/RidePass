@@ -272,15 +272,21 @@ namespace webapi.Controllers
             // Optional damage waiver ("insurance"): a non-refundable add-on = rate * gross rental
             // value. When taken it waives the refundable deposit. It rides in the rental subtotal so
             // it is fee'd and taxed like the rest of the rental.
-            var insuranceCents = req.Insurance && tenant.RentalInsuranceEnabled && tenant.RentalInsuranceBps > 0
-                ? (int)((long)amount * tenant.RentalInsuranceBps / 10_000L)
-                : 0;
-            var subtotal = netRental + insuranceCents;
-            var depositCents = insuranceCents > 0 ? 0 : depositTotal;
+            //
+            // Service fee + tax, identical to the counter, and literally so: both go through
+            // RentalCharge, which owns the fee base, the waiver rate, and the deposit waiver. The
+            // deposit is never in either base.
+            var insuranceOffered = tenant.RentalInsuranceEnabled && tenant.RentalInsuranceBps > 0;
+            var insuranceCents = Services.Payments.RentalCharge.InsuranceFor(
+                amount, tenant.RentalInsuranceBps, insuranceOffered, req.Insurance);
+            var charge = Services.Payments.RentalCharge.WithInsurance(
+                netRental, insuranceCents, tenant.ServiceChargeBps,
+                tenant.RentalRiderPaidServiceChargeBps, depositTotal);
 
-            // Service fee + tax, identical to the counter. Deposit is never in either base.
-            var serviceChargeCents = (int)((long)subtotal * tenant.ServiceChargeBps / 10_000L);
-            var renterFeeCents = (int)((long)serviceChargeCents * tenant.RentalRiderPaidServiceChargeBps / 10_000L);
+            var subtotal = netRental + insuranceCents;
+            var depositCents = charge.DepositCents;
+            var serviceChargeCents = charge.ServiceChargeCents;
+            var renterFeeCents = charge.RiderServiceChargeCents;
             var taxableBase = subtotal + (tenant.RentalTaxServiceChargeTaxable ? renterFeeCents : 0);
             var taxCents = (int)Math.Round(
                 (decimal)taxableBase * (tenant.RentalTaxBps ?? 0) / 10_000m, MidpointRounding.AwayFromZero);
@@ -301,6 +307,11 @@ namespace webapi.Controllers
                 EndsAt = endsAt,
                 Status = "pending",
                 AmountCents = amount + insuranceCents,
+                InsuranceCents = insuranceCents,
+                InsuranceLabelSnapshot = insuranceCents > 0
+                    ? (string.IsNullOrWhiteSpace(tenant.RentalInsuranceLabel)
+                        ? "Damage Protection" : tenant.RentalInsuranceLabel.Trim())
+                    : null,
                 TaxCents = taxCents,
                 TotalCents = total,
                 ServiceChargeCents = serviceChargeCents,

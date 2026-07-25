@@ -12,6 +12,12 @@ namespace Services.Repositories.Interfaces
         /// <summary>Set the season pass gate admission mode: 1 = event sign-up required,
         /// 2 = walk-up. See SeasonPassAdmissionType.</summary>
         Task UpdateSeasonPassAdmissionType(Guid tenantId, int admissionTypeId);
+        /// <summary>Set where and when staff may run money-moving operations (Script0239).
+        /// mode 0 = off, 1 = enforce. Empty cidrs / null hours clear that constraint.</summary>
+        Task UpdateStaffAccessPolicy(Guid tenantId, int mode, string[] allowedCidrs,
+            TimeSpan? hoursStart, TimeSpan? hoursEnd);
+        /// <summary>Daily staff alert digest: on/off and the per-staffer daily refund threshold.</summary>
+        Task UpdateStaffAlertSettings(Guid tenantId, bool enabled, int refundCents);
         Task UpdateRequireEmergencyContact(Guid tenantId, bool require);
         Task UpdateAllowEventSubscriptions(Guid tenantId, bool allow);
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);

@@ -175,6 +175,9 @@ import tenantHelper from '../helpers/TenantHelper'
 import NotificationBell from './NotificationBell.vue'
 import ImpersonationMenu from './ImpersonationMenu.vue'
 import { Perm, type Permission } from '@/helpers/TenantPermissions'
+
+// Every tenant permission, for the staffOnly test below.
+const ALL_PERMS = Object.values(Perm) as Permission[]
 import { ConcessionService } from '@/services/ConcessionService'
 
 const router = useRouter()
@@ -264,17 +267,26 @@ const superAdminLinks: SuperAdminLink[] = [
 // show in the admin nav at all).
 type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled' | 'sellsSpectatorPasses'
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
-interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag }
+// staffOnly: visible to anyone holding at least one tenant permission, i.e. any staff role, but
+// not to riders. For links every staffer needs and no single permission describes.
+interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag; staffOnly?: boolean }
 interface AdminGroup { value: string; title: string; icon: string; links: AdminLink[] }
 
 // Direct links: pinned at top of admin menu, no group header.
 const allDirectLinks: AdminLink[] = [
-    { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null },
+    // No single permission describes "works here", so this is staffOnly rather than perm-gated:
+    // every staff role should land on the dashboard, and no rider should see it.
+    { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null, staffOnly: true },
     { to: '/Admin/Users',     icon: 'mdi-account-multiple', title: 'Users',     perm: Perm.UsersManage },
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
     { to: '/Admin/Feedback',  icon: 'mdi-message-text',     title: 'Feedback',  perm: Perm.SettingsManage },
     { to: '/Admin/Inbox',     icon: 'mdi-inbox',            title: 'Inbox',     perm: Perm.SettingsManage },
+    // Every staffer sees this and lands on their own activity; the whole-track view inside is
+    // gated on audit.view by the page and the API. A log people know is there and can open
+    // deters more than one they only meet during an investigation. staffOnly keeps it off a
+    // rider's menu, since no single permission means "is staff".
+    { to: '/Admin/StaffActivity', icon: 'mdi-history',      title: 'Activity',  perm: null, staffOnly: true },
 ]
 
 // Grouped links: each group is a collapsible accordion. Groups with no permitted items are hidden.
@@ -317,7 +329,6 @@ const allGroups: AdminGroup[] = [
         links: [
             { to: '/Admin/BikeShop',     icon: 'mdi-package-variant',      title: 'Inventory',   perm: Perm.CatalogManage, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Register', icon: 'mdi-cash-register',   title: 'Register',    perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
-            { to: '/Admin/BikeShop/RentalBoard', icon: 'mdi-chart-timeline-variant', title: 'Rental Board', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Rentals',  icon: 'mdi-bike-fast',       title: 'Rentals',     perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/WorkOrders', icon: 'mdi-wrench',        title: 'Work Orders', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Sales',    icon: 'mdi-receipt-text-clock', title: 'Shop Sales', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
@@ -367,6 +378,7 @@ const allGroups: AdminGroup[] = [
         links: [
             { to: '/Admin/Settings/General',  icon: 'mdi-tune',          title: 'General',   perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Features', icon: 'mdi-toggle-switch', title: 'Features',  perm: Perm.SettingsManage },
+            { to: '/Admin/Settings/StaffAccess', icon: 'mdi-shield-lock-outline', title: 'Staff Access', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/HomePage', icon: 'mdi-home-edit',     title: 'Home Page', perm: Perm.SettingsManage },
             { to: '/Admin/Pages',             icon: 'mdi-file-document-outline', title: 'Pages', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
@@ -379,6 +391,9 @@ const allGroups: AdminGroup[] = [
 
 function allowed(link: AdminLink): boolean {
     if (link.perm !== null && !authHelper.hasPermission(link.perm)) return false
+    // "Any tenant permission at all" is the closest thing to an is-staff test: every staff role
+    // carries at least one, and a rider carries none.
+    if (link.staffOnly && !authHelper.hasAnyPermission(...ALL_PERMS)) return false
     // Feature-gated links hide entirely when the super-admin hasn't enabled that
     // platform feature for the tenant.
     if (link.feature && !branding[link.feature]) return false
@@ -392,7 +407,13 @@ const visibleGroups = computed<AdminGroup[]>(() =>
         .filter(g => g.links.length > 0)
 )
 
-const hasAdminAccess = computed(() => directLinks.value.length > 0 || visibleGroups.value.length > 0)
+// Requires actually being staff, not merely having a visible link. Deriving this from the link
+// list alone meant one entry with perm: null (the dashboard) made it true for every signed-in
+// user, so riders were shown the admin gear. The staff test is the durable half: a future
+// perm: null link cannot bring the menu back for riders on its own.
+const hasAdminAccess = computed(() =>
+    authHelper.hasAnyPermission(...ALL_PERMS)
+    && (directLinks.value.length > 0 || visibleGroups.value.length > 0))
 
 // Auto-expand: the group containing the current route stays open when the menu opens.
 // Plus: if the user only has a single visible group, expand it by default so they don't

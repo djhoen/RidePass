@@ -31,6 +31,13 @@ using Services.Sms;
 //     daily because tenants span timezones — a day closes at a different UTC
 //     moment for each, and the sweep simply posts whatever is now complete.
 //
+//   • Staff alert tripwires (60m tick) — tenant-spanning sweep that runs each
+//     tenant's completed local day of audit_log entries through the tripwire
+//     rules and emails the owner anything that trips. Hourly rather than daily
+//     because a local day closes at a different UTC moment per tenant; the
+//     unique index on staff_alert_scan (tenant_id, scan_date) makes the repeat
+//     safe and stops a day being emailed twice.
+//
 //   • SMS billing attacher (60s tick) — drains tenant_billing_event rows
 //     into tenant_ledger_entry as negative sms_charge adjustments so the
 //     monthly drafter rolls SMS costs into total_adjustment_cents. Same
@@ -108,6 +115,13 @@ var quickBooksApi = new QuickBooksApiClient(quickBooksOptions, quickBooksTokens,
 var quickBooksSync = new QuickBooksSyncService(quickBooksRepo, accountingEntryRepo, quickBooksApi,
     tenantRepo, NullLogger<QuickBooksSyncService>.Instance);
 
+// Staff alert tripwires. Tenant-spanning sweep, same shape as the QuickBooks sync
+// and for the same reason: a tenant's local day closes at a different UTC moment for
+// each one, so it runs hourly and scans whatever has now finished, with the unique
+// index on staff_alert_scan making the repeat safe.
+var staffAlertSweep = new Services.Alerts.StaffAlertSweep(
+    tenantRepo, new AuditLogRepository(dbHelper), new StaffAlertScanRepository(dbHelper), emailer);
+
 // One entry per handler kind. Add new jobs here. These must mirror the
 // IScheduledTaskHandler registrations in webapi/Program.cs — TaskRunner is the
 // only process that actually runs the dispatcher, so a handler missing here
@@ -127,15 +141,46 @@ var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// Four independent loops. Cancellation token wired so Ctrl-C stops all.
+// Five independent loops. Cancellation token wired so Ctrl-C stops all.
 var dispatcherLoop = Task.Run(() => DispatcherLoop(dispatcher, cts.Token));
 var drafterLoop = Task.Run(() => DrafterLoop(drafter, cts.Token));
 var smsBillingLoop = Task.Run(() => SmsBillingAttachLoop(smsBillingAttacher, cts.Token));
 var quickBooksLoop = Task.Run(() => QuickBooksSyncLoop(quickBooksSync, quickBooksOptions, cts.Token));
+var staffAlertLoop = Task.Run(() => StaffAlertLoop(staffAlertSweep, cts.Token));
 
-await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop, quickBooksLoop);
+await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop, quickBooksLoop, staffAlertLoop);
 
 Console.WriteLine("TaskRunner stopped.");
+
+static async Task StaffAlertLoop(Services.Alerts.StaffAlertSweep sweep, CancellationToken ct)
+{
+    // Hourly for the same reason as the QuickBooks sync: tenants span timezones, so each one's
+    // local day closes at a different UTC moment and the sweep just scans whatever has finished.
+    // Re-running is safe (unique index on staff_alert_scan), so a restart costs nothing.
+    var timer = new PeriodicTimer(TimeSpan.FromMinutes(60));
+    try
+    {
+        do
+        {
+            try
+            {
+                var summary = await sweep.ScanDueTenantsAsync(ct);
+                if (summary.DaysScanned > 0 || summary.Failures > 0)
+                {
+                    Console.WriteLine($"[{DateTime.UtcNow:o}] Staff alerts: tenants={summary.TenantsConsidered} "
+                        + $"scanned={summary.DaysScanned} flagged={summary.DaysFlagged} "
+                        + $"sent={summary.EmailsSent} failed={summary.Failures}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[{DateTime.UtcNow:o}] Staff alert loop error: {ex.Message}");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(ct));
+    }
+    catch (OperationCanceledException) { /* shutting down */ }
+}
 
 static async Task QuickBooksSyncLoop(IQuickBooksSyncService sync, QuickBooksOptions options, CancellationToken ct)
 {

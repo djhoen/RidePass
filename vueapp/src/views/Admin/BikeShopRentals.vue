@@ -3,16 +3,22 @@
         <div class="d-flex align-center mb-4 ga-3 flex-wrap">
             <h1 class="text-h4">Rentals</h1>
             <v-spacer></v-spacer>
-            <v-switch v-if="tab === 'bookings'" v-model="activeOnly" label="Active only" color="primary"
-                hide-details density="compact" @update:model-value="reload"></v-switch>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openBook">New rental</v-btn>
+            <v-btn color="primary" prepend-icon="mdi-plus" :loading="openingBook" @click="openBook">New rental</v-btn>
         </div>
 
         <v-tabs v-model="tab" class="mb-4">
-            <v-tab value="bookings">Bookings</v-tab>
+            <v-tab value="board">Board</v-tab>
+            <v-tab value="bookings">All Bookings</v-tab>
             <v-tab value="fleet">Rental products</v-tab>
             <v-tab value="settings">Settings</v-tab>
         </v-tabs>
+
+        <!-- ── Board ────────────────────────────────────────────────────── -->
+        <!-- Kept alive so flipping to another tab and back doesn't re-fetch the day and lose the
+             date, hour range, and filters the user had set up. -->
+        <keep-alive>
+            <RentalBoardPanel v-if="tab === 'board'" ref="boardPanel" @changed="onBookingsChanged" />
+        </keep-alive>
 
         <!-- ── Settings ─────────────────────────────────────────────────── -->
         <div v-if="tab === 'settings'">
@@ -185,9 +191,12 @@
                     <tbody>
                         <tr v-if="fleetProducts.length === 0">
                             <td colspan="5" class="text-center text-medium-emphasis py-6">
-                                {{ fleetSearch
-                                    ? 'No rental products match that search.'
-                                    : 'No rental products yet. Flag a product as rentable on the Bike Shop page.' }}
+                                <!-- A failed catalog load must not read as "you own no bikes". -->
+                                {{ !fleetLoaded
+                                    ? 'Could not load the rental fleet. Reopen this tab to retry.'
+                                    : fleetSearch
+                                        ? 'No rental products match that search.'
+                                        : 'No rental products yet. Flag a product as rentable on the Bike Shop page.' }}
                             </td>
                         </tr>
                         <template v-for="p in fleetProducts" :key="p.id">
@@ -280,61 +289,152 @@
             </v-card>
         </div>
 
-        <v-card v-if="tab === 'bookings' && loading" class="pa-6 text-center"><v-progress-circular indeterminate color="primary" /></v-card>
-        <v-alert v-else-if="tab === 'bookings' && loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
-        <v-card v-else-if="tab === 'bookings' && rentals.length === 0" class="pa-6 text-center text-medium-emphasis">
-            No rentals yet. Book the first one.
-        </v-card>
-        <v-table v-else-if="tab === 'bookings'" density="compact">
-            <thead>
-                <tr>
-                    <th>#</th><th>Renter</th><th>Window</th><th>Items</th>
-                    <th class="text-right">Total</th><th class="text-right">Deposit</th><th>Status</th><th></th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr v-for="r in rentals" :key="r.id">
-                    <td>{{ r.orderNumber ?? '—' }}</td>
-                    <td>{{ r.renterName || 'Walk-in' }}</td>
-                    <td class="text-caption">{{ windowLabel(r) }}</td>
-                    <td class="text-caption">{{ itemsLabel(r) }}</td>
-                    <td class="text-right">{{ money(r.totalCents) }}</td>
-                    <td class="text-right">
-                        {{ money(r.depositCents) }}
-                        <span v-if="r.depositCapturedCents > 0" class="text-error text-caption">(-{{ money(r.depositCapturedCents) }})</span>
-                    </td>
-                    <td><v-chip size="x-small" :color="statusColor(r.status)">{{ r.status }}</v-chip></td>
-                    <td class="text-right" style="white-space: nowrap">
-                        <v-btn v-if="r.status === 'paid'" size="x-small" color="primary" variant="tonal"
-                            :loading="busyId === r.id" @click="checkOut(r)">Check out</v-btn>
-                        <v-tooltip v-if="r.status === 'paid' || r.status === 'pending'" text="Agreement + waiver" location="top">
-                            <template #activator="{ props }">
-                                <v-btn v-bind="props" size="x-small" variant="text"
-                                    icon="mdi-draw-pen" @click="openSign(r)"></v-btn>
-                            </template>
-                        </v-tooltip>
-                        <v-btn v-if="r.status === 'out'" size="x-small" color="secondary" variant="tonal"
-                            @click="openReturn(r)">Return</v-btn>
-                        <v-tooltip text="Condition photos" location="top">
-                            <template #activator="{ props }">
-                                <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-camera"
-                                    @click="openPhotos(r)"></v-btn>
-                            </template>
-                        </v-tooltip>
-                        <v-tooltip v-if="r.status === 'pending' || r.status === 'paid'" text="Cancel" location="top">
-                            <template #activator="{ props }">
-                                <v-btn v-bind="props" size="x-small" variant="text"
-                                    icon="mdi-close" @click="cancel(r)"></v-btn>
-                            </template>
-                        </v-tooltip>
-                    </td>
-                </tr>
-            </tbody>
-        </v-table>
+        <!-- ── All Bookings ─────────────────────────────────────────────── -->
+        <div v-if="tab === 'bookings'">
+            <v-card class="pa-3 mb-4">
+                <div class="d-flex ga-3 align-center flex-wrap">
+                    <!-- Upcoming first, because "what's coming" is the standing question and
+                         history is what you go looking for. -->
+                    <v-btn-toggle v-model="scope" mandatory density="compact" variant="outlined"
+                        color="primary" @update:model-value="applyFilters">
+                        <v-btn value="upcoming" size="small">Upcoming</v-btn>
+                        <v-btn value="past" size="small">Past</v-btn>
+                        <v-btn value="all" size="small">All</v-btn>
+                    </v-btn-toggle>
+
+                    <!-- Applies as you type (debounced in the watcher); Enter just skips the wait. -->
+                    <v-text-field v-model="search" density="compact" hide-details clearable
+                        prepend-inner-icon="mdi-magnify" label="Renter name, email or order #"
+                        style="max-width: 280px" @keyup.enter="applyFilters"></v-text-field>
+
+                    <!-- Reload is driven by a debounced watcher, not @update:menu: chips are
+                         closable, and removing one never opens or closes the menu. -->
+                    <v-select v-model="statusFilter" :items="statusOptions" multiple chips closable-chips
+                        density="compact" hide-details label="Status" style="max-width: 280px"></v-select>
+
+                    <v-text-field v-model="fromDate" type="date" label="From" density="compact"
+                        hide-details style="max-width: 165px" @update:model-value="applyFilters"></v-text-field>
+                    <v-text-field v-model="toDate" type="date" label="Until" density="compact"
+                        hide-details style="max-width: 165px" @update:model-value="applyFilters"></v-text-field>
+
+                    <v-btn v-if="filtersActive" size="small" variant="text" prepend-icon="mdi-filter-off"
+                        @click="clearFilters">Clear</v-btn>
+
+                    <v-spacer></v-spacer>
+                    <v-tooltip text="Reload" location="top">
+                        <template #activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-refresh" variant="text" size="small"
+                                :loading="loading" @click="loadBookings"></v-btn>
+                        </template>
+                    </v-tooltip>
+                </div>
+
+                <div v-if="!loadError" class="d-flex ga-2 mt-3 flex-wrap align-center">
+                    <v-chip size="small" variant="tonal">
+                        {{ total }} booking{{ total === 1 ? '' : 's' }}{{ scopeLabel }}
+                    </v-chip>
+                    <v-chip v-if="outNowCount > 0" size="small" color="indigo" variant="tonal">
+                        {{ outNowCount }} out on this page
+                    </v-chip>
+                    <v-chip v-if="depositHeldCents > 0" size="small" variant="tonal">
+                        {{ money(depositHeldCents) }} deposits held on this page
+                    </v-chip>
+                </div>
+            </v-card>
+
+            <v-card v-if="loading && rentals.length === 0" class="pa-6 text-center">
+                <v-progress-circular indeterminate color="primary" />
+            </v-card>
+            <v-alert v-else-if="loadError" type="error" variant="tonal">
+                {{ loadError }}
+                <template #append>
+                    <v-btn size="small" variant="text" @click="loadBookings">Retry</v-btn>
+                </template>
+            </v-alert>
+            <v-card v-else-if="rentals.length === 0" class="pa-6 text-center text-medium-emphasis">
+                <template v-if="filtersActive">
+                    No bookings match those filters.
+                    <v-btn size="small" variant="text" class="ml-2" @click="clearFilters">Clear filters</v-btn>
+                </template>
+                <template v-else-if="scope === 'upcoming'">
+                    Nothing booked from here on. Switch to Past to see history, or book one.
+                </template>
+                <template v-else>No rentals yet. Book the first one.</template>
+            </v-card>
+
+            <template v-else>
+                <v-card>
+                    <v-table density="compact">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Renter</th><th>Window</th><th>Items</th>
+                                <th class="text-right">Total</th><th class="text-right">Deposit</th>
+                                <th>Status</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="r in rentals" :key="r.id" :class="{ 'row-past': isPast(r) }">
+                                <td>{{ r.orderNumber ?? '—' }}</td>
+                                <td>
+                                    <div>{{ r.renterName || 'Walk-in' }}</div>
+                                    <div v-if="r.renterEmail" class="text-caption text-medium-emphasis">
+                                        {{ r.renterEmail }}
+                                    </div>
+                                </td>
+                                <td class="text-caption">
+                                    <div>{{ windowLabel(r) }}</div>
+                                    <!-- Relative time is what makes a long list scannable: "in 2 hours"
+                                         reads faster than a date you have to compare against today. -->
+                                    <div class="text-medium-emphasis">{{ relativeLabel(r) }}</div>
+                                </td>
+                                <td class="text-caption">{{ itemsLabel(r) }}</td>
+                                <td class="text-right">{{ money(r.totalCents) }}</td>
+                                <td class="text-right">
+                                    {{ money(r.depositCents) }}
+                                    <span v-if="r.depositCapturedCents > 0" class="text-error text-caption">
+                                        (-{{ money(r.depositCapturedCents) }})
+                                    </span>
+                                </td>
+                                <td><v-chip size="x-small" :color="statusColor(r.status)">{{ r.status }}</v-chip></td>
+                                <td class="text-right" style="white-space: nowrap">
+                                    <v-btn v-if="r.status === 'paid'" size="x-small" color="primary" variant="tonal"
+                                        :loading="busyId === r.id" @click="checkOut(r)">Check out</v-btn>
+                                    <v-tooltip v-if="r.status === 'paid' || r.status === 'pending'" text="Agreement + waiver" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text"
+                                                icon="mdi-draw-pen" @click="openSign(r)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                    <v-btn v-if="r.status === 'out'" size="x-small" color="secondary" variant="tonal"
+                                        @click="openReturn(r)">Return</v-btn>
+                                    <v-tooltip text="Condition photos" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-camera"
+                                                @click="openPhotos(r)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                    <v-tooltip v-if="r.status === 'pending' || r.status === 'paid'" text="Cancel" location="top">
+                                        <template #activator="{ props }">
+                                            <v-btn v-bind="props" size="x-small" variant="text"
+                                                icon="mdi-close" @click="cancel(r)"></v-btn>
+                                        </template>
+                                    </v-tooltip>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                </v-card>
+
+                <div v-if="pageCount > 1" class="d-flex justify-center mt-4">
+                    <v-pagination v-model="page" :length="pageCount" :total-visible="7"
+                        density="compact" @update:model-value="loadBookings"></v-pagination>
+                </div>
+            </template>
+        </div>
 
         <!-- ── Book + return, shared with the Rental Board ──────────────── -->
         <BookRentalDialog v-model="bookOpen" :rentable-variants="rentableVariants" :preset="bookPreset"
-            @booked="reload" @notify="flash" />
+            @booked="onBookingsChanged" @notify="flash" />
 
         <ReturnRentalDialog v-model="returnOpen" :rental="returning" @returned="onReturned" />
 
@@ -384,7 +484,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
@@ -394,6 +494,7 @@ import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
 import RentalReadinessPanel from '@/components/bikeshop/RentalReadinessPanel.vue'
 import BookRentalDialog, { type BookRentalPreset } from '@/components/bikeshop/BookRentalDialog.vue'
 import ReturnRentalDialog from '@/components/bikeshop/ReturnRentalDialog.vue'
+import RentalBoardPanel from '@/components/bikeshop/RentalBoardPanel.vue'
 import { branding } from '@/stores/branding'
 import { TenantService } from '@/services/TenantService'
 import { useConfirm } from '@/composables/useConfirm'
@@ -421,8 +522,103 @@ const rentals = ref<ShopRental[]>([])
 const products = ref<ShopProduct[]>([])
 const loading = ref(false)
 const loadError = ref('')
-const activeOnly = ref(true)
 const busyId = ref<string | null>(null)
+
+// ── All Bookings: filters ───────────────────────────────────────────────────
+// Scope defaults to upcoming. History is one click away rather than the thing you scroll past to
+// find tomorrow's pickup, which is what an undated list of everything turns into.
+type RentalScope = 'upcoming' | 'past' | 'all'
+const scope = ref<RentalScope>('upcoming')
+const search = ref('')
+const statusFilter = ref<string[]>([])
+const fromDate = ref('')
+const toDate = ref('')
+const page = ref(1)
+const total = ref(0)
+const pageSize = 25
+
+const statusOptions = [
+    { title: 'Pending payment', value: 'pending' },
+    { title: 'Paid', value: 'paid' },
+    { title: 'Out', value: 'out' },
+    { title: 'Returned', value: 'returned' },
+    { title: 'Damaged', value: 'damaged' },
+    { title: 'Cancelled', value: 'cancelled' },
+    { title: 'Failed', value: 'failed' },
+]
+
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const filtersActive = computed(() =>
+    !!search.value?.trim() || statusFilter.value.length > 0 || !!fromDate.value || !!toDate.value)
+const scopeLabel = computed(() =>
+    scope.value === 'upcoming' ? ' from here on' : scope.value === 'past' ? ' in the past' : '')
+
+// Page-level tallies, labelled as such. Summing the whole filtered set would need another query,
+// and quietly presenting a page total as a grand total is worse than not showing one.
+const outNowCount = computed(() => rentals.value.filter(r => r.status === 'out').length)
+const depositHeldCents = computed(() => rentals.value
+    .filter(r => r.status === 'out' || r.status === 'paid')
+    .reduce((sum, r) => sum + Math.max(0, r.depositCents - r.depositCapturedCents), 0))
+
+function isPast(r: ShopRental): boolean {
+    return dayjs(r.endsAt).isBefore(dayjs())
+}
+/**
+ * "in 2 hours" / "3 days ago". Hand-rolled rather than pulling in dayjs' relativeTime plugin: it
+ * is a handful of lines, it keeps the plugin registration in main.ts untouched, and the wording
+ * here wants to be specific to a rental ("due back", not a bare "in 2 hours").
+ */
+function fromNow(iso: string): string {
+    const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60000)
+    const ago = mins < 0
+    const m = Math.abs(mins)
+    const said = m < 1 ? 'now'
+        : m < 60 ? `${m} min`
+        : m < 60 * 36 ? `${Math.round(m / 60)} hr`
+        : `${Math.round(m / 1440)} days`
+    if (said === 'now') return 'now'
+    return ago ? `${said} ago` : `in ${said}`
+}
+
+/** Relative time against whichever end of the window is the live one. */
+function relativeLabel(r: ShopRental): string {
+    const now = Date.now()
+    if (new Date(r.startsAt).getTime() > now) return `starts ${fromNow(r.startsAt)}`
+    if (new Date(r.endsAt).getTime() > now) return `due back ${fromNow(r.endsAt)}`
+    return `ended ${fromNow(r.endsAt)}`
+}
+
+// Any filter change resets to page 1: staying on page 4 of a result set that just shrank to one
+// page shows an empty table and reads as "no matches".
+let filterTimer: number | undefined
+function applyFilters() {
+    // Cancel any debounced run this one supersedes, so an explicit apply (Enter, Clear, a scope
+    // change) doesn't get followed by a redundant fetch 350ms later.
+    if (filterTimer) { window.clearTimeout(filterTimer); filterTimer = undefined }
+    page.value = 1
+    loadBookings()
+}
+function clearFilters() {
+    search.value = ''
+    statusFilter.value = []
+    fromDate.value = ''
+    toDate.value = ''
+    applyFilters()
+}
+
+// Search and status apply as you type / click, debounced. Enter still works for anyone who
+// expects it; this just means someone who types a name and then looks up at the table sees
+// results rather than a list that never moved. Debouncing status as well coalesces the burst of
+// changes from ticking several boxes in one visit to the menu, and unlike an on-menu-close hook
+// it also catches a chip being removed. The stale-response guard in loadBookings makes the
+// overlapping calls safe.
+function debouncedApply() {
+    if (filterTimer) window.clearTimeout(filterTimer)
+    filterTimer = window.setTimeout(applyFilters, 350)
+}
+watch(search, debouncedApply)
+watch(statusFilter, debouncedApply, { deep: true })
+onBeforeUnmount(() => { if (filterTimer) window.clearTimeout(filterTimer) })
 
 const snackbar = ref(false); const snackText = ref(''); const snackColor = ref<'success' | 'error'>('success')
 function flash(t: string, c: 'success' | 'error' = 'success') { snackText.value = t; snackColor.value = c; snackbar.value = true }
@@ -532,11 +728,14 @@ async function saveRentalSettings() {
 // ── Fleet tab: rental products with availability + schedule ─────────────────
 // ?tab= opens a specific tab, so links from elsewhere (Shop Settings, the booking dialog's
 // "set the tax rate" prompt) land on the right one instead of dumping you on Bookings.
-const validTabs = ['bookings', 'fleet', 'settings'] as const
+// Board first and by default: "what is on the rack right now" is the question the counter opens
+// this screen to answer. The old default (an undated list of every booking) made them read to
+// find it. ?tab= still overrides, which is what the retired /RentalBoard URL redirects into.
+const validTabs = ['board', 'bookings', 'fleet', 'settings'] as const
 type RentalTab = typeof validTabs[number]
 const route = useRoute()
 const tab = ref<RentalTab>(
-    validTabs.includes(route.query.tab as RentalTab) ? route.query.tab as RentalTab : 'bookings')
+    validTabs.includes(route.query.tab as RentalTab) ? route.query.tab as RentalTab : 'board')
 watch(() => route.query.tab, t => {
     if (validTabs.includes(t as RentalTab)) tab.value = t as RentalTab
 })
@@ -591,11 +790,13 @@ function toggleFleet(id: string) {
     fleetExpanded.value = next
 }
 
-// What's already on the books for this product, built from the rentals already loaded.
+// What's already on the books for this product. Reads fleetRentals, NOT the bookings page: that
+// list is filtered and paged now, so using it would make this schedule reflect whatever the user
+// last searched for rather than what is actually booked.
 function scheduleFor(p: ShopProduct) {
     const variantIds = new Set(rentableVariantsOf(p).map(v => v.id))
     const out: { key: string; window: string; renter: string; unit: string; status: string }[] = []
-    for (const r of rentals.value) {
+    for (const r of fleetRentals.value) {
         if (r.status === 'cancelled' || r.status === 'failed' || r.status === 'returned') continue
         for (const l of r.lines) {
             if (!variantIds.has(l.variantId)) continue
@@ -666,7 +867,26 @@ const rentableVariants = computed(() =>
             trackingKind: v.trackingKind, name: p.name, dailyRateCents: v.dailyRateCents!, depositCents: v.depositCents,
         }))))
 
-function openBook() {
+const boardPanel = ref<InstanceType<typeof RentalBoardPanel> | null>(null)
+const openingBook = ref(false)
+
+async function openBook() {
+    // On the Board tab, drive the panel's own dialog. It already holds the fleet it loaded, so
+    // its gear picker is populated even for a shop-counter user who can't read the catalog
+    // endpoints this page uses. Two dialogs mounted at once would also fight over Stripe's
+    // payment element, which can only be mounted in one place.
+    if (tab.value === 'board' && boardPanel.value) {
+        boardPanel.value.openBlankBooking()
+        return
+    }
+    // The catalog now loads with the Rental products tab rather than on mount, so from any other
+    // tab it may not be here yet. Without this the dialog opens with an empty gear picker and no
+    // hint as to why.
+    if (!fleetLoaded.value) {
+        openingBook.value = true
+        try { await loadFleet() } finally { openingBook.value = false }
+        if (!fleetLoaded.value) return   // loadFleet already surfaced the failure
+    }
     bookPreset.value = null
     bookOpen.value = true
 }
@@ -677,7 +897,7 @@ async function checkOut(r: ShopRental) {
     try {
         await service.checkOutRental(r.id)
         flash('Checked out — gear is on its way.')
-        await reload()
+        await onBookingsChanged()
     } catch (e: any) {
         flash(e.response?.data?.error || 'Could not check out this rental.', 'error')
     } finally { busyId.value = null }
@@ -693,7 +913,7 @@ async function onReturned(capturedCents: number) {
     flash(capturedCents > 0
         ? `Returned — ${money(capturedCents)} kept from the deposit.`
         : 'Returned — deposit released in full.')
-    await reload()
+    await onBookingsChanged()
 }
 
 async function cancel(r: ShopRental) {
@@ -708,33 +928,88 @@ async function cancel(r: ShopRental) {
     try {
         await service.cancelRental(r.id)
         flash('Rental cancelled.')
-        await reload()
+        await onBookingsChanged()
     } catch (e: any) {
         flash(e.response?.data?.error || 'Could not cancel this rental.', 'error')
     }
 }
 
-async function reload() {
-    loading.value = rentals.value.length === 0
+// Bookings are paged and filtered server-side, so this is the only thing that fills `rentals`.
+// Filter changes reset the page first; see applyFilters.
+let bookingsSeq = 0
+async function loadBookings() {
+    const seq = ++bookingsSeq
+    loading.value = true
     loadError.value = ''
     try {
-        const [r, p] = await Promise.all([service.listRentals(activeOnly.value), service.listProducts(true)])
-        rentals.value = r.data.data
-        products.value = p.data.data
+        const r = await service.searchRentals({
+            scope: scope.value,
+            search: search.value?.trim() || null,
+            statuses: statusFilter.value,
+            // Date inputs are plain calendar days. Send the tenant-local day boundaries so a
+            // "From 25th" means the 25th at the track, not 00:00 UTC (which is the 24th in Denver).
+            from: fromDate.value ? dayjs.tz(`${fromDate.value}T00:00:00`, tenantZone()).toISOString() : null,
+            to: toDate.value ? dayjs.tz(`${toDate.value}T00:00:00`, tenantZone()).add(1, 'day').toISOString() : null,
+            page: page.value,
+            pageSize,
+        })
+        // Stale-response guard: typing in the search box fires several of these, and an older
+        // one landing last would show results for a query the user has already moved past.
+        if (seq !== bookingsSeq) return
+        rentals.value = r.data.data.rows
+        total.value = r.data.data.total
     } catch (e: any) {
-        loadError.value = e.response?.data?.error || 'Could not load rentals. Refresh to try again.'
-    } finally { loading.value = false }
+        if (seq !== bookingsSeq) return
+        rentals.value = []
+        total.value = 0
+        loadError.value = e.response?.data?.error
+            || 'Could not load bookings. Check the connection and retry.'
+    } finally {
+        if (seq === bookingsSeq) loading.value = false
+    }
 }
 
-// Probe availability when the fleet tab is first opened, and whenever the catalog finishes
-// loading while it's already showing (the grid is meaningless without it).
+function tenantZone(): string { return branding.timezone || 'UTC' }
+
+// The fleet tab needs the catalog plus every currently-live rental for its per-product schedule.
+// Deliberately its own read: the bookings list is a filtered page now, so reusing it would make
+// the schedule show only whatever the user happened to be filtering for.
+const fleetLoaded = ref(false)
+const fleetRentals = ref<ShopRental[]>([])
+async function loadFleet() {
+    try {
+        const [r, p] = await Promise.all([service.listRentals(true, 500), service.listProducts(true)])
+        fleetRentals.value = r.data.data
+        products.value = p.data.data
+        fleetLoaded.value = true
+    } catch (e: any) {
+        flash(e.response?.data?.error || 'Could not load the rental fleet. Reopen the tab to retry.', 'error')
+    }
+}
+
+/** A booking changed somewhere (the board, a row action), so anything already loaded is stale. */
+async function onBookingsChanged() {
+    await loadBookings()
+    if (fleetLoaded.value) await loadFleet()
+}
+
+// Each tab loads what it needs the first time it's opened, so landing on the Board doesn't pull
+// the catalog and a full booking page nobody asked for.
 watch(tab, t => {
-    if (t === 'fleet') refreshFleetAvailability()
+    if (t === 'bookings' && rentals.value.length === 0 && !loadError.value) loadBookings()
+    if (t === 'fleet') {
+        if (!fleetLoaded.value) loadFleet(); else refreshFleetAvailability()
+    }
     if (t === 'settings' && retailTaxCategories.value.length === 0) loadRetailTax()
 })
 watch(products, () => { if (tab.value === 'fleet') refreshFleetAvailability() })
 
-onMounted(reload)
+onMounted(() => {
+    // The board fetches its own data; only load for the tab actually showing.
+    if (tab.value === 'bookings') loadBookings()
+    if (tab.value === 'fleet') loadFleet()
+    if (tab.value === 'settings') loadRetailTax()
+})
 </script>
 
 <style scoped>

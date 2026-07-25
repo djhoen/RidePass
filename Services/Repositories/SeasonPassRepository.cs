@@ -568,19 +568,34 @@ namespace Services.Repositories
             // here. The burn CTE returns zero rows when the pass has no credits left (or isn't
             // paid / isn't this tenant's), which suppresses the INSERT entirely.
             //
-            // ON CONFLICT revives only a CANCELLED prior reservation for the same (pass, event);
-            // the caller pre-checks live rows under the per-pass advisory lock, so a live
-            // conflicting row can't appear between that check and this statement.
+            // ON CONFLICT revives only a CANCELLED prior reservation for the same (pass, event).
+            //
+            // The NOT EXISTS guard on the burn is what stops a double charge. A CTE's UPDATE runs
+            // whether or not the INSERT below it ends up writing anything, so without the guard a
+            // call that hit a live reservation and was filtered out by the ON CONFLICT WHERE would
+            // still have decremented the credit: the rider pays twice for one admission and the
+            // statement reports failure. Measured before the guard was added: 3 credits to 2 on
+            // the first scan, then 2 to 1 on a repeat scan that returned no row at all.
+            //
+            // The caller pre-checks live rows under the per-pass advisory lock, so this should be
+            // unreachable. It is here because "should be unreachable" is not the standard a money
+            // path is held to.
             const string sql = @"
                 WITH burn AS (
-                    UPDATE season_pass_purchase
+                    UPDATE season_pass_purchase p
                     SET credits_remaining = CASE WHEN @burnCredit THEN credits_remaining - 1
                                                  ELSE credits_remaining END,
                         updated_at = now()
-                    WHERE id = @passPurchaseId AND tenant_id = @tenantId AND status = 'paid'
+                    WHERE p.id = @passPurchaseId AND p.tenant_id = @tenantId AND p.status = 'paid'
                       AND (NOT @burnCredit
-                           OR (credits_remaining IS NOT NULL AND credits_remaining > 0))
-                    RETURNING id, credits_remaining
+                           OR (p.credits_remaining IS NOT NULL AND p.credits_remaining > 0))
+                      AND NOT EXISTS (
+                          SELECT 1 FROM season_pass_reservation r
+                          WHERE r.season_pass_purchase_id = p.id
+                            AND r.event_id = @eventId
+                            AND r.status <> 'cancelled'
+                      )
+                    RETURNING p.id, p.credits_remaining
                 )
                 INSERT INTO season_pass_reservation
                     (season_pass_purchase_id, event_id, status, checked_in_at, checked_in_by_user_id)
@@ -609,16 +624,28 @@ namespace Services.Repositories
         public async Task<(Guid ReservationId, int? CreditsRemaining)?> CreateWalkUpGateCheckIn(
             Guid passPurchaseId, Guid tenantId, DateTime checkInDate, Guid? staffUserId, bool burnCredit)
         {
+            // Same NOT EXISTS guard as CreateGateCheckIn, for the same reason: the burn must not
+            // happen when there is already a live admission for this pass on this day, or a repeat
+            // scan charges a second credit and still reports failure. Scoped to the no-event
+            // anchor (event_id IS NULL, same date) so it cannot be confused by an event-anchored
+            // row for the same pass on the same day.
             const string sql = @"
                 WITH burn AS (
-                    UPDATE season_pass_purchase
+                    UPDATE season_pass_purchase p
                     SET credits_remaining = CASE WHEN @burnCredit THEN credits_remaining - 1
                                                  ELSE credits_remaining END,
                         updated_at = now()
-                    WHERE id = @passPurchaseId AND tenant_id = @tenantId AND status = 'paid'
+                    WHERE p.id = @passPurchaseId AND p.tenant_id = @tenantId AND p.status = 'paid'
                       AND (NOT @burnCredit
-                           OR (credits_remaining IS NOT NULL AND credits_remaining > 0))
-                    RETURNING id, credits_remaining
+                           OR (p.credits_remaining IS NOT NULL AND p.credits_remaining > 0))
+                      AND NOT EXISTS (
+                          SELECT 1 FROM season_pass_reservation r
+                          WHERE r.season_pass_purchase_id = p.id
+                            AND r.event_id IS NULL
+                            AND r.check_in_date = @checkInDate
+                            AND r.status <> 'cancelled'
+                      )
+                    RETURNING p.id, p.credits_remaining
                 )
                 INSERT INTO season_pass_reservation
                     (season_pass_purchase_id, event_id, check_in_date, status, checked_in_at, checked_in_by_user_id)

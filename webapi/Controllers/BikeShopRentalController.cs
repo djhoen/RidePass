@@ -137,6 +137,62 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListRentals(TenantId, activeOnly, Math.Clamp(limit, 1, 500)));
         }
 
+        // The All Bookings screen: past and future, filtered and paged. The unpaged List above
+        // stays for callers that want everything currently live in memory (the fleet schedule).
+        //
+        // scope defaults to upcoming because that is the counter's standing question; history is
+        // one click away rather than the thing you wade through to find tomorrow's pickup.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Rentals/Page")]
+        public async Task<IActionResult> SearchRentals(
+            [FromQuery] string scope = "upcoming",
+            [FromQuery] string? search = null,
+            [FromQuery] string? statuses = null,
+            [FromQuery] DateTime? from = null,
+            [FromQuery] DateTime? to = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var parsedScope = scope?.ToLowerInvariant() switch
+            {
+                "past" => ShopRentalScope.Past,
+                "all" => ShopRentalScope.All,
+                "upcoming" or null or "" => ShopRentalScope.Upcoming,
+                _ => (ShopRentalScope?)null,
+            };
+            if (parsedScope is null)
+                return new ApiResponses().BadRequestResult("Scope must be upcoming, past, or all.");
+
+            // Comma-separated on the wire; anything not a real rental status is rejected rather
+            // than silently dropped, so a typo doesn't quietly widen the list.
+            var wanted = (statuses ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => s.ToLowerInvariant())
+                .Distinct()
+                .ToList();
+            var known = new[] { "pending", "paid", "out", "returned", "damaged", "cancelled", "failed" };
+            var unknown = wanted.Where(s => !known.Contains(s)).ToList();
+            if (unknown.Count > 0)
+                return new ApiResponses().BadRequestResult($"Unknown rental status: {string.Join(", ", unknown)}.");
+
+            if (from is not null && to is not null && to <= from)
+                return new ApiResponses().BadRequestResult("The end of the date range must be after the start.");
+
+            var result = await _shop.SearchRentals(TenantId, new ShopRentalQuery
+            {
+                Scope = parsedScope.Value,
+                Search = search,
+                Statuses = wanted,
+                FromUtc = from?.ToUniversalTime(),
+                ToUtc = to?.ToUniversalTime(),
+                Page = page,
+                PageSize = pageSize,
+            });
+            return new ApiResponses().OkResult(new { rows = result.Rows, total = result.Total });
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
         [HttpPost("Rentals")]
         public async Task<IActionResult> Book([FromBody] BookShopRentalRequest req, CancellationToken ct)
@@ -225,24 +281,35 @@ namespace webapi.Controllers
 
             // Rentals are all-in priced (no tax line for v1, matching the old rental system).
             // amount_cents keeps the gross; total_cents is what's actually charged.
-            var subtotal = amount - benefitDiscount;
+            var netRental = amount - benefitDiscount;
             var tenant = _tenantContext.Tenant;
 
+            // Damage waiver, if the renter took it and the track offers it. A non-refundable fee on
+            // the GROSS rental that WAIVES the deposit; RentalCharge owns both halves of that rule
+            // so the counter, the storefront, and packages cannot drift apart on it.
+            var insuranceOffered = tenant.RentalInsuranceEnabled && tenant.RentalInsuranceBps > 0;
+            var insuranceCents = Services.Payments.RentalCharge.InsuranceFor(
+                amount, tenant.RentalInsuranceBps, insuranceOffered, req.Insurance);
+
             // Tenant service fee, same rate events use. The base is the discounted rental subtotal
-            // and NEVER the deposit: a refundable deposit is the renter's own money held against
-            // damage, so taking a percentage of it would charge them to lend us their deposit.
-            // ServiceChargeCents is what RidePass is owed (the fee-calculator input); only the
-            // renter-paid share is added to what the card is charged. A track that absorbs the fee
-            // (riderPaidBps = 0) still owes it, out of its own proceeds.
+            // (plus the waiver, which is revenue for a service) and NEVER the deposit: a refundable
+            // deposit is the renter's own money held against damage, so taking a percentage of it
+            // would charge them to lend us their deposit. ServiceChargeCents is what RidePass is
+            // owed (the fee-calculator input); only the renter-paid share is added to what the card
+            // is charged. A track that absorbs the fee (riderPaidBps = 0) still owes it.
             //
             // Computed by RentalCharge rather than inline so RentalChargeTests actually pins THIS
             // path: a test guarding a helper the app doesn't call cannot catch the regression it
             // describes. depositTotal is already summed across lines, each with its own per-unit
             // deposit, so there is no single (deposit, quantity) pair to hand over.
-            var charge = Services.Payments.RentalCharge.ForTotalDeposit(
-                subtotal, tenant.ServiceChargeBps, tenant.RentalRiderPaidServiceChargeBps, depositTotal);
+            var charge = Services.Payments.RentalCharge.WithInsurance(
+                netRental, insuranceCents, tenant.ServiceChargeBps,
+                tenant.RentalRiderPaidServiceChargeBps, depositTotal);
+            var subtotal = netRental + insuranceCents;
             var serviceChargeCents = charge.ServiceChargeCents;
             var renterFeeCents = charge.RiderServiceChargeCents;
+            // Taking the waiver replaces the deposit, so nothing is held.
+            depositTotal = charge.DepositCents;
 
             // Sales tax. NULL rate = never configured, which we treat as 0 here and warn about in
             // the UI rather than guessing a rate. The taxable base is the rental (plus the renter
@@ -272,7 +339,15 @@ namespace webapi.Controllers
                 StartsAt = startsAt,
                 EndsAt = endsAt,
                 Status = "pending",
-                AmountCents = amount,
+                // Gross INCLUDES the waiver fee, matching ShopStoreController, so amount_cents is
+                // the whole thing charged for the rental before fee and tax. InsuranceCents below
+                // is what lets it be itemised back out on a receipt or a refund.
+                AmountCents = amount + insuranceCents,
+                InsuranceCents = insuranceCents,
+                InsuranceLabelSnapshot = insuranceCents > 0
+                    ? (string.IsNullOrWhiteSpace(tenant.RentalInsuranceLabel)
+                        ? "Damage Protection" : tenant.RentalInsuranceLabel.Trim())
+                    : null,
                 TaxCents = taxCents,
                 TotalCents = total,
                 ServiceChargeCents = serviceChargeCents,
@@ -297,7 +372,7 @@ namespace webapi.Controllers
                     return new ApiResponses().OkResult(new
                     {
                         rentalId, receiptToken = receipt, status = "paid", orderNumber,
-                        totalCents = total, depositCents = depositTotal,
+                        totalCents = total, depositCents = depositTotal, insuranceCents,
                     });
                 }
                 return new ApiResponses().OkResult(new { rentalId, receiptToken = receipt, status = "paid", totalCents = total });
@@ -342,7 +417,7 @@ namespace webapi.Controllers
             {
                 rentalId, receiptToken = receipt, status = "pending",
                 clientSecret = intent.ClientSecret, depositClientSecret,
-                totalCents = total, depositCents = depositTotal,
+                totalCents = total, depositCents = depositTotal, insuranceCents,
             });
         }
 

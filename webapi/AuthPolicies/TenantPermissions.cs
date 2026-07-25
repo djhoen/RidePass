@@ -45,6 +45,12 @@
         // deliberately stays out of the manager set — mapping revenue to the wrong account is an
         // accounting decision, not an operational one.
         public const string AccountingManage = "accounting.manage";
+        // Read the staff activity log: who did what, when, and from where. Held by admin only,
+        // deliberately NOT by manager: it exposes every colleague's actions including the owner's,
+        // so it is oversight rather than an operational tool. Widening it to the manager set later
+        // is one line; narrowing it after people rely on it is not. Every staffer can always see
+        // their OWN activity without this, which needs no permission at all.
+        public const string AuditView = "audit.view";
 
         // Compile-time policy names for [Authorize(Policy = ...)] attributes.
         // Must match TenantPermissionRequirement.PolicyName(perm) format.
@@ -69,6 +75,7 @@
             public const string CashTurnIn = "TenantPerm:cash.turnin";
             public const string CashReconcile = "TenantPerm:cash.reconcile";
             public const string AccountingManage = "TenantPerm:accounting.manage";
+            public const string AuditView      = "TenantPerm:audit.view";
 
             /// <summary>
             /// READ the shop catalog: catalog.manage OR shop.counter. The bike shop counter cannot
@@ -92,6 +99,7 @@
             SalesCounter, ConcessionsCounter, ShopCounter, SalesRedeem, SalesView, SalesCancel,
             ReportsView, DisputesView, CampaignsManage, CustomersView,
             BlogManage, SalesRefund, SalesRefundOverride, CashTurnIn, CashReconcile, AccountingManage,
+            AuditView,
         };
 
         public static IReadOnlySet<string> ForRole(string role) =>
@@ -109,6 +117,26 @@
             };
 
         /// <summary>Union of the permission sets for every role the user holds.</summary>
+        /// <summary>
+        /// The permissions a tenant's staff access policy can restrict by location and hours
+        /// (Script0239). These are the operations that move money or admit people: doing one of
+        /// them from an employee's home at 2am is almost definitionally not legitimate work.
+        ///
+        /// What is deliberately NOT here matters as much as what is. settings.manage and
+        /// users.manage are never restricted, so an owner who mis-configures their own policy can
+        /// always sign in from anywhere and fix it: a lockout with no way back is an outage, not a
+        /// control. The read-only and back-office permissions (reports.view, sales.view,
+        /// catalog.manage, campaigns.manage, blog.manage, customers.view, accounting.manage,
+        /// disputes.view, audit.view) are also excluded, because doing paperwork from the couch on
+        /// a Tuesday night is normal and blocking it would only teach people to resent the rule.
+        /// </summary>
+        public static readonly IReadOnlySet<string> LocationRestrictable = new HashSet<string>
+        {
+            SalesCounter, ConcessionsCounter, ShopCounter, SalesRedeem,
+            SalesRefund, SalesRefundOverride, SalesCancel,
+            CashTurnIn, CashReconcile,
+        };
+
         public static IReadOnlySet<string> ForRoles(IEnumerable<string> roles)
         {
             var union = new HashSet<string>();

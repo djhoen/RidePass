@@ -71,6 +71,12 @@ namespace Services.Repositories
             shop_supply_fee_label AS ShopSupplyFeeLabel,
             shop_labor_rate_cents AS ShopLaborRateCents,
             wristbands_enabled AS WristbandsEnabled,
+            staff_access_policy_mode AS StaffAccessPolicyMode,
+            staff_allowed_cidrs AS StaffAllowedCidrs,
+            staff_hours_start AS StaffHoursStart,
+            staff_hours_end AS StaffHoursEnd,
+            staff_alerts_enabled AS StaffAlertsEnabled,
+            staff_alert_refund_cents AS StaffAlertRefundCents,
             trackside_export_enabled AS TracksideExportEnabled,
             blog_enabled AS BlogEnabled,
             dynamic_pricing_enabled AS DynamicPricingEnabled,
@@ -152,6 +158,33 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET require_reservation_for_passes = @require WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, require });
+        }
+
+        /// <summary>Set the staff access policy: mode, the networks the track operates from, and
+        /// the local hours window. Nulls for the hours clear the clock rule; an empty array clears
+        /// the location rule. Same tenant scope as the other settings writers.</summary>
+        public async Task UpdateStaffAccessPolicy(Guid tenantId, int mode, string[] allowedCidrs,
+            TimeSpan? hoursStart, TimeSpan? hoursEnd)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET staff_access_policy_mode = @mode,
+                    staff_allowed_cidrs = @allowedCidrs,
+                    staff_hours_start = @hoursStart,
+                    staff_hours_end = @hoursEnd
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, mode, allowedCidrs, hoursStart, hoursEnd });
+        }
+
+        /// <summary>Enable or disable the daily staff alert digest and set the per-staffer daily
+        /// refund total that trips it.</summary>
+        public async Task UpdateStaffAlertSettings(Guid tenantId, bool enabled, int refundCents)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET staff_alerts_enabled = @enabled, staff_alert_refund_cents = @refundCents
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, enabled, refundCents });
         }
 
         /// <summary>Set the gate admission mode for season passes. The row being written IS the

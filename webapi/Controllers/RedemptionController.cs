@@ -20,6 +20,7 @@ namespace webapi.Controllers
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
+        private readonly Services.Audit.IAuditLogger _audit;
 
         public RedemptionController(
             IEventTicketPurchaseRepository tickets,
@@ -28,8 +29,10 @@ namespace webapi.Controllers
             IEventRepository events,
             IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            Services.Audit.IAuditLogger audit)
         {
+            _audit = audit;
             _tickets = tickets;
             _extras = extras;
             _users = users;
@@ -291,6 +294,28 @@ namespace webapi.Controllers
                     result.Outcome = fresh?.RedeemedByUserId == staffId.Value ? "admitted" : "conflict";
                 }
                 results.Add(result);
+            }
+
+            // Bulk admissions are audited; the single gate scan deliberately is not. A busy gate
+            // scans thousands of times a day and logging each one would bury the money signal the
+            // rest of the audit trail exists for. A batch is different: it is rare, it is usually
+            // an offline device syncing back, and admitting hundreds of people in one call is the
+            // shape worth being able to review after the fact.
+            var admitted = results.Count(r => r.Outcome == "admitted");
+            if (admitted > 0)
+            {
+                await _audit.Log(
+                    "redemption.admit_batch",
+                    $"Admitted {admitted} of {results.Count} entries in one batch",
+                    targetKind: "event_ticket_batch",
+                    targetId: null,
+                    tenantId: tenantId,
+                    metadata: new
+                    {
+                        submitted = results.Count,
+                        admitted,
+                        conflicts = results.Count(r => r.Outcome == "conflict"),
+                    });
             }
 
             return new ApiResponses().OkResult(new BatchAdmitResponse { Results = results });
@@ -572,6 +597,25 @@ namespace webapi.Controllers
                 {
                     resp.Errors.Add(ex.Message);
                 }
+            }
+
+            // Whole-order redemption: one action admitting every line on an order. Low volume and
+            // worth reviewing, unlike the per-entry scan. Records the ID attestation too, since
+            // that is a claim the worker made rather than something the system checked.
+            if (resp.RedeemedCount > 0)
+            {
+                await _audit.Log(
+                    "redemption.redeem_order",
+                    $"Redeemed {resp.RedeemedCount} item(s) on one order at the gate",
+                    targetKind: "order",
+                    targetId: null,
+                    tenantId: tenantId,
+                    metadata: new
+                    {
+                        redeemedCount = resp.RedeemedCount,
+                        errorCount = resp.Errors.Count,
+                        idVerifiedAttested = req.IdVerified,
+                    });
             }
 
             return new ApiResponses().OkResult(resp);

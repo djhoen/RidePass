@@ -75,6 +75,15 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool SeasonPassesEnabled { get; set; } = true;
         /// <summary>Season pass gate admission mode: 1 = event sign-up required, 2 = walk-up.</summary>
         public int SeasonPassAdmissionTypeId { get; set; } = 2;
+        /// <summary>Staff access policy (Script0239): 0 = off, 1 = enforce. Exposed so the
+        /// settings screen can render current state; the rule itself is enforced server-side.</summary>
+        public int StaffAccessPolicyMode { get; set; }
+        public string[] StaffAllowedCidrs { get; set; } = Array.Empty<string>();
+        /// <summary>Tenant-local "HH:mm", or null when there is no hours rule.</summary>
+        public string? StaffHoursStart { get; set; }
+        public string? StaffHoursEnd { get; set; }
+        public bool StaffAlertsEnabled { get; set; }
+        public int StaffAlertRefundCents { get; set; } = 50000;
         public bool ConcessionsEnabled { get; set; }
         public bool BikeShopEnabled { get; set; }
         /// <summary>Days after pickup to email a shop service reminder; 0 = off.</summary>

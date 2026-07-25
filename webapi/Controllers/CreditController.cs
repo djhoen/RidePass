@@ -19,11 +19,14 @@ namespace webapi.Controllers
     {
         private readonly ITenantCreditRepository _credit;
         private readonly ITenantContext _tenantContext;
+        private readonly Services.Audit.IAuditLogger _audit;
 
-        public CreditController(ITenantCreditRepository credit, ITenantContext tenantContext)
+        public CreditController(ITenantCreditRepository credit, ITenantContext tenantContext,
+            Services.Audit.IAuditLogger audit)
         {
             _credit = credit;
             _tenantContext = tenantContext;
+            _audit = audit;
         }
 
         private Guid TenantId => _tenantContext.TenantId;
@@ -79,6 +82,27 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(
                     $"The account only has {Money(account.BalanceCents)} available.");
             var updated = await _credit.GetAccount(id, TenantId);
+
+            // A manual adjustment mints spendable value with nothing behind it: no sale, no
+            // payment, no processor record. Anyone holding sales.refund can grant an arbitrary
+            // amount to any account, so this is the single most direct way to convert access into
+            // money and belongs in the audit trail with the before/after balance.
+            await _audit.Log(
+                "credit.manual_adjust",
+                $"Adjusted store credit by {Money(req.DeltaCents)} for {account.Email ?? account.DisplayName ?? "an account"} "
+                    + $"({Money(account.BalanceCents)} to {Money(updated?.BalanceCents ?? account.BalanceCents + req.DeltaCents)})",
+                targetKind: "credit_account",
+                targetId: id,
+                tenantId: TenantId,
+                metadata: new
+                {
+                    deltaCents = req.DeltaCents,
+                    balanceBeforeCents = account.BalanceCents,
+                    balanceAfterCents = updated?.BalanceCents,
+                    accountEmail = account.Email,
+                    note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
+                });
+
             return new ApiResponses().OkResult(updated);
         }
 

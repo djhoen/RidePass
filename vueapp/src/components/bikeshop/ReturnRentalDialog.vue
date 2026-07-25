@@ -16,7 +16,20 @@
                 <v-btn icon="mdi-close" variant="text" size="small" :disabled="busy" @click="close"></v-btn>
             </v-card-title>
             <v-card-text>
-                <p class="text-body-2 text-medium-emphasis mb-3">
+                <!-- Covered vs simply-no-deposit are opposite conversations to have with a renter
+                     standing at the counter, and both used to render as a bare $0.00. The waiver
+                     fee is what distinguishes them; a zero deposit on its own does not. -->
+                <v-alert v-if="covered" type="info" variant="tonal" density="compact" class="mb-3">
+                    <strong>{{ rental.insuranceLabelSnapshot || 'Damage Protection' }}</strong> was
+                    bought on this rental ({{ money(rental.insuranceCents ?? 0) }}), so no deposit was
+                    held and there is nothing to charge damage against. Still photograph anything
+                    broken, then complete the return.
+                </v-alert>
+                <p v-else-if="rental.depositCents === 0" class="text-body-2 text-medium-emphasis mb-3">
+                    No deposit was held on this rental, so there's nothing to keep against damage.
+                    Photograph anything broken and settle it separately.
+                </p>
+                <p v-else class="text-body-2 text-medium-emphasis mb-3">
                     Deposit authorized: <strong>{{ money(rental.depositCents) }}</strong>. Enter any damage
                     to keep; the rest is released to the renter's card automatically.
                 </p>
@@ -26,7 +39,8 @@
                     title="Return photos"
                     hint="Photograph any damage you're charging for." />
                 <PhotoQrPanel kind="rental" :id="rental.id" class="mb-4" />
-                <v-text-field v-model.number="damageDollars" type="number" min="0" step="0.01"
+                <v-text-field v-if="rental.depositCents > 0"
+                    v-model.number="damageDollars" type="number" min="0" step="0.01"
                     :max="rental.depositCents / 100" label="Damage to keep" prefix="$" density="compact"
                     persistent-hint :hint="`Up to the ${money(rental.depositCents)} authorized`"></v-text-field>
                 <v-text-field v-model="conditionNotes" label="Condition notes" density="compact" class="mt-4" hide-details></v-text-field>
@@ -42,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { BikeShopService } from '@/services/BikeShopService'
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
@@ -51,6 +65,9 @@ import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
 export interface ReturnableRental {
     id: string
     depositCents: number
+    /** Greater than zero means the renter bought the damage waiver. */
+    insuranceCents?: number
+    insuranceLabelSnapshot?: string | null
 }
 
 const props = defineProps<{
@@ -63,6 +80,10 @@ const emit = defineEmits<{
 }>()
 
 const service = new BikeShopService()
+
+/** The waiver fee is the evidence the renter is covered, not the zero deposit it produced. */
+const covered = computed(() => (props.rental?.insuranceCents ?? 0) > 0)
+
 const busy = ref(false)
 const error = ref('')
 const damageDollars = ref<number | null>(0)

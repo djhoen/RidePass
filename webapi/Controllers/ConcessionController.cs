@@ -46,6 +46,7 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly webapi.Security.IManagerPinService _managerPin;
         private readonly ITenantCreditRepository _credit;
+        private readonly Services.Audit.IAuditLogger _audit;
         private readonly Services.Rewards.IRewardEngine _rewardEngine;
         private readonly ITenantContext _tenantContext;
 
@@ -69,8 +70,10 @@ namespace webapi.Controllers
             webapi.Security.IManagerPinService managerPin,
             ITenantCreditRepository credit,
             Services.Rewards.IRewardEngine rewardEngine,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            Services.Audit.IAuditLogger audit)
         {
+            _audit = audit;
             _credit = credit;
             _rewardEngine = rewardEngine;
             _concessions = concessions;
@@ -718,7 +721,20 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Not signed in.");
             var result = await _managerPin.VerifyAsync(_tenantContext.TenantId, uid, req.Pin);
             if (!result.Authorized)
+            {
+                // Failures only. A successful verification is already implied by the action it
+                // authorized (which logs its own entry), but repeated failures from one staff
+                // account are how PIN guessing looks from the outside, and the DB lockout alone
+                // leaves no reviewable trace of who was trying. The PIN is never recorded.
+                await _audit.Log(
+                    "concession.manager_pin_failed",
+                    "Manager PIN verification failed",
+                    targetKind: "user",
+                    targetId: uid,
+                    tenantId: _tenantContext.TenantId,
+                    metadata: new { error = result.Error });
                 return new ApiResponses().BadRequestResult(result.Error ?? "That manager PIN wasn't recognized.");
+            }
             return new ApiResponses().OkResult(new ConcessionManagerPinResponse
             {
                 ManagerUserId = result.AuthorizedUserId!.Value,
@@ -2026,6 +2042,29 @@ namespace webapi.Controllers
             if (sale.CreditAppliedCents > 0)
                 await _credit.ReverseRedeem(_tenantContext.TenantId, "concession_sale", sale.Id, "sale refunded");
             await WriteRefundLedger(sale, actingUserId, pinResult.AuthorizedName);
+
+            // The second of three refund paths in the app (the others are PurchaseController and
+            // the bike shop register), so it needs its own audit entry to show up in the same
+            // review. A cash concession refund is the purest form of till fraud available here:
+            // no processor record, and the manager PIN that authorized it is the only other
+            // control, so record who that was.
+            await _audit.Log(
+                "concession.refund",
+                $"Refunded a ${sale.TotalCents / 100m:0.00} concession sale ({sale.PaymentMethod})",
+                targetKind: "concession_sale",
+                targetId: sale.Id,
+                tenantId: _tenantContext.TenantId,
+                metadata: new
+                {
+                    totalCents = sale.TotalCents,
+                    creditAppliedCents = sale.CreditAppliedCents,
+                    paymentMethod = sale.PaymentMethod,
+                    stripePaymentIntentId = sale.StripePaymentIntentId,
+                    // Who approved it via manager PIN, which may not be the person ringing it.
+                    // The PIN itself is deliberately never recorded.
+                    authorizedBy = pinResult.AuthorizedName,
+                });
+
             return new ApiResponses().OkResult();
         }
 

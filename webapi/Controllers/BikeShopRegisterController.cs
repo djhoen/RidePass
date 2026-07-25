@@ -20,6 +20,7 @@ namespace webapi.Controllers
     public class BikeShopRegisterController : ControllerBase
     {
         private readonly IBikeShopRepository _shop;
+        private readonly Services.Audit.IAuditLogger _audit;
         private readonly IChargeRouter _chargeRouter;
         private readonly IPaymentProvider _payments;
         private readonly IFeeCalculator _feeCalculator;
@@ -47,8 +48,10 @@ namespace webapi.Controllers
             Services.Rewards.IRewardEngine rewardEngine,
             IGiftCardRepository giftCards, Services.GiftCards.IGiftCardValidator giftCardValidator,
             ITenantRepository tenants,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            Services.Audit.IAuditLogger audit)
         {
+            _audit = audit;
             _emailer = emailer;
             _sms = sms;
             _credit = credit;
@@ -546,6 +549,31 @@ namespace webapi.Controllers
             {
                 await WriteRefundLedger(sale);
             }
+
+            // Third of the three refund paths. This one carries a vector the others don't: the
+            // refund can be redirected to a store-credit account instead of back to the original
+            // payment, so the destination is recorded explicitly. A cash sale refunded to credit
+            // on an account the staff member controls is money leaving the till with the value
+            // landing somewhere they can spend it.
+            await _audit.Log(
+                "shop.refund",
+                $"Refunded a ${sale.TotalCents / 100m:0.00} shop sale ({sale.PaymentMethod}) "
+                    + $"to {(toCredit ? "store credit" : "the original payment")}",
+                targetKind: "shop_sale",
+                targetId: sale.Id,
+                tenantId: TenantId,
+                metadata: new
+                {
+                    totalCents = sale.TotalCents,
+                    moneyPortionCents = moneyPortion,
+                    paymentMethod = sale.PaymentMethod,
+                    stripePaymentIntentId = sale.StripePaymentIntentId,
+                    destination = toCredit ? "credit" : "original",
+                    creditedCents = toCredit ? moneyPortion : 0,
+                    creditAccountId = toCredit ? creditAccount?.Id : null,
+                    restocked = req.Restock,
+                    note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
+                });
 
             return new ApiResponses().OkResult(new
             {

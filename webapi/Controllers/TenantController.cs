@@ -223,6 +223,71 @@ namespace webapi.Controllers
             return await GetBranding();
         }
 
+        /// <summary>
+        /// Where and when staff may run money-moving operations (Script0239). Validated hard on
+        /// the way in: a typo in a CIDR is exactly what would lock a track out of its own register
+        /// mid-event, so a bad entry is rejected here rather than quietly ignored at check time.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("StaffAccessPolicy")]
+        public async Task<IActionResult> UpdateStaffAccessPolicy([FromBody] UpdateStaffAccessPolicyRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var cidrs = (request.AllowedCidrs ?? new List<string>())
+                .Select(c => (c ?? string.Empty).Trim())
+                .Where(c => c.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (var c in cidrs)
+            {
+                var ok = c.Contains('/')
+                    ? System.Net.IPNetwork.TryParse(c, out _)
+                    : System.Net.IPAddress.TryParse(c, out _);
+                if (!ok)
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{c}\" isn't a valid address or network. Use a single address like "
+                        + "203.0.113.45, or a range like 203.0.113.0/24.");
+            }
+
+            TimeSpan? start = null, end = null;
+            var hasStart = !string.IsNullOrWhiteSpace(request.HoursStart);
+            var hasEnd = !string.IsNullOrWhiteSpace(request.HoursEnd);
+            if (hasStart != hasEnd)
+                return new ApiResponses().BadRequestResult(
+                    "Set both an opening and a closing time, or leave both blank for no time limit.");
+            if (hasStart)
+            {
+                if (!TimeSpan.TryParse(request.HoursStart, out var s) || !TimeSpan.TryParse(request.HoursEnd, out var e))
+                    return new ApiResponses().BadRequestResult("Times must look like 06:00 and 22:00.");
+                start = s;
+                end = e;
+            }
+
+            // Refuse to switch enforcement on with nothing to enforce: it would read as protection
+            // while changing nothing at all.
+            if (request.Mode == 1 && cidrs.Length == 0 && start is null)
+                return new ApiResponses().BadRequestResult(
+                    "Add at least one allowed network or an hours window before turning enforcement on.");
+
+            await _tenants.UpdateStaffAccessPolicy(_tenantContext.TenantId, request.Mode, cidrs, start, end);
+            await _tenants.UpdateStaffAlertSettings(_tenantContext.TenantId, request.AlertsEnabled, request.AlertRefundCents);
+            InvalidateTenantCache();
+            return await GetBranding();
+        }
+
+        /// <summary>The address this request came from, so an admin can allowlist the track
+        /// without having to look it up elsewhere and without guessing wrong.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpGet("MyIpAddress")]
+        public IActionResult GetMyIpAddress()
+        {
+            var ip = HttpContext.Connection.RemoteIpAddress;
+            if (ip is not null && ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            return new ApiResponses().OkResult(new { ipAddress = ip?.ToString() });
+        }
+
         /// <summary>The bike shop's customer-notification policy: whether a repair marked ready
         /// emails and/or texts the customer, and how many days after pickup to send a service
         /// reminder (0 = off). Saved together because they're edited on one screen.</summary>
@@ -558,6 +623,12 @@ namespace webapi.Controllers
                 ShopLaborRateCents = tenant.ShopLaborRateCents,
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
                 SeasonPassAdmissionTypeId = tenant.SeasonPassAdmissionTypeId,
+                StaffAccessPolicyMode = tenant.StaffAccessPolicyMode,
+                StaffAllowedCidrs = tenant.StaffAllowedCidrs ?? Array.Empty<string>(),
+                StaffHoursStart = tenant.StaffHoursStart?.ToString(@"hh\:mm"),
+                StaffHoursEnd = tenant.StaffHoursEnd?.ToString(@"hh\:mm"),
+                StaffAlertsEnabled = tenant.StaffAlertsEnabled,
+                StaffAlertRefundCents = tenant.StaffAlertRefundCents,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BikeShopEnabled = tenant.BikeShopEnabled,
                 WristbandsEnabled = tenant.WristbandsEnabled,

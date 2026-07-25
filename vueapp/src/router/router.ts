@@ -186,6 +186,21 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'users.manage', hideFooter: true }
     },
     {
+        // No requiresPermission: every staffer can reach this to see their OWN activity. The
+        // page itself only offers the whole-track view to holders of audit.view, and the API
+        // enforces that independently.
+        path: '/Admin/StaffActivity',
+        name: 'AdminStaffActivity',
+        component: () => import('../views/Admin/StaffActivity.vue'),
+        meta: { requiresAuth: true, hideFooter: true }
+    },
+    {
+        path: '/Admin/Settings/StaffAccess',
+        name: 'AdminSettingsStaffAccess',
+        component: () => import('../views/Admin/Settings/StaffAccess.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Settings/General',
         name: 'AdminSettingsGeneral',
         component: () => import('../views/Admin/Settings/General.vue'),
@@ -389,11 +404,10 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
     },
     {
-        // Day timeline of the rental fleet: what's free, what's out, and drag-to-book.
+        // The board is now the first tab of the Rentals screen rather than its own page. Kept as a
+        // redirect because the standalone URL was linked from the nav and may be bookmarked.
         path: '/Admin/BikeShop/RentalBoard',
-        name: 'AdminBikeShopRentalBoard',
-        component: () => import('../views/Admin/BikeShopRentalBoard.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+        redirect: { path: '/Admin/BikeShop/Rentals', query: { tab: 'board' } },
     },
     {
         path: '/Admin/BikeShop/Sales',

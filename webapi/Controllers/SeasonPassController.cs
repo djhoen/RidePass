@@ -1401,6 +1401,23 @@ namespace webapi.Controllers
                 var result = await _passes.CreateGateCheckIn(pass.Id, _tenantContext.TenantId, gateEventId, staffId, burnCredit);
                 if (result is null)
                 {
+                    // Two different things produce null: no credits left, or a live reservation
+                    // appeared between the pre-check above and the write (the statement's own
+                    // guard against burning a second credit). Telling a rider with a full pass
+                    // that they have no rides left would send them to the office over nothing, so
+                    // re-read before choosing the message. Only on this rare path, never per scan.
+                    var raced = await _passes.GetReservation(pass.Id, gateEventId);
+                    if (raced is not null && raced.Status == "checked_in")
+                    {
+                        return new ApiResponses().OkResult(new
+                        {
+                            ReservationId = raced.Id,
+                            AlreadyAdmitted = true,
+                            CheckedInAtUtc = raced.CheckedInAt is null
+                                ? null : (DateTime?)DateTime.SpecifyKind(raced.CheckedInAt.Value, DateTimeKind.Utc),
+                            pass.CreditsRemaining,
+                        });
+                    }
                     return new ApiResponses().BadRequestResult(
                         "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
                 }
@@ -1414,10 +1431,10 @@ namespace webapi.Controllers
             }
             else
             {
-                // No event on the calendar: the anchor is (pass, today's local date). The
-                // already-admitted pre-check is load-bearing, not just a fast path: the burn in
-                // CreateWalkUpGateCheckIn commits even when its upsert is filtered out, so
-                // reaching it twice in one day would burn a second credit.
+                // No event on the calendar: the anchor is (pass, today's local date). This
+                // pre-check is the fast path; CreateWalkUpGateCheckIn now refuses to burn against
+                // a live admission on its own, so a race here costs a wasted round trip rather
+                // than a rider's credit.
                 var existingWalkUp = await _passes.GetWalkUpCheckIn(pass.Id, _tenantContext.TenantId, dayLocal);
                 if (existingWalkUp is not null && existingWalkUp.Status == "checked_in")
                 {
@@ -1435,6 +1452,19 @@ namespace webapi.Controllers
                 var result = await _passes.CreateWalkUpGateCheckIn(pass.Id, _tenantContext.TenantId, dayLocal, staffId, burnCredit);
                 if (result is null)
                 {
+                    // Same two causes as the event branch, same re-read before blaming credits.
+                    var raced = await _passes.GetWalkUpCheckIn(pass.Id, _tenantContext.TenantId, dayLocal);
+                    if (raced is not null && raced.Status == "checked_in")
+                    {
+                        return new ApiResponses().OkResult(new
+                        {
+                            ReservationId = raced.Id,
+                            AlreadyAdmitted = true,
+                            CheckedInAtUtc = raced.CheckedInAt is null
+                                ? null : (DateTime?)DateTime.SpecifyKind(raced.CheckedInAt.Value, DateTimeKind.Utc),
+                            pass.CreditsRemaining,
+                        });
+                    }
                     return new ApiResponses().BadRequestResult(
                         "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
                 }

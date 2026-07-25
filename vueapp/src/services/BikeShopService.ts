@@ -616,6 +616,35 @@ export class BikeShopService {
         return axios.get<{ data: ShopRental[] }>(`${this.apiUrl}/BikeShopRental/Rentals?activeOnly=${activeOnly}&limit=${limit}`)
     }
     /**
+     * One filtered page of bookings for the All Bookings tab. `scope` decides which half of the
+     * calendar you get and which way it sorts: 'upcoming' is soonest-first (the counter's standing
+     * question), 'past' and 'all' are most-recent-first.
+     */
+    searchRentals(q: {
+        scope?: 'upcoming' | 'past' | 'all'
+        search?: string | null
+        /** Rental statuses; omit or empty for every status. */
+        statuses?: string[]
+        /** ISO instants. Matched as an OVERLAP, so a rental spanning the range is included. */
+        from?: string | null
+        to?: string | null
+        page?: number
+        pageSize?: number
+    }) {
+        return axios.get<{ data: { rows: ShopRental[]; total: number } }>(
+            `${this.apiUrl}/BikeShopRental/Rentals/Page`, {
+                params: {
+                    scope: q.scope ?? 'upcoming',
+                    search: q.search || undefined,
+                    statuses: q.statuses?.length ? q.statuses.join(',') : undefined,
+                    from: q.from || undefined,
+                    to: q.to || undefined,
+                    page: q.page ?? 1,
+                    pageSize: q.pageSize ?? 25,
+                },
+            })
+    }
+    /**
      * The whole rental fleet plus every reservation overlapping the window, for the Rental Board
      * timeline. One call rather than an availability probe per variant, and self-contained (rates,
      * deposits, and the category list ride along) so a ShopCounter-only user never has to touch the
@@ -633,6 +662,9 @@ export class BikeShopService {
         // largest line quantity (two bikes = two riders; a bike + helmet is still one).
         ridersRequired?: number | null
         renterName?: string | null; renterEmail?: string | null; renterPhone?: string | null
+        // Renter took the damage waiver: charges a non-refundable fee and waives the deposit.
+        // Ignored server-side when the track doesn't offer it.
+        insurance?: boolean
     }) {
         return axios.post<{ data: BookRentalResult }>(`${this.apiUrl}/BikeShopRental/Rentals`, req)
     }
@@ -1161,6 +1193,11 @@ export interface ShopRental {
     status: 'pending' | 'paid' | 'out' | 'returned' | 'damaged' | 'cancelled' | 'failed'
     amountCents: number
     totalCents: number
+    /** Damage-waiver fee charged. Greater than zero is what says the waiver was bought; a zero
+     *  deposit is a consequence of it, not evidence for it. */
+    insuranceCents: number
+    /** What the renter was told they bought, frozen at booking. Null when they didn't. */
+    insuranceLabelSnapshot: string | null
     depositCents: number
     depositCapturedCents: number
     paymentMethod: string
@@ -1179,6 +1216,9 @@ export interface BookRentalResult {
     orderNumber?: number
     totalCents: number
     depositCents: number
+    /** Damage-waiver fee charged; 0 when not taken. A zero deposit alongside this being > 0 is
+     *  the waiver doing its job, not a missing hold. */
+    insuranceCents?: number
     clientSecret?: string
     depositClientSecret?: string
 }

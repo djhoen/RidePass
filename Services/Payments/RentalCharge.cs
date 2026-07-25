@@ -45,6 +45,53 @@ namespace Services.Payments
     public static class RentalCharge
     {
         /// <summary>
+        /// The optional damage waiver ("insurance") on a rental: fee = gross rental value * rate,
+        /// and taking it WAIVES the refundable deposit.
+        ///
+        /// The base is the GROSS rental, before any season-pass discount: the waiver prices the
+        /// risk of the gear going out of the door, and that risk does not shrink because the rider
+        /// holds a pass. It rides inside the rental subtotal, so it is fee'd and taxed like the
+        /// rest of the rental, which is correct because it is a non-refundable charge for a
+        /// service, unlike the deposit it replaces.
+        /// </summary>
+        /// <param name="grossRentalCents">Rental value before discounts.</param>
+        /// <param name="offered">Tenant has the waiver switched on with a non-zero rate.</param>
+        /// <param name="taken">The renter actually bought it.</param>
+        public static int InsuranceFor(int grossRentalCents, int rateBps, bool offered, bool taken)
+        {
+            if (!taken || !offered || rateBps <= 0) return 0;
+            return (int)((long)Math.Max(grossRentalCents, 0) * rateBps / 10_000L);
+        }
+
+        /// <summary>
+        /// A rental with the damage waiver folded in. The single entry point for the three booking
+        /// paths (counter, customer self-serve, packages) so the fee base, the tax base, and the
+        /// deposit waiver cannot drift apart between them.
+        /// </summary>
+        /// <param name="netRentalCents">Rental value AFTER any season-pass discount.</param>
+        /// <param name="insuranceCents">From <see cref="InsuranceFor"/>; 0 when not taken.</param>
+        /// <param name="totalDepositCents">
+        /// What the deposit would be without the waiver. Ignored when insurance was taken, which is
+        /// the whole point of buying it.
+        /// </param>
+        public static RentalChargeAmounts WithInsurance(
+            int netRentalCents,
+            int insuranceCents,
+            int serviceChargeBps,
+            int riderPaidServiceChargeBps,
+            int totalDepositCents)
+        {
+            var insurance = Math.Max(insuranceCents, 0);
+            return ForTotalDeposit(
+                subtotalAfterDiscountCents: Math.Max(netRentalCents, 0) + insurance,
+                serviceChargeBps,
+                riderPaidServiceChargeBps,
+                // Buying the waiver replaces the deposit. Charging both would be taking damage
+                // cover twice for the same gear.
+                totalDepositCents: insurance > 0 ? 0 : totalDepositCents);
+        }
+
+        /// <summary>
         /// One rental product taken in some quantity, where the deposit is quoted per unit.
         /// </summary>
         public static RentalChargeAmounts Compute(

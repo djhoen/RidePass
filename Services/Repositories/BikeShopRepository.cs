@@ -1037,6 +1037,7 @@ namespace Services.Repositories
             waiver_signature_id AS WaiverSignatureId, starts_at AS StartsAt, ends_at AS EndsAt,
             status, amount_cents AS AmountCents, tax_cents AS TaxCents, total_cents AS TotalCents,
             service_charge_cents AS ServiceChargeCents, riders_required AS RidersRequired,
+            insurance_cents AS InsuranceCents, insurance_label_snapshot AS InsuranceLabelSnapshot,
             deposit_cents AS DepositCents, deposit_pi_id AS DepositPiId,
             deposit_captured_cents AS DepositCapturedCents, payment_method AS PaymentMethod,
             stripe_payment_intent_id AS StripePaymentIntentId,
@@ -2107,15 +2108,18 @@ namespace Services.Repositories
             {
                 (@"INSERT INTO shop_rental (id, tenant_id, renter_user_id, renter_name, renter_email, renter_phone,
                         waiver_signature_id, starts_at, ends_at, status, amount_cents, tax_cents, total_cents,
-                        service_charge_cents, riders_required, deposit_cents, payment_method, sold_by_user_id, receipt_token, event_id)
+                        service_charge_cents, riders_required, insurance_cents, insurance_label_snapshot,
+                        deposit_cents, payment_method, sold_by_user_id, receipt_token, event_id)
                    VALUES (@id, @TenantId, @RenterUserId, @RenterName, @RenterEmail, @RenterPhone,
                         @WaiverSignatureId, @StartsAt, @EndsAt, @Status, @AmountCents, @TaxCents, @TotalCents,
-                        @ServiceChargeCents, @RidersRequired, @DepositCents, @PaymentMethod, @SoldByUserId, @receipt, @EventId)",
+                        @ServiceChargeCents, @RidersRequired, @InsuranceCents, @InsuranceLabelSnapshot,
+                        @DepositCents, @PaymentMethod, @SoldByUserId, @receipt, @EventId)",
                     new
                     {
                         id = rentalId, rental.TenantId, rental.RenterUserId, rental.RenterName, rental.RenterEmail,
                         rental.RenterPhone, rental.WaiverSignatureId, rental.StartsAt, rental.EndsAt, rental.Status,
-                        rental.AmountCents, rental.TaxCents, rental.TotalCents, rental.ServiceChargeCents, rental.RidersRequired, rental.DepositCents,
+                        rental.AmountCents, rental.TaxCents, rental.TotalCents, rental.ServiceChargeCents, rental.RidersRequired,
+                        rental.InsuranceCents, rental.InsuranceLabelSnapshot, rental.DepositCents,
                         rental.PaymentMethod, rental.SoldByUserId, receipt, rental.EventId,
                     }),
             };
@@ -2162,6 +2166,85 @@ namespace Services.Repositories
                 new { ids })).GroupBy(l => l.RentalId).ToDictionary(g => g.Key, g => g.ToList());
             foreach (var r in rentals) r.Lines = lines.GetValueOrDefault(r.Id) ?? new();
             return rentals;
+        }
+
+        /// <summary>
+        /// One filtered page of bookings for the All Bookings screen. Separate from ListRentals
+        /// (which stays the unpaged "everything currently live" read the fleet schedule needs)
+        /// because booking history grows without bound and this screen has to look backwards too.
+        /// </summary>
+        public async Task<ShopRentalPage> SearchRentals(Guid tenantId, ShopRentalQuery query)
+        {
+            var where = new List<string> { "r.tenant_id = @tenantId" };
+
+            // Scope keys off ends_at, not starts_at: a rental that started yesterday and comes back
+            // tomorrow is still very much upcoming from the counter's point of view.
+            switch (query.Scope)
+            {
+                case ShopRentalScope.Upcoming: where.Add("r.ends_at >= now()"); break;
+                case ShopRentalScope.Past: where.Add("r.ends_at < now()"); break;
+            }
+
+            if (query.Statuses.Count > 0) where.Add("r.status = ANY(@statuses)");
+
+            // Half-open overlap, the same test every availability check in this file uses.
+            if (query.FromUtc is not null) where.Add("r.ends_at > @fromUtc");
+            if (query.ToUtc is not null) where.Add("r.starts_at < @toUtc");
+
+            // Name and email are user-entered, so they are matched case-insensitively. The order
+            // number is matched only when the box actually holds a number, so searching "12" finds
+            // order 12 as well as "Jim Brady the 12th", not one at the expense of the other.
+            var search = query.Search?.Trim();
+            var hasSearch = !string.IsNullOrWhiteSpace(search);
+            int? orderNumber = int.TryParse(search, out var n) ? n : null;
+            if (hasSearch)
+            {
+                where.Add(@"(r.renter_name ILIKE @searchLike
+                            OR r.renter_email ILIKE @searchLike
+                            OR (@orderNumber::int IS NOT NULL AND r.order_number = @orderNumber))");
+            }
+
+            var whereSql = string.Join(" AND ", where);
+            // Upcoming reads forwards (what is coming next); history reads backwards.
+            var orderSql = query.Scope == ShopRentalScope.Upcoming
+                ? "r.starts_at ASC, r.created_at ASC"
+                : "r.starts_at DESC, r.created_at DESC";
+
+            var page = Math.Max(1, query.Page);
+            var pageSize = Math.Clamp(query.PageSize, 1, 200);
+            var args = new
+            {
+                tenantId,
+                statuses = query.Statuses.ToArray(),
+                fromUtc = query.FromUtc,
+                toUtc = query.ToUtc,
+                searchLike = hasSearch ? $"%{search}%" : null,
+                orderNumber,
+                limit = pageSize,
+                offset = (page - 1) * pageSize,
+            };
+
+            var total = (await _db.Query<int>(
+                $"SELECT count(*)::int FROM shop_rental r WHERE {whereSql}", args)).FirstOrDefault();
+
+            // Columns go unqualified: there is only one table in this query, so the shared
+            // projection needs no aliasing, and the WHERE's `r.` prefixes still resolve.
+            var rentals = (await _db.Query<ShopRentalWithLines>($@"
+                SELECT {RentalCols} FROM shop_rental r
+                WHERE {whereSql}
+                ORDER BY {orderSql}
+                LIMIT @limit OFFSET @offset", args)).ToList();
+
+            if (rentals.Count > 0)
+            {
+                var ids = rentals.Select(r => r.Id).ToArray();
+                var lines = (await _db.Query<ShopRentalLine>(
+                    $"SELECT {RentalLineCols} FROM shop_rental_line WHERE rental_id = ANY(@ids) ORDER BY created_at",
+                    new { ids })).GroupBy(l => l.RentalId).ToDictionary(g => g.Key, g => g.ToList());
+                foreach (var r in rentals) r.Lines = lines.GetValueOrDefault(r.Id) ?? new();
+            }
+
+            return new ShopRentalPage { Rows = rentals, Total = total };
         }
 
         public async Task<List<ShopRentalWithLines>> ListRentalsForUser(Guid userId, Guid tenantId, int limit)

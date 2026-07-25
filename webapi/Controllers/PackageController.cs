@@ -463,8 +463,15 @@ namespace webapi.Controllers
 
         private int InsuranceFor(int rentalGross)
         {
+            // Through RentalCharge so all three booking paths (counter, storefront, packages) price
+            // the waiver from one place. Same formula it always was; the tests pin it now.
+            //
+            // taken: true because this method answers "what would the waiver cost on this rental",
+            // which is what the quote at :153 needs. Whether the customer actually took it is the
+            // caller's business, and :302 gates on req.Insurance before calling.
             var t = _tenantContext.Tenant;
-            return InsuranceOffered(t) ? (int)((long)rentalGross * t.RentalInsuranceBps / 10_000L) : 0;
+            return Services.Payments.RentalCharge.InsuranceFor(
+                rentalGross, t.RentalInsuranceBps, InsuranceOffered(t), taken: true);
         }
 
         private async Task SaveChildren(Guid id, UpsertPackageRequest req)

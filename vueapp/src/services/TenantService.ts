@@ -19,6 +19,24 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/GiftCardSettings`, req)
     }
 
+    // Where and when staff may run money-moving actions. mode 0 = off, 1 = enforce.
+    // Empty allowedCidrs / null hours mean that constraint is not applied.
+    async updateStaffAccessPolicy(req: {
+        mode: number
+        allowedCidrs: string[]
+        hoursStart: string | null
+        hoursEnd: string | null
+        alertsEnabled: boolean
+        alertRefundCents: number
+    }) {
+        return axios.put(`${this.apiUrl}/Tenant/StaffAccessPolicy`, req)
+    }
+
+    /** The address the caller is coming from, so an admin can allowlist the track accurately. */
+    async getMyIpAddress() {
+        return axios.get<{ data: { ipAddress: string | null } }>(`${this.apiUrl}/Tenant/MyIpAddress`)
+    }
+
 
     async updateShopNotifications(req: {
         readyNotifyEmail: boolean; readyNotifySms: boolean; serviceReminderDays: number

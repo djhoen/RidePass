@@ -1651,7 +1651,7 @@ identifier and no new `Kind`-named member is introduced anywhere in this design.
 | a | Mode B, event running today, first scan | 1, if `product.Kind == "credits"` | `AlreadyAdmitted: false`, new `checked_in` row via `CreateGateCheckIn` |
 | b | Mode B, same event, repeat scan | none | `AlreadyAdmitted: true`, existing row returned (lines 1189-1199) |
 | c | Mode B, zero events today, first scan | 1, if `product.Kind == "credits"` | `AlreadyAdmitted: false`, new row with `event_id NULL`, `check_in_date = today` via `CreateWalkUpGateCheckIn` |
-| d | Mode B, same no-event day, repeat scan | none | `AlreadyAdmitted: true`; caught by the `GetWalkUpCheckIn` pre-check under the same advisory lock. See the correction below: the index is NOT a backstop for the burn |
+| d | Mode B, same no-event day, repeat scan | none | `AlreadyAdmitted: true`; caught by the `GetWalkUpCheckIn` pre-check, and backstopped by the statement's own `NOT EXISTS` guard if a race gets past it (see the resolved note below) |
 | e | Mode B, staff scans a second, different event running the same day | 1 more (separate `(pass, event)` row) | Existing semantics, unchanged; each event is its own admission and its own burn |
 | f | Mode B, no-event walk-up admission, then an event gets added/rescheduled onto today and staff scan them into it | 1 for the no-event row, 1 more for the event row; both admit | Accepted edge case. Mitigated operationally: the scanner only offers the no-event path when `todaysEvents` is empty, so this requires an event to appear after the walk-up already happened |
 | g | Mode A, reserved ahead, then scanned at the gate | none at the gate; `Reserve` already burned it (lines 928-938) | `AlreadyAdmitted: false`, reservation flips `reserved` to `checked_in` (lines 1200-1214) |
@@ -1666,11 +1666,18 @@ anchor decrements `credits_remaining` and still returns null (measured: 3 credit
 first scan, 2 to 1 on a repeat scan that returned zero rows). The per-pass advisory lock plus
 the caller's pre-check are therefore the ONLY thing preventing a double burn, not a second line
 of defense. This is a pre-existing property of the shipped event path, not something the
-walk-up work introduced, and it is unreachable while callers honor the contract. Tracked as an
-open item rather than fixed here, because restructuring a live credit-burn statement is not in
-scope for the schema and repository phase.
+walk-up work introduced, and it is unreachable while callers honor the contract.
 
-**Invariant (given the caller contract is honored):** at most one credit is burned per admission (one `(pass, event)` or
+**RESOLVED (2026-07-25).** Both statements now carry a `NOT EXISTS` guard on the burn, so the
+credit is only decremented when there is no live reservation for that anchor. Verified by
+re-running the measurement above: the first scan still goes 3 to 2, and repeat scans now return
+zero rows with credits held at 2 instead of draining to 1 and then 0. The revive-a-cancelled-row
+path still burns and admits correctly (2 to 1), and the zero-credit guard still refuses without
+going negative. `RedeemPassAtGate` also re-reads on a null result before reporting "no ride
+credits left", so a raced repeat is reported as already admitted rather than sending a rider with
+a full pass to the office.
+
+**Invariant:** at most one credit is burned per admission (one `(pass, event)` or
 `(pass, check-in date)` anchor), and every burn + write for a given pass is serialized by
 the single per-pass advisory lock (`season-pass-redeem:{pass.Id}`), so two concurrent scans
 of the same pass can never both pass the pre-check and both burn.

@@ -20,6 +20,11 @@ namespace webapi.Controllers.API.Data.BikeShop
         // but hold nothing (a cash deposit is a drawer matter, not a Stripe one).
         public bool TakeDepositHold { get; set; } = true;
 
+        // The renter took the damage waiver. Charges a non-refundable fee (a percentage of the
+        // gross rental) and waives the deposit entirely. Ignored when the tenant doesn't offer it,
+        // so a stale client can't conjure a charge the track never configured.
+        public bool Insurance { get; set; }
+
         // How many riders must each sign the waiver before this gear leaves. Units on a booking
         // are not people (a bike plus a helmet is one rider), so the counter sets it. Null lets the
         // server default it to the largest line quantity, which is right in the common cases.

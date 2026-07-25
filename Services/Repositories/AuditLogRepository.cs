@@ -53,5 +53,44 @@ namespace Services.Repositories
                 LIMIT @take";
             return (await _db.Query<AuditLogEntry>(sql, new { action, actorUserId, targetKind, targetId, tenantId, fromUtc, toUtc, take })).ToList();
         }
+
+        public async Task<List<AuditLogEntry>> ListForTenant(
+            Guid tenantId,
+            string? action = null,
+            Guid? actorUserId = null,
+            DateTime? fromUtc = null,
+            DateTime? toUtc = null,
+            int take = 200)
+        {
+            // tenant_id = @tenantId is unconditional here, unlike List's optional predicate: this
+            // overload backs a tenant-facing screen, so there is no code path that widens it.
+            var sql = $@"
+                SELECT {Columns}
+                FROM audit_log
+                WHERE tenant_id = @tenantId
+                  AND (@action::text IS NULL OR action = @action)
+                  AND (@actorUserId::uuid IS NULL OR actor_user_id = @actorUserId)
+                  AND (@fromUtc::timestamptz IS NULL OR created_at >= @fromUtc)
+                  AND (@toUtc::timestamptz IS NULL OR created_at < @toUtc)
+                ORDER BY created_at DESC
+                LIMIT @take";
+            return (await _db.Query<AuditLogEntry>(sql, new { tenantId, action, actorUserId, fromUtc, toUtc, take })).ToList();
+        }
+
+        public async Task<HashSet<(Guid ActorUserId, string Ip)>> ListKnownActorAddresses(
+            Guid tenantId, DateTime beforeUtc, int lookbackDays)
+        {
+            const string sql = @"
+                SELECT DISTINCT actor_user_id AS ActorUserId, ip_address AS Ip
+                FROM audit_log
+                WHERE tenant_id = @tenantId
+                  AND actor_user_id IS NOT NULL
+                  AND ip_address IS NOT NULL
+                  AND created_at < @beforeUtc
+                  AND created_at >= @beforeUtc - (@lookbackDays * INTERVAL '1 day')";
+            var rows = await _db.Query<(Guid ActorUserId, string Ip)>(
+                sql, new { tenantId, beforeUtc, lookbackDays });
+            return rows.ToHashSet();
+        }
     }
 }
