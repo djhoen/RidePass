@@ -75,6 +75,31 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { available, units = Array.Empty<object>() });
         }
 
+        // The Rental Board timeline: the whole rentable fleet plus every reservation overlapping
+        // the window, in one round trip. The Availability action above answers "how many free"
+        // with a scalar per variant, which a timeline can't draw from.
+        //
+        // The payload is deliberately self-contained (rates, deposits, and the category list ride
+        // along) because BikeShop/Categories and BikeShop/Products sit behind CatalogManage while
+        // this is a ShopCounter screen, and a counter-only user must get a working board and filter.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Board")]
+        public async Task<IActionResult> Board([FromQuery] DateTime startsAt, [FromQuery] DateTime endsAt,
+            [FromQuery] Guid? categoryId = null)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var from = startsAt.ToUniversalTime();
+            var to = endsAt.ToUniversalTime();
+            if (to <= from) return new ApiResponses().BadRequestResult("The end of the window must be after the start.");
+            // A board is a day or a week, never a year. Cap it so a stray query string can't ask
+            // for every reservation the track has ever taken.
+            if ((to - from).TotalDays > 31)
+                return new ApiResponses().BadRequestResult("The board covers at most 31 days at a time.");
+
+            var board = await _shop.GetRentalBoard(TenantId, from, to, categoryId);
+            return new ApiResponses().OkResult(board);
+        }
+
         // The signed-in rider's own rentals (lesson bikes booked online land here too), for the
         // My Passes page. Any authenticated user may read their own bookings.
         [HttpGet("Mine")]
@@ -206,11 +231,18 @@ namespace webapi.Controllers
             // Tenant service fee, same rate events use. The base is the discounted rental subtotal
             // and NEVER the deposit: a refundable deposit is the renter's own money held against
             // damage, so taking a percentage of it would charge them to lend us their deposit.
-            // serviceChargeCents is what RidePass is owed (the fee-calculator input); only the
+            // ServiceChargeCents is what RidePass is owed (the fee-calculator input); only the
             // renter-paid share is added to what the card is charged. A track that absorbs the fee
             // (riderPaidBps = 0) still owes it, out of its own proceeds.
-            var serviceChargeCents = (int)((long)subtotal * tenant.ServiceChargeBps / 10_000L);
-            var renterFeeCents = (int)((long)serviceChargeCents * tenant.RentalRiderPaidServiceChargeBps / 10_000L);
+            //
+            // Computed by RentalCharge rather than inline so RentalChargeTests actually pins THIS
+            // path: a test guarding a helper the app doesn't call cannot catch the regression it
+            // describes. depositTotal is already summed across lines, each with its own per-unit
+            // deposit, so there is no single (deposit, quantity) pair to hand over.
+            var charge = Services.Payments.RentalCharge.ForTotalDeposit(
+                subtotal, tenant.ServiceChargeBps, tenant.RentalRiderPaidServiceChargeBps, depositTotal);
+            var serviceChargeCents = charge.ServiceChargeCents;
+            var renterFeeCents = charge.RiderServiceChargeCents;
 
             // Sales tax. NULL rate = never configured, which we treat as 0 here and warn about in
             // the UI rather than guessing a rate. The taxable base is the rental (plus the renter

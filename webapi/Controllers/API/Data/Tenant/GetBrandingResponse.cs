@@ -24,6 +24,7 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool RequireEmergencyContact { get; set; }
         public bool AllowEventSubscriptions { get; set; }
         public bool RequireIdAtCheckin { get; set; }
+        public bool RequireIdForWristband { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }
         // 'platform' (default) or 'direct'. When 'direct', the SPA must initialize Stripe.js with
@@ -72,6 +73,8 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? Phone { get; set; }
         public bool ExtrasEnabled { get; set; }
         public bool SeasonPassesEnabled { get; set; } = true;
+        /// <summary>Season pass gate admission mode: 1 = event sign-up required, 2 = walk-up.</summary>
+        public int SeasonPassAdmissionTypeId { get; set; } = 2;
         public bool ConcessionsEnabled { get; set; }
         public bool BikeShopEnabled { get; set; }
         /// <summary>Days after pickup to email a shop service reminder; 0 = off.</summary>

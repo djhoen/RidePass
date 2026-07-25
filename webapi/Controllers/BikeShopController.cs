@@ -11,12 +11,25 @@ using webapi.Multitenancy;
 
 namespace webapi.Controllers
 {
-    // Bike shop admin: catalog + inventory + purchasing management. All CatalogManage, tenant-scoped.
+    // Bike shop admin: catalog + inventory + purchasing management. Tenant-scoped throughout.
     // The shop's own catalog is fully isolated from concessions and event extras by construction
     // (docs/bike-shop.md) — nothing here reads or writes those tables.
+    //
+    // AUTHORIZATION. The class policy is CatalogRead (catalog.manage OR shop.counter) and EVERY
+    // action carries an explicit [Authorize(Policy = CatalogManage)] except the four reads the
+    // bike shop counter genuinely needs to work: the product list (ring a sale, book a rental, add
+    // a part to a work order), a variant's serialized units, job templates, and tax categories.
+    // A tenant_shop_cashier holds shop.counter but NOT catalog.manage, so before this split the
+    // Register, Rentals, and Work Orders screens all failed to load for them.
+    //
+    // Attribute policies COMBINE (AND), so the class policy can only be tightened, never relaxed:
+    // an action-level CatalogManage means BOTH must pass, which for a catalog manager is just
+    // CatalogManage. That is why the loose policy is on the class and the strict one on each
+    // action, rather than the other way round. An action added here WITHOUT an explicit
+    // [Authorize] is readable by shop cashiers — add the attribute unless that is intended.
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+    [Authorize(Policy = TenantPermissions.Policy.CatalogRead)]
     public class BikeShopController : ControllerBase
     {
         private readonly IBikeShopRepository _shop;
@@ -37,7 +50,24 @@ namespace webapi.Controllers
         private bool NoTenant => !_tenantContext.IsResolved;
         private Guid? UserId => Guid.TryParse(User.FindFirst("UserId")?.Value, out var id) ? id : null;
 
+        /// <summary>
+        /// True when the caller can manage the catalog, as opposed to only reading it from the
+        /// counter. Used to withhold buying-side figures (unit cost, and therefore margin) from a
+        /// shop cashier: they need the product list to ring a sale, not to know what we paid.
+        /// Super admins pass, matching TenantPermissionHandler.
+        /// </summary>
+        private bool CanManageCatalog
+        {
+            get
+            {
+                var roles = User.FindAll("role").Select(c => c.Value).ToList();
+                return roles.Contains("super_admin")
+                    || TenantPermissions.ForRoles(roles).Contains(TenantPermissions.CatalogManage);
+            }
+        }
+
         // ── Categories ────────────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Categories")]
         public async Task<IActionResult> ListCategories([FromQuery] bool activeOnly = false)
         {
@@ -45,6 +75,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListCategories(TenantId, activeOnly));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Categories")]
         public async Task<IActionResult> CreateCategory([FromBody] UpsertShopCategoryRequest req)
         {
@@ -57,6 +88,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { id });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("Categories/{id:guid}")]
         public async Task<IActionResult> UpdateCategory(Guid id, [FromBody] UpsertShopCategoryRequest req)
         {
@@ -69,6 +101,7 @@ namespace webapi.Controllers
             return n == 0 ? new ApiResponses().NotFoundResult("Category not found.") : new ApiResponses().OkResult();
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpDelete("Categories/{id:guid}")]
         public async Task<IActionResult> DeleteCategory(Guid id)
         {
@@ -78,6 +111,7 @@ namespace webapi.Controllers
         }
 
         // ── Suppliers ─────────────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Suppliers")]
         public async Task<IActionResult> ListSuppliers([FromQuery] bool activeOnly = false)
         {
@@ -85,6 +119,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListSuppliers(TenantId, activeOnly));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Suppliers")]
         public async Task<IActionResult> CreateSupplier([FromBody] UpsertShopSupplierRequest req)
         {
@@ -98,6 +133,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { id });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("Suppliers/{id:guid}")]
         public async Task<IActionResult> UpdateSupplier(Guid id, [FromBody] UpsertShopSupplierRequest req)
         {
@@ -122,6 +158,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListJobTemplates(TenantId, activeOnly));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("JobTemplates")]
         public async Task<IActionResult> SaveJobTemplate([FromBody] UpsertJobTemplateRequest req)
         {
@@ -169,6 +206,7 @@ namespace webapi.Controllers
             }
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpDelete("JobTemplates/{id:guid}")]
         public async Task<IActionResult> DeleteJobTemplate(Guid id)
         {
@@ -182,6 +220,7 @@ namespace webapi.Controllers
         // controller's policy) because writing the terms is a management act, while CAPTURING a
         // signature is counter work and lives on BikeShopPhotoController under ShopCounter.
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Agreements/{kind}")]
         public async Task<IActionResult> GetAgreement(string kind)
         {
@@ -194,6 +233,7 @@ namespace webapi.Controllers
         /// <summary>Publishes new terms as a NEW VERSION rather than editing in place, so every
         /// existing signature keeps proving what that customer actually agreed to. Renters are
         /// re-asked to sign at their next checkout, which is the intended consequence.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Agreements/{kind}")]
         public async Task<IActionResult> PublishAgreement(string kind, [FromBody] PublishShopAgreementRequest req)
         {
@@ -210,11 +250,19 @@ namespace webapi.Controllers
         }
 
         // ── Products ──────────────────────────────────────────────────────────────
+        // CatalogRead, not CatalogManage: the bike shop register, the rental booker, and the work
+        // order parts picker all need this list, and a shop cashier holds only shop.counter.
+        // Unit cost is stripped for them — the counter needs to know the price, not the margin.
         [HttpGet("Products")]
         public async Task<IActionResult> ListProducts([FromQuery] bool activeOnly = false)
         {
             if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            return new ApiResponses().OkResult(await _shop.ListProducts(TenantId, activeOnly));
+            var products = await _shop.ListProducts(TenantId, activeOnly);
+            if (!CanManageCatalog)
+            {
+                foreach (var v in products.SelectMany(p => p.Variants)) v.CostCents = null;
+            }
+            return new ApiResponses().OkResult(products);
         }
 
         // Paged + searchable catalog for the admin list screen. The unpaged endpoint above stays
@@ -224,6 +272,7 @@ namespace webapi.Controllers
         // sellable/rentable are nullable so one endpoint serves both lists: the retail catalog asks
         // for sellable, the rental fleet asks for rentable, and a product flagged both appears in
         // each. Omitting them returns everything.
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Products/Page")]
         public async Task<IActionResult> SearchProducts(
             [FromQuery] string? search = null,
@@ -252,6 +301,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { rows = page_.Rows, total = page_.Total, totals = page_.Totals });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Products/{id:guid}")]
         public async Task<IActionResult> GetProduct(Guid id)
         {
@@ -260,6 +310,7 @@ namespace webapi.Controllers
             return p is null ? new ApiResponses().NotFoundResult("Product not found.") : new ApiResponses().OkResult(p);
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Products")]
         public async Task<IActionResult> CreateProduct([FromBody] UpsertShopProductRequest req)
         {
@@ -270,6 +321,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { id });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("Products/{id:guid}")]
         public async Task<IActionResult> UpdateProduct(Guid id, [FromBody] UpsertShopProductRequest req)
         {
@@ -330,6 +382,7 @@ namespace webapi.Controllers
         // they can't collide with the cover-upload route.
         private const int MaxProductImages = 12;
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Products/{productId:guid}/Images")]
         public async Task<IActionResult> ListProductImages(Guid productId)
         {
@@ -339,6 +392,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListProductImages(productId, TenantId));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Products/{productId:guid}/Images")]
         [RequestSizeLimit(5 * 1024 * 1024)]
         public async Task<IActionResult> AddProductImage(Guid productId, IFormFile file,
@@ -379,6 +433,7 @@ namespace webapi.Controllers
             }
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("ProductImages/{imageId:guid}")]
         public async Task<IActionResult> UpdateProductImage(Guid imageId,
             [FromBody] UpdateShopProductImageRequest req)
@@ -390,6 +445,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpDelete("ProductImages/{imageId:guid}")]
         public async Task<IActionResult> DeleteProductImage(Guid imageId, CancellationToken ct)
         {
@@ -408,6 +464,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Products/{productId:guid}/Images/Reorder")]
         public async Task<IActionResult> ReorderProductImages(Guid productId,
             [FromBody] ShopImageReorderRequest req)
@@ -421,6 +478,7 @@ namespace webapi.Controllers
         }
 
         // ── Variants ──────────────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Products/{productId:guid}/Variants")]
         public async Task<IActionResult> CreateVariant(Guid productId, [FromBody] UpsertShopVariantRequest req)
         {
@@ -438,6 +496,7 @@ namespace webapi.Controllers
             });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("Variants/{id:guid}")]
         public async Task<IActionResult> UpdateVariant(Guid id, [FromBody] UpsertShopVariantRequest req)
         {
@@ -479,6 +538,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListItems(variantId, TenantId));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Variants/{variantId:guid}/Items")]
         public async Task<IActionResult> CreateItem(Guid variantId, [FromBody] UpsertShopItemRequest req)
         {
@@ -500,6 +560,7 @@ namespace webapi.Controllers
             });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("Items/{id:guid}")]
         public async Task<IActionResult> UpdateItem(Guid id, [FromBody] UpsertShopItemRequest req)
         {
@@ -519,6 +580,7 @@ namespace webapi.Controllers
         }
 
         // ── Stock ─────────────────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Variants/{variantId:guid}/AdjustStock")]
         public async Task<IActionResult> AdjustStock(Guid variantId, [FromBody] AdjustStockRequest req)
         {
@@ -537,6 +599,7 @@ namespace webapi.Controllers
                 : new ApiResponses().OkResult(new { stockOnHand = newQty.Value });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Variants/{variantId:guid}/Movements")]
         public async Task<IActionResult> ListMovements(Guid variantId, [FromQuery] int limit = 100)
         {
@@ -545,6 +608,7 @@ namespace webapi.Controllers
         }
 
         // ── Purchase orders ───────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("PurchaseOrders")]
         public async Task<IActionResult> ListPurchaseOrders()
         {
@@ -552,6 +616,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListPurchaseOrders(TenantId));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("PurchaseOrders/{id:guid}")]
         public async Task<IActionResult> GetPurchaseOrder(Guid id)
         {
@@ -560,6 +625,7 @@ namespace webapi.Controllers
             return po is null ? new ApiResponses().NotFoundResult("Purchase order not found.") : new ApiResponses().OkResult(po);
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("PurchaseOrders")]
         public async Task<IActionResult> CreatePurchaseOrder([FromBody] UpsertPurchaseOrderRequest req)
         {
@@ -574,6 +640,7 @@ namespace webapi.Controllers
         }
 
         /// <summary>Everything sitting at or below its reorder point, ready to turn into POs.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("Reorder")]
         public async Task<IActionResult> ReorderWorklist()
         {
@@ -582,6 +649,7 @@ namespace webapi.Controllers
         }
 
         /// <summary>Raise a purchase order from picked reorder rows (one supplier per PO).</summary>
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Reorder/PurchaseOrder")]
         public async Task<IActionResult> CreateReorderPo([FromBody] CreateReorderPoRequest req)
         {
@@ -601,6 +669,7 @@ namespace webapi.Controllers
                 : new ApiResponses().OkResult(new { id = poId });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("PurchaseOrders/{id:guid}")]
         public async Task<IActionResult> UpdatePurchaseOrder(Guid id, [FromBody] UpsertPurchaseOrderRequest req)
         {
@@ -618,6 +687,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("PurchaseOrders/{id:guid}/Lines")]
         public async Task<IActionResult> AddLine(Guid id, [FromBody] AddPurchaseOrderLineRequest req)
         {
@@ -646,6 +716,7 @@ namespace webapi.Controllers
         // product name become one product with N variants; categories and suppliers are created
         // by name on the fly; opening stock writes 'adjustment' movements. Products that already
         // exist by name are rejected rather than merged (no silent updates to a live catalog).
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("ImportCsv")]
         public async Task<IActionResult> ImportCsv([FromBody] ImportShopCsvRequest req, [FromQuery] bool dryRun = true)
         {
@@ -704,6 +775,7 @@ namespace webapi.Controllers
             });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("Products/{id:guid}/GenerateVariants")]
         public async Task<IActionResult> GenerateVariants(Guid id, [FromBody] GenerateShopVariantsRequest req)
         {
@@ -901,6 +973,7 @@ namespace webapi.Controllers
             return rows;
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("PurchaseOrderLines/{lineId:guid}/Receive")]
         public async Task<IActionResult> ReceiveLine(Guid lineId, [FromBody] ReceivePurchaseOrderLineRequest req)
         {
@@ -960,6 +1033,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListTaxCategories(TenantId, activeOnly));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("TaxCategories")]
         public async Task<IActionResult> CreateTaxCategory([FromBody] UpsertShopTaxCategoryRequest req)
         {
@@ -972,6 +1046,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { id });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("TaxCategories/{id:guid}")]
         public async Task<IActionResult> UpdateTaxCategory(Guid id, [FromBody] UpsertShopTaxCategoryRequest req)
         {
@@ -985,6 +1060,7 @@ namespace webapi.Controllers
         }
 
         // ── Stock takes ───────────────────────────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("StockCounts")]
         public async Task<IActionResult> ListStockCounts([FromQuery] int limit = 50)
         {
@@ -992,6 +1068,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(await _shop.ListStockCounts(TenantId, Math.Clamp(limit, 1, 200)));
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpGet("StockCounts/{id:guid}")]
         public async Task<IActionResult> GetStockCount(Guid id)
         {
@@ -1000,6 +1077,7 @@ namespace webapi.Controllers
             return count is null ? new ApiResponses().NotFoundResult("Stock take not found.") : new ApiResponses().OkResult(count);
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("StockCounts")]
         public async Task<IActionResult> CreateStockCount([FromBody] CreateStockCountRequest req)
         {
@@ -1008,6 +1086,7 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { id });
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("StockCountLines/{lineId:guid}")]
         public async Task<IActionResult> SetStockCountLine(Guid lineId, [FromBody] SetStockCountLineRequest req)
         {
@@ -1018,6 +1097,7 @@ namespace webapi.Controllers
                 : new ApiResponses().OkResult();
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("StockCounts/{id:guid}/Complete")]
         public async Task<IActionResult> CompleteStockCount(Guid id)
         {
@@ -1028,6 +1108,7 @@ namespace webapi.Controllers
                 : new ApiResponses().BadRequestResult("Only an open stock take can be completed.");
         }
 
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPost("StockCounts/{id:guid}/Cancel")]
         public async Task<IActionResult> CancelStockCount(Guid id)
         {

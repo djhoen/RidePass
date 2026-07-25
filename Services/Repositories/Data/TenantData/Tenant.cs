@@ -20,7 +20,14 @@ namespace Services.Repositories.Data.TenantData
         public bool AllowEventSubscriptions { get; set; }
         // When true, gate staff must attest they verified the rider's photo ID against
         // the purchaser name before redeeming. Enforced server-side in RedemptionController.
+        // A per-scan attestation only: nothing is recorded about the rider. Contrast with
+        // RequireIdForWristband below, which is a STORED verification.
         public bool RequireIdAtCheckin { get; set; }
+        // When true, a wristband cannot be issued until the rider has both signed the waiver
+        // and had their ID/age verified and recorded. Unlike RequireIdAtCheckin the result
+        // persists, so a rider is carded once and every later scan shows the tick. Enforced
+        // server-side in WristbandController.Link.
+        public bool RequireIdForWristband { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted
         // 'platform' (default): charges run on the platform account, internal split, monthly payout.
@@ -112,6 +119,12 @@ namespace Services.Repositories.Data.TenantData
         public bool RentalsEnabled { get; set; } = false;
         public bool ExtrasEnabled { get; set; } = true;
         public bool SeasonPassesEnabled { get; set; } = true;
+        /// <summary>Gate admission mode for season passes: 1 (SeasonPassAdmissionType.EventSignUp)
+        /// requires a prior reservation for a specific event before the gate admits the holder;
+        /// 2 (SeasonPassAdmissionType.WalkUp, the default) admits on scan alone, with or without a
+        /// calendar event running that day. Stored as an int to match the plain-column mapping
+        /// convention used throughout this class; cast to SeasonPassAdmissionType at the call site.</summary>
+        public int SeasonPassAdmissionTypeId { get; set; } = (int)SeasonPassAdmissionType.WalkUp;
         public bool ConcessionsEnabled { get; set; } = false;
         public bool BikeShopEnabled { get; set; } = false;
         /// <summary>Days after pickup to email a service reminder. 0 = off, the default: a track

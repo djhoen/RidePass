@@ -25,6 +25,9 @@ namespace Services.Repositories
             race_number AS RaceNumber,
             image_url AS ImageUrl,
             email_verified AS EmailVerified,
+            id_verified_at AS IdVerifiedAt,
+            id_verified_by_user_id AS IdVerifiedByUserId,
+            id_verified_dob AS IdVerifiedDob,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         public UserRepository(IDbHelper db)
@@ -181,6 +184,34 @@ namespace Services.Repositories
                     updated_at = now()
                 WHERE id = @userId";
             await _db.Execute(sql, new { userId });
+        }
+
+        /// <summary>
+        /// Records that a staff member checked this person's photo ID. Tenant-scoped: a rider row
+        /// belongs to one tenant, and verification at one track must never appear at another.
+        /// Rerunnable — re-verifying overwrites, which a corrected date of birth needs.
+        /// </summary>
+        public async Task<int> SetIdVerified(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        {
+            const string sql = @"
+                UPDATE users
+                SET id_verified_at         = now(),
+                    id_verified_by_user_id = @verifiedByUserId,
+                    id_verified_dob        = @verifiedDob,
+                    updated_at             = now()
+                WHERE id = @userId AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { userId, tenantId, verifiedByUserId, verifiedDob });
+        }
+
+        /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
+        public async Task<int> ClearIdVerified(Guid userId, Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE users
+                SET id_verified_at = NULL, id_verified_by_user_id = NULL, id_verified_dob = NULL,
+                    updated_at = now()
+                WHERE id = @userId AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { userId, tenantId });
         }
 
         public async Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,

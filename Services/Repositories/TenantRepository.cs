@@ -13,6 +13,7 @@ namespace Services.Repositories
             require_emergency_contact AS RequireEmergencyContact,
             allow_event_subscriptions AS AllowEventSubscriptions,
             require_id_at_checkin AS RequireIdAtCheckin,
+            require_id_for_wristband AS RequireIdForWristband,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -59,6 +60,7 @@ namespace Services.Repositories
             rentals_enabled AS RentalsEnabled,
             extras_enabled AS ExtrasEnabled,
             season_passes_enabled AS SeasonPassesEnabled,
+            season_pass_admission_type_id AS SeasonPassAdmissionTypeId,
             concessions_enabled AS ConcessionsEnabled,
             bike_shop_enabled AS BikeShopEnabled,
             shop_service_reminder_days AS ShopServiceReminderDays,
@@ -152,6 +154,15 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, require });
         }
 
+        /// <summary>Set the gate admission mode for season passes. The row being written IS the
+        /// tenant, so its primary key is the tenant scope; the caller must resolve tenantId from
+        /// ITenantContext and never from a request body.</summary>
+        public async Task UpdateSeasonPassAdmissionType(Guid tenantId, int admissionTypeId)
+        {
+            const string sql = "UPDATE tenant SET season_pass_admission_type_id = @admissionTypeId WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, admissionTypeId });
+        }
+
         public async Task UpdateRequireEmergencyContact(Guid tenantId, bool require)
         {
             const string sql = "UPDATE tenant SET require_emergency_contact = @require WHERE id = @tenantId";
@@ -167,6 +178,12 @@ namespace Services.Repositories
         public async Task UpdateRequireIdAtCheckin(Guid tenantId, bool require)
         {
             const string sql = "UPDATE tenant SET require_id_at_checkin = @require WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, require });
+        }
+
+        public async Task UpdateRequireIdForWristband(Guid tenantId, bool require)
+        {
+            const string sql = "UPDATE tenant SET require_id_for_wristband = @require WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, require });
         }
 

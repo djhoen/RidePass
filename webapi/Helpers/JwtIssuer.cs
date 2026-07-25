@@ -23,8 +23,16 @@ namespace webapi.Helpers
             var issuer = _configuration["Jwt:Issuer"]!;
             var signingKey = _configuration["Jwt:SigningKey"]!;
 
+            // Default lifetime is an IDLE timeout, not a hard cap: SlidingSessionMiddleware
+            // re-issues a same-length token on activity, so only inactivity ends the session.
+            var life = expiration
+                ?? TimeSpan.FromMinutes(int.TryParse(_configuration["Jwt:IdleTimeoutMinutes"], out var m) && m > 0 ? m : 30);
+
             var claims = new List<Claim>
             {
+                // Lets the sliding middleware re-issue with the caller's original duration
+                // (30-min session, 21-day remember-me, 1-hour impersonation alike).
+                new("session_minutes", ((int)life.TotalMinutes).ToString()),
                 new("UserId", user.Id.ToString()),
                 new("role", user.Role),   // primary first, so FindFirst("role") is the identity role
                 new(ClaimTypes.NameIdentifier, user.Id.ToString())
@@ -52,7 +60,7 @@ namespace webapi.Helpers
                 signingKey: signingKey,
                 issuer: issuer,
                 audience: issuer,
-                expiration: expiration ?? TimeSpan.FromHours(24),
+                expiration: life,
                 additionalClaims: claims.ToArray());
 
             return new JwtSecurityTokenHandler().WriteToken(jwt);

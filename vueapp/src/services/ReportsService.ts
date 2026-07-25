@@ -140,8 +140,10 @@ export interface PlatformAnalyticsSummary {
 export interface RiderReportItem {
     purchaseId: string
     source: 'ticket' | 'season_pass'
-    eventId: string
-    eventTitle: string
+    // Null for a walk-up season-pass admission: anchored to a calendar date, not an event.
+    // eventStartsAtUtc is still always set (the walk-up date at tenant-local midnight).
+    eventId: string | null
+    eventTitle: string | null
     eventStartsAtUtc: string
     riderName: string
     email: string | null
@@ -151,6 +153,26 @@ export interface RiderReportItem {
     checkedInAtUtc: string | null
     wristbandCode: string | null
     waiverSigned: boolean
+    purchaseType: RiderPurchaseType
+    eventTypeName: string | null   // the tenant's own label ("Lift Day", "Clinic")
+    eventTypeCode: string | null   // stable code (open_ride, lesson, race, ...) across renames
+    registrationComplete: boolean
+    ageAtEvent: number | null      // age on the event day, when a birthdate was captured
+}
+
+// Server-derived bucket for "how did this person get in". Mirrors RiderPurchaseTypes.
+export type RiderPurchaseType =
+    | 'day_ticket' | 'race_entry'
+    | 'season_pass_unlimited' | 'season_pass_credits' | 'season_pass_days'
+    | 'spectator_pass'
+
+export const RIDER_PURCHASE_TYPE_LABELS: Record<RiderPurchaseType, string> = {
+    day_ticket: 'Day ticket',
+    race_entry: 'Race entry',
+    season_pass_unlimited: 'Season pass (unlimited)',
+    season_pass_credits: 'Season pass (credit pack)',
+    season_pass_days: 'Season pass (set days)',
+    spectator_pass: 'Spectator pass',
 }
 
 export interface RiderReportResponse {
@@ -168,12 +190,36 @@ export interface RiderWaiverItem {
     signedAtUtc: string
     signedByParent: boolean
     parentName: string | null
+    signerName: string | null
     waiverIsCurrent: boolean
+    hasSignatureImage: boolean
+}
+
+export interface RiderProfileItem {
+    userId: string | null
+    email: string | null
+    phone: string | null
+    hometown: string | null
+    raceNumber: string | null
+    birthdateUtc: string | null
+    age: number | null
+    memberSinceUtc: string | null
+    bike: string | null
+    emergencyContactName: string | null
+    emergencyContactPhone: string | null
+    parentGuardianName: string | null
+    totalRegistrations: number
+    totalCheckedIn: number
+    totalSpentCents: number
+    firstVisitUtc: string | null
+    lastVisitUtc: string | null
+    isGuest: boolean
 }
 
 export interface RiderDetailResponse {
     riderName: string
     email: string | null
+    profile: RiderProfileItem | null
     registrations: RiderReportItem[]
     waivers: RiderWaiverItem[]
 }
@@ -185,10 +231,22 @@ export class ReportsService {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
     }
 
-    getRiders(fromUtc: string, toUtc: string, search?: string, audience: 'rider' | 'spectator' = 'rider') {
+    getRiders(fromUtc: string, toUtc: string, search?: string, audience: 'rider' | 'spectator' = 'rider',
+              filters?: { purchaseTypes?: string[]; eventTypeCodes?: string[] }) {
         return axios.get<{ data: RiderReportResponse }>(`${this.apiUrl}/Reports/Admin/Riders`, {
-            params: { fromUtc, toUtc, search: search || undefined, audience },
+            params: {
+                fromUtc, toUtc, search: search || undefined, audience,
+                // Comma-separated so the filtered view stays a shareable URL.
+                purchaseTypes: filters?.purchaseTypes?.length ? filters.purchaseTypes.join(',') : undefined,
+                eventTypeCodes: filters?.eventTypeCodes?.length ? filters.eventTypeCodes.join(',') : undefined,
+            },
         })
+    }
+
+    // Fetched only when an admin opens a specific signature; the drill-in payload omits images.
+    getRiderWaiverSignature(signatureId: string) {
+        return axios.get<{ data: { signatureDataUrl: string } }>(
+            `${this.apiUrl}/Reports/Admin/RiderWaiver/${signatureId}/Signature`)
     }
 
     getRiderDetail(params: { userId?: string | null; email?: string | null; name?: string | null }) {

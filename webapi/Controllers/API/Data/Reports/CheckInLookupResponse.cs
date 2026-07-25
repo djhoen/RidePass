@@ -25,7 +25,8 @@ namespace webapi.Controllers.API.Data.Reports
     {
         public Guid Id { get; set; }
         public string Source { get; set; } = null!;     // 'pass' | 'event_ticket' | 'season_pass'
-        public Guid EventId { get; set; }
+        /// <summary>Null on a no-event walk-up season pass admission.</summary>
+        public Guid? EventId { get; set; }
         public string EventTitle { get; set; } = null!;
         public DateTime EventStartsAtUtc { get; set; }
         public DateTime EventEndsAtUtc { get; set; }

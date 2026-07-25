@@ -14,6 +14,7 @@ namespace Services.Repositories
             COALESCE(c.sort_order, 2147483647) AS CategorySortOrder,
             p.price_cents AS PriceCents, p.image_url AS ImageUrl, p.show_in_carousel AS ShowInCarousel,
             p.is_active AS IsActive, p.sort_order AS SortOrder, p.station_id AS StationId,
+            p.requires_prep AS RequiresPrep,
             p.inventory, p.sold_out_date AS SoldOutDate, p.combo_available AS ComboAvailable,
             p.tax_category_id AS TaxCategoryId,
             p.created_at AS CreatedAt, p.updated_at AS UpdatedAt";
@@ -72,7 +73,8 @@ namespace Services.Repositories
 
         private const string SaleLineCols = @"
             id, sale_id AS SaleId, product_id AS ProductId, variant_id AS VariantId,
-            station_id AS StationId, name_snapshot AS NameSnapshot, variant_label AS VariantLabel,
+            station_id AS StationId, requires_prep AS RequiresPrep,
+            name_snapshot AS NameSnapshot, variant_label AS VariantLabel,
             unit_price_cents AS UnitPriceCents, quantity, line_total_cents AS LineTotalCents,
             discount_cents AS DiscountCents, discount_kind AS DiscountKind, discount_label AS DiscountLabel,
             tax_cents AS TaxCents, tax_rate_bps AS TaxRateBps,
@@ -121,9 +123,9 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO concession_product
                     (tenant_id, name, description, category_id, price_cents, image_url, show_in_carousel,
-                     is_active, sort_order, station_id, inventory, combo_available, tax_category_id)
+                     is_active, sort_order, station_id, requires_prep, inventory, combo_available, tax_category_id)
                 VALUES (@TenantId, @Name, @Description, @CategoryId, @PriceCents, @ImageUrl, @ShowInCarousel,
-                     @IsActive, @SortOrder, @StationId, @Inventory, @ComboAvailable, @TaxCategoryId)
+                     @IsActive, @SortOrder, @StationId, @RequiresPrep, @Inventory, @ComboAvailable, @TaxCategoryId)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, p)).First();
         }
@@ -136,7 +138,8 @@ namespace Services.Repositories
                     price_cents = @PriceCents, image_url = @ImageUrl, inventory = @Inventory,
                     show_in_carousel = @ShowInCarousel, combo_available = @ComboAvailable,
                     tax_category_id = @TaxCategoryId,
-                    is_active = @IsActive, sort_order = @SortOrder, station_id = @StationId, updated_at = now()
+                    is_active = @IsActive, sort_order = @SortOrder, station_id = @StationId,
+                    requires_prep = @RequiresPrep, updated_at = now()
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, p);
         }
@@ -584,11 +587,11 @@ namespace Services.Repositories
         {
             const string lineSql = @"
                 INSERT INTO concession_sale_line
-                    (sale_id, product_id, variant_id, station_id, name_snapshot, variant_label,
+                    (sale_id, product_id, variant_id, station_id, requires_prep, name_snapshot, variant_label,
                      unit_price_cents, quantity, line_total_cents, discount_cents, discount_kind, discount_label,
                      tax_cents, tax_rate_bps,
                      prep_status, notes, parent_line_id, is_combo, combo_tier)
-                VALUES (@SaleId, @ProductId, @VariantId, @StationId, @NameSnapshot, @VariantLabel,
+                VALUES (@SaleId, @ProductId, @VariantId, @StationId, @RequiresPrep, @NameSnapshot, @VariantLabel,
                      @UnitPriceCents, @Quantity, @LineTotalCents, @DiscountCents, @DiscountKind, @DiscountLabel,
                      @TaxCents, @TaxRateBps,
                      @PrepStatus, @Notes, @ParentLineId, @IsCombo, @ComboTier)
@@ -729,18 +732,22 @@ namespace Services.Repositories
             return (await _db.Query<ConcessionSale>(sql, new { tenantId })).ToList();
         }
 
+        // Grab-and-go lines (requires_prep = false) are excluded: there is nothing to cook, so they never
+        // reach the KDS. An order made up entirely of them returns no lines and drops off the board.
         public async Task<List<ConcessionSaleLine>> GetKitchenLines(Guid tenantId, Guid? stationId)
         {
             var stationFilter = stationId.HasValue ? "AND l.station_id = @stationId" : "";
             var sql = $@"
                 SELECT l.id, l.sale_id AS SaleId, l.product_id AS ProductId, l.variant_id AS VariantId,
-                       l.station_id AS StationId, l.name_snapshot AS NameSnapshot, l.variant_label AS VariantLabel,
+                       l.station_id AS StationId, l.requires_prep AS RequiresPrep,
+                       l.name_snapshot AS NameSnapshot, l.variant_label AS VariantLabel,
                        l.unit_price_cents AS UnitPriceCents, l.quantity, l.line_total_cents AS LineTotalCents,
                        l.prep_status AS PrepStatus, l.notes, l.parent_line_id AS ParentLineId,
                        l.is_combo AS IsCombo, l.combo_tier AS ComboTier
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
                 WHERE s.tenant_id = @tenantId AND s.status = 'paid' AND s.fulfillment_status <> 'completed'
+                  AND l.requires_prep = true
                   {stationFilter}
                 ORDER BY s.order_number, l.id";
             var lines = (await _db.Query<ConcessionSaleLine>(sql, new { tenantId, stationId })).ToList();
@@ -978,7 +985,8 @@ namespace Services.Repositories
             var prodId = products.ToDictionary(p => p.Name, p => p.Id, StringComparer.OrdinalIgnoreCase);
             var sort = 0;
             async Task EnsureProduct(string name, int priceCents, string category, string? station, string[] mods, string[] defaults,
-                (string Item, decimal Qty)[]? recipe = null, bool comboAvailable = false, string? imageUrl = null)
+                (string Item, decimal Qty)[]? recipe = null, bool comboAvailable = false, string? imageUrl = null,
+                bool requiresPrep = true)
             {
                 if (existingNames.Contains(name)) return;
                 var p = new ConcessionProduct
@@ -988,6 +996,7 @@ namespace Services.Repositories
                     PriceCents = priceCents,
                     CategoryId = catId.TryGetValue(category, out var cid) ? cid : (Guid?)null,
                     StationId = station != null && stnId.TryGetValue(station, out var sid) ? sid : (Guid?)null,
+                    RequiresPrep = requiresPrep,
                     ImageUrl = imageUrl,
                     IsActive = true,
                     ShowInCarousel = true,
@@ -1040,12 +1049,14 @@ namespace Services.Repositories
                 new[] { ("Onion rings", 1m) }, imageUrl: onionRingsImg);
             await EnsureProduct("Chicken Tenders", 750, "Sides", "Fryer", new[] { "Condiments" }, Array.Empty<string>(),
                 new[] { ("Chicken tenders", 1m) }, comboAvailable: true, imageUrl: tendersImg);
+            // Packaged snacks + bottled water are grab-and-go: handed over at the window, never cooked,
+            // so they ship with requiresPrep off to show the setting off in the starter catalog.
             await EnsureProduct("Chips", 150, "Snacks", null, Array.Empty<string>(), Array.Empty<string>(),
-                new[] { ("Chips bag", 1m) }, imageUrl: chipsImg);
+                new[] { ("Chips bag", 1m) }, imageUrl: chipsImg, requiresPrep: false);
             await EnsureProduct("Candy Bar", 200, "Snacks", null, Array.Empty<string>(), Array.Empty<string>(),
-                new[] { ("Candy bar", 1m) }, imageUrl: candyImg);
+                new[] { ("Candy bar", 1m) }, imageUrl: candyImg, requiresPrep: false);
             await EnsureProduct("Bottled Water", 200, "Drinks", "Drinks", Array.Empty<string>(), Array.Empty<string>(),
-                new[] { ("Bottled water", 1m) }, imageUrl: waterImg);
+                new[] { ("Bottled water", 1m) }, imageUrl: waterImg, requiresPrep: false);
             await EnsureProduct("Soda", 250, "Drinks", "Drinks", Array.Empty<string>(), Array.Empty<string>(),
                 new[] { ("Soda cup", 1m) }, imageUrl: sodaImg);
 

@@ -120,6 +120,7 @@ export interface ConcessionProduct {
     isActive: boolean
     sortOrder: number
     stationId: string | null
+    requiresPrep: boolean          // false = grab-and-go; never listed on the cook screen
     taxCategoryId: string | null   // null = use the tenant default tax category
     inventory: number | null     // product-level stock (no-variant items); null = unlimited
     remaining: number            // -1 = unlimited / not tracked at product level
@@ -141,6 +142,7 @@ export interface UpsertConcessionProduct {
     isActive: boolean
     sortOrder: number
     stationId: string | null
+    requiresPrep: boolean
     taxCategoryId: string | null
     inventory: number | null
     modifierGroupIds: string[]

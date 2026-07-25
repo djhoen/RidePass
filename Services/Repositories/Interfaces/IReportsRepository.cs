@@ -30,15 +30,27 @@ namespace Services.Repositories.Interfaces
         /// coverage. Search matches name, email, or wristband code (case-insensitive).
         /// Returns at most <paramref name="cap"/> rows; callers pass cap+1 to detect overflow.</summary>
         /// <param name="audience">"rider" (default) or "spectator"; spectators are ticket-only.</param>
+        /// <param name="purchaseTypes">Optional <see cref="RiderPurchaseTypes"/> values to keep; null/empty = all.</param>
+        /// <param name="eventTypeCodes">Optional tenant_event_type codes to keep; null/empty = all.</param>
         Task<List<RiderReportRow>> GetRidersByRange(Guid tenantId, DateTime fromUtc, DateTime toUtc,
-            string? search, int cap, string audience = "rider");
+            string? search, int cap, string audience = "rider",
+            IReadOnlyList<string>? purchaseTypes = null, IReadOnlyList<string>? eventTypeCodes = null);
 
         /// <summary>Everything one rider is registered for (last year + upcoming), matched by
         /// user id and/or email. Same row shape as the range report.</summary>
         Task<List<RiderReportRow>> GetRiderRegistrations(Guid tenantId, Guid? userId, string? email);
 
-        /// <summary>Waivers this rider has signed, newest first, matched by user id and/or email.</summary>
+        /// <summary>Waivers this rider has signed, newest first, matched by user id and/or email.
+        /// Carries a HasSignatureImage flag rather than the image itself.</summary>
         Task<List<RiderWaiverRow>> GetRiderWaivers(Guid tenantId, Guid? userId, string? email);
+
+        /// <summary>One signature's image data URL, tenant-scoped. Null when the signature is
+        /// unknown to this tenant or has no stored image.</summary>
+        Task<string?> GetWaiverSignatureImage(Guid tenantId, Guid signatureId);
+
+        /// <summary>Identity + lifetime totals for the rider drill-in header, matched by account
+        /// id and/or email. Falls back to purchase-captured details for guests with no account.</summary>
+        Task<RiderProfileRow?> GetRiderProfile(Guid tenantId, Guid? userId, string? email);
         Task<List<EventWaiverSignatureRow>> GetEventWaiverSignatures(Guid tenantId, Guid eventId);
 
         /// <summary>One row per scheduled event in [fromUtc, toUtc) with registered/checked-in/revenue aggregates.</summary>

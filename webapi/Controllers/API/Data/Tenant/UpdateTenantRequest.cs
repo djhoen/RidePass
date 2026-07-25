@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Services.Repositories.Data.TenantData;
 
 namespace webapi.Controllers.API.Data.Tenant
 {
@@ -11,11 +12,21 @@ namespace webapi.Controllers.API.Data.Tenant
 
         public bool RequireReservationForPasses { get; set; }
 
+        /// <summary>Season pass gate admission mode: 1 = event sign-up required, 2 = walk-up.
+        /// Unrelated to RequireReservationForPasses above, which governs buying a day pass.</summary>
+        [Range(1, 2, ErrorMessage = "SeasonPassAdmissionTypeId must be 1 (event sign-up required) or 2 (walk-up).")]
+        public int SeasonPassAdmissionTypeId { get; set; } = (int)SeasonPassAdmissionType.WalkUp;
+
         public bool RequireEmergencyContact { get; set; }
 
         public bool AllowEventSubscriptions { get; set; } = true;
 
         public bool RequireIdAtCheckin { get; set; }
+
+        /// <summary>When true, a wristband can't be issued until the rider has a signed waiver AND
+        /// a recorded ID/age verification. Separate from RequireIdAtCheckin, which is a per-scan
+        /// attestation that records nothing.</summary>
+        public bool RequireIdForWristband { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

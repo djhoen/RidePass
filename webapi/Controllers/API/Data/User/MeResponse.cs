@@ -17,5 +17,6 @@ namespace webapi.Controllers.API.Data.User
         // Tenant gate setting the operator app needs: when true, staff must verify a photo ID at
         // check-in. False when no tenant is resolved.
         public bool RequireIdAtCheckin { get; set; }
+        public bool RequireIdForWristband { get; set; }
     }
 }

@@ -6,6 +6,7 @@ using Services.Payments;
 using Services.Repositories.Data.CouponData;
 using Services.Repositories.Data.GiftCardData;
 using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Data.TenantData;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.SeasonPass;
@@ -31,6 +32,7 @@ namespace webapi.Controllers
         private readonly IMembershipRepository _memberships;
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
+        private readonly Services.Riders.IRiderIdVerification _idVerification;
         private readonly ITenantLedgerRepository _ledger;
         private readonly Services.Payments.IFeeCalculator _feeCalculator;
         private readonly ITenantContext _tenantContext;
@@ -52,6 +54,7 @@ namespace webapi.Controllers
             IMembershipRepository memberships,
             IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
+            Services.Riders.IRiderIdVerification idVerification,
             ITenantLedgerRepository ledger,
             Services.Payments.IFeeCalculator feeCalculator,
             ITenantContext tenantContext,
@@ -72,6 +75,7 @@ namespace webapi.Controllers
             _memberships = memberships;
             _waivers = waivers;
             _waiverGate = waiverGate;
+            _idVerification = idVerification;
             _ledger = ledger;
             _feeCalculator = feeCalculator;
             _tenantContext = tenantContext;
@@ -974,7 +978,8 @@ namespace webapi.Controllers
             var dayStartLocal = nowLocal.Date;
             var atUtc = TimeZoneInfo.ConvertTimeToUtc(dayStartLocal, tz);
             var untilUtc = TimeZoneInfo.ConvertTimeToUtc(dayStartLocal.AddDays(1), tz);
-            var reservations = await _passes.ListReservationsForPurchaseOnDate(pass.Id, atUtc, untilUtc);
+            var reservations = await _passes.ListReservationsForPurchaseOnDate(
+                pass.Id, _tenantContext.TenantId, atUtc, untilUtc, dayStartLocal);
 
             // Today's admissible events, so the scanner can offer walk-up redemption without
             // the pass holder having pre-booked anything (0 → nothing running today, 1 →
@@ -987,6 +992,33 @@ namespace webapi.Controllers
             // only when the check-in button fails.
             var registrationComplete = pass.IsRegistered(product?.RequiresWaiver ?? false);
 
+            // ── The two things the gate worker has to see before banding someone ──────────
+            // Waiver. Computed the same way RedeemPassAtGate ENFORCES it, so the tick on screen
+            // and the block on the button can never disagree: a signature on the pass itself
+            // satisfies it outright, otherwise the event's own rider waiver decides. With no
+            // event picked yet (nothing running, or several to choose from) there is no event
+            // waiver to resolve, so fall back to the pass signature and leave the reason null
+            // rather than inventing a block staff can't act on.
+            var ctx = await _passes.GetPassForGateCheckIn(pass.Id, _tenantContext.TenantId);
+            // Already through the gate today settles it: admission enforces the waiver on every
+            // path, so a checked_in reservation IS the evidence. Without this, a rider who
+            // satisfied it via the event's waiver rather than a signature on the pass would read
+            // as "not signed" for the rest of the day.
+            var admittedToday = reservations.Any(r => r.Status == "checked_in");
+            var waiverSigned = admittedToday || ctx?.WaiverSignatureId is not null;
+            string? waiverBlockReason = null;
+            if (!waiverSigned && ctx is not null && todaysEvents.Count == 1)
+            {
+                waiverBlockReason = await _waiverGate.BlockReason(
+                    _tenantContext.TenantId, todaysEvents[0].Id, riderAudience: true,
+                    ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
+                waiverSigned = waiverBlockReason is null;
+            }
+
+            // ID / age. Resolved through the shared service so this display and the wristband
+            // gate always agree about who counts as verified.
+            var idStatus = await _idVerification.StatusForPass(pass, _tenantContext.TenantId);
+
             return new ApiResponses().OkResult(new
             {
                 pass.Id,
@@ -997,6 +1029,19 @@ namespace webapi.Controllers
                 pass.ValidToDate,
                 pass.CreditsRemaining,
                 pass.PhotoDataUrl,
+                WaiverSigned = waiverSigned,
+                WaiverBlockReason = waiverBlockReason,
+                IdVerified = idStatus.Verified,
+                IdVerifiedAtUtc = idStatus.VerifiedAtUtc,
+                IdVerifiedByName = idStatus.VerifiedByName,
+                IdVerifiedScope = idStatus.Scope,
+                // Age off the DOCUMENT, not the sign-up form. Null until verified, so the screen
+                // can never present a typed-in age as a checked one.
+                IdVerifiedAge = idStatus.VerifiedAge,
+                // Self-reported, shown as the starting point for the verify dialog.
+                HolderBirthdate = pass.HolderBirthdate,
+                // Echoed so the scanner knows whether to enforce, without a second round trip.
+                RequireIdForWristband = _tenantContext.Tenant.RequireIdForWristband,
                 // Who the pass admits — may differ from the buyer, so this is the name staff
                 // should be checking against the photo.
                 HolderName = string.IsNullOrWhiteSpace(pass.HolderFirstName)
@@ -1014,17 +1059,107 @@ namespace webapi.Controllers
                     StartsAtUtc = DateTime.SpecifyKind(e.StartsAt, DateTimeKind.Utc),
                     EndsAtUtc = DateTime.SpecifyKind(e.EndsAt, DateTimeKind.Utc),
                 }),
+                // A no-event walk-up admission has no event to describe, so it carries a stand-in
+                // title and null times; the scanner renders it from CheckInDate instead.
                 TodaysReservations = reservations.Select(r => new
                 {
                     r.Id,
                     r.EventId,
-                    r.EventTitle,
-                    EventStartsAtUtc = DateTime.SpecifyKind(r.EventStartsAt, DateTimeKind.Utc),
-                    EventEndsAtUtc = DateTime.SpecifyKind(r.EventEndsAt, DateTimeKind.Utc),
+                    EventTitle = r.EventTitle ?? "Walk-up admission",
+                    EventStartsAtUtc = r.EventStartsAt is null
+                        ? null : (DateTime?)DateTime.SpecifyKind(r.EventStartsAt.Value, DateTimeKind.Utc),
+                    EventEndsAtUtc = r.EventEndsAt is null
+                        ? null : (DateTime?)DateTime.SpecifyKind(r.EventEndsAt.Value, DateTimeKind.Utc),
+                    r.CheckInDate,
                     r.Status,
                     CheckedInAtUtc = r.CheckedInAt is null ? null : (DateTime?)DateTime.SpecifyKind(r.CheckedInAt.Value, DateTimeKind.Utc),
                 }),
             });
+        }
+
+        /// <summary>
+        /// Records that a gate worker checked this holder's photo ID and date of birth. SalesRedeem
+        /// because this is a counter action performed with the rider standing there, the same
+        /// permission that admits them.
+        ///
+        /// The result persists, which is the whole point: unlike tenant.require_id_at_checkin (a
+        /// per-scan attestation that records nothing), a rider is carded once and every later scan
+        /// shows the tick. It lands on the pass always, and on the rider's account too when the
+        /// buyer IS the holder, never on a parent's account for their child's pass.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
+        [HttpPost("Pass/{token:guid}/VerifyId")]
+        public async Task<IActionResult> VerifyPassHolderId(Guid token, [FromBody] VerifyRiderIdRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var pass = await _passes.GetPurchaseByRedemptionToken(token);
+            if (pass is null || pass.TenantId != _tenantContext.TenantId)
+                return new ApiResponses().NotFoundResult("Pass not found.");
+            if (pass.Status != "paid")
+                return new ApiResponses().BadRequestResult(
+                    $"This pass is {pass.Status}, so there's nothing to verify against. Sort the pass out first.");
+
+            // The DOB is the age evidence, so a verification without one is not worth recording.
+            var dob = request.VerifiedDob ?? pass.HolderBirthdate;
+            if (dob is null)
+                return new ApiResponses().BadRequestResult(
+                    "Enter the date of birth from the rider's ID. It's what the age check rests on.");
+            if (dob.Value.Date > DateTime.UtcNow.Date)
+                return new ApiResponses().BadRequestResult("That date of birth is in the future. Check the ID again.");
+
+            var staffId = TryGetUserId(out var sid) ? sid : (Guid?)null;
+            var status = await _idVerification.RecordForPass(pass, _tenantContext.TenantId, staffId, dob);
+            if (!status.Verified)
+                return new ApiResponses().BadRequestResult(
+                    "The verification did not save: the pass changed while you were entering it. Rescan and try again.");
+
+            var holder = string.IsNullOrWhiteSpace(pass.HolderFirstName)
+                ? pass.PurchaserName
+                : $"{pass.HolderFirstName} {pass.HolderLastName}".Trim();
+            await _audit.Log("rider.id_verified",
+                $"Verified ID and age for {holder} (age {status.VerifiedAge}).",
+                targetKind: "season_pass_purchase", targetId: pass.Id,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { scope = status.Scope, verifiedDob = dob.Value.Date });
+
+            return new ApiResponses().OkResult(new
+            {
+                IdVerified = true,
+                IdVerifiedAtUtc = status.VerifiedAtUtc,
+                IdVerifiedByName = status.VerifiedByName,
+                IdVerifiedScope = status.Scope,
+                IdVerifiedAge = status.VerifiedAge,
+            });
+        }
+
+        /// <summary>
+        /// Undoes a verification recorded in error. UsersManage rather than SalesRedeem: a gate
+        /// worker records the check, but unwinding a compliance record is an administrative act.
+        /// Clears the account as well as the pass, since leaving either behind would keep
+        /// answering "verified".
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [HttpPost("Pass/{token:guid}/ClearIdVerification")]
+        public async Task<IActionResult> ClearPassHolderIdVerification(Guid token)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var pass = await _passes.GetPurchaseByRedemptionToken(token);
+            if (pass is null || pass.TenantId != _tenantContext.TenantId)
+                return new ApiResponses().NotFoundResult("Pass not found.");
+
+            await _idVerification.ClearForPass(pass, _tenantContext.TenantId);
+
+            var holder = string.IsNullOrWhiteSpace(pass.HolderFirstName)
+                ? pass.PurchaserName
+                : $"{pass.HolderFirstName} {pass.HolderLastName}".Trim();
+            await _audit.Log("rider.id_verification_cleared",
+                $"Cleared the ID/age verification for {holder}.",
+                targetKind: "season_pass_purchase", targetId: pass.Id,
+                tenantId: _tenantContext.TenantId);
+
+            return new ApiResponses().OkResult(new { IdVerified = false });
         }
 
         /// <summary>
@@ -1113,11 +1248,16 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// Walk-up gate redemption: staff scanned a pass QR and admits the holder to one of
-        /// today's events, with no pre-booking required. For credits passes this burns one ride
-        /// credit atomically with the check-in record; unlimited / day-of-week passes go through
-        /// the same door without a burn (fixing the long-standing gap where a pass QR had no
-        /// walk-up path at all and holders had to pre-book a $0 ticket online).
+        /// Gate redemption: staff scanned a pass QR. What happens next depends on the tenant's
+        /// admission mode (tenant.season_pass_admission_type_id).
+        ///
+        /// WalkUp: the pass admits on scan alone, against one of today's events when any are
+        /// running, or against the tenant-local operating day when the calendar is empty. For
+        /// credits passes this burns one ride credit atomically with the check-in record;
+        /// unlimited and day-of-week passes go through the same door without a burn.
+        ///
+        /// EventSignUp: the holder must already hold a reservation for the event. A scan with no
+        /// event, or with no live reservation for that event, is refused and told to sign up.
         /// </summary>
         [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
         [HttpPost("Pass/{token:guid}/Redeem")]
@@ -1140,93 +1280,172 @@ namespace webapi.Controllers
             var product = await _passes.GetProduct(pass.ProductId, _tenantContext.TenantId);
             if (product is null) return new ApiResponses().BadRequestResult("Pass product missing — contact support.");
 
-            var ev = await _events.GetById(request.EventId, _tenantContext.TenantId);
-            if (ev is null || ev.Status != "scheduled")
-                return new ApiResponses().BadRequestResult("That event isn't available for check-in.");
+            // Which admission model this track runs.
+            var admissionType = (SeasonPassAdmissionType)_tenantContext.Tenant.SeasonPassAdmissionTypeId;
 
-            // Walk-up only: the event must be running today in the tenant's timezone. Advance
-            // booking stays on the rider-facing Reserve endpoint.
             var tz = TimeZoneInfo.FindSystemTimeZoneById(_tenantContext.Tenant.Timezone);
             var todayLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
-            var eventDayLocal = TimeZoneInfo.ConvertTimeFromUtc(
-                DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc), tz).Date;
-            if (eventDayLocal != todayLocal)
-                return new ApiResponses().BadRequestResult("That event isn't running today — walk-up redemption is same-day only.");
 
-            if (eventDayLocal < pass.ValidFromDate.Date)
-                return new ApiResponses().BadRequestResult($"This pass's season hasn't started yet — it's valid from {pass.ValidFromDate:MMM d, yyyy}.");
-            if (eventDayLocal > pass.ValidToDate.Date)
+            // A sign-up track has no admission path without an event, so reject the no-event shape
+            // before any branching rather than letting it fall through to the walk-up anchor.
+            if (admissionType == SeasonPassAdmissionType.EventSignUp && request.EventId is null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track requires an event sign-up before riding. The rider must reserve a spot " +
+                    "for the event from My Passes first, then scan again.");
+            }
+
+            // The operating day this scan validates against: the event's day, or simply today.
+            DateTime dayLocal;
+            var eventId = request.EventId;
+
+            if (eventId is Guid evId)
+            {
+                var ev = await _events.GetById(evId, _tenantContext.TenantId);
+                if (ev is null || ev.Status != "scheduled")
+                    return new ApiResponses().BadRequestResult("That event isn't available for check-in.");
+
+                // Same-day only in the tenant's timezone. Advance booking stays on Reserve.
+                var eventDayLocal = TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc), tz).Date;
+                if (eventDayLocal != todayLocal)
+                    return new ApiResponses().BadRequestResult("That event isn't running today, and gate redemption is same-day only.");
+                dayLocal = eventDayLocal;
+            }
+            else
+            {
+                // Walk-up track with an empty calendar: the operating day is the anchor.
+                dayLocal = todayLocal;
+            }
+
+            if (dayLocal < pass.ValidFromDate.Date)
+                return new ApiResponses().BadRequestResult($"This pass's season hasn't started yet, it's valid from {pass.ValidFromDate:MMM d, yyyy}.");
+            if (dayLocal > pass.ValidToDate.Date)
                 return new ApiResponses().BadRequestResult($"This pass's season ended {pass.ValidToDate:MMM d, yyyy}.");
 
             if (product.Kind == "days_of_week" && product.ValidDaysOfWeek is { Length: > 0 })
             {
-                var dow = (int)eventDayLocal.DayOfWeek;     // 0=Sun..6=Sat
+                var dow = (int)dayLocal.DayOfWeek;     // 0=Sun..6=Sat
                 if (!product.ValidDaysOfWeek.Contains(dow))
                     return new ApiResponses().BadRequestResult("This pass isn't valid on this day of the week.");
             }
 
             // Registration gate (photo to verify the holder, product waiver when required),
-            // then the event's own rider waiver — same standards as reservation check-in.
+            // then the event's own rider waiver, same standards as reservation check-in.
             var ctx = await _passes.GetPassForGateCheckIn(pass.Id, _tenantContext.TenantId);
             if (ctx is not null)
             {
                 var registrationBlock = await RegistrationBlockReason(ctx);
                 if (registrationBlock is not null) return new ApiResponses().BadRequestResult(registrationBlock);
 
-                if (ctx.WaiverSignatureId is null)
+                // Skipped with no event: there is no event document to carry a rider waiver, so
+                // there is nothing to enforce. The product's own waiver was covered just above.
+                if (eventId is Guid waiverEventId && ctx.WaiverSignatureId is null)
                 {
-                    var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, request.EventId,
+                    var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, waiverEventId,
                         riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
                     if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
                 }
             }
 
-            // Serialize double-scans of the same pass; the pre-check below + the atomic
-            // burn/upsert in CreateGateCheckIn depend on it.
+            // Serialize double-scans of the same pass; the pre-checks below and the atomic
+            // burn/upsert in both CreateGateCheckIn and CreateWalkUpGateCheckIn depend on it.
+            // Keyed on the pass alone, so it covers every anchor that pass could be admitted
+            // against today, event or no event.
             await using var redeemLock = await _db.AcquireAdvisoryLock($"season-pass-redeem:{pass.Id}");
 
-            var existing = await _passes.GetReservation(pass.Id, request.EventId);
-            if (existing is not null && existing.Status == "checked_in")
+            if (eventId is Guid gateEventId)
             {
-                return new ApiResponses().OkResult(new
+                var existing = await _passes.GetReservation(pass.Id, gateEventId);
+
+                // A sign-up track admits only a pass that reserved ahead. Re-checked here, under
+                // the lock, so a raced cancel can't slip a walk-up through after the earlier checks.
+                if (admissionType == SeasonPassAdmissionType.EventSignUp
+                    && existing?.Status is not ("reserved" or "checked_in"))
                 {
-                    ReservationId = existing.Id,
-                    AlreadyAdmitted = true,
-                    CheckedInAtUtc = existing.CheckedInAt is null
-                        ? null : (DateTime?)DateTime.SpecifyKind(existing.CheckedInAt.Value, DateTimeKind.Utc),
-                    pass.CreditsRemaining,
-                });
-            }
-            if (existing is not null && existing.Status == "reserved")
-            {
-                // Pre-booked via Reserve, which already burned the credit — just flip it.
-                var flipped = await _passes.UpdateReservationStatus(existing.Id, _tenantContext.TenantId, "checked_in", staffId);
-                if (flipped == 0)
                     return new ApiResponses().BadRequestResult(
-                        "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
+                        "This track requires an event sign-up before riding. The rider must reserve a spot " +
+                        "for the event from My Passes first, then scan again.");
+                }
+
+                if (existing is not null && existing.Status == "checked_in")
+                {
+                    return new ApiResponses().OkResult(new
+                    {
+                        ReservationId = existing.Id,
+                        AlreadyAdmitted = true,
+                        CheckedInAtUtc = existing.CheckedInAt is null
+                            ? null : (DateTime?)DateTime.SpecifyKind(existing.CheckedInAt.Value, DateTimeKind.Utc),
+                        pass.CreditsRemaining,
+                    });
+                }
+                if (existing is not null && existing.Status == "reserved")
+                {
+                    // Pre-booked via Reserve, which already burned the credit, so just flip it.
+                    // On a sign-up track this IS the admission; CreateGateCheckIn is never reached.
+                    var flipped = await _passes.UpdateReservationStatus(existing.Id, _tenantContext.TenantId, "checked_in", staffId);
+                    if (flipped == 0)
+                        return new ApiResponses().BadRequestResult(
+                            "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
+                    return new ApiResponses().OkResult(new
+                    {
+                        ReservationId = existing.Id,
+                        AlreadyAdmitted = false,
+                        CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
+                        pass.CreditsRemaining,
+                    });
+                }
+
+                // Walk-up only past this point: a sign-up track already returned above.
+                var burnCredit = product.Kind == "credits";
+                var result = await _passes.CreateGateCheckIn(pass.Id, _tenantContext.TenantId, gateEventId, staffId, burnCredit);
+                if (result is null)
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
+                }
                 return new ApiResponses().OkResult(new
                 {
-                    ReservationId = existing.Id,
+                    ReservationId = result.Value.ReservationId,
                     AlreadyAdmitted = false,
                     CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
-                    pass.CreditsRemaining,
+                    CreditsRemaining = result.Value.CreditsRemaining,
                 });
             }
+            else
+            {
+                // No event on the calendar: the anchor is (pass, today's local date). The
+                // already-admitted pre-check is load-bearing, not just a fast path: the burn in
+                // CreateWalkUpGateCheckIn commits even when its upsert is filtered out, so
+                // reaching it twice in one day would burn a second credit.
+                var existingWalkUp = await _passes.GetWalkUpCheckIn(pass.Id, _tenantContext.TenantId, dayLocal);
+                if (existingWalkUp is not null && existingWalkUp.Status == "checked_in")
+                {
+                    return new ApiResponses().OkResult(new
+                    {
+                        ReservationId = existingWalkUp.Id,
+                        AlreadyAdmitted = true,
+                        CheckedInAtUtc = existingWalkUp.CheckedInAt is null
+                            ? null : (DateTime?)DateTime.SpecifyKind(existingWalkUp.CheckedInAt.Value, DateTimeKind.Utc),
+                        pass.CreditsRemaining,
+                    });
+                }
 
-            var burnCredit = product.Kind == "credits";
-            var result = await _passes.CreateGateCheckIn(pass.Id, _tenantContext.TenantId, request.EventId, staffId, burnCredit);
-            if (result is null)
-            {
-                return new ApiResponses().BadRequestResult(
-                    "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
+                var burnCredit = product.Kind == "credits";
+                var result = await _passes.CreateWalkUpGateCheckIn(pass.Id, _tenantContext.TenantId, dayLocal, staffId, burnCredit);
+                if (result is null)
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
+                }
+                return new ApiResponses().OkResult(new
+                {
+                    ReservationId = result.Value.ReservationId,
+                    AlreadyAdmitted = false,
+                    CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
+                    CreditsRemaining = result.Value.CreditsRemaining,
+                });
             }
-            return new ApiResponses().OkResult(new
-            {
-                ReservationId = result.Value.ReservationId,
-                AlreadyAdmitted = false,
-                CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
-                CreditsRemaining = result.Value.CreditsRemaining,
-            });
         }
 
         /// <summary>

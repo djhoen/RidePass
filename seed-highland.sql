@@ -659,25 +659,25 @@ BEGIN
     INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
         VALUES (v_tenant_id, 'Pretzel', 'Warm soft pretzel with cheese sauce', 'food', v_cat_snacks, 600, 20, true)
         RETURNING id INTO v_p_pretzel;
-    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
-        VALUES (v_tenant_id, 'Energy Bar', 'Grab-and-go trail fuel', 'food', v_cat_snacks, 350, 30, true)
+    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active, requires_prep)
+        VALUES (v_tenant_id, 'Energy Bar', 'Grab-and-go trail fuel', 'food', v_cat_snacks, 350, 30, true, false)
         RETURNING id INTO v_p_energybar;
-    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
-        VALUES (v_tenant_id, 'Trail Mix', 'Nuts, dried fruit, chocolate', 'food', v_cat_snacks, 400, 40, true)
+    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active, requires_prep)
+        VALUES (v_tenant_id, 'Trail Mix', 'Nuts, dried fruit, chocolate', 'food', v_cat_snacks, 400, 40, true, false)
         RETURNING id INTO v_p_trailmix;
 
     -- Drinks (Fountain Drink carries the Size modifier group)
     INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
         VALUES (v_tenant_id, 'Fountain Drink', 'Coke products, free refills at the counter', 'drink', v_cat_drinks, 350, 10, true)
         RETURNING id INTO v_p_fountain;
-    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
-        VALUES (v_tenant_id, 'Bottled Water', 'Spring water, 16.9oz', 'drink', v_cat_drinks, 250, 20, true)
+    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active, requires_prep)
+        VALUES (v_tenant_id, 'Bottled Water', 'Spring water, 16.9oz', 'drink', v_cat_drinks, 250, 20, true, false)
         RETURNING id INTO v_p_water;
-    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
-        VALUES (v_tenant_id, 'Sports Drink', 'Electrolyte replacement', 'drink', v_cat_drinks, 400, 30, true)
+    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active, requires_prep)
+        VALUES (v_tenant_id, 'Sports Drink', 'Electrolyte replacement', 'drink', v_cat_drinks, 400, 30, true, false)
         RETURNING id INTO v_p_sports;
-    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
-        VALUES (v_tenant_id, 'Canned Soda', 'Assorted cans', 'drink', v_cat_drinks, 300, 40, true)
+    INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active, requires_prep)
+        VALUES (v_tenant_id, 'Canned Soda', 'Assorted cans', 'drink', v_cat_drinks, 300, 40, true, false)
         RETURNING id INTO v_p_soda;
     INSERT INTO concession_product (tenant_id, name, description, category, category_id, price_cents, sort_order, is_active)
         VALUES (v_tenant_id, 'Hellion IPA (16oz)', 'House-brewed hazy IPA. 21+ with valid ID.', 'drink', v_cat_drinks, 800, 50, true)

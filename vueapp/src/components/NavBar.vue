@@ -317,6 +317,7 @@ const allGroups: AdminGroup[] = [
         links: [
             { to: '/Admin/BikeShop',     icon: 'mdi-package-variant',      title: 'Inventory',   perm: Perm.CatalogManage, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Register', icon: 'mdi-cash-register',   title: 'Register',    perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/RentalBoard', icon: 'mdi-chart-timeline-variant', title: 'Rental Board', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Rentals',  icon: 'mdi-bike-fast',       title: 'Rentals',     perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/WorkOrders', icon: 'mdi-wrench',        title: 'Work Orders', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Sales',    icon: 'mdi-receipt-text-clock', title: 'Shop Sales', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },

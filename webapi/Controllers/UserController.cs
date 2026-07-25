@@ -107,10 +107,12 @@ namespace webapi.Controllers
                     "Please verify your email before signing in. Check your inbox for the verification link.");
             }
 
-            // "Remember me" = a longer-lived token, not a stored credential. NOTE: there is no
-            // refresh/revocation mechanism today, so a remembered token stays valid for its full
-            // life even after a password change or deactivation. 21 days is the agreed balance
-            // between not re-authenticating a bench phone daily and limiting that exposure.
+            // "Remember me" = a longer-lived token for bench devices, not a stored credential.
+            // Normal sessions get the Jwt:IdleTimeoutMinutes default (30 min) and SLIDE:
+            // SlidingSessionMiddleware re-issues on activity, so the lifetime is an idle
+            // timeout, not a hard cap, and deactivation stops the slide at the next refresh.
+            // A token's remaining window (up to 21 days when remembered) still can't be
+            // revoked mid-flight after a password change.
             var token = _jwtIssuer.IssueForUser(
                 user, request.RememberMe ? TimeSpan.FromDays(21) : null);
 
@@ -163,6 +165,7 @@ namespace webapi.Controllers
                 Roles = roles,
                 Permissions = permissions,
                 RequireIdAtCheckin = _tenantContext.IsResolved && _tenantContext.Tenant.RequireIdAtCheckin,
+                RequireIdForWristband = _tenantContext.IsResolved && _tenantContext.Tenant.RequireIdForWristband,
             });
         }
 

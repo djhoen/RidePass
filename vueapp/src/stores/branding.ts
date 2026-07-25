@@ -28,9 +28,12 @@ export interface BrandingState {
     navBarTextColor: string | null
     stripePublishableKey: string | null
     requireReservationForPasses: boolean
+    /** Season pass gate admission mode: 1 = event sign-up required, 2 = walk-up. */
+    seasonPassAdmissionTypeId: number
     requireEmergencyContact: boolean
     allowEventSubscriptions: boolean
     requireIdAtCheckin: boolean
+    requireIdForWristband: boolean
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
     stripeChargeMode: string
@@ -142,9 +145,11 @@ const defaults: BrandingState = {
     navBarTextColor: null,
     stripePublishableKey: null,
     requireReservationForPasses: false,
+    seasonPassAdmissionTypeId: 2,
     requireEmergencyContact: false,
     allowEventSubscriptions: true,
     requireIdAtCheckin: false,
+    requireIdForWristband: false,
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
     stripeChargeMode: 'platform',
@@ -294,9 +299,13 @@ export async function loadBranding(): Promise<void> {
         branding.navBarTextColor = data.navBarTextColor ?? null
         branding.stripePublishableKey = data.stripePublishableKey ?? null
         branding.requireReservationForPasses = !!data.requireReservationForPasses
+        // Default 2 (walk-up) matches the tenant column default, so any rollout skew where the
+        // API predates this field resolves to today's behavior rather than locking the gate.
+        branding.seasonPassAdmissionTypeId = data.seasonPassAdmissionTypeId ?? 2
         branding.requireEmergencyContact = !!data.requireEmergencyContact
         branding.allowEventSubscriptions = !!data.allowEventSubscriptions
         branding.requireIdAtCheckin = !!data.requireIdAtCheckin
+        branding.requireIdForWristband = !!data.requireIdForWristband
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'

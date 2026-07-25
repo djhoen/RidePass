@@ -286,6 +286,30 @@ namespace Services.Repositories
         // gate_fee rows sold to the spectator audience; everything else is a rider.
         private const string SpectatorTierExpr = "(tier.kind = 'spectator_pass' OR tier.audience = 'spectator')";
 
+        // A ticket's purchase bucket. A gate fee redeemed against a season pass reports as that
+        // pass's type, not as a day ticket: the rider walked in on their pass, which is what the
+        // filter is asked to answer. Everything else falls back to the tier's own kind.
+        private const string TicketPurchaseTypeExpr = @"
+                       CASE
+                           WHEN tier.kind = 'race_entry' THEN 'race_entry'
+                           WHEN tier.kind = 'spectator_pass' OR tier.audience = 'spectator' THEN 'spectator_pass'
+                           WHEN aspp.id IS NOT NULL THEN
+                               CASE asp.kind
+                                   WHEN 'credits' THEN 'season_pass_credits'
+                                   WHEN 'days_of_week' THEN 'season_pass_days'
+                                   ELSE 'season_pass_unlimited'
+                               END
+                           ELSE 'day_ticket'
+                       END";
+
+        // Same buckets for a season-pass reservation, read off the pass product itself.
+        private const string SeasonPassPurchaseTypeExpr = @"
+                       CASE sp.kind
+                           WHEN 'credits' THEN 'season_pass_credits'
+                           WHEN 'days_of_week' THEN 'season_pass_days'
+                           ELSE 'season_pass_unlimited'
+                       END";
+
         private const string RiderTicketBranch = @"
                 SELECT t.id AS PurchaseId,
                        'ticket' AS Source,
@@ -299,19 +323,41 @@ namespace Services.Repositories
                        t.redeemed_at_utc AS CheckedInAtUtc,
                        wb.code AS WristbandCode,
                        (t.waiver_signature_id IS NOT NULL OR t.waiver_signed_at IS NOT NULL
-                            OR t.waiver_signature_data_url IS NOT NULL) AS SignedForThis
+                            OR t.waiver_signature_data_url IS NOT NULL) AS SignedForThis,
+{TICKET_PURCHASE_TYPE} AS PurchaseType,
+                       tet.name AS EventTypeName, tet.code AS EventTypeCode,
+                       COALESCE(t.registration_complete, false) AS RegistrationComplete,
+                       t.rider_birthdate AS RiderBirthdate
                 FROM event_ticket_purchase t
                 JOIN event_ticket_tier tier ON tier.id = t.tier_id
                 JOIN event e ON e.id = tier.event_id
+                LEFT JOIN tenant_event_type tet ON tet.id = e.event_type_id
                 LEFT JOIN event_wristband wb ON wb.ticket_id = t.id AND wb.tenant_id = t.tenant_id
+                LEFT JOIN season_pass_purchase aspp ON aspp.id = t.applied_season_pass_purchase_id
+                                                   AND aspp.tenant_id = t.tenant_id
+                LEFT JOIN season_pass_product asp ON asp.id = aspp.product_id
                 WHERE t.tenant_id = @tenantId
                   AND t.status <> 'cancelled'
                   AND {AUDIENCE_FILTER}
                   AND {EVENT_WINDOW}";
 
+        // The tenant's IANA zone, defaulted, for converting between walk-up calendar dates and the
+        // UTC instants the rest of the report speaks. Matches the fallback NextOrderNumber uses.
+        private const string TenantZoneExpr =
+            "COALESCE(NULLIF((SELECT t.timezone FROM tenant t WHERE t.id = @tenantId), ''), 'UTC')";
+
+        // A season-pass admission anchors to EITHER an event or a tenant-local calendar date
+        // (Script0236: walk-up tracks can open the lift on a day with nothing on the calendar).
+        // The event join is therefore a LEFT join: an INNER join silently drops every walk-up row,
+        // and walk-up is the DEFAULT admission type, so that would hide the common case.
+        //
+        // EventStartsAtUtc for a walk-up is its check_in_date read as MIDNIGHT IN THE TENANT'S ZONE,
+        // not midnight UTC. Casting the date straight to timestamptz would land it on the previous
+        // evening for any negative-offset track and the row would render under the wrong day.
         private const string RiderSeasonPassBranch = @"
                 SELECT spr.id, 'season_pass',
-                       e.id, e.title, e.starts_at,
+                       e.id, e.title,
+                       COALESCE(e.starts_at, (spr.check_in_date::timestamp AT TIME ZONE " + TenantZoneExpr + @")),
                        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', spp.holder_first_name, spp.holder_last_name)), ''),
                                 spp.purchaser_name, '(unknown)'),
                        spp.purchaser_email,
@@ -320,17 +366,23 @@ namespace Services.Repositories
                        (spr.checked_in_at IS NOT NULL),
                        spr.checked_in_at,
                        NULL::text,
-                       false
+                       false,
+{SEASON_PASS_PURCHASE_TYPE},
+                       tet.name, tet.code,
+                       true,
+                       spp.holder_birthdate
                 FROM season_pass_reservation spr
                 JOIN season_pass_purchase spp ON spp.id = spr.season_pass_purchase_id
                 JOIN season_pass_product sp ON sp.id = spp.product_id
-                JOIN event e ON e.id = spr.event_id
+                LEFT JOIN event e ON e.id = spr.event_id AND e.tenant_id = spp.tenant_id
+                LEFT JOIN tenant_event_type tet ON tet.id = e.event_type_id
                 WHERE spp.tenant_id = @tenantId
                   AND spr.status <> 'cancelled'
-                  AND {EVENT_WINDOW}";
+                  AND {SEASON_PASS_WINDOW}";
 
         // Composes the CTE for one audience: spectators are ticket-only (a season pass
-        // reservation is always a rider), riders get both branches.
+        // reservation is always a rider), riders get both branches. The active-waiver set is
+        // hoisted alongside so the per-row coverage check below doesn't re-derive it.
         private static string RiderRowsCteFor(string audience) =>
             "WITH rows AS (" + (audience switch
             {
@@ -340,40 +392,106 @@ namespace Services.Repositories
                 _ => RiderTicketBranch.Replace("{AUDIENCE_FILTER}", $"NOT {SpectatorTierExpr}")
                     + "\n                UNION ALL\n" + RiderSeasonPassBranch,
             })
-            + "\n            )";
+                .Replace("{TICKET_PURCHASE_TYPE}", TicketPurchaseTypeExpr)
+                .Replace("{SEASON_PASS_PURCHASE_TYPE}", SeasonPassPurchaseTypeExpr)
+            + "\n            ),\n" + ActiveWaiverCte;
+
+        // The tenant's currently-active waivers, resolved once per query. Materialized on purpose:
+        // it's a handful of rows probed by every coverage branch below, so re-planning it inline
+        // for each one buys nothing.
+        private const string ActiveWaiverCte = @"
+            active_waiver AS MATERIALIZED (
+                SELECT tw.id
+                FROM tenant_waiver tw
+                WHERE tw.tenant_id = @tenantId
+                  AND tw.is_active AND (tw.expires_at IS NULL OR tw.expires_at > now())
+            )";
 
         // Account/email-level waiver coverage on a currently-active waiver, same matching the
         // Compliance screen uses (account id first, else email against signer or account email).
+        //
+        // PERFORMANCE: this runs once per report row, so each match path has to be index-driven.
+        // It used to be ONE EXISTS that ORed all three paths together inside a single scan of
+        // rider_waiver_signature. No index can serve an OR across three different columns, so
+        // Postgres fell back to a full scan of the tenant's signatures for EVERY row that wasn't
+        // already signed-for-this-ticket, plus a full scan of users inside it. Measured on stage
+        // (Highland, 32k signatures) that was 8.3 s for a single day of riders, and it degrades
+        // linearly with both signature history and rows on screen.
+        //
+        // Split into one EXISTS per path, each hitting an existing index
+        // (uk_rider_waiver_once_user, idx_rider_waiver_sig_signer_email, users_pkey), the same
+        // query returns the same rows in 16 ms. Keep them separate: re-merging them into one
+        // OR'd EXISTS silently restores the full scan.
         private const string RiderWaiverCoverageExpr = @"
-            (r.SignedForThis OR EXISTS (
-                SELECT 1
-                FROM rider_waiver_signature ws
-                JOIN tenant_waiver tw ON tw.id = ws.waiver_id
-                WHERE ws.tenant_id = @tenantId
-                  AND tw.is_active AND (tw.expires_at IS NULL OR tw.expires_at > now())
-                  AND ((r.UserId IS NOT NULL AND ws.user_id = r.UserId)
-                    OR (r.Email IS NOT NULL AND r.Email <> '' AND
-                         (lower(ws.signer_email) = lower(r.Email)
-                          OR ws.user_id IN (SELECT uu.id FROM users uu WHERE lower(uu.email) = lower(r.Email)))))))";
+            (r.SignedForThis
+             -- Signed under their own account.
+             OR (r.UserId IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM rider_waiver_signature ws
+                    WHERE ws.tenant_id = @tenantId AND ws.user_id = r.UserId
+                      AND ws.waiver_id IN (SELECT id FROM active_waiver)))
+             -- Signed as a guest under this row's email.
+             OR (r.Email IS NOT NULL AND r.Email <> '' AND EXISTS (
+                    SELECT 1 FROM rider_waiver_signature ws
+                    WHERE ws.tenant_id = @tenantId
+                      AND lower(ws.signer_email) = lower(r.Email)
+                      AND ws.waiver_id IN (SELECT id FROM active_waiver)))
+             -- Signed under an account whose email matches this row's email (the buyer holds an
+             -- account but the ticket carries only their address).
+             OR (r.Email IS NOT NULL AND r.Email <> '' AND EXISTS (
+                    SELECT 1 FROM users uu
+                    JOIN rider_waiver_signature ws ON ws.user_id = uu.id
+                    WHERE lower(uu.email) = lower(r.Email)
+                      AND ws.tenant_id = @tenantId
+                      AND ws.waiver_id IN (SELECT id FROM active_waiver))))";
+
+        // Date-range window for season-pass admissions. Event-anchored rows keep comparing against
+        // the event's UTC start; walk-up rows compare their tenant-LOCAL calendar date against the
+        // window's bounds converted into that same local calendar, so a Denver track's "July 4"
+        // report can't pull in a walk-up stamped July 3 or miss one stamped July 4.
+        private const string RangeSeasonPassWindow = @"(
+                      (spr.event_id IS NOT NULL
+                          AND e.tenant_id = @tenantId AND e.starts_at >= @fromUtc AND e.starts_at < @toUtc)
+                   OR (spr.event_id IS NULL
+                          AND spr.check_in_date >= (@fromUtc AT TIME ZONE " + TenantZoneExpr + @")::date
+                          AND spr.check_in_date <  (@toUtc   AT TIME ZONE " + TenantZoneExpr + @")::date)
+                  )";
+
+        // Same split for the rider drill-in's rolling last-365-days window.
+        private const string RegistrationsSeasonPassWindow = @"(
+                      (spr.event_id IS NOT NULL
+                          AND e.tenant_id = @tenantId AND e.starts_at >= now() - INTERVAL '365 days')
+                   OR (spr.event_id IS NULL
+                          AND spr.check_in_date >= ((now() - INTERVAL '365 days') AT TIME ZONE " + TenantZoneExpr + @")::date)
+                  )";
 
         public async Task<List<RiderReportRow>> GetRidersByRange(Guid tenantId, DateTime fromUtc, DateTime toUtc,
-            string? search, int cap, string audience = "rider")
+            string? search, int cap, string audience = "rider",
+            IReadOnlyList<string>? purchaseTypes = null, IReadOnlyList<string>? eventTypeCodes = null)
         {
             var searchSql = string.IsNullOrWhiteSpace(search) ? "" : @"
                   AND (lower(r.RiderName) LIKE @search
                        OR lower(COALESCE(r.Email, '')) LIKE @search
                        OR lower(COALESCE(r.WristbandCode, '')) LIKE @search)";
+            // Both filters are applied against the CTE's derived columns, so they narrow the set
+            // BEFORE the row cap: a filtered report can reach rows a capped unfiltered one hid.
+            var purchaseTypeSql = purchaseTypes is { Count: > 0 }
+                ? "\n                  AND r.PurchaseType = ANY(@purchaseTypes)" : "";
+            var eventTypeSql = eventTypeCodes is { Count: > 0 }
+                ? "\n                  AND r.EventTypeCode = ANY(@eventTypeCodes)" : "";
             var sql = RiderRowsCteFor(audience)
-                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= @fromUtc AND e.starts_at < @toUtc") + $@"
+                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= @fromUtc AND e.starts_at < @toUtc")
+                .Replace("{SEASON_PASS_WINDOW}", RangeSeasonPassWindow) + $@"
                 SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
                 FROM rows r
-                WHERE true{searchSql}
+                WHERE true{searchSql}{purchaseTypeSql}{eventTypeSql}
                 ORDER BY r.EventStartsAtUtc, r.RiderName
                 LIMIT @cap";
             var rows = await _db.Query<RiderReportRow>(sql, new
             {
                 tenantId, fromUtc, toUtc, cap,
                 search = $"%{search?.Trim().ToLowerInvariant()}%",
+                purchaseTypes = purchaseTypes?.ToArray(),
+                eventTypeCodes = eventTypeCodes?.ToArray(),
             });
             return rows.ToList();
         }
@@ -381,7 +499,8 @@ namespace Services.Repositories
         public async Task<List<RiderReportRow>> GetRiderRegistrations(Guid tenantId, Guid? userId, string? email)
         {
             var sql = RiderRowsCteFor("all")
-                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= now() - INTERVAL '365 days'") + $@"
+                .Replace("{EVENT_WINDOW}", "e.tenant_id = @tenantId AND e.starts_at >= now() - INTERVAL '365 days'")
+                .Replace("{SEASON_PASS_WINDOW}", RegistrationsSeasonPassWindow) + $@"
                 SELECT r.*, {RiderWaiverCoverageExpr} AS WaiverSigned
                 FROM rows r
                 WHERE ((@userId::uuid IS NOT NULL AND r.UserId = @userId)
@@ -394,6 +513,9 @@ namespace Services.Repositories
 
         public async Task<List<RiderWaiverRow>> GetRiderWaivers(Guid tenantId, Guid? userId, string? email)
         {
+            // The signature image is deliberately NOT selected: it's a base64 data URL per row and a
+            // regular at a busy park racks up dozens. Only the flag ships; GetWaiverSignatureImage
+            // fetches the one the admin actually opens.
             const string sql = @"
                 SELECT s.id,
                        w.name AS WaiverName,
@@ -401,6 +523,8 @@ namespace Services.Repositories
                        s.signed_at AS SignedAtUtc,
                        s.signed_by_parent AS SignedByParent,
                        s.parent_name AS ParentName,
+                       s.signer_name AS SignerName,
+                       (s.signature_data_url IS NOT NULL) AS HasSignatureImage,
                        (w.is_active AND (w.expires_at IS NULL OR w.expires_at > now())) AS WaiverIsCurrent
                 FROM rider_waiver_signature s
                 JOIN tenant_waiver w ON w.id = s.waiver_id
@@ -413,6 +537,100 @@ namespace Services.Repositories
                 LIMIT 100";
             var rows = await _db.Query<RiderWaiverRow>(sql, new { tenantId, userId, email });
             return rows.ToList();
+        }
+
+        /// <summary>
+        /// One signature's image, tenant-scoped by the signature id. Separate from the drill-in so
+        /// the payload only carries an image when an admin asks to see that specific one.
+        /// </summary>
+        public async Task<string?> GetWaiverSignatureImage(Guid tenantId, Guid signatureId)
+        {
+            const string sql = @"
+                SELECT signature_data_url
+                FROM rider_waiver_signature
+                WHERE id = @signatureId AND tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<string?>(sql, new { tenantId, signatureId })).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Identity + lifetime totals for the drill-in header. Identity comes from the account when
+        /// there is one; guests (no account) fall back to the details captured on their most recent
+        /// purchase, which is the only place a guest's phone/emergency contact is ever recorded.
+        /// </summary>
+        public async Task<RiderProfileRow?> GetRiderProfile(Guid tenantId, Guid? userId, string? email)
+        {
+            const string sql = @"
+                WITH matched_tickets AS (
+                    SELECT t.*
+                    FROM event_ticket_purchase t
+                    WHERE t.tenant_id = @tenantId
+                      AND t.status <> 'cancelled'
+                      AND ((@userId::uuid IS NOT NULL AND t.purchaser_user_id = @userId)
+                        OR (@email IS NOT NULL AND lower(COALESCE(t.purchaser_email, '')) = lower(@email)))
+                ),
+                -- Most recent purchase that actually captured each detail, so an older ticket can
+                -- still supply a phone the latest one left blank.
+                latest AS (
+                    SELECT
+                        (SELECT bike FROM matched_tickets WHERE bike IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS Bike,
+                        (SELECT emergency_contact_name FROM matched_tickets WHERE emergency_contact_name IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS EmergencyContactName,
+                        (SELECT emergency_contact_phone FROM matched_tickets WHERE emergency_contact_phone IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS EmergencyContactPhone,
+                        (SELECT parent_guardian_name FROM matched_tickets WHERE parent_guardian_name IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS ParentGuardianName,
+                        (SELECT rider_birthdate FROM matched_tickets WHERE rider_birthdate IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS TicketBirthdate,
+                        (SELECT race_number FROM matched_tickets WHERE race_number IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS TicketRaceNumber
+                ),
+                -- Season-pass reservations are entries too, so a pass holder's counts can't read as
+                -- zero next to a Registered-for list full of rows. They carry no spend: the money
+                -- was on the pass itself, not the reservation.
+                matched_entries AS (
+                    SELECT (status = 'redeemed') AS attended, amount_cents,
+                           created_at, COALESCE(redeemed_at_utc, created_at) AS last_seen
+                    FROM matched_tickets
+                    UNION ALL
+                    SELECT (spr.checked_in_at IS NOT NULL), 0,
+                           spr.reserved_at, COALESCE(spr.checked_in_at, spr.reserved_at)
+                    FROM season_pass_reservation spr
+                    JOIN season_pass_purchase spp ON spp.id = spr.season_pass_purchase_id
+                    WHERE spp.tenant_id = @tenantId
+                      AND spr.status <> 'cancelled'
+                      AND ((@userId::uuid IS NOT NULL AND spp.purchaser_user_id = @userId)
+                        OR (@email IS NOT NULL AND lower(COALESCE(spp.purchaser_email, '')) = lower(@email)))
+                ),
+                totals AS (
+                    SELECT COUNT(*)::int AS TotalRegistrations,
+                           COUNT(*) FILTER (WHERE attended)::int AS TotalCheckedIn,
+                           COALESCE(SUM(amount_cents), 0)::bigint AS TotalSpentCents,
+                           MIN(created_at) AS FirstVisitUtc,
+                           MAX(last_seen) AS LastVisitUtc
+                    FROM matched_entries
+                )
+                SELECT u.id AS UserId,
+                       COALESCE(u.email, @email) AS Email,
+                       u.phone AS Phone,
+                       NULLIF(TRIM(BOTH ', ' FROM CONCAT_WS(', ', u.city, u.state)), '') AS Hometown,
+                       COALESCE(u.race_number, latest.TicketRaceNumber) AS RaceNumber,
+                       COALESCE(u.birthdate, latest.TicketBirthdate) AS Birthdate,
+                       u.created_at AS MemberSinceUtc,
+                       latest.Bike, latest.EmergencyContactName, latest.EmergencyContactPhone,
+                       latest.ParentGuardianName,
+                       totals.TotalRegistrations, totals.TotalCheckedIn, totals.TotalSpentCents,
+                       totals.FirstVisitUtc, totals.LastVisitUtc
+                FROM totals
+                CROSS JOIN latest
+                LEFT JOIN users u ON (@userId::uuid IS NOT NULL AND u.id = @userId)
+                                  OR (@userId::uuid IS NULL AND @email IS NOT NULL AND lower(u.email) = lower(@email))
+                -- An email can resolve to more than one account (a rider's global account and a
+                -- tenant-scoped staff row). Oldest wins so the header doesn't flip between loads.
+                ORDER BY u.created_at
+                LIMIT 1";
+            return (await _db.Query<RiderProfileRow>(sql, new { tenantId, userId, email })).FirstOrDefault();
         }
 
         // "Who has signed" report for one event: each event ticket's attendee and their waiver signing
@@ -525,9 +743,9 @@ namespace Services.Repositories
                     spr.id AS Id,
                     'season_pass' AS Source,
                     e.id AS EventId,
-                    e.title AS EventTitle,
-                    e.starts_at AS EventStartsAtUtc,
-                    e.ends_at AS EventEndsAtUtc,
+                    COALESCE(e.title, 'Walk-up admission') AS EventTitle,
+                    COALESCE(e.starts_at, (spr.check_in_date::timestamp AT TIME ZONE " + TenantZoneExpr + @")) AS EventStartsAtUtc,
+                    COALESCE(e.ends_at,   (spr.check_in_date::timestamp AT TIME ZONE " + TenantZoneExpr + @")) AS EventEndsAtUtc,
                     sp.name AS ItemName,
                     spr.status AS Status,
                     (spr.checked_in_at IS NOT NULL) AS CheckedIn,
@@ -536,12 +754,16 @@ namespace Services.Repositories
                 FROM season_pass_reservation spr
                 JOIN season_pass_purchase spp ON spp.id = spr.season_pass_purchase_id
                 JOIN season_pass_product sp ON sp.id = spp.product_id
-                JOIN event e ON e.id = spr.event_id
+                LEFT JOIN event e ON e.id = spr.event_id AND e.tenant_id = spp.tenant_id
                 WHERE spp.tenant_id = @tenantId
                   AND spp.purchaser_user_id = @userId
                   AND spr.status <> 'cancelled'
-                  AND e.starts_at >= @fromUtc
-                  AND e.starts_at < @toUtc
+                  AND (
+                        (e.starts_at >= @fromUtc AND e.starts_at < @toUtc)
+                        OR (spr.event_id IS NULL AND spr.check_in_date IS NOT NULL
+                            AND spr.check_in_date >= (@fromUtc AT TIME ZONE " + TenantZoneExpr + @")::date
+                            AND spr.check_in_date <  (@toUtc   AT TIME ZONE " + TenantZoneExpr + @")::date)
+                      )
 
                 ORDER BY EventStartsAtUtc";
             var regs = rider.UserId.HasValue

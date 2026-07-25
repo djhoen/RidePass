@@ -139,10 +139,15 @@ export interface MySeasonPass {
 
 export interface PassReservation {
     id: string
-    eventId: string
+    /** Null on a walk-up admission taken on a day with no calendar event. */
+    eventId: string | null
+    /** "Walk-up admission" when there was no event. */
     eventTitle: string
-    eventStartsAtUtc: string
-    eventEndsAtUtc: string
+    /** Both null on a walk-up admission; render checkInDate instead. */
+    eventStartsAtUtc: string | null
+    eventEndsAtUtc: string | null
+    /** Tenant-local date (YYYY-MM-DD) of a walk-up admission; null on event-anchored rows. */
+    checkInDate: string | null
     status: string
     checkedInAtUtc: string | null
 }
@@ -174,6 +179,31 @@ export interface PassLookup {
     /** Scheduled events running today (tenant tz) — walk-up redemption targets. */
     todaysEvents: PassTodayEvent[]
     todaysReservations: PassReservation[]
+
+    // ── The two gate checks the worker has to see before banding someone ──────
+    /** Holder has a signed waiver. Computed the same way admission enforces it. */
+    waiverSigned: boolean
+    /** Why the waiver check fails, when it could be resolved (a single event today). */
+    waiverBlockReason: string | null
+    idVerified: boolean
+    idVerifiedAtUtc: string | null
+    idVerifiedByName: string | null
+    /** 'rider' = on their account, carries forward. 'credential' = this pass only. 'none'. */
+    idVerifiedScope: 'none' | 'rider' | 'credential'
+    /** Age from the DOB on the document. Null until verified, never a self-reported age. */
+    idVerifiedAge: number | null
+    /** Self-reported at registration; the starting point for the verify dialog. */
+    holderBirthdate: string | null
+    /** Tenant requires waiver + verified ID before a wristband may be issued. */
+    requireIdForWristband: boolean
+}
+
+export interface VerifyRiderIdResult {
+    idVerified: boolean
+    idVerifiedAtUtc: string | null
+    idVerifiedByName: string | null
+    idVerifiedScope: 'none' | 'rider' | 'credential'
+    idVerifiedAge: number | null
 }
 
 export interface GateRedeemResult {
@@ -238,8 +268,23 @@ export class SeasonPassService {
         return axios.post(`${this.apiUrl}/SeasonPass/Reservations/${reservationId}/CheckIn`)
     }
     /** Walk-up gate admission for a scanned pass: burns one credit on credits passes. */
-    redeemAtGate(token: string, eventId: string) {
+    /** Admit a scanned pass. eventId null = walk-up on a day with no calendar event, which the
+     *  server accepts only for tenants in walk-up admission mode. */
+    redeemAtGate(token: string, eventId: string | null) {
         return axios.post<{ data: GateRedeemResult }>(`${this.apiUrl}/SeasonPass/Pass/${token}/Redeem`, { eventId })
+    }
+    /**
+     * Records that the worker checked this holder's photo ID. `verifiedDob` is the date of birth
+     * printed on the document; omitting it falls back to the birthdate given at registration.
+     * The result persists, so later scans show the tick without re-carding the rider.
+     */
+    verifyPassHolderId(token: string, verifiedDob: string | null) {
+        return axios.post<{ data: VerifyRiderIdResult }>(
+            `${this.apiUrl}/SeasonPass/Pass/${token}/VerifyId`, { verifiedDob })
+    }
+    /** Admin-only correction: undoes a verification recorded in error, account included. */
+    clearPassHolderIdVerification(token: string) {
+        return axios.post(`${this.apiUrl}/SeasonPass/Pass/${token}/ClearIdVerification`)
     }
     /** Admin support override of a credits pass's remaining rides (audit-logged, reason required). */
     adjustCredits(passPurchaseId: string, creditsRemaining: number, reason: string) {

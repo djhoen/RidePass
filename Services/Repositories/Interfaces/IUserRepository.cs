@@ -38,6 +38,11 @@ namespace Services.Repositories.Interfaces
         Task SetEmailVerificationToken(Guid userId, string tokenHash, DateTime expiresAtUtc);
         Task<User?> GetByEmailVerificationTokenHash(string tokenHash);
         Task MarkEmailVerified(Guid userId);
+        /// <summary>Records a staff ID/age check against this rider's account. Tenant-scoped;
+        /// returns rows affected.</summary>
+        Task<int> SetIdVerified(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
+        /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
+        Task<int> ClearIdVerified(Guid userId, Guid tenantId);
         Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
             string? city, string? state, string? postalCode, string? country);
         Task<string?> GetDashboardConfig(Guid userId);

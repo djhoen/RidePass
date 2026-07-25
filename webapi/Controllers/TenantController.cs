@@ -207,6 +207,8 @@ namespace webapi.Controllers
             await _tenants.UpdateRequireEmergencyContact(_tenantContext.TenantId, request.RequireEmergencyContact);
             await _tenants.UpdateAllowEventSubscriptions(_tenantContext.TenantId, request.AllowEventSubscriptions);
             await _tenants.UpdateRequireIdAtCheckin(_tenantContext.TenantId, request.RequireIdAtCheckin);
+            await _tenants.UpdateRequireIdForWristband(_tenantContext.TenantId, request.RequireIdForWristband);
+            await _tenants.UpdateSeasonPassAdmissionType(_tenantContext.TenantId, request.SeasonPassAdmissionTypeId);
             return await GetBranding();
         }
 
@@ -508,6 +510,7 @@ namespace webapi.Controllers
                 RequireEmergencyContact = tenant.RequireEmergencyContact,
                 AllowEventSubscriptions = tenant.AllowEventSubscriptions,
                 RequireIdAtCheckin = tenant.RequireIdAtCheckin,
+                RequireIdForWristband = tenant.RequireIdForWristband,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,
                 StripeConnectStatus = tenant.StripeConnectStatus,
                 StripeChargeMode = tenant.StripeChargeMode,
@@ -554,6 +557,7 @@ namespace webapi.Controllers
                 ShopSupplyFeeLabel = tenant.ShopSupplyFeeLabel,
                 ShopLaborRateCents = tenant.ShopLaborRateCents,
                 SeasonPassesEnabled = tenant.SeasonPassesEnabled,
+                SeasonPassAdmissionTypeId = tenant.SeasonPassAdmissionTypeId,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
                 BikeShopEnabled = tenant.BikeShopEnabled,
                 WristbandsEnabled = tenant.WristbandsEnabled,

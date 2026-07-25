@@ -9,9 +9,14 @@ namespace Services.Repositories.Interfaces
         Task<Guid> Create(Tenant tenant);
         Task UpdateTimezone(Guid tenantId, string timezone);
         Task UpdateRequireReservation(Guid tenantId, bool require);
+        /// <summary>Set the season pass gate admission mode: 1 = event sign-up required,
+        /// 2 = walk-up. See SeasonPassAdmissionType.</summary>
+        Task UpdateSeasonPassAdmissionType(Guid tenantId, int admissionTypeId);
         Task UpdateRequireEmergencyContact(Guid tenantId, bool require);
         Task UpdateAllowEventSubscriptions(Guid tenantId, bool allow);
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
+        /// <summary>Gate wristband issuance on a signed waiver plus a stored ID/age verification.</summary>
+        Task UpdateRequireIdForWristband(Guid tenantId, bool require);
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
         Task SetStripeChargeMode(Guid tenantId, string chargeMode);

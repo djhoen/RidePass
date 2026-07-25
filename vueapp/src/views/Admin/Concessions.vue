@@ -68,7 +68,13 @@
                                         <v-img :src="absoluteUrl(p.imageUrl)"></v-img>
                                     </v-avatar>
                                     <v-icon v-else icon="mdi-silverware-fork-knife" color="grey"></v-icon>
-                                    <div>{{ p.name }}</div>
+                                    <div>
+                                        {{ p.name }}
+                                        <v-chip v-if="!p.requiresPrep" size="x-small" variant="tonal" class="ml-2">
+                                            <v-tooltip activator="parent" location="top">Grab-and-go: never shows on the cook screen</v-tooltip>
+                                            Grab-and-go
+                                        </v-chip>
+                                    </div>
                                 </div>
                             </td>
                             <td><v-chip size="x-small" variant="tonal">{{ p.categoryName || 'Uncategorized' }}</v-chip></td>
@@ -658,8 +664,15 @@
                                     <div class="text-subtitle-1 font-weight-bold mb-3 d-flex align-center ga-2">
                                         <v-icon size="small" color="primary">mdi-tune-variant</v-icon> Kitchen &amp; options
                                     </div>
+                                    <v-switch v-model="form.requiresPrep" label="Made to order (needs kitchen prep)"
+                                        color="primary" density="compact" hide-details></v-switch>
+                                    <div class="text-caption text-medium-emphasis mb-2">
+                                        Turn this off for grab-and-go items (bagged chips, canned soda). They never
+                                        show on the cook screen and are ready the moment they're rung up.
+                                    </div>
                                     <v-select v-model="form.stationId" :items="stationItems" label="Kitchen station (optional)"
-                                        density="compact" clearable hint="Where the cook screen routes this item"
+                                        density="compact" clearable :disabled="!form.requiresPrep"
+                                        :hint="form.requiresPrep ? 'Where the cook screen routes this item' : 'Not used: this item skips the cook screen'"
                                         persistent-hint></v-select>
                                     <v-select v-model="form.modifierGroupIds" :items="groupItems" label="Modifier groups (optional)"
                                         density="compact" class="mt-4" multiple chips closable-chips
@@ -851,7 +864,8 @@ const uploading = ref(false)
 const form = ref({
     name: '', categoryId: null as string | null, priceDollars: 0,
     description: '' as string | null, imageUrl: null as string | null, isActive: true,
-    stationId: null as string | null, taxCategoryId: null as string | null, modifierGroupIds: [] as string[],
+    stationId: null as string | null, requiresPrep: true, taxCategoryId: null as string | null,
+    modifierGroupIds: [] as string[],
     inventory: null as number | null, showInCarousel: true, defaultOptionIds: [] as string[],
     comboAvailable: false,
 })
@@ -1062,7 +1076,7 @@ async function load() {
 
 function openCreate() {
     editing.value = null
-    form.value = { name: '', categoryId: null, priceDollars: 0, description: '', imageUrl: null, isActive: true, stationId: null, taxCategoryId: null, modifierGroupIds: [], inventory: null, showInCarousel: true, defaultOptionIds: [], comboAvailable: false }
+    form.value = { name: '', categoryId: null, priceDollars: 0, description: '', imageUrl: null, isActive: true, stationId: null, requiresPrep: true, taxCategoryId: null, modifierGroupIds: [], inventory: null, showInCarousel: true, defaultOptionIds: [], comboAvailable: false }
     recipeRows.value = []
     recipeLoaded.value = true   // new item: empty recipe is the correct starting state
     productDialog.value = true
@@ -1073,7 +1087,8 @@ async function openEdit(p: ConcessionProduct) {
     form.value = {
         name: p.name, categoryId: p.categoryId, priceDollars: p.priceCents / 100,
         description: p.description, imageUrl: p.imageUrl, isActive: p.isActive,
-        stationId: p.stationId, taxCategoryId: p.taxCategoryId, modifierGroupIds: p.modifierGroups.map(g => g.id),
+        stationId: p.stationId, requiresPrep: p.requiresPrep, taxCategoryId: p.taxCategoryId,
+        modifierGroupIds: p.modifierGroups.map(g => g.id),
         inventory: p.inventory, showInCarousel: p.showInCarousel,
         defaultOptionIds: [...(p.defaultModifierOptionIds ?? [])],
         comboAvailable: p.comboAvailable,
@@ -1120,6 +1135,7 @@ async function saveProduct() {
             isActive: form.value.isActive,
             sortOrder: editing.value?.sortOrder ?? rows.value.length * 10 + 10,
             stationId: form.value.stationId,
+            requiresPrep: form.value.requiresPrep,
             taxCategoryId: form.value.taxCategoryId,
             modifierGroupIds: form.value.modifierGroupIds,
             defaultModifierOptionIds: form.value.defaultOptionIds,

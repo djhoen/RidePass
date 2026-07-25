@@ -40,6 +40,7 @@ namespace webapi.Payments
         private readonly ITenantCreditRepository _credit;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
+        private readonly Services.Helpers.ISmsSender _sms;
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly IConfiguration _config;
         private readonly ILogger<StripePurchaseFinalizer> _logger;
@@ -70,6 +71,7 @@ namespace webapi.Payments
             ITenantCreditRepository credit,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
+            Services.Helpers.ISmsSender sms,
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             IConfiguration configuration,
             ILogger<StripePurchaseFinalizer> logger)
@@ -98,6 +100,7 @@ namespace webapi.Payments
             _credit = credit;
             _suppression = suppression;
             _emailer = emailer;
+            _sms = sms;
             _orderConfirmations = orderConfirmations;
             _config = configuration;
             _logger = logger;
@@ -599,6 +602,11 @@ namespace webapi.Payments
             var isDirect = !string.IsNullOrEmpty(sale.StripeConnectedAccountId);
             var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0);
             await _concessions.MarkSalePaid(sale.Id);
+            // Settle the kitchen state on the paid flip: an order made up entirely of grab-and-go items
+            // has every line already 'ready' and no cook-screen ticket to bump, so it must land as
+            // 'ready' instead of sitting in "Preparing" forever. Orders with real prep lines stay
+            // 'active' exactly as before, and a completed order is left alone by the recompute.
+            await _concessions.RecomputeSaleFulfillment(sale.Id, sale.TenantId);
             // Assign the pickup number now that the card sale is paid (cash sales get theirs at the
             // counter). Skipped automatically on a duplicate webhook (order_number already set).
             if (sale.OrderNumber is null)
@@ -621,6 +629,14 @@ namespace webapi.Payments
                     }
                 }
                 catch { /* alerting is best-effort */ }
+
+                // An online order made up entirely of grab-and-go items never reaches the cook screen,
+                // so no bump will ever fire the "your order is ready" text from ConcessionController.
+                // Send it here instead. TryMarkReadyNotified is the same one-shot claim the cook path
+                // uses, so an order that still has prep lines (fulfillment 'active') sends nothing now
+                // and gets its text from the last bump as before. Best-effort.
+                try { await NotifyConcessionReady(sale.Id, sale.TenantId); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Ready SMS failed for concession sale {Id}", sale.Id); }
             }
             try
             {
@@ -658,6 +674,24 @@ namespace webapi.Payments
             {
                 _logger.LogWarning(ex, "Credit-back failed for concession sale {Id}", sale.Id);
             }
+        }
+
+        // Mirrors ConcessionController.NotifyIfReady: texts the rider once when their online order is
+        // already fully ready. Only an all-grab-and-go order qualifies at payment time; anything with a
+        // real prep line is still 'active' here and gets its text when the cook bumps the last line.
+        private async Task NotifyConcessionReady(Guid saleId, Guid tenantId)
+        {
+            var fresh = await _concessions.GetSale(saleId, tenantId);
+            if (fresh is null || fresh.FulfillmentStatus != "ready"
+                || fresh.OrderChannel != "online" || !fresh.PurchaserUserId.HasValue)
+                return;
+            // One-shot claim shared with the cook-screen path, so the rider is texted exactly once.
+            if (!await _concessions.TryMarkReadyNotified(fresh.Id, tenantId)) return;
+            var tenant = await _tenants.GetById(tenantId);
+            var user = await _users.GetById(fresh.PurchaserUserId.Value);
+            if (tenant is null || string.IsNullOrWhiteSpace(user?.Phone)) return;
+            await _sms.Send(tenant, user.Phone,
+                $"Your {tenant.DisplayName} order #{fresh.OrderNumber} is ready for pickup!");
         }
 
         private async Task OnShopSalePaid(Services.Repositories.Data.BikeShopData.ShopSale sale)

@@ -1099,6 +1099,115 @@ namespace Services.Repositories
             return (await _db.Query<ShopItem>(sql, new { variantId, tenantId, startsAt, endsAt })).ToList();
         }
 
+        /// <summary>
+        /// Whole rental fleet plus every reservation overlapping a window, for the Rental Board
+        /// timeline. Three queries instead of one probe per variant: a timeline needs the
+        /// individual reservations laid out in time across the whole fleet, which a per-variant
+        /// scalar can't express.
+        /// </summary>
+        public async Task<ShopRentalBoard> GetRentalBoard(Guid tenantId, DateTime startsAt,
+            DateTime endsAt, Guid? categoryId)
+        {
+            // Shared fleet predicate: the product and variant are live and rentable, and the
+            // variant carries a rate (a rentable product whose variant has no daily rate can't be
+            // booked, so it isn't fleet). Every join re-asserts tenant_id rather than trusting the
+            // FK chain: one predicate per table is the rule in this codebase.
+            const string fleetJoin = @"
+                JOIN shop_variant  v ON v.id = i.variant_id AND v.tenant_id = @tenantId
+                JOIN shop_product  p ON p.id = v.product_id AND p.tenant_id = @tenantId
+                LEFT JOIN shop_category c ON c.id = p.category_id AND c.tenant_id = @tenantId";
+            const string fleetWhere = @"
+                v.is_active AND v.daily_rate_cents IS NOT NULL
+                AND p.is_active AND p.is_rentable";
+
+            // ── Serialized units: one row per physical bike. 'sold'/'retired' have left the
+            // fleet; 'maintenance' stays visible so the board can show WHY a bike staff can see on
+            // the rack isn't bookable, rather than silently omitting it.
+            var serializedSql = $@"
+                SELECT i.id AS Id, v.id AS VariantId, i.id AS ItemId,
+                       v.tracking_kind AS TrackingKind,
+                       p.id AS ProductId, p.name AS ProductName, p.brand AS Brand,
+                       p.category_id AS CategoryId, c.name AS CategoryName,
+                       v.size AS Size, v.color AS Color, v.gender AS Gender, v.sku AS Sku,
+                       i.label AS UnitLabel, i.serial AS Serial, i.status AS ItemStatus,
+                       1 AS Capacity,
+                       v.daily_rate_cents AS DailyRateCents, v.deposit_cents AS DepositCents
+                FROM shop_item i
+                {fleetJoin}
+                WHERE i.tenant_id = @tenantId
+                  AND i.status IN ('available','rented_out','maintenance')
+                  AND v.tracking_kind = 'serialized'
+                  AND {fleetWhere}
+                  AND (@categoryId::uuid IS NULL OR p.category_id = @categoryId)
+                ORDER BY p.name, v.size NULLS FIRST, i.label";
+
+            // ── Pool variants: one row per bucket. Capacity mirrors GetPoolAvailability's fleet
+            // math exactly: stock on the shelf plus what's currently out on a rental, because
+            // checkout decremented stock for units that still exist and come back.
+            var poolSql = @"
+                SELECT v.id AS Id, v.id AS VariantId, NULL::uuid AS ItemId,
+                       v.tracking_kind AS TrackingKind,
+                       p.id AS ProductId, p.name AS ProductName, p.brand AS Brand,
+                       p.category_id AS CategoryId, c.name AS CategoryName,
+                       v.size AS Size, v.color AS Color, v.gender AS Gender, v.sku AS Sku,
+                       NULL::text AS UnitLabel, NULL::text AS Serial, NULL::text AS ItemStatus,
+                       v.stock_on_hand + COALESCE((
+                           SELECT sum(l.quantity)::int FROM shop_rental_line l
+                           JOIN shop_rental r ON r.id = l.rental_id AND r.tenant_id = @tenantId
+                           WHERE l.variant_id = v.id AND r.status = 'out'), 0) AS Capacity,
+                       v.daily_rate_cents AS DailyRateCents, v.deposit_cents AS DepositCents
+                FROM shop_variant v
+                JOIN shop_product p ON p.id = v.product_id AND p.tenant_id = @tenantId
+                LEFT JOIN shop_category c ON c.id = p.category_id AND c.tenant_id = @tenantId
+                WHERE v.tenant_id = @tenantId
+                  AND v.tracking_kind = 'pool'
+                  AND v.is_active AND v.daily_rate_cents IS NOT NULL
+                  AND p.is_active AND p.is_rentable
+                  AND (@categoryId::uuid IS NULL OR p.category_id = @categoryId)
+                ORDER BY p.name, v.size NULLS FIRST, v.color NULLS FIRST";
+
+            // ── Reservations overlapping the window. Same half-open overlap and the same
+            // reservation-holding statuses every other availability check uses, so a bar on the
+            // board is exactly a booking that would block a new one.
+            var segmentSql = $@"
+                SELECT r.id AS RentalId, l.id AS LineId, l.variant_id AS VariantId,
+                       l.item_id AS ItemId, l.quantity AS Quantity,
+                       r.starts_at AS StartsAt, r.ends_at AS EndsAt, r.status AS Status,
+                       r.renter_name AS RenterName, r.renter_email AS RenterEmail,
+                       r.order_number AS OrderNumber, r.checked_out_at AS CheckedOutAt,
+                       l.name_snapshot AS NameSnapshot, l.variant_label AS VariantLabel
+                FROM shop_rental_line l
+                JOIN shop_rental r ON r.id = l.rental_id
+                WHERE r.tenant_id = @tenantId AND {ActiveOverlapWhere}
+                ORDER BY r.starts_at";
+
+            // Categories for the filter come from the UNFILTERED fleet: computing them from the
+            // filtered set would leave the picker holding only the category already chosen.
+            const string categorySql = @"
+                SELECT DISTINCT c.id AS Id, c.name AS Name
+                FROM shop_product p
+                JOIN shop_variant v ON v.product_id = p.id AND v.tenant_id = @tenantId
+                JOIN shop_category c ON c.id = p.category_id AND c.tenant_id = @tenantId
+                WHERE p.tenant_id = @tenantId AND p.is_active AND p.is_rentable
+                  AND v.is_active AND v.daily_rate_cents IS NOT NULL
+                ORDER BY c.name";
+
+            var args = new { tenantId, startsAt, endsAt, categoryId };
+            var serialized = await _db.Query<ShopRentalBoardResource>(serializedSql, args);
+            var pool = await _db.Query<ShopRentalBoardResource>(poolSql, args);
+            var segments = await _db.Query<ShopRentalBoardSegment>(segmentSql, args);
+            var categories = await _db.Query<ShopRentalBoardCategory>(categorySql, args);
+
+            return new ShopRentalBoard
+            {
+                StartsAt = startsAt,
+                EndsAt = endsAt,
+                Resources = serialized.Concat(pool).ToList(),
+                Segments = segments.ToList(),
+                Categories = categories.ToList(),
+            };
+        }
+
         /// <summary>Links a captured waiver signature to a rental, so the checkout gate can see
         /// it without re-deriving who signed. Tenant-scoped; returns false if not this tenant's.</summary>
         /// <summary>Public signing page lookup. Tenant-scoped as well as token-scoped so a token

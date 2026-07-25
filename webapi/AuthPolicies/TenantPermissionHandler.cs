@@ -28,7 +28,11 @@ namespace webapi.AuthPolicies
                 return Task.CompletedTask;
             }
 
-            if (!TenantPermissions.ForRoles(roles).Contains(requirement.Permission))
+            // Any ONE of the named permissions grants: a requirement usually names one, but a
+            // shared endpoint (a catalog read both the catalog manager and the shop cashier need)
+            // names several.
+            var held = TenantPermissions.ForRoles(roles);
+            if (!requirement.Permissions.Any(held.Contains))
             {
                 return Task.CompletedTask;
             }

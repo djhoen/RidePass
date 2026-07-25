@@ -15,6 +15,8 @@ namespace webapi.Controllers.API.Data.Concession
         public bool IsActive { get; set; }
         public int SortOrder { get; set; }
         public Guid? StationId { get; set; }
+        // False = grab-and-go: the cook screen never lists this item (nothing to make).
+        public bool RequiresPrep { get; set; } = true;
         // Tax category that sets this item's rate (null = the tenant's default category).
         public Guid? TaxCategoryId { get; set; }
         // Product-level stock for simple (no-variant) items. Inventory null = unlimited; Remaining -1 = not

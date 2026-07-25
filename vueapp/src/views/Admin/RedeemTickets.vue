@@ -307,6 +307,42 @@
                     </div>
                 </div>
 
+                <!-- ── The two gate checks, at a glance ─────────────────────────────────
+                     Deliberately the most prominent thing after the face and the name: this is
+                     what the worker is actually deciding on, and it has to be readable across a
+                     counter without being clicked into. -->
+                <div v-if="pass.requireIdForWristband" class="d-flex align-center ga-2 flex-wrap mt-3">
+                    <v-chip :color="pass.waiverSigned ? 'success' : 'error'" variant="flat" size="small"
+                        :prepend-icon="pass.waiverSigned ? 'mdi-check-circle' : 'mdi-alert-circle'">
+                        Waiver {{ pass.waiverSigned ? 'signed' : 'not signed' }}
+                    </v-chip>
+
+                    <v-tooltip :text="idChipTooltip" location="top">
+                        <template #activator="{ props }">
+                            <v-chip v-bind="props" :color="pass.idVerified ? 'success' : 'error'" variant="flat"
+                                size="small"
+                                :prepend-icon="pass.idVerified ? 'mdi-check-circle' : 'mdi-alert-circle'">
+                                ID &amp; age
+                                {{ pass.idVerified
+                                    ? (pass.idVerifiedAge != null ? `verified (${pass.idVerifiedAge})` : 'verified')
+                                    : 'not verified' }}
+                            </v-chip>
+                        </template>
+                    </v-tooltip>
+
+                    <v-btn v-if="!pass.idVerified" size="small" color="primary" variant="tonal"
+                        prepend-icon="mdi-card-account-details-outline" @click="openVerifyId">
+                        Verify ID
+                    </v-btn>
+
+                    <v-chip v-if="bandReady" color="success" size="small" variant="tonal"
+                        prepend-icon="mdi-check-all">Clear for a wristband</v-chip>
+                </div>
+                <p v-if="pass.requireIdForWristband && !bandReady"
+                    class="text-caption text-error mt-1 mb-0">
+                    {{ bandBlockReason }}
+                </p>
+
                 <v-alert v-if="!pass.registrationComplete" type="warning" variant="tonal"
                     density="compact" class="mt-3">
                     Not registered yet — the buyer must finish registration (holder details, photo,
@@ -333,9 +369,39 @@
 
                 <v-divider class="my-3"></v-divider>
 
-                <v-alert v-if="pass.todaysEvents.length === 0" type="info" variant="tonal" density="compact">
-                    No event is running today at this track, so the pass can't be redeemed right now.
-                </v-alert>
+                <!-- Nothing on the calendar today. A sign-up track has no admission path without an
+                     event; a walk-up track admits against the operating day itself. -->
+                <template v-if="pass.todaysEvents.length === 0">
+                    <v-alert v-if="branding.seasonPassAdmissionTypeId === 1"
+                        type="info" variant="tonal" density="compact">
+                        No event is running today. This track requires event sign-up, so passes can
+                        only be checked in for a scheduled event.
+                    </v-alert>
+                    <div v-else-if="walkUpAlreadyCheckedIn" class="d-flex align-center ga-2">
+                        <v-icon size="18" color="success">mdi-check-circle</v-icon>
+                        <span class="text-body-2">Already admitted today</span>
+                        <v-chip v-if="walkUpAlreadyCheckedIn.checkedInAtUtc" size="x-small"
+                            color="success" variant="tonal">
+                            {{ formatInTenant(walkUpAlreadyCheckedIn.checkedInAtUtc) }}
+                        </v-chip>
+                    </div>
+                    <template v-else>
+                        <div class="text-body-2 text-medium-emphasis mb-2">
+                            <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
+                            No event today: walk-up admission
+                        </div>
+                        <div class="d-flex align-center ga-2">
+                            <v-spacer></v-spacer>
+                            <span v-if="passAdmitBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock }}</span>
+                            <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock"
+                                @click="admitPass">
+                                {{ pass.productKind === 'credits'
+                                    ? `Admit — uses 1 ride credit (${pass.creditsRemaining ?? 0} left)`
+                                    : 'Admit' }}
+                            </v-btn>
+                        </div>
+                    </template>
+                </template>
                 <template v-else>
                     <v-radio-group v-if="pass.todaysEvents.length > 1" v-model="passEventId"
                         density="compact" hide-details class="mb-2">
@@ -346,6 +412,12 @@
                         {{ pass.todaysEvents[0].title }}
                     </div>
                     <div class="d-flex align-center ga-2">
+                        <!-- Sign-up track: warn before the click that this event has no reservation
+                             on file. The server enforces it either way. -->
+                        <v-chip v-if="branding.seasonPassAdmissionTypeId === 1 && passEventId && !selectedEventReserved"
+                            size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">
+                            Sign-up required
+                        </v-chip>
                         <v-spacer></v-spacer>
                         <span v-if="passAdmitBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock }}</span>
                         <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock || !passEventId"
@@ -358,6 +430,44 @@
                 </template>
             </v-card-text>
         </v-card>
+
+        <!-- ── Verify ID / age ─────────────────────────────────────────────── -->
+        <v-dialog v-model="verifyIdOpen" max-width="440">
+            <v-card v-if="pass">
+                <v-card-title class="d-flex align-center">
+                    <span>Verify ID and age</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="verifyingId"
+                        @click="verifyIdOpen = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-1">
+                        Check the photo ID against the person in front of you.
+                    </p>
+                    <div class="text-h6">{{ pass.holderName || pass.purchaserName }}</div>
+                    <p class="text-caption text-medium-emphasis mb-0">
+                        This is recorded against the rider, so they won't be asked again on later scans.
+                    </p>
+
+                    <v-text-field v-model="verifyDob" type="date" label="Date of birth on the ID"
+                        density="compact" class="mt-4"
+                        :hint="verifyDobHint" persistent-hint
+                        :error-messages="verifyDobError ? [verifyDobError] : []"></v-text-field>
+
+                    <p v-if="verifyAge != null" class="text-body-2 mt-2 mb-0">
+                        That makes them <strong>{{ verifyAge }}</strong> today.
+                    </p>
+
+                    <div v-if="verifyIdError" class="text-error text-body-2 mt-3">{{ verifyIdError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="verifyingId" @click="verifyIdOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="verifyingId" :disabled="!verifyDob || !!verifyDobError"
+                        @click="submitVerifyId">Record verification</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <v-dialog v-model="signatureOpen" max-width="520">
             <v-card>
@@ -587,7 +697,7 @@ async function loadBands() {
     try {
         const r = await wristbands.codes(ids)
         const map: Record<string, string> = {}
-        for (const row of r.data.data) map[row.ticketId] = row.code
+        for (const row of r.data.data.tickets) map[row.ticketId] = row.code
         bandsByTicket.value = map
     } catch { /* band chips are decoration on this screen; the order itself already loaded */ }
 }
@@ -700,6 +810,15 @@ const passWindowBlock = computed(() => {
 
 // Why Admit is disabled, or null when it's allowed. The server re-validates all of this;
 // surfacing it up front just saves the gate line a failed round-trip.
+// On a no-event day, has this pass already been walked in today? A walk-up admission carries no
+// eventId, which is exactly what distinguishes it from an event-anchored row.
+const walkUpAlreadyCheckedIn = computed(() =>
+    pass.value?.todaysReservations.find(r => r.eventId === null && r.status === 'checked_in') ?? null)
+
+// Does the selected event already have a reservation on this pass? Drives the sign-up warning.
+const selectedEventReserved = computed(() =>
+    pass.value?.todaysReservations.some(r => r.eventId === passEventId.value) ?? false)
+
 const passAdmitBlock = computed(() => {
     if (!pass.value) return null
     if (pass.value.status !== 'paid') return 'Pass is not active.'
@@ -707,11 +826,99 @@ const passAdmitBlock = computed(() => {
     if (passWindowBlock.value) return 'Outside the pass season.'
     if (pass.value.productKind === 'credits' && (pass.value.creditsRemaining ?? 0) <= 0)
         return 'No ride credits left.'
+    if (pass.value.todaysEvents.length === 0 && walkUpAlreadyCheckedIn.value)
+        return 'Already admitted today.'
     return null
 })
 
+// ── Waiver + ID gate for a wristband ────────────────────────────────────────
+// Mirrors what WristbandController.Link enforces, so the screen never invites a click the
+// server is going to refuse.
+const bandReady = computed(() =>
+    !!pass.value && (!pass.value.requireIdForWristband
+        || (pass.value.waiverSigned && pass.value.idVerified)))
+
+const bandBlockReason = computed(() => {
+    const p = pass.value
+    if (!p || bandReady.value) return ''
+    if (!p.waiverSigned && !p.idVerified)
+        return 'No wristband yet: this rider still needs to sign the waiver and have their ID verified.'
+    if (!p.waiverSigned)
+        return p.waiverBlockReason
+            || 'No wristband yet: this rider still needs to sign the waiver.'
+    return 'No wristband yet: this rider still needs their ID and age verified.'
+})
+
+const idChipTooltip = computed(() => {
+    const p = pass.value
+    if (!p) return ''
+    if (!p.idVerified) return 'No ID check on file for this rider.'
+    const when = p.idVerifiedAtUtc ? formatInTenant(p.idVerifiedAtUtc) : 'earlier'
+    const who = p.idVerifiedByName ? ` by ${p.idVerifiedByName}` : ''
+    const scope = p.idVerifiedScope === 'rider'
+        ? 'Recorded against their account, so it carries to anything else they buy.'
+        : 'Recorded against this pass only, because the holder has no account of their own.'
+    return `Verified ${when}${who}. ${scope}`
+})
+
+// ── Verify ID dialog ────────────────────────────────────────────────────────
+const verifyIdOpen = ref(false)
+const verifyingId = ref(false)
+const verifyIdError = ref('')
+const verifyDob = ref('')
+
+function openVerifyId() {
+    // Seed from what the rider gave at registration: the common case is the document simply
+    // confirming it, so staff only change it when the two disagree.
+    verifyDob.value = pass.value?.holderBirthdate
+        ? dayjs(pass.value.holderBirthdate).format('YYYY-MM-DD')
+        : ''
+    verifyIdError.value = ''
+    verifyIdOpen.value = true
+}
+
+const verifyAge = computed(() => {
+    if (!verifyDob.value) return null
+    const d = dayjs(verifyDob.value)
+    return d.isValid() ? dayjs().diff(d, 'year') : null
+})
+
+const verifyDobError = computed(() => {
+    if (!verifyDob.value) return ''
+    const d = dayjs(verifyDob.value)
+    if (!d.isValid()) return 'That date isn\'t valid.'
+    if (d.isAfter(dayjs(), 'day')) return 'That date of birth is in the future.'
+    return ''
+})
+
+const verifyDobHint = computed(() =>
+    pass.value?.holderBirthdate
+        ? 'Pre-filled from what the rider gave at registration. Change it if the ID says otherwise.'
+        : 'No birthdate on file, so read it off the ID.')
+
+async function submitVerifyId() {
+    if (!passToken.value || !verifyDob.value || verifyDobError.value) return
+    verifyingId.value = true
+    verifyIdError.value = ''
+    try {
+        await seasonPasses.verifyPassHolderId(passToken.value, verifyDob.value)
+        verifyIdOpen.value = false
+        flash('ID and age verified.', 'success')
+        // Re-read rather than patching locally: the server decides whether this stuck to the
+        // rider's account or only to this pass, and the chip's wording depends on which.
+        await tryLoadPass(passToken.value)
+    } catch (err: any) {
+        verifyIdError.value = err.response?.data?.error
+            || 'Couldn\'t record the ID verification. Check the connection and try again.'
+    } finally {
+        verifyingId.value = false
+    }
+}
+
 async function admitPass() {
-    if (!pass.value || !passToken.value || !passEventId.value) return
+    if (!pass.value || !passToken.value) return
+    // With events running, staff must still pick one. With none, the walk-up path sends null.
+    if (pass.value.todaysEvents.length > 0 && !passEventId.value) return
     admitting.value = true
     try {
         const r = await seasonPasses.redeemAtGate(passToken.value, passEventId.value)

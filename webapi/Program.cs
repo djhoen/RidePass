@@ -75,6 +75,7 @@ builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRe
 builder.Services.AddScoped<IDisputeRepository, DisputeRepository>();
 builder.Services.AddScoped<IReportsRepository, ReportsRepository>();
 builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
+builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
 builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
 // Scheduled-task handlers — add one line per kind. The dispatcher resolves
@@ -270,6 +271,15 @@ builder.Services.AddAuthorization(options =>
         options.AddPolicy(TenantPermissionRequirement.PolicyName(perm),
             p => p.Requirements.Add(new TenantPermissionRequirement(perm)));
     }
+    // Any-of policies: one endpoint two different job roles must both reach. Registered from the
+    // same table the Policy constants are named for, so the two can't drift apart.
+    foreach (var (name, perms) in TenantPermissions.AnyOfPolicies)
+    {
+        if (name != TenantPermissionRequirement.AnyPolicyName(perms))
+            throw new InvalidOperationException(
+                $"Any-of policy name '{name}' does not match its permissions {string.Join('|', perms)}.");
+        options.AddPolicy(name, p => p.Requirements.Add(new TenantPermissionRequirement(perms)));
+    }
 });
 
 // CORS - only the apex and its tenant subdomains may call the API with
@@ -317,6 +327,11 @@ builder.Services.AddCors(options =>
                                 })
                                 .AllowAnyMethod()
                                 .AllowAnyHeader()
+                                // Sliding sessions: the SPA must be able to read the
+                                // re-issued token on cross-origin (dev / embed) responses.
+                                .WithExposedHeaders(
+                                    SlidingSessionMiddleware.HeaderName,
+                                    SlidingSessionMiddleware.OriginalHeaderName)
                                 .AllowCredentials();
                       });
 });
@@ -402,6 +417,11 @@ app.UseStaticFiles();
 // (role / tenant_id) and let a tenant's own admins + super admins reach an
 // unpublished tenant while the public is blocked.
 app.UseAuthentication();
+
+// Slide the session window: an authenticated request re-issues the token (see
+// SlidingSessionMiddleware) so active users are never logged out mid-use. Must
+// run after UseAuthentication so context.User is populated.
+app.UseMiddleware<SlidingSessionMiddleware>();
 
 // Tenant resolution must run before authorization so the permission handlers
 // see ITenantContext populated. Excluded for /api/health via UseWhen so the

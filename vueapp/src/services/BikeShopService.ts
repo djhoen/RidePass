@@ -213,6 +213,60 @@ export interface MyShopRental {
     lines: { nameSnapshot: string; variantLabel: string | null; quantity: number }[]
 }
 
+// ── Rental Board ─────────────────────────────────────────────────────────────
+// The read model behind the day timeline. A "resource" is one row on the board: a serialized
+// unit (one physical bike, capacity 1) or a pool variant (the whole bucket, capacity = fleet).
+// A "segment" is one reservation drawn as a bar.
+export interface ShopRentalBoardResource {
+    /** Row key: the item id for a serialized unit, the variant id for a pool. */
+    id: string
+    variantId: string
+    itemId: string | null
+    trackingKind: 'pool' | 'serialized'
+    productId: string
+    productName: string
+    brand: string | null
+    categoryId: string | null
+    categoryName: string | null
+    size: string | null
+    color: string | null
+    gender: string | null
+    sku: string | null
+    /** Serialized only: the unit's own name ("Trail Bike #3"). */
+    unitLabel: string | null
+    serial: string | null
+    /** Serialized only. 'maintenance' means on the bench, so not bookable. */
+    itemStatus: 'available' | 'rented_out' | 'maintenance' | null
+    capacity: number
+    dailyRateCents: number
+    depositCents: number
+}
+
+export interface ShopRentalBoardSegment {
+    rentalId: string
+    lineId: string
+    variantId: string
+    itemId: string | null
+    quantity: number
+    startsAt: string
+    endsAt: string
+    status: 'pending' | 'paid' | 'out'
+    renterName: string | null
+    renterEmail: string | null
+    orderNumber: number | null
+    checkedOutAt: string | null
+    nameSnapshot: string
+    variantLabel: string | null
+}
+
+export interface ShopRentalBoard {
+    startsAt: string
+    endsAt: string
+    resources: ShopRentalBoardResource[]
+    segments: ShopRentalBoardSegment[]
+    categories: { id: string; name: string }[]
+}
+
 // A condition photo on a work order or a rental. Exactly one owner id is set.
 // stage: 'intake' = what arrived / went out, 'return' = what came back (rentals only,
 // the evidence behind a damage capture), 'progress' = what a tech found mid-repair.
@@ -560,6 +614,17 @@ export class BikeShopService {
     }
     listRentals(activeOnly = true, limit = 100) {
         return axios.get<{ data: ShopRental[] }>(`${this.apiUrl}/BikeShopRental/Rentals?activeOnly=${activeOnly}&limit=${limit}`)
+    }
+    /**
+     * The whole rental fleet plus every reservation overlapping the window, for the Rental Board
+     * timeline. One call rather than an availability probe per variant, and self-contained (rates,
+     * deposits, and the category list ride along) so a ShopCounter-only user never has to touch the
+     * CatalogManage catalog endpoints.
+     */
+    rentalBoard(startsAt: string, endsAt: string, categoryId?: string | null) {
+        return axios.get<{ data: ShopRentalBoard }>(`${this.apiUrl}/BikeShopRental/Board`, {
+            params: { startsAt, endsAt, categoryId: categoryId || undefined },
+        })
     }
     bookRental(req: {
         lines: { variantId: string; quantity: number; itemId?: string | null }[]

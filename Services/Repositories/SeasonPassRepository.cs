@@ -41,11 +41,13 @@ namespace Services.Repositories
             photo_data_url AS PhotoDataUrl,
             holder_first_name AS HolderFirstName, holder_last_name AS HolderLastName,
             holder_birthdate AS HolderBirthdate,
+            id_verified_at AS IdVerifiedAt, id_verified_by_user_id AS IdVerifiedByUserId,
+            id_verified_dob AS IdVerifiedDob,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string ReservationColumns = @"
             id, season_pass_purchase_id AS SeasonPassPurchaseId,
-            event_id AS EventId, status,
+            event_id AS EventId, check_in_date AS CheckInDate, status,
             reserved_at AS ReservedAt,
             checked_in_at AS CheckedInAt,
             cancelled_at AS CancelledAt";
@@ -399,6 +401,8 @@ namespace Services.Repositories
                     sp.photo_data_url AS PhotoDataUrl,
                     sp.holder_first_name AS HolderFirstName, sp.holder_last_name AS HolderLastName,
                     sp.holder_birthdate AS HolderBirthdate,
+                    sp.id_verified_at AS IdVerifiedAt, sp.id_verified_by_user_id AS IdVerifiedByUserId,
+                    sp.id_verified_dob AS IdVerifiedDob,
                     sp.created_at AS CreatedAt, sp.updated_at AS UpdatedAt,
                     p.name AS ProductName,
                     p.kind AS ProductKind,
@@ -433,6 +437,36 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE season_pass_purchase SET status = @status, updated_at = now() WHERE id = @id";
             await _db.Execute(sql, new { id, status });
+        }
+
+        /// <summary>
+        /// Records that a staff member checked this pass holder's photo ID. Tenant-scoped, and
+        /// restricted to a paid pass: verifying a refunded or pending pass records a fact about a
+        /// credential nobody can use. Rerunnable — re-verifying overwrites, which is what a
+        /// corrected date of birth needs.
+        /// </summary>
+        public async Task<int> SetIdVerified(Guid id, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        {
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET id_verified_at         = now(),
+                    id_verified_by_user_id = @verifiedByUserId,
+                    id_verified_dob        = @verifiedDob,
+                    updated_at             = now()
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
+            return await _db.Execute(sql, new { id, tenantId, verifiedByUserId, verifiedDob });
+        }
+
+        /// <summary>Undoes a verification recorded in error. Not restricted by status: a mistake
+        /// on a since-refunded pass still needs clearing.</summary>
+        public async Task<int> ClearIdVerified(Guid id, Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE season_pass_purchase
+                SET id_verified_at = NULL, id_verified_by_user_id = NULL, id_verified_dob = NULL,
+                    updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { id, tenantId });
         }
 
         public async Task<int> CompleteRegistration(Guid id, Guid tenantId, Guid purchaserUserId,
@@ -561,6 +595,81 @@ namespace Services.Repositories
             return row.Id == Guid.Empty ? null : (row.Id, row.CreditsRemaining);
         }
 
+        /// <summary>The no-event twin of CreateGateCheckIn: burns a credit (when the product is
+        /// credit-based) and writes the admission straight to checked_in, anchored to the tenant's
+        /// local calendar date instead of an event. ON CONFLICT targets the Script0236 partial
+        /// unique index, which only covers event_id IS NULL rows, so this can never collide with an
+        /// event-anchored reservation. Returns null when the credit guard bites.
+        ///
+        /// CALLER CONTRACT, load-bearing: hold the per-pass advisory lock AND pre-check
+        /// GetWalkUpCheckIn for a live checked_in row. The burn CTE commits whether or not the
+        /// INSERT is filtered out by ON CONFLICT, so calling this against an already-admitted row
+        /// burns a credit and still returns null. The unique index prevents the duplicate ROW, not
+        /// the duplicate BURN. CreateGateCheckIn has the same property and the same contract.</summary>
+        public async Task<(Guid ReservationId, int? CreditsRemaining)?> CreateWalkUpGateCheckIn(
+            Guid passPurchaseId, Guid tenantId, DateTime checkInDate, Guid? staffUserId, bool burnCredit)
+        {
+            const string sql = @"
+                WITH burn AS (
+                    UPDATE season_pass_purchase
+                    SET credits_remaining = CASE WHEN @burnCredit THEN credits_remaining - 1
+                                                 ELSE credits_remaining END,
+                        updated_at = now()
+                    WHERE id = @passPurchaseId AND tenant_id = @tenantId AND status = 'paid'
+                      AND (NOT @burnCredit
+                           OR (credits_remaining IS NOT NULL AND credits_remaining > 0))
+                    RETURNING id, credits_remaining
+                )
+                INSERT INTO season_pass_reservation
+                    (season_pass_purchase_id, event_id, check_in_date, status, checked_in_at, checked_in_by_user_id)
+                SELECT id, NULL, @checkInDate, 'checked_in', now(), @staffUserId FROM burn
+                ON CONFLICT (season_pass_purchase_id, check_in_date) WHERE event_id IS NULL DO UPDATE
+                    SET status = 'checked_in', checked_in_at = now(),
+                        checked_in_by_user_id = EXCLUDED.checked_in_by_user_id
+                    WHERE season_pass_reservation.status = 'cancelled'
+                RETURNING id, (SELECT credits_remaining FROM burn)";
+            var row = (await _db.Query<(Guid Id, int? CreditsRemaining)>(sql,
+                new { passPurchaseId, tenantId, checkInDate = checkInDate.Date, staffUserId, burnCredit })).FirstOrDefault();
+            return row.Id == Guid.Empty ? null : (row.Id, row.CreditsRemaining);
+        }
+
+        /// <summary>Find an existing no-event walk-up admission for one pass on one tenant-local
+        /// calendar day, so a repeat scan is answered idempotently instead of burning again.</summary>
+        public async Task<SeasonPassReservation?> GetWalkUpCheckIn(Guid passPurchaseId, Guid tenantId, DateTime checkInDate)
+        {
+            // Tenant scope via join: season_pass_reservation carries no tenant_id of its own.
+            const string sql = @"
+                SELECT r.id, r.season_pass_purchase_id AS SeasonPassPurchaseId,
+                       r.event_id AS EventId, r.check_in_date AS CheckInDate, r.status,
+                       r.reserved_at AS ReservedAt, r.checked_in_at AS CheckedInAt, r.cancelled_at AS CancelledAt
+                FROM season_pass_reservation r
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                WHERE r.season_pass_purchase_id = @passPurchaseId
+                  AND p.tenant_id = @tenantId
+                  AND r.event_id IS NULL
+                  AND r.check_in_date = @checkInDate
+                LIMIT 1";
+            return (await _db.Query<SeasonPassReservation>(sql,
+                new { passPurchaseId, tenantId, checkInDate = checkInDate.Date })).FirstOrDefault();
+        }
+
+        /// <summary>Tenant-scoped reservation read for wristband linking: confirms the admission is
+        /// checked_in and returns the event/date scope a band linked to it should inherit. Joins
+        /// through season_pass_purchase because season_pass_reservation has no tenant_id.</summary>
+        public async Task<SeasonPassReservationLinkContext?> GetReservationForBandLink(Guid reservationId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT r.status, r.event_id AS EventId, r.check_in_date AS CheckInDate,
+                       p.purchaser_name AS PurchaserName,
+                       p.id AS SeasonPassPurchaseId,
+                       p.holder_first_name AS HolderFirstName, p.holder_last_name AS HolderLastName
+                FROM season_pass_reservation r
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                WHERE r.id = @reservationId AND p.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<SeasonPassReservationLinkContext>(sql, new { reservationId, tenantId })).FirstOrDefault();
+        }
+
         public async Task<Guid> CreateReservation(SeasonPassReservation r)
         {
             const string sql = @"
@@ -599,35 +708,52 @@ namespace Services.Repositories
             return (await _db.Query<SeasonPassCheckInContext>(sql, new { reservationId, tenantId })).FirstOrDefault();
         }
 
+        // LEFT JOIN, not an inner join: a no-event walk-up admission has no event row to join to,
+        // and the one caller (the season-pass refund path) cancels every reservation this returns.
+        // An inner join would hide walk-up admissions from that sweep and strand them in
+        // 'checked_in' after the pass was refunded.
         public async Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchase(Guid purchaseId)
         {
             const string sql = @"
                 SELECT r.id, r.season_pass_purchase_id AS SeasonPassPurchaseId,
-                       r.event_id AS EventId, r.status,
+                       r.event_id AS EventId, r.check_in_date AS CheckInDate, r.status,
                        r.reserved_at AS ReservedAt, r.checked_in_at AS CheckedInAt,
                        r.cancelled_at AS CancelledAt,
                        e.title AS EventTitle, e.starts_at AS EventStartsAt, e.ends_at AS EventEndsAt
                 FROM season_pass_reservation r
-                JOIN event e ON e.id = r.event_id
+                LEFT JOIN event e ON e.id = r.event_id
                 WHERE r.season_pass_purchase_id = @purchaseId
-                ORDER BY e.starts_at DESC";
+                ORDER BY COALESCE(e.starts_at, r.checked_in_at) DESC";
             return (await _db.Query<SeasonPassReservationWithContext>(sql, new { purchaseId })).ToList();
         }
 
-        public async Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(Guid purchaseId, DateTime atUtc, DateTime untilUtc)
+        /// <summary>Today's admissions for one pass. Event-anchored rows are matched by the event's
+        /// UTC window as before; no-event walk-up rows have no start/end to bound them, so they are
+        /// matched by check_in_date against the tenant's local calendar date.</summary>
+        public async Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(
+            Guid purchaseId, Guid tenantId, DateTime atUtc, DateTime untilUtc, DateTime localDate)
         {
+            // Tenant scope via the season_pass_purchase join: season_pass_reservation carries no
+            // tenant_id of its own. Defense in depth, since the caller has already verified the
+            // pass belongs to the tenant.
             const string sql = @"
                 SELECT r.id, r.season_pass_purchase_id AS SeasonPassPurchaseId,
-                       r.event_id AS EventId, r.status,
+                       r.event_id AS EventId, r.check_in_date AS CheckInDate, r.status,
                        r.reserved_at AS ReservedAt, r.checked_in_at AS CheckedInAt,
                        r.cancelled_at AS CancelledAt,
                        e.title AS EventTitle, e.starts_at AS EventStartsAt, e.ends_at AS EventEndsAt
                 FROM season_pass_reservation r
-                JOIN event e ON e.id = r.event_id
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                LEFT JOIN event e ON e.id = r.event_id
                 WHERE r.season_pass_purchase_id = @purchaseId
-                  AND e.starts_at < @untilUtc AND e.ends_at >= @atUtc
-                ORDER BY e.starts_at";
-            return (await _db.Query<SeasonPassReservationWithContext>(sql, new { purchaseId, atUtc, untilUtc })).ToList();
+                  AND p.tenant_id = @tenantId
+                  AND (
+                        (r.event_id IS NOT NULL AND e.starts_at < @untilUtc AND e.ends_at >= @atUtc)
+                     OR (r.event_id IS NULL AND r.check_in_date = @localDate)
+                      )
+                ORDER BY COALESCE(e.starts_at, r.checked_in_at)";
+            return (await _db.Query<SeasonPassReservationWithContext>(sql,
+                new { purchaseId, tenantId, atUtc, untilUtc, localDate = localDate.Date })).ToList();
         }
 
         // Returns the number of rows affected so callers can detect a no-op transition (e.g. an

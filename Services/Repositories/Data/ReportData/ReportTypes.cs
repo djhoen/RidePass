@@ -136,8 +136,12 @@
     {
         public Guid Id { get; set; }                    // purchase or reservation id
         public string Source { get; set; } = null!;     // 'pass' | 'event_ticket' | 'season_pass'
-        public Guid EventId { get; set; }
+        /// <summary>Null on a no-event walk-up season pass admission (Script0236), which anchors
+        /// to a calendar date instead of an event.</summary>
+        public Guid? EventId { get; set; }
         public string EventTitle { get; set; } = null!;
+        /// <summary>Always set. For a walk-up admission this is its check_in_date read as midnight
+        /// in the TENANT's zone, so the today/future split below still classifies it correctly.</summary>
         public DateTime EventStartsAtUtc { get; set; }
         public DateTime EventEndsAtUtc { get; set; }
         public string ItemName { get; set; } = null!;   // pass product / tier / season pass name
@@ -177,8 +181,11 @@
     {
         public Guid PurchaseId { get; set; }
         public string Source { get; set; } = null!;          // 'ticket' | 'season_pass'
-        public Guid EventId { get; set; }
-        public string EventTitle { get; set; } = null!;
+        // NULL for a walk-up season-pass admission: it is anchored to a calendar date, not an
+        // event (Script0236). EventStartsAtUtc is still always set (the event's start, or the
+        // walk-up date read as midnight in the tenant's zone), so ordering never has to special-case it.
+        public Guid? EventId { get; set; }
+        public string? EventTitle { get; set; }
         public DateTime EventStartsAtUtc { get; set; }
         public string RiderName { get; set; } = null!;
         public string? Email { get; set; }
@@ -188,6 +195,35 @@
         public DateTime? CheckedInAtUtc { get; set; }
         public string? WristbandCode { get; set; }
         public bool WaiverSigned { get; set; }
+        // How this person got in, as one filterable bucket. See RiderPurchaseTypes.
+        public string PurchaseType { get; set; } = null!;
+        // The tenant's own name for the event type ("Lift Day", "Clinic"), plus the underlying
+        // code so the UI can group renamed types (Highland calls a lesson a Clinic).
+        public string? EventTypeName { get; set; }
+        public string? EventTypeCode { get; set; }
+        // Paid but never completed registration (rider details / waiver still outstanding).
+        public bool RegistrationComplete { get; set; }
+        // Rider's date of birth as captured on the purchase; drives the minor filter.
+        public DateTime? RiderBirthdate { get; set; }
+    }
+
+    /// <summary>
+    /// The buckets the Rider Report's purchase-type filter offers. Derived per row in SQL, so
+    /// the value is stable across the report, the drill-in, and the CSV export.
+    /// </summary>
+    public static class RiderPurchaseTypes
+    {
+        public const string DayTicket = "day_ticket";
+        public const string RaceEntry = "race_entry";
+        public const string SeasonPassUnlimited = "season_pass_unlimited";
+        public const string SeasonPassCredits = "season_pass_credits";
+        public const string SeasonPassDays = "season_pass_days";
+        public const string SpectatorPass = "spectator_pass";
+
+        public static readonly string[] All =
+        {
+            DayTicket, RaceEntry, SeasonPassUnlimited, SeasonPassCredits, SeasonPassDays, SpectatorPass,
+        };
     }
 
     /// <summary>One signed waiver on the rider drill-in.</summary>
@@ -200,5 +236,36 @@
         public bool SignedByParent { get; set; }
         public string? ParentName { get; set; }
         public bool WaiverIsCurrent { get; set; }
+        public string? SignerName { get; set; }
+        // Whether a signature image exists to fetch. The image itself is pulled on demand
+        // (Reports/Admin/RiderWaiver/{id}/Signature) so the drill-in payload stays small
+        // however many waivers the rider has on file.
+        public bool HasSignatureImage { get; set; }
+    }
+
+    /// <summary>
+    /// Identity + lifetime activity for the rider drill-in header. Resolved by account id when
+    /// the rider has one, else by the email on their purchases (guests never get a user row).
+    /// </summary>
+    public class RiderProfileRow
+    {
+        public Guid? UserId { get; set; }
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string? Hometown { get; set; }
+        public string? RaceNumber { get; set; }
+        public DateTime? Birthdate { get; set; }
+        public DateTime? MemberSinceUtc { get; set; }
+        public string? Bike { get; set; }
+        public string? EmergencyContactName { get; set; }
+        public string? EmergencyContactPhone { get; set; }
+        public string? ParentGuardianName { get; set; }
+        // Lifetime across this tenant: paid registrations, how many they actually attended,
+        // what they've spent, and the bracketing visit dates.
+        public int TotalRegistrations { get; set; }
+        public int TotalCheckedIn { get; set; }
+        public long TotalSpentCents { get; set; }
+        public DateTime? FirstVisitUtc { get; set; }
+        public DateTime? LastVisitUtc { get; set; }
     }
 }

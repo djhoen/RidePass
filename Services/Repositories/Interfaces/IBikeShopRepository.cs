@@ -175,6 +175,10 @@ namespace Services.Repositories.Interfaces
         /// currently rented_out) with no overlapping active reservation.</summary>
         Task<List<ShopItem>> GetFreeSerializedUnits(Guid variantId, Guid tenantId, DateTime startsAt, DateTime endsAt);
 
+        /// <summary>The whole rental fleet plus every reservation overlapping the window, for the
+        /// Rental Board timeline. One call rather than a probe per variant.</summary>
+        Task<ShopRentalBoard> GetRentalBoard(Guid tenantId, DateTime startsAt, DateTime endsAt, Guid? categoryId);
+
         /// <summary>Public signing page lookup by token (also tenant-scoped).</summary>
         Task<ShopRentalWithLines?> GetRentalBySignatureToken(Guid token, Guid tenantId);
         Task MarkRentalSignatureRequestSent(Guid rentalId, Guid tenantId);

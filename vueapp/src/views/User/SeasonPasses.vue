@@ -50,10 +50,59 @@
                     Finish registration
                 </v-btn>
             </v-alert>
-            <p v-else class="text-caption text-medium-emphasis mt-3">
-                Show this QR to the gate worker on your event day.
-            </p>
+            <!-- What this pass actually gets you depends on how the track admits pass holders. -->
+            <div v-else class="mt-3">
+                <v-alert v-if="branding.seasonPassAdmissionTypeId === 1" type="info" variant="tonal"
+                    density="compact">
+                    Sign up for an event to use your pass. This track requires a reservation before
+                    you ride, so walking up without one will be turned away at the gate.
+                </v-alert>
+                <p v-else class="text-caption text-medium-emphasis">
+                    Walk-ups welcome: just show this QR at the gate on any operating day.
+                    Riding a capacity-limited event? Reserve your spot below.
+                </p>
+                <v-btn v-if="p.status === 'paid'" size="small" variant="tonal" color="primary"
+                    class="mt-2" prepend-icon="mdi-calendar-plus" @click="openReserve(p)">
+                    Reserve for an event
+                </v-btn>
+            </div>
         </v-card>
+
+        <v-dialog v-model="reserveOpen" max-width="520">
+            <v-card v-if="reserveTarget">
+                <v-card-title class="d-flex align-center">
+                    <span>Reserve for an event</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="reserveOpen = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">
+                        {{ reserveTarget.productName }}: pick an upcoming event to reserve your spot.
+                    </p>
+                    <v-progress-circular v-if="reserveLoading" indeterminate color="primary"></v-progress-circular>
+                    <v-alert v-else-if="reserveEvents.length === 0" type="info" variant="tonal" density="compact">
+                        No upcoming events fall within this pass's validity window.
+                    </v-alert>
+                    <v-select v-else v-model="reserveEventId" :items="reserveEvents"
+                        item-title="title" item-value="id" label="Event"
+                        density="compact" variant="outlined" hide-details>
+                        <template #item="{ props, item }">
+                            <v-list-item v-bind="props" :subtitle="formatEventWhen(item.raw.startsAtUtc)"></v-list-item>
+                        </template>
+                    </v-select>
+                    <div v-if="reserveError" class="text-error text-body-2 mt-3">{{ reserveError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="reserveSaving" @click="reserveOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="reserveSaving"
+                        :disabled="reserveEvents.length === 0 || !reserveEventId"
+                        @click="submitReserve">
+                        Reserve
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <v-dialog v-model="registerOpen" max-width="520" persistent>
             <v-card v-if="registering">
@@ -119,12 +168,14 @@
 import { ref, reactive, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { SeasonPassService, type MySeasonPass } from '@/services/SeasonPassService'
+import { EventService, type EventDto } from '@/services/EventService'
 import QrCode from '@/components/QrCode.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import SignaturePad from '@/components/SignaturePad.vue'
 import { branding } from '@/stores/branding'
 
 const service = new SeasonPassService()
+const eventService = new EventService()
 const passes = ref<MySeasonPass[]>([])
 const loading = ref(false)
 
@@ -236,6 +287,77 @@ function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text
     snackbarColor.value = color
     snackbar.value = true
+}
+
+// ── Reserve a spot at an event ────────────────────────────────────────────────
+// Available in both admission modes: a walk-up track can still run capacity-limited race
+// days, and on a sign-up track this is the only way to become admissible.
+const reserveOpen = ref(false)
+const reserveTarget = ref<MySeasonPass | null>(null)
+const reserveEvents = ref<EventDto[]>([])
+const reserveEventId = ref<string | null>(null)
+const reserveLoading = ref(false)
+const reserveSaving = ref(false)
+const reserveError = ref('')
+
+/** Event start in the track's own timezone. dayjs utc/timezone plugins are registered in main.ts. */
+function formatEventWhen(startsAtUtc: string): string {
+    return dayjs.utc(startsAtUtc).tz(branding.timezone || 'UTC').format('ddd MMM D, h:mm A')
+}
+
+async function openReserve(p: MySeasonPass) {
+    reserveTarget.value = p
+    reserveEventId.value = null
+    reserveError.value = ''
+    reserveOpen.value = true
+    reserveLoading.value = true
+    try {
+        const fromUtc = dayjs().startOf('day').toISOString()
+        const toUtc = dayjs(p.validToDate).endOf('day').toISOString()
+        const r = await eventService.list(fromUtc, toUtc)
+        // Client-side mirror of the server's own Reserve validations, so the rider is only
+        // offered events it will actually accept. Deliberately does NOT use
+        // EventDto.eligiblePasses: that field is never populated (its backing table was
+        // dropped), so filtering on it would show an empty list forever.
+        const now = dayjs()
+        const from = p.validFromDate.slice(0, 10)
+        const to = p.validToDate.slice(0, 10)
+        reserveEvents.value = r.data.data.filter((e: EventDto) => {
+            if (e.status !== 'scheduled') return false
+            if (!dayjs.utc(e.endsAtUtc).isAfter(now)) return false
+            const start = dayjs.utc(e.startsAtUtc).tz(branding.timezone || 'UTC')
+            const day = start.format('YYYY-MM-DD')
+            if (day < from || day > to) return false
+            if (p.productKind === 'days_of_week' && p.validDaysOfWeek?.length)
+                return p.validDaysOfWeek.includes(start.day())
+            return true
+        })
+    } catch (err: any) {
+        flash(err.response?.data?.error
+            || 'Could not load events to reserve. Check your connection and try again.', 'error')
+        reserveEvents.value = []
+    } finally {
+        reserveLoading.value = false
+    }
+}
+
+async function submitReserve() {
+    if (!reserveTarget.value || !reserveEventId.value) return
+    reserveError.value = ''
+    reserveSaving.value = true
+    try {
+        await service.reserve(reserveTarget.value.id, reserveEventId.value)
+        reserveOpen.value = false
+        flash('Reserved. Show your pass QR at the gate for that event.', 'success')
+        await load()
+    } catch (err: any) {
+        // Inline rather than a snackbar: the dialog stays open for a retry, and a snackbar
+        // behind it can go unnoticed.
+        reserveError.value = err.response?.data?.error
+            || 'Could not reserve that event. It may be full, so try another.'
+    } finally {
+        reserveSaving.value = false
+    }
 }
 
 onMounted(async () => {

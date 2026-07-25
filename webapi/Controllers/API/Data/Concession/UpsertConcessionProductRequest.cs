@@ -23,6 +23,10 @@ namespace webapi.Controllers.API.Data.Concession
         public int SortOrder { get; set; }
         // Kitchen station that prepares this item (null = default queue).
         public Guid? StationId { get; set; }
+        // False = grab-and-go (bagged chips, canned soda): never listed on the cook screen. Default true.
+        public bool RequiresPrep { get; set; } = true;
+        // Whether this entree can be upgraded via the shared "make it a combo" definition.
+        public bool ComboAvailable { get; set; }
         // Tax category that sets this item's rate (null = the tenant's default category). Validated
         // server-side against this tenant's categories.
         public Guid? TaxCategoryId { get; set; }

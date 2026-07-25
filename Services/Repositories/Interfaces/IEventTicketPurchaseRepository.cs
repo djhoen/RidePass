@@ -41,6 +41,10 @@ namespace Services.Repositories.Interfaces
             string firstName, string lastName, DateTime? birthdate, string? raceNumber,
             IReadOnlyList<Guid> excludeTicketIds);
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
+        /// <summary>Records a staff ID/age check against this ticket's rider. Tenant-scoped.</summary>
+        Task<int> SetIdVerified(Guid id, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
+        /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
+        Task<int> ClearIdVerified(Guid id, Guid tenantId);
         // Guarded redeem for offline batch sync: flips paid -> redeemed only, returning true
         // if THIS call made the transition (so the first sync wins and duplicates are detected).
         Task<bool> TryMarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);

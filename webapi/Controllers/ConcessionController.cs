@@ -138,6 +138,8 @@ namespace webapi.Controllers
                 IsActive = req.IsActive,
                 SortOrder = req.SortOrder,
                 StationId = stationId,
+                RequiresPrep = req.RequiresPrep,
+                ComboAvailable = req.ComboAvailable,
                 Inventory = req.Inventory,
                 TaxCategoryId = await ValidateTaxCategory(_tenantContext.TenantId, req.TaxCategoryId),
             };
@@ -163,6 +165,8 @@ namespace webapi.Controllers
             existing.IsActive = req.IsActive;
             existing.SortOrder = req.SortOrder;
             existing.StationId = stationId;
+            existing.RequiresPrep = req.RequiresPrep;
+            existing.ComboAvailable = req.ComboAvailable;
             existing.Inventory = req.Inventory;
             existing.TaxCategoryId = await ValidateTaxCategory(_tenantContext.TenantId, req.TaxCategoryId);
             await _concessions.UpdateProduct(existing);
@@ -1774,6 +1778,9 @@ namespace webapi.Controllers
                     await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "sale could not be created");
                     throw;
                 }
+                // All grab-and-go? Every line is already 'ready', so settle the order as ready now:
+                // nothing will ever hit the cook screen to bump it there.
+                await _concessions.RecomputeSaleFulfillment(cashSale.Id, tenantId);
                 if (cashSale.TotalCents - creditApplied > 0) await WriteCashLedger(cashSale);   // skip when no money changed hands
                 try { await _concessions.DepleteInventoryForSale(cashSale.Id, tenantId); } catch { /* inventory is best-effort */ }
                 await NotifyLowStock(tenantId);
@@ -1852,6 +1859,8 @@ namespace webapi.Controllers
                 await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "sale could not be created");
                 throw;
             }
+            // NB: fulfillment stays 'active' until the card payment lands; StripePurchaseFinalizer
+            // recomputes it on the paid flip so an all-grab-and-go order settles straight to 'ready'.
 
             var metadata = new Dictionary<string, string>
             {
@@ -2418,7 +2427,6 @@ namespace webapi.Controllers
                 await _credit.ReverseRedeem(tenantId, "concession_sale", saleId, "order could not be created");
                 throw;
             }
-
             // Fully covered by credit: nothing to charge; settle it straight onto the cook screen
             // (no ledger entry: no money moved, and the credit's value was booked when funded).
             if (due == 0)
@@ -2426,8 +2434,14 @@ namespace webapi.Controllers
                 await _concessions.MarkSalePaid(sale.Id);
                 var orderNumber = await _concessions.NextOrderNumber(tenantId);
                 await _concessions.SetOrderNumber(sale.Id, orderNumber);
+                // An order of nothing but grab-and-go items has no cook-screen line to bump, so settle
+                // it as ready here; anything with a real prep line stays 'active' for the kitchen.
+                await _concessions.RecomputeSaleFulfillment(sale.Id, tenantId);
                 try { await _concessions.DepleteInventoryForSale(sale.Id, tenantId); } catch { /* inventory is best-effort */ }
                 await NotifyLowStock(tenantId);
+                // Nothing to cook (all grab-and-go) means no bump will ever fire the ready text, so send
+                // it here. No-ops for any order that still has prep lines.
+                await NotifyIfReady(sale.Id);
                 return new ApiResponses().OkResult(new ConcessionSaleResponse
                 {
                     SaleId = sale.Id,
@@ -2679,6 +2693,7 @@ namespace webapi.Controllers
                 IsActive = p.IsActive,
                 SortOrder = p.SortOrder,
                 StationId = p.StationId,
+                RequiresPrep = p.RequiresPrep,
                 TaxCategoryId = p.TaxCategoryId,
                 Inventory = p.Inventory,
                 ComboAvailable = p.ComboAvailable,
@@ -2875,6 +2890,10 @@ namespace webapi.Controllers
                     LineTotalCents = unitPrice * item.Quantity,
                     Notes = Blank(item.Notes),
                     Modifiers = mods,
+                    // Grab-and-go: snapshot the setting and land the line already 'ready' so it neither
+                    // shows on the cook screen nor holds the order in "Preparing" waiting for a bump.
+                    RequiresPrep = product.RequiresPrep,
+                    PrepStatus = product.RequiresPrep ? "queued" : "ready",
                 };
 
                 // "Make it a combo": layer a size tier + side/drink children onto the entree line.
@@ -3023,7 +3042,9 @@ namespace webapi.Controllers
                     UnitPriceCents = 0,
                     Quantity = item.Quantity,
                     LineTotalCents = 0,
-                    PrepStatus = "queued",
+                    // A grab-and-go component (bagged chips as the combo side) skips the cook screen too.
+                    RequiresPrep = component.RequiresPrep,
+                    PrepStatus = component.RequiresPrep ? "queued" : "ready",
                 });
             }
 

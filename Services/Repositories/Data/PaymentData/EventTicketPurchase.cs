@@ -46,6 +46,13 @@ namespace Services.Repositories.Data.PaymentData
         public string? RiderFirstName { get; set; }
         public string? RiderLastName { get; set; }
         public DateTime? RiderBirthdate { get; set; }
+        // ── Stored ID/age verification of the RIDER (Script0238) ─────────────
+        // On the ticket as well as on users, because a ticketed rider frequently has no account
+        // (a parent buying for a kid). IdVerifiedDob is what the document said, as against the
+        // self-reported RiderBirthdate above.
+        public DateTime? IdVerifiedAt { get; set; }
+        public Guid? IdVerifiedByUserId { get; set; }
+        public DateTime? IdVerifiedDob { get; set; }
         public string? Bike { get; set; }
         public Guid? WaiverId { get; set; }
         public DateTime? WaiverSignedAt { get; set; }

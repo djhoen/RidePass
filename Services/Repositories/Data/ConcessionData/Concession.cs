@@ -20,6 +20,9 @@ namespace Services.Repositories.Data.ConcessionData
         public int SortOrder { get; set; }
         // Which kitchen station prepares this item (fryer/grill/...). NULL = default queue.
         public Guid? StationId { get; set; }
+        // False = grab-and-go (bagged chips, canned soda): nothing to make, so it never shows on the
+        // cook screen and its sale line is born 'ready'. Defaults true (made to order).
+        public bool RequiresPrep { get; set; } = true;
         // Stock count for simple (no-variant) items. NULL = unlimited. Variant items track stock per variant.
         public int? Inventory { get; set; }
         // Business date this item is manually 86'd for; while == today (UTC) it's unavailable, then auto-clears.
@@ -336,6 +339,9 @@ namespace Services.Repositories.Data.ConcessionData
         public Guid? VariantId { get; set; }
         // Station this line is prepared at (snapshot from the product). NULL = default queue.
         public Guid? StationId { get; set; }
+        // Snapshot of the product's grab-and-go setting. False = the cook screen never lists this line
+        // and it is written with PrepStatus 'ready', so it can't hold the order in "Preparing".
+        public bool RequiresPrep { get; set; } = true;
         public string NameSnapshot { get; set; } = null!;
         public string? VariantLabel { get; set; }
         public int UnitPriceCents { get; set; }

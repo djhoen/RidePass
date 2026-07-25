@@ -389,6 +389,13 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
     },
     {
+        // Day timeline of the rental fleet: what's free, what's out, and drag-to-book.
+        path: '/Admin/BikeShop/RentalBoard',
+        name: 'AdminBikeShopRentalBoard',
+        component: () => import('../views/Admin/BikeShopRentalBoard.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
         path: '/Admin/BikeShop/Sales',
         name: 'AdminBikeShopSales',
         component: () => import('../views/Admin/BikeShopSales.vue'),

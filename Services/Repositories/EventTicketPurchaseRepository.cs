@@ -23,6 +23,8 @@ namespace Services.Repositories
             race_number AS RaceNumber,
             rider_first_name AS RiderFirstName, rider_last_name AS RiderLastName,
             rider_birthdate AS RiderBirthdate, bike AS Bike,
+            id_verified_at AS IdVerifiedAt, id_verified_by_user_id AS IdVerifiedByUserId,
+            id_verified_dob AS IdVerifiedDob,
             waiver_id AS WaiverId, waiver_signed_at AS WaiverSignedAt,
             waiver_signature_data_url AS WaiverSignatureDataUrl,
             waiver_signature_id AS WaiverSignatureId,
@@ -346,6 +348,33 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE event_ticket_purchase SET status = @status WHERE id = @id";
             await _db.Execute(sql, new { id, status });
+        }
+
+        /// <summary>
+        /// Records a staff ID/age check against the rider on this ticket. Tenant-scoped.
+        /// Rerunnable — re-verifying overwrites, which a corrected date of birth needs.
+        /// </summary>
+        public async Task<int> SetIdVerified(Guid id, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET id_verified_at         = now(),
+                    id_verified_by_user_id = @verifiedByUserId,
+                    id_verified_dob        = @verifiedDob,
+                    updated_at             = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { id, tenantId, verifiedByUserId, verifiedDob });
+        }
+
+        /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
+        public async Task<int> ClearIdVerified(Guid id, Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET id_verified_at = NULL, id_verified_by_user_id = NULL, id_verified_dob = NULL,
+                    updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { id, tenantId });
         }
 
         public async Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc)

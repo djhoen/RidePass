@@ -113,6 +113,13 @@ namespace Services.Repositories.Data.PaymentData
         public string? HolderFirstName { get; set; }
         public string? HolderLastName { get; set; }
         public DateTime? HolderBirthdate { get; set; }
+        // ── Stored ID/age verification of the HOLDER (Script0238) ────────────
+        // Lives on the purchase, not only on users, because the holder frequently has no account
+        // of their own (the parent-buying-for-a-kid case this class already documents above).
+        // IdVerifiedDob is what the photo ID said, as against the self-reported HolderBirthdate.
+        public DateTime? IdVerifiedAt { get; set; }
+        public Guid? IdVerifiedByUserId { get; set; }
+        public DateTime? IdVerifiedDob { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
@@ -162,11 +169,19 @@ namespace Services.Repositories.Data.PaymentData
         public SeasonPassBenefit Benefit { get; set; } = null!;
     }
 
+    /// <summary>One admission's worth of a season pass. Anchored to EITHER an event (the
+    /// classic case) or, for a walk-up track open on a day with nothing on the calendar, to
+    /// CheckInDate. Never neither: the database enforces that with
+    /// chk_season_pass_reservation_anchor.</summary>
     public class SeasonPassReservation
     {
         public Guid Id { get; set; }
         public Guid SeasonPassPurchaseId { get; set; }
-        public Guid EventId { get; set; }
+        /// <summary>NULL on a no-event walk-up admission, where CheckInDate is the anchor instead.</summary>
+        public Guid? EventId { get; set; }
+        /// <summary>Tenant-local calendar date of a no-event walk-up admission. NULL on every
+        /// event-anchored row, where the event's own schedule is the source of truth.</summary>
+        public DateTime? CheckInDate { get; set; }
         public string Status { get; set; } = "reserved";    // reserved | checked_in | cancelled
         public DateTime ReservedAt { get; set; }
         public DateTime? CheckedInAt { get; set; }
@@ -175,9 +190,10 @@ namespace Services.Repositories.Data.PaymentData
 
     public class SeasonPassReservationWithContext : SeasonPassReservation
     {
-        public string EventTitle { get; set; } = null!;
-        public DateTime EventStartsAt { get; set; }
-        public DateTime EventEndsAt { get; set; }
+        // All three are null on a no-event walk-up row: there is no event to describe.
+        public string? EventTitle { get; set; }
+        public DateTime? EventStartsAt { get; set; }
+        public DateTime? EventEndsAt { get; set; }
     }
 
     /// <summary>A reservation resolved to its event + the season-pass holder, for check-in gating.</summary>

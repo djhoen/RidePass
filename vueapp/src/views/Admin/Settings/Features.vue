@@ -28,6 +28,20 @@
                                      locked "Included" badge, never a tenant-settable toggle. -->
                                 <v-chip v-if="isPlatformFeature(f.key)" size="small" color="success"
                                     variant="tonal" prepend-icon="mdi-lock-check">Included</v-chip>
+                                <!-- Two named modes rather than on/off, so this row gets a select
+                                     instead of a switch. Bound one-way: a rejected save snaps back
+                                     on the next render, same as a failed toggle. -->
+                                <v-select v-else-if="f.key === 'seasonPassAdmissionType'"
+                                    :model-value="branding.seasonPassAdmissionTypeId"
+                                    :items="[
+                                        { title: 'Walk-up: scan and ride', value: 2 },
+                                        { title: 'Event sign-up required', value: 1 },
+                                    ]"
+                                    density="compact" hide-details variant="outlined"
+                                    style="min-width: 240px"
+                                    :loading="savingKey === 'seasonPassAdmissionType'"
+                                    :disabled="savingKey !== null && savingKey !== 'seasonPassAdmissionType'"
+                                    @update:model-value="(v: number) => applySeasonPassAdmissionType(v)"></v-select>
                                 <v-switch v-else
                                     :model-value="f.enabled"
                                     @update:model-value="(v: boolean | null) => toggle(f, !!v)"
@@ -105,6 +119,25 @@ import { branding, loadBranding } from '@/stores/branding'
 
 const tenantService = new TenantService()
 const membershipService = new MembershipService()
+
+/**
+ * PUT /Tenant replaces the whole settings object, so every caller has to send all of it. Sending
+ * the current branding plus just the field being changed keeps that honest: spelling the fields
+ * out at each call site meant a newly added setting silently reverted to its stale value from any
+ * toggle that predated it.
+ */
+function saveSettings(overrides: Partial<Parameters<typeof tenantService.updateSettings>[0]>) {
+    return tenantService.updateSettings({
+        timezone: branding.timezone,
+        requireReservationForPasses: branding.requireReservationForPasses,
+        requireEmergencyContact: branding.requireEmergencyContact,
+        allowEventSubscriptions: branding.allowEventSubscriptions,
+        requireIdAtCheckin: branding.requireIdAtCheckin,
+        requireIdForWristband: branding.requireIdForWristband,
+        seasonPassAdmissionTypeId: branding.seasonPassAdmissionTypeId,
+        ...overrides,
+    })
+}
 
 interface Feature {
     key: string
@@ -265,15 +298,19 @@ const features = computed<Feature[]>(() => [
         description: 'Riders must reserve a spot at an event before buying a pass — no walk-up sales.',
         icon: 'mdi-calendar-check',
         enabled: branding.requireReservationForPasses,
-        apply: async (next) => {
-            await tenantService.updateSettings({
-                timezone: branding.timezone,
-                requireReservationForPasses: next,
-                requireEmergencyContact: branding.requireEmergencyContact,
-                allowEventSubscriptions: branding.allowEventSubscriptions,
-                requireIdAtCheckin: branding.requireIdAtCheckin,
-            })
-        },
+        apply: async (next) => { await saveSettings({ requireReservationForPasses: next }) },
+    },
+    {
+        key: 'seasonPassAdmissionType',
+        title: 'Season pass admission',
+        description: 'Walk-up: any pass holder can scan in on any operating day, event or not. ' +
+            'Event sign-up required: pass holders must reserve a spot at a scheduled event before they can be checked in.',
+        icon: 'mdi-qrcode-scan',
+        // Two modes, not a boolean, so the row renders a v-select in the #append slot and saves
+        // through applySeasonPassAdmissionType. `enabled` exists only to satisfy visibleFeatures'
+        // filter; the generic toggle() never runs for this key.
+        enabled: branding.seasonPassAdmissionTypeId === 2,
+        apply: async () => { /* handled by applySeasonPassAdmissionType */ },
     },
     {
         key: 'requireEmergencyContact',
@@ -281,15 +318,7 @@ const features = computed<Feature[]>(() => [
         description: 'Riders must add an emergency contact on their profile before any purchase.',
         icon: 'mdi-phone-alert',
         enabled: branding.requireEmergencyContact,
-        apply: async (next) => {
-            await tenantService.updateSettings({
-                timezone: branding.timezone,
-                requireReservationForPasses: branding.requireReservationForPasses,
-                requireEmergencyContact: next,
-                allowEventSubscriptions: branding.allowEventSubscriptions,
-                requireIdAtCheckin: branding.requireIdAtCheckin,
-            })
-        },
+        apply: async (next) => { await saveSettings({ requireEmergencyContact: next }) },
     },
     {
         key: 'allowEventSubscriptions',
@@ -297,15 +326,7 @@ const features = computed<Feature[]>(() => [
         description: 'Riders can subscribe to be notified when new events get scheduled.',
         icon: 'mdi-email-multiple',
         enabled: branding.allowEventSubscriptions,
-        apply: async (next) => {
-            await tenantService.updateSettings({
-                timezone: branding.timezone,
-                requireReservationForPasses: branding.requireReservationForPasses,
-                requireEmergencyContact: branding.requireEmergencyContact,
-                allowEventSubscriptions: next,
-                requireIdAtCheckin: branding.requireIdAtCheckin,
-            })
-        },
+        apply: async (next) => { await saveSettings({ allowEventSubscriptions: next }) },
     },
     {
         key: 'requireIdAtCheckin',
@@ -313,15 +334,18 @@ const features = computed<Feature[]>(() => [
         description: 'Gate staff must confirm they checked the rider\'s photo ID against the purchaser name before redeeming. One QR scan still pulls up the rider\'s whole order for the event.',
         icon: 'mdi-card-account-details-outline',
         enabled: branding.requireIdAtCheckin,
-        apply: async (next) => {
-            await tenantService.updateSettings({
-                timezone: branding.timezone,
-                requireReservationForPasses: branding.requireReservationForPasses,
-                requireEmergencyContact: branding.requireEmergencyContact,
-                allowEventSubscriptions: branding.allowEventSubscriptions,
-                requireIdAtCheckin: next,
-            })
-        },
+        apply: async (next) => { await saveSettings({ requireIdAtCheckin: next }) },
+    },
+    {
+        key: 'requireIdForWristband',
+        title: 'Require waiver + verified ID for a wristband',
+        description: 'No wristband goes on a rider until they have signed the waiver and had their photo ID '
+            + 'and age checked. Unlike "Require ID at check-in" above, the check is recorded against the '
+            + 'rider, so they are carded once and every later scan shows it. Gate staff verify and record '
+            + 'the ID straight from the scan screen.',
+        icon: 'mdi-shield-account-outline',
+        enabled: branding.requireIdForWristband,
+        apply: async (next) => { await saveSettings({ requireIdForWristband: next }) },
     },
 ])
 
@@ -349,6 +373,22 @@ const snackbarColor = ref<'success' | 'error'>('success')
 const waitlistConfirmMinutes = ref<number>(branding.waitlistConfirmWindowMinutes)
 const waitlistWindowDirty = computed(() =>
     waitlistConfirmMinutes.value !== branding.waitlistConfirmWindowMinutes)
+
+// Season pass admission mode. Not a boolean, so it bypasses the generic toggle() path, but it
+// saves through the same helper and so passes every other setting through unchanged.
+async function applySeasonPassAdmissionType(next: number) {
+    if (savingKey.value) return
+    savingKey.value = 'seasonPassAdmissionType'
+    try {
+        await saveSettings({ seasonPassAdmissionTypeId: next })
+        await loadBranding()
+        flash(`Season pass admission set to ${next === 1 ? 'event sign-up required' : 'walk-up'}.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || "Couldn't save the season pass admission setting.", 'error')
+    } finally {
+        savingKey.value = null
+    }
+}
 
 async function saveWaitlistWindow() {
     if (savingKey.value) return

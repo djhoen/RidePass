@@ -173,6 +173,16 @@ export default {
         }
     },
 
+    // While impersonating, the API re-issues the impersonator's own token alongside the
+    // impersonation token (X-Refreshed-Original-Token) so the stashed original session
+    // can't expire mid-impersonation. Swap it into the stash; the live session state is
+    // untouched. No-op when there's no stash (cross-origin preview restores via the apex).
+    refreshStashedOriginal(token: string): void {
+        if (sessionStorage.getItem(ORIGINAL_TOKEN_KEY) !== null) {
+            sessionStorage.setItem(ORIGINAL_TOKEN_KEY, token)
+        }
+    },
+
     hasRole(...roles: string[]): boolean {
         return state.token !== null && state.roles.some(r => roles.includes(r))
     },

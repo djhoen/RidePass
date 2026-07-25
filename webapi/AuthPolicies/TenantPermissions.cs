@@ -69,7 +69,22 @@
             public const string CashTurnIn = "TenantPerm:cash.turnin";
             public const string CashReconcile = "TenantPerm:cash.reconcile";
             public const string AccountingManage = "TenantPerm:accounting.manage";
+
+            /// <summary>
+            /// READ the shop catalog: catalog.manage OR shop.counter. The bike shop counter cannot
+            /// do its job blind — the register needs the product list to ring a sale, rentals need
+            /// it to book gear, and work orders need it to add parts — but a cashier must not be
+            /// able to EDIT the catalog. Reads carry this; every write stays on CatalogManage.
+            /// </summary>
+            public const string CatalogRead = "TenantPermAny:catalog.manage|shop.counter";
         }
+
+        /// <summary>Any-of policies, as (policy name, permissions) so Program.cs registers exactly
+        /// what the Policy constants above name. Keep the order matching the constant's string.</summary>
+        public static readonly (string PolicyName, string[] Permissions)[] AnyOfPolicies =
+        {
+            (Policy.CatalogRead, new[] { CatalogManage, ShopCounter }),
+        };
 
         public static readonly string[] All =
         {

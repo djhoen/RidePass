@@ -262,14 +262,24 @@ namespace webapi.Controllers
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
         [HttpGet("Admin/Riders")]
         public async Task<IActionResult> GetRiders([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc,
-            [FromQuery] string? search, [FromQuery] string audience = "rider")
+            [FromQuery] string? search, [FromQuery] string audience = "rider",
+            [FromQuery] string? purchaseTypes = null, [FromQuery] string? eventTypeCodes = null)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("The date range is empty.");
             if (audience is not ("rider" or "spectator"))
                 return new ApiResponses().BadRequestResult("audience must be 'rider' or 'spectator'.");
+            // Comma-separated so the filters stay bookmarkable. Unknown purchase types are rejected
+            // rather than ignored: silently returning everything would read as "no such riders".
+            var types = SplitCsv(purchaseTypes);
+            var unknown = types.Where(t => !RiderPurchaseTypes.All.Contains(t)).ToList();
+            if (unknown.Count > 0)
+                return new ApiResponses().BadRequestResult($"Unknown purchase type: {string.Join(", ", unknown)}.");
+            var eventTypes = SplitCsv(eventTypeCodes);
+
             var rows = await _reports.GetRidersByRange(_tenantContext.TenantId,
-                fromUtc.ToUniversalTime(), toUtc.ToUniversalTime(), search, RiderReportCap + 1, audience);
+                fromUtc.ToUniversalTime(), toUtc.ToUniversalTime(), search, RiderReportCap + 1, audience,
+                types, eventTypes);
             var truncated = rows.Count > RiderReportCap;
             if (truncated) rows = rows.Take(RiderReportCap).ToList();
             return new ApiResponses().OkResult(new RiderReportResponse
@@ -280,6 +290,21 @@ namespace webapi.Controllers
                 TotalCheckedIn = rows.Count(r => r.CheckedIn),
                 TotalMissingWaiver = rows.Count(r => !r.WaiverSigned),
             });
+        }
+
+        private static List<string> SplitCsv(string? csv) =>
+            string.IsNullOrWhiteSpace(csv)
+                ? new List<string>()
+                : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Distinct().ToList();
+
+        // Whole years elapsed between two dates, birthday-accurate (not a 365-day division).
+        private static int? AgeOn(DateTime? birthdate, DateTime onDate)
+        {
+            if (birthdate is null) return null;
+            var age = onDate.Year - birthdate.Value.Year;
+            if (onDate.Date < birthdate.Value.Date.AddYears(age)) age--;
+            return age < 0 || age > 120 ? null : age;
         }
 
         // Drill-in for one rider (identified by account id and/or email from a report row):
@@ -294,10 +319,43 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("A rider account or email is required to look up details.");
             var regs = await _reports.GetRiderRegistrations(_tenantContext.TenantId, userId, email);
             var waivers = await _reports.GetRiderWaivers(_tenantContext.TenantId, userId, email);
+            // The profile block reads identity off the (platform-wide) account, so it is only
+            // resolved for someone with an actual footprint at THIS tenant. Both lookups above are
+            // tenant-scoped, so no footprint means a hand-typed email can't be used to pull a
+            // stranger's phone, hometown, or birthdate out of another track's customer base.
+            var hasTenantFootprint = regs.Count > 0 || waivers.Count > 0;
+            var profile = hasTenantFootprint
+                ? await _reports.GetRiderProfile(_tenantContext.TenantId, userId, email)
+                : null;
             return new ApiResponses().OkResult(new RiderDetailResponse
             {
                 RiderName = name ?? regs.FirstOrDefault()?.RiderName ?? email ?? "",
                 Email = email,
+                Profile = profile is null ? null : new RiderProfileItem
+                {
+                    UserId = profile.UserId,
+                    Email = profile.Email,
+                    Phone = profile.Phone,
+                    Hometown = profile.Hometown,
+                    RaceNumber = profile.RaceNumber,
+                    BirthdateUtc = profile.Birthdate.HasValue
+                        ? DateTime.SpecifyKind(profile.Birthdate.Value, DateTimeKind.Utc) : null,
+                    Age = AgeOn(profile.Birthdate, DateTime.UtcNow),
+                    MemberSinceUtc = profile.MemberSinceUtc.HasValue
+                        ? DateTime.SpecifyKind(profile.MemberSinceUtc.Value, DateTimeKind.Utc) : null,
+                    Bike = profile.Bike,
+                    EmergencyContactName = profile.EmergencyContactName,
+                    EmergencyContactPhone = profile.EmergencyContactPhone,
+                    ParentGuardianName = profile.ParentGuardianName,
+                    TotalRegistrations = profile.TotalRegistrations,
+                    TotalCheckedIn = profile.TotalCheckedIn,
+                    TotalSpentCents = profile.TotalSpentCents,
+                    FirstVisitUtc = profile.FirstVisitUtc.HasValue
+                        ? DateTime.SpecifyKind(profile.FirstVisitUtc.Value, DateTimeKind.Utc) : null,
+                    LastVisitUtc = profile.LastVisitUtc.HasValue
+                        ? DateTime.SpecifyKind(profile.LastVisitUtc.Value, DateTimeKind.Utc) : null,
+                    IsGuest = profile.UserId is null,
+                },
                 Registrations = regs.Select(ToRiderItem).ToList(),
                 Waivers = waivers.Select(w => new RiderWaiverItem
                 {
@@ -307,9 +365,25 @@ namespace webapi.Controllers
                     SignedAtUtc = DateTime.SpecifyKind(w.SignedAtUtc, DateTimeKind.Utc),
                     SignedByParent = w.SignedByParent,
                     ParentName = w.ParentName,
+                    SignerName = w.SignerName,
                     WaiverIsCurrent = w.WaiverIsCurrent,
+                    HasSignatureImage = w.HasSignatureImage,
                 }).ToList(),
             });
+        }
+
+        // One waiver's signature image, fetched only when an admin opens that signature. Kept off
+        // the drill-in payload because each image is a base64 data URL and a regular accumulates
+        // one per season.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/RiderWaiver/{signatureId:guid}/Signature")]
+        public async Task<IActionResult> GetRiderWaiverSignature(Guid signatureId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var image = await _reports.GetWaiverSignatureImage(_tenantContext.TenantId, signatureId);
+            if (string.IsNullOrWhiteSpace(image))
+                return new ApiResponses().NotFoundResult("No signature image is stored for this waiver.");
+            return new ApiResponses().OkResult(new { signatureDataUrl = image });
         }
 
         private static RiderReportItem ToRiderItem(Services.Repositories.Data.ReportData.RiderReportRow r) => new()
@@ -327,6 +401,13 @@ namespace webapi.Controllers
             CheckedInAtUtc = r.CheckedInAtUtc.HasValue ? DateTime.SpecifyKind(r.CheckedInAtUtc.Value, DateTimeKind.Utc) : null,
             WristbandCode = r.WristbandCode,
             WaiverSigned = r.WaiverSigned,
+            PurchaseType = r.PurchaseType,
+            EventTypeName = r.EventTypeName,
+            EventTypeCode = r.EventTypeCode,
+            RegistrationComplete = r.RegistrationComplete,
+            // Age ON THE EVENT DAY, not today: a 17-year-old who rode last season was a minor for
+            // that entry's waiver, and that's what the report is being asked about.
+            AgeAtEvent = AgeOn(r.RiderBirthdate, r.EventStartsAtUtc),
         };
 
         // ── Event Riders ────────────────────────────────────────────────────
@@ -799,7 +880,9 @@ namespace webapi.Controllers
                 // Check-in is rider-side, so we look at the rider waiver flag here.
                 foreach (var r in data.TodayRegistrations)
                 {
-                    var ev = await _events.GetById(r.EventId, _tenantContext.TenantId);
+                    // A walk-up admission has no event, so there is no event waiver to require.
+                    if (r.EventId is not Guid regEventId) continue;
+                    var ev = await _events.GetById(regEventId, _tenantContext.TenantId);
                     if (ev is not null && ev.RequiresRiderWaiver) { data.RequiresWaiver = true; break; }
                 }
             }

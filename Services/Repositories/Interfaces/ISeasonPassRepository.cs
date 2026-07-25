@@ -64,6 +64,11 @@ namespace Services.Repositories.Interfaces
         Task<int> CompleteRegistration(Guid id, Guid tenantId, Guid purchaserUserId,
             string holderFirstName, string holderLastName, DateTime? holderBirthdate,
             string photoDataUrl, Guid? waiverSignatureId);
+        /// <summary>Records a staff ID/age check against the pass holder. Tenant-scoped, paid
+        /// passes only; returns rows affected.</summary>
+        Task<int> SetIdVerified(Guid id, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
+        /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
+        Task<int> ClearIdVerified(Guid id, Guid tenantId);
         /// <summary>Burn one ride credit. Guarded (&gt; 0, paid, tenant-scoped); returns rows
         /// affected — 0 means no credit was available and the caller must abort the thing the
         /// credit was about to fund.</summary>
@@ -102,8 +107,32 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task<(Guid ReservationId, int? CreditsRemaining)?> CreateGateCheckIn(
             Guid passPurchaseId, Guid tenantId, Guid eventId, Guid? staffUserId, bool burnCredit);
+        /// <summary>
+        /// The no-event twin of CreateGateCheckIn, for a walk-up track open on a day with nothing
+        /// on the calendar: optionally burns a credit (guarded &gt; 0, paid, tenant-scoped) and
+        /// upserts the (pass, check-in date) reservation straight to checked_in, reviving a
+        /// cancelled row if present. Returns null when the credit guard fails; otherwise the
+        /// reservation id and post-burn credits. Caller MUST hold the per-pass advisory lock and
+        /// have pre-checked GetWalkUpCheckIn for an existing checked_in row: the burn commits even
+        /// when ON CONFLICT filters the insert out, so calling this on an already-admitted day
+        /// burns a credit and returns null anyway. The index stops the duplicate row, not the
+        /// duplicate burn.
+        /// </summary>
+        Task<(Guid ReservationId, int? CreditsRemaining)?> CreateWalkUpGateCheckIn(
+            Guid passPurchaseId, Guid tenantId, DateTime checkInDate, Guid? staffUserId, bool burnCredit);
+
+        /// <summary>Resolve a no-event walk-up admission for one pass on one tenant-local calendar
+        /// day. Tenant-scoped through the join to season_pass_purchase, which is where the scope
+        /// lives, since season_pass_reservation has no tenant_id. Null when no such row exists yet.</summary>
+        Task<SeasonPassReservation?> GetWalkUpCheckIn(Guid passPurchaseId, Guid tenantId, DateTime checkInDate);
+
+        /// <summary>Tenant-scoped reservation read for wristband linking: is this admission
+        /// checked in, and what event/date scope should a band linked to it inherit?</summary>
+        Task<SeasonPassReservationLinkContext?> GetReservationForBandLink(Guid reservationId, Guid tenantId);
+
         Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchase(Guid purchaseId);
-        Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(Guid purchaseId, DateTime atUtc, DateTime untilUtc);
+        Task<List<SeasonPassReservationWithContext>> ListReservationsForPurchaseOnDate(
+            Guid purchaseId, Guid tenantId, DateTime atUtc, DateTime untilUtc, DateTime localDate);
         /// <summary>
         /// Updates a reservation's status. <paramref name="tenantId"/> is required and the
         /// SQL filter joins through season_pass_purchase to refuse updates against

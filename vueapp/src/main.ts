@@ -98,11 +98,27 @@ axios.interceptors.request.use(
     }
 )
 
-// Axios response interceptor for 401 handling
+// Sliding sessions: the API re-issues the JWT on activity via this header; adopting
+// it keeps an active user signed in indefinitely, while idle sessions expire.
+function adoptRefreshedToken(headers: Record<string, unknown> | undefined) {
+    const refreshed = headers?.['x-refreshed-token']
+    if (typeof refreshed === 'string' && refreshed) authHelper.setToken(refreshed)
+    // During impersonation the impersonator's own stashed token slides too, so
+    // "stop impersonation" restores a live session no matter how long it lasted.
+    const original = headers?.['x-refreshed-original-token']
+    if (typeof original === 'string' && original) authHelper.refreshStashedOriginal(original)
+}
+
+// Axios response interceptor for token refresh + 401 handling
 axios.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        adoptRefreshedToken(response.headers)
+        return response
+    },
     (error) => {
         if (error.response) {
+            // Even a failed action (400/403/etc.) proves the user is active, so keep sliding.
+            adoptRefreshedToken(error.response.headers)
             if (error.response.status === 401) {
                 console.error('[RidePass] 401 Unauthorized:', {
                     url: error.config?.url,
