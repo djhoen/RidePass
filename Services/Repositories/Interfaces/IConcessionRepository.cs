@@ -104,7 +104,7 @@ namespace Services.Repositories.Interfaces
         Task MarkSaleRefunded(Guid saleId, Guid tenantId);
         /// <summary>Blind age sweep of pending sales; status as on <see cref="MarkSaleFailed"/>.
         /// The reconciler's walk-off sweep passes 'abandoned'.</summary>
-        Task<int> FailStalePendingSales(DateTime olderThanUtc, string status = "failed");
+        Task<List<StalePendingSale>> FailStalePendingSales(DateTime olderThanUtc, string status = "failed");
 
         // Sale lines + modifiers
         Task<List<ConcessionSaleLine>> GetSaleLines(Guid saleId);

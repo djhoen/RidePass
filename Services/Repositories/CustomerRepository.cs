@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.CustomerData;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Data.UserData;
@@ -22,8 +22,11 @@ namespace Services.Repositories
         public CustomerRepository(IDbHelper db) => _db = db;
 
         // Common subquery: every (user_id, activity_at, amount_cents, is_paid) row
-        // for this tenant across all three purchase tables. Status = 'paid' is the
-        // bar for counting toward purchase totals, but un-paid rows still mark the
+        // for this tenant across all three purchase tables. A SETTLED payment is the bar for
+        // counting toward purchase totals, which for a ticket means 'paid' OR 'redeemed': redeemed
+        // is where a paid ticket LANDS once it is scanned at the gate, not a separate kind of sale.
+        // Counting only 'paid' hid the majority of real spend, since most tickets get scanned. Un-paid
+        // rows still mark the
         // user as a customer (so support can see them in the list) - including
         // 'pending' and 'failed', both of which are a real interaction (a payment
         // attempt happened). The one exception is 'abandoned': that status means
@@ -36,7 +39,7 @@ namespace Services.Repositories
                 SELECT purchaser_user_id AS user_id,
                        created_at AS activity_at,
                        amount_cents,
-                       (status = 'paid')::int AS is_paid
+                       (status IN ('paid', 'redeemed'))::int AS is_paid
                 FROM event_ticket_purchase
                 WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
                   AND status <> 'abandoned'
@@ -44,6 +47,8 @@ namespace Services.Repositories
                 SELECT purchaser_user_id AS user_id,
                        created_at AS activity_at,
                        amount_cents,
+                       -- No 'redeemed' here on purpose: a season pass never enters that status
+                       -- (its vocabulary is pending/paid/failed/cancelled/refunded/upgraded).
                        (status = 'paid')::int AS is_paid
                 FROM season_pass_purchase
                 WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
@@ -209,7 +214,7 @@ namespace Services.Repositories
                     SELECT purchaser_user_id AS user_id, amount_cents
                     FROM event_ticket_purchase
                     WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
-                      AND status = 'paid' AND created_at >= @since
+                      AND status IN ('paid', 'redeemed') AND created_at >= @since
                     UNION ALL
                     SELECT purchaser_user_id AS user_id, amount_cents
                     FROM season_pass_purchase

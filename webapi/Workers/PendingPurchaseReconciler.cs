@@ -131,7 +131,25 @@ namespace webapi.Workers
             {
                 var concessions = scope.ServiceProvider.GetRequiredService<IConcessionRepository>();
                 var swept = await concessions.FailStalePendingSales(now - TimeSpan.FromMinutes(30), "abandoned");
-                if (swept > 0) _logger.LogInformation("Reconciler abandoned {Count} stale pending concession sales.", swept);
+                if (swept.Count > 0)
+                    _logger.LogInformation("Reconciler abandoned {Count} stale pending concession sales.", swept.Count);
+                // Hand back any store credit those walk-offs debited at ring-up. This sweep is the
+                // ONLY thing that ever resolves them: at 30 minutes it always beats the two-hour
+                // PI-keyed path that does the same hand-back, so without this the credit is simply
+                // kept for food nobody collected.
+                var credit = scope.ServiceProvider.GetRequiredService<ITenantCreditRepository>();
+                foreach (var s in swept.Where(s => s.CreditAppliedCents > 0))
+                {
+                    try
+                    {
+                        await credit.ReverseRedeem(s.TenantId, "concession_sale", s.Id, "order abandoned");
+                    }
+                    catch (Exception ex)
+                    {
+                        // One stuck refund must not abort the rest of the sweep.
+                        _logger.LogWarning(ex, "Could not return store credit for abandoned concession sale {Sale}.", s.Id);
+                    }
+                }
             }
             catch (Exception ex)
             {

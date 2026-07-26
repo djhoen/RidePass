@@ -381,4 +381,15 @@
         public string OptionNameSnapshot { get; set; } = null!;
         public int PriceDeltaCentsSnapshot { get; set; }
     }
+
+    /// <summary>
+    /// A pending concession sale the reconciler just swept (walk-off / cancelled reader). Carries the
+    /// store credit that was applied at ring-up so the sweep can hand it back.
+    /// </summary>
+    public class StalePendingSale
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public int CreditAppliedCents { get; set; }
+    }
 }

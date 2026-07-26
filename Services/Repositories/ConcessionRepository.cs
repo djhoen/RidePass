@@ -660,12 +660,17 @@ namespace Services.Repositories
         // a pending sale older than the cutoff is closed so SumSold stops counting it. Returns
         // count. The reconciler passes 'abandoned': a walk-off is not a decline, and a real
         // decline gets 'failed' from its webhook long before this sweep sees the row.
-        public async Task<int> FailStalePendingSales(DateTime olderThanUtc, string status = "failed")
+        // Returns the rows it actually swept rather than a bare count, because a walked-off card
+        // sale may have had store credit applied at ring-up and the caller has to hand that back.
+        // RETURNING also makes this single-winner: two reconciler ticks cannot both claim a sale.
+        public async Task<List<StalePendingSale>> FailStalePendingSales(DateTime olderThanUtc, string status = "failed")
         {
             const string sql = @"
                 UPDATE concession_sale SET status = @status
-                WHERE status = 'pending' AND created_at < @olderThanUtc";
-            return await _db.Execute(sql, new { olderThanUtc, status });
+                WHERE status = 'pending' AND created_at < @olderThanUtc
+                RETURNING id AS Id, tenant_id AS TenantId,
+                          COALESCE(credit_applied_cents, 0) AS CreditAppliedCents";
+            return (await _db.Query<StalePendingSale>(sql, new { olderThanUtc, status })).ToList();
         }
 
         // ── Sale lines + modifiers (receipt / refund / kitchen hydration) ───────────

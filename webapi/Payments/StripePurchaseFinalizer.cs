@@ -404,8 +404,15 @@ namespace webapi.Payments
                 if (cleared > 0)
                     await _seasonPasses.IncrementCredits(t.AppliedSeasonPassPurchaseId!.Value, t.TenantId);
             }
-            foreach (var sp in seasonPasses.Where(p => p.Status == "pending"))
+            var deadPasses = seasonPasses.Where(p => p.Status == "pending").ToList();
+            foreach (var sp in deadPasses)
                 await _seasonPasses.UpdatePurchaseStatus(sp.Id, status);
+            // Same hand-back the tickets get above. A pass checkout can carry a gift card and a
+            // coupon, both recorded against the anchor pass row, and without this a declined or
+            // abandoned pass purchase keeps the money: the card stays debited and the coupon stays
+            // spent, for a pass the buyer never received.
+            if (deadPasses.Count > 0)
+                await RestoreDiscountsFor("season_pass", deadPasses.Select(p => p.Id).ToList());
             // Hand back any store credit this checkout debited.
             var deadTender = await _credit.GetCheckoutTenderByPaymentIntentId(paymentIntentId);
             if (deadTender is not null)
