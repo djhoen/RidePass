@@ -1780,14 +1780,6 @@ namespace webapi.Controllers
             var (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
             if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
 
-            // Re-check availability at the moment of payment, before any money moves. The cashier's
-            // tile grid is a snapshot from whenever the menu last loaded, and stock shifts underneath
-            // it: an online order can take the last portion, or the kitchen can 86 an item mid-queue.
-            // Without this the counter cheerfully charges for food it cannot serve and the customer
-            // finds out at the window.
-            var soldOutError = await UnavailableItemsError(tenantId, req.Items);
-            if (soldOutError is not null) return new ApiResponses().BadRequestResult(soldOutError);
-
             // The signed-in cashier: attributes the sale and is the subject of the manager-PIN lockout.
             Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
 
@@ -2491,14 +2483,6 @@ namespace webapi.Controllers
             var (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
             if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
 
-            // Re-check availability at the moment of payment, before any money moves. The cashier's
-            // tile grid is a snapshot from whenever the menu last loaded, and stock shifts underneath
-            // it: an online order can take the last portion, or the kitchen can 86 an item mid-queue.
-            // Without this the counter cheerfully charges for food it cannot serve and the customer
-            // finds out at the window.
-            var soldOutError = await UnavailableItemsError(tenantId, req.Items);
-            if (soldOutError is not null) return new ApiResponses().BadRequestResult(soldOutError);
-
             // Tips are only honored when the tenant has enabled them; otherwise force 0 server-side.
             var tipsEnabled = settings?.TipsEnabled ?? false;
             var pricesIncludeTax = settings?.PricesIncludeTax ?? false;
@@ -2863,92 +2847,6 @@ namespace webapi.Controllers
 
         // Fills the product-level availability fields (SoldOut / ManuallySoldOut / Remaining) that need a
         // sold-count lookup + "today", so the POS, menu board, and online menu can show / block 86'd items.
-        /// <summary>
-        /// Names every requested item that can no longer be served, or null when the whole cart is good.
-        ///
-        /// Deliberately applies the SAME rule as <see cref="ApplyProductAvailability"/> (manual 86 for
-        /// today, or tracked inventory exhausted) so the tiles the cashier sees and the gate at payment
-        /// can never disagree. Quantity is part of the test: asking for three when two remain fails.
-        ///
-        /// The sold counts behind this include sales in 'pending' as well as 'paid', which is what makes
-        /// the online side count: a rider's unpaid-but-placed order already holds its stock, so the
-        /// counter cannot sell the same last portion a second time.
-        /// </summary>
-        private async Task<string?> UnavailableItemsError(
-            Guid tenantId, List<ConcessionSaleRequest.SaleLine> items)
-        {
-            var wanted = items.Where(i => i.Quantity > 0).ToList();
-            if (wanted.Count == 0) return null;
-
-            var productIds = wanted.Select(i => i.ProductId).Distinct().ToList();
-            var products = (await _concessions.ListProducts(tenantId, activeOnly: true))
-                .Where(p => productIds.Contains(p.Id))
-                .ToDictionary(p => p.Id);
-
-            var variantsByProduct = await _concessions.ListVariantsForProducts(productIds);
-            var soldByVariant = await _concessions.SumSoldVariants(
-                variantsByProduct.Values.SelectMany(v => v).Select(v => v.Id));
-            var soldByProduct = await _concessions.SumSoldProducts(productIds);
-            var today = TenantToday();
-
-            // Same product (or variant) can appear on several lines; the totals have to be summed
-            // before comparing against stock or two half-carts each pass and together oversell.
-            var wantByProduct = wanted.Where(i => i.VariantId is null)
-                .GroupBy(i => i.ProductId).ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
-            var wantByVariant = wanted.Where(i => i.VariantId is not null)
-                .GroupBy(i => i.VariantId!.Value).ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
-
-            var unavailable = new List<string>();
-            foreach (var p in products.Values)
-            {
-                var manually86 = p.SoldOutDate.HasValue && p.SoldOutDate.Value.Date == today;
-                if (manually86)
-                {
-                    unavailable.Add(p.Name);
-                    continue;
-                }
-
-                var activeVariants = variantsByProduct.GetValueOrDefault(p.Id, new())
-                    .Where(v => v.IsActive).ToList();
-                if (activeVariants.Count == 0)
-                {
-                    // Product-level stock. Inventory null means untracked, so it never runs out.
-                    if (!p.Inventory.HasValue) continue;
-                    var remaining = Math.Max(0, p.Inventory.Value - soldByProduct.GetValueOrDefault(p.Id, 0));
-                    var want = wantByProduct.GetValueOrDefault(p.Id, 0);
-                    if (want > remaining)
-                    {
-                        unavailable.Add(remaining == 0
-                            ? p.Name
-                            : $"{p.Name} (only {remaining} left)");
-                    }
-                    continue;
-                }
-
-                foreach (var v in activeVariants)
-                {
-                    if (!v.Inventory.HasValue) continue;
-                    var want = wantByVariant.GetValueOrDefault(v.Id, 0);
-                    if (want == 0) continue;
-                    var remaining = Math.Max(0, v.Inventory.Value - soldByVariant.GetValueOrDefault(v.Id, 0));
-                    if (want > remaining)
-                    {
-                        var label = string.Join(" ", new[] { v.Size, v.Color }
-                            .Where(x => !string.IsNullOrWhiteSpace(x)));
-                        var name = string.IsNullOrWhiteSpace(label) ? p.Name : $"{p.Name} ({label})";
-                        unavailable.Add(remaining == 0 ? name : $"{name} (only {remaining} left)");
-                    }
-                }
-            }
-
-            if (unavailable.Count == 0) return null;
-            // Named rather than a generic refusal: the cashier has a customer in front of them and
-            // needs to know which item to pull off the order, not that "something" is wrong.
-            return unavailable.Count == 1
-                ? $"{unavailable[0]} just sold out. Remove it from the order and ring up the rest."
-                : $"These just sold out: {string.Join(", ", unavailable)}. Remove them and ring up the rest.";
-        }
-
         private static void ApplyProductAvailability(
             ConcessionProductResponse r, ConcessionProduct p, List<ConcessionVariant> activeVariants,
             Dictionary<Guid, int> soldByProduct, DateTime today)
