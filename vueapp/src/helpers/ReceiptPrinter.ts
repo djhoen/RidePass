@@ -25,7 +25,8 @@ export interface Receipt {
     discountLabel: string | null
     taxCents: number
     pricesIncludeTax: boolean  // true = tax already in line prices (labeled "incl.")
-    tipCents: number
+    /** Concessions only. Omit on surfaces that don't take tips (the bike shop doesn't). */
+    tipCents?: number
     totalCents: number
     method: string            // "Cash" | "Card"
 }

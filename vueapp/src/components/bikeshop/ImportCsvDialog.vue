@@ -12,16 +12,52 @@
                     and suppliers are created automatically. Serialized products import with zero
                     stock (add each unit with its serial afterward).
                 </p>
+                <p class="text-caption text-medium-emphasis mb-2">
+                    <strong>Product</strong> is your own name for the row and stays private to your
+                    shop. The optional <strong>ManufacturerName</strong> column is the name on the
+                    box: supply it and a scan of that barcode can identify the part for you later.
+                </p>
                 <v-btn size="small" variant="text" prepend-icon="mdi-download" class="mb-3" @click="downloadTemplate">
                     Download template
                 </v-btn>
                 <v-file-input v-model="file" label="CSV file" accept=".csv,text/csv" density="compact"
                     prepend-icon="mdi-file-delimited" @update:model-value="preview = null"></v-file-input>
 
+                <!-- The difference between a first load and a refresh. Off by default because a
+                     silent rewrite of a live catalog is worse than an error telling you it exists. -->
+                <v-checkbox v-model="updateExisting" density="compact" hide-details class="mt-1"
+                    @update:model-value="preview = null">
+                    <template #label>
+                        <span class="text-body-2">Update products that already exist</span>
+                    </template>
+                </v-checkbox>
+                <p class="text-caption text-medium-emphasis mb-2">
+                    <template v-if="updateExisting">
+                        Rows are matched to your catalog by barcode, then MPN, then SKU, and only the
+                        columns in the file are written. Stock is never changed by an import.
+                    </template>
+                    <template v-else>
+                        Anything already in your catalog will be reported as an error rather than changed.
+                    </template>
+                </p>
+
                 <template v-if="preview">
                     <v-alert v-if="preview.errors.length === 0" type="success" variant="tonal" density="compact" class="mt-2">
-                        Ready: {{ preview.products }} product{{ preview.products === 1 ? '' : 's' }},
-                        {{ preview.variants }} variant{{ preview.variants === 1 ? '' : 's' }}{{ newThingsNote }}.
+                        Ready:
+                        <template v-if="preview.variants > 0">
+                            {{ preview.products }} new product{{ preview.products === 1 ? '' : 's' }},
+                            {{ preview.variants }} new variant{{ preview.variants === 1 ? '' : 's' }}
+                        </template>
+                        <template v-if="preview.variants > 0 && preview.variantsUpdated > 0">, </template>
+                        <template v-if="preview.variantsUpdated > 0">
+                            {{ preview.variantsUpdated }} existing variant{{ preview.variantsUpdated === 1 ? '' : 's' }} refreshed
+                        </template>
+                        <template v-if="preview.variants === 0 && preview.variantsUpdated === 0">
+                            nothing to do
+                        </template>{{ newThingsNote }}.
+                        <div v-if="preview.variantsUpdated > 0 && preview.columns?.length" class="text-caption mt-1">
+                            Updating: {{ preview.columns.join(', ') }}. Everything else is left alone.
+                        </div>
                     </v-alert>
                     <template v-else>
                         <v-alert type="error" variant="tonal" density="compact" class="mt-2 mb-2">
@@ -41,8 +77,11 @@
                 <v-btn :disabled="importing" @click="close">Cancel</v-btn>
                 <v-btn v-if="!preview || preview.errors.length > 0" color="primary" :loading="checking"
                     :disabled="!file" @click="runPreview">Check file</v-btn>
-                <v-btn v-else color="primary" :loading="importing" @click="runImport">
-                    Import {{ preview.variants }} variant{{ preview.variants === 1 ? '' : 's' }}
+                <v-btn v-else color="primary" :loading="importing"
+                    :disabled="preview.variants === 0 && preview.variantsUpdated === 0" @click="runImport">
+                    {{ preview.variantsUpdated > 0 && preview.variants === 0
+                        ? `Refresh ${preview.variantsUpdated} variant${preview.variantsUpdated === 1 ? '' : 's'}`
+                        : `Import ${preview.variants + preview.variantsUpdated} variant${preview.variants + preview.variantsUpdated === 1 ? '' : 's'}` }}
                 </v-btn>
             </v-card-actions>
         </v-card>
@@ -59,6 +98,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'impo
 const service = new BikeShopService()
 const file = ref<File | null>(null)
 const preview = ref<ShopImportPreview | null>(null)
+const updateExisting = ref(false)
 const checking = ref(false)
 const importing = ref(false)
 const error = ref('')
@@ -82,10 +122,13 @@ function close() {
 
 function downloadTemplate() {
     const csv = [
-        'Product,Description,Brand,Category,Supplier,SKU,Barcode,Size,Color,Price,Cost,DailyRate,Deposit,Tracking,Stock,LowStockAt',
-        'Team Jersey,Track team jersey,Fly Racing,Apparel,MX Distribution,JRS-M,,M,,39.99,16.00,,,pool,8,2',
-        'Team Jersey,,,Apparel,MX Distribution,JRS-L,,L,,39.99,16.00,,,pool,8,2',
-        'Trail Bike 250F,Race-ready 250F,Yamaha,Bikes,MX Distribution,BIKE-250F,,,,5499.00,4200.00,80.00,300.00,serialized,0,',
+        // MPN and ManufacturerName are here because a distributor export carries both and they are
+        // what make a barcode scan resolve later. "Product" is YOUR name for the row and stays
+        // private; "ManufacturerName" is the name on the box and is the one shared field.
+        'Product,Description,Brand,Category,Supplier,SKU,Barcode,MPN,ManufacturerName,Size,Color,Price,Cost,DailyRate,Deposit,Tracking,Stock,LowStockAt',
+        'Team Jersey,Track team jersey,Fly Racing,Apparel,MX Distribution,JRS-M,,FR-JRS-24,Fly Racing Kinetic Jersey,M,,39.99,16.00,,,pool,8,2',
+        'Team Jersey,,,Apparel,MX Distribution,JRS-L,,FR-JRS-24,Fly Racing Kinetic Jersey,L,,39.99,16.00,,,pool,8,2',
+        'Trail Bike 250F,Race-ready 250F,Yamaha,Bikes,MX Distribution,BIKE-250F,,,,,,5499.00,4200.00,80.00,300.00,serialized,0,',
     ].join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a')
@@ -107,7 +150,7 @@ async function runPreview() {
     if (text == null) return
     checking.value = true
     try {
-        preview.value = (await service.importCsv(text, true)).data.data
+        preview.value = (await service.importCsv(text, true, updateExisting.value)).data.data
     } catch (e: any) {
         error.value = e.response?.data?.error || 'Could not check the file. Make sure it is a CSV and try again.'
     } finally { checking.value = false }
@@ -119,12 +162,16 @@ async function runImport() {
     if (text == null) return
     importing.value = true
     try {
-        const r = (await service.importCsv(text, false)).data.data
-        emit('flash', `Imported ${r.products} products (${r.variants} variants).`, 'success')
+        const r = (await service.importCsv(text, false, updateExisting.value)).data.data
+        const bits: string[] = []
+        if (r.variants > 0) bits.push(`${r.variants} variant${r.variants === 1 ? '' : 's'} added`)
+        if (r.variantsUpdated > 0) bits.push(`${r.variantsUpdated} refreshed`)
+        emit('flash', bits.length ? `Import complete: ${bits.join(', ')}.` : 'Import complete: nothing changed.', 'success')
         emit('imported')
         close()
     } catch (e: any) {
-        error.value = e.response?.data?.error || 'Import failed. Nothing was created; check the file and try again.'
+        error.value = e.response?.data?.error
+            || 'Import failed. Nothing was changed; check the file and try again.'
     } finally { importing.value = false }
 }
 </script>

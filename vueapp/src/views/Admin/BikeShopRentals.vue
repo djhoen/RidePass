@@ -184,7 +184,7 @@
                             <th style="width: 40px"></th>
                             <th>Rental product</th>
                             <th style="width: 110px">Variants</th>
-                            <th style="width: 150px" class="text-right">Free in window</th>
+                            <th style="width: 150px" class="text-right">Available in window</th>
                             <th style="width: 150px"></th>
                         </tr>
                     </thead>
@@ -238,7 +238,7 @@
                                                     <th>Variant</th><th>SKU</th>
                                                     <th class="text-right">Rate / day</th>
                                                     <th class="text-right">Deposit</th>
-                                                    <th class="text-right">Free</th>
+                                                    <th class="text-right">Available</th>
                                                     <th style="width: 130px"></th>
                                                 </tr>
                                             </thead>
@@ -487,7 +487,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
-import { formatTenantDateTime } from '@/helpers/TenantTime'
+import { formatTenantDateTime, tenantWallClockNow, tenantWallClockToMs } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopProduct, type ShopRental, type ShopTaxCategory } from '@/services/BikeShopService'
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
@@ -739,8 +739,12 @@ const tab = ref<RentalTab>(
 watch(() => route.query.tab, t => {
     if (validTabs.includes(t as RentalTab)) tab.value = t as RentalTab
 })
-const fleetFrom = ref(dayjs().format('YYYY-MM-DDTHH:mm'))
-const fleetTo = ref(dayjs().add(1, 'day').format('YYYY-MM-DDTHH:mm'))
+// Wall clock AT THE TRACK, not in the browser, matching the Rental Board and the booking dialog.
+// These values are handed straight to the dialog as a preset, so if this seeded browser-local
+// while the dialog read tenant-local, an operator in a different timezone from the track would
+// probe availability for the wrong hours and be told available gear was taken.
+const fleetFrom = ref(tenantWallClockNow())
+const fleetTo = ref(dayjs(tenantWallClockNow()).add(1, 'day').format('YYYY-MM-DDTHH:mm'))
 const fleetSearch = ref('')
 const fleetExpanded = ref<Set<string>>(new Set())
 // variantId -> units free across the chosen window. A missing key means "not known" (the probe
@@ -750,7 +754,8 @@ const fleetAvailability = ref<Record<string, number>>({})
 const loadingFleetAvailability = ref(false)
 
 const fleetWindowValid = computed(() =>
-    !!fleetFrom.value && !!fleetTo.value && new Date(fleetTo.value) > new Date(fleetFrom.value))
+    !!fleetFrom.value && !!fleetTo.value
+    && tenantWallClockToMs(fleetTo.value) > tenantWallClockToMs(fleetFrom.value))
 
 // The fleet is small (tens of units), and the page already holds the full product list for the
 // booking dialog, so this filters in memory rather than paging the server. Switch to
@@ -819,8 +824,8 @@ async function refreshFleetAvailability() {
     const variants = fleetProducts.value.flatMap(rentableVariantsOf)
     if (variants.length === 0) { fleetAvailability.value = {}; return }
     loadingFleetAvailability.value = true
-    const from = new Date(fleetFrom.value).toISOString()
-    const to = new Date(fleetTo.value).toISOString()
+    const from = new Date(tenantWallClockToMs(fleetFrom.value)).toISOString()
+    const to = new Date(tenantWallClockToMs(fleetTo.value)).toISOString()
     try {
         let failed = 0
         const results = await Promise.all(variants.map(async v => {

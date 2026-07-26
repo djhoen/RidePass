@@ -29,12 +29,23 @@ const vuetify = createVuetify({
     directives,
     // Match the LoamPass-style compact-outlined look on every form field by default.
     // Per-field overrides still work, e.g. <v-text-field variant="filled" :hide-details="false" />.
+    //
+    // hideDetails is 'auto', NOT true. With `true` Vuetify does not render the details block at
+    // all, which silently swallowed two things the author explicitly asked for: every `hint` /
+    // `persistent-hint` in the app (25+ files write one and none of them appeared), and every
+    // validation message from `:rules`. It also removed the space under a field, so a stack of
+    // inputs sat flush against each other and read as cramped, worst on a tall control like a
+    // chips combobox.
+    //
+    // 'auto' keeps the tight look exactly where there is nothing to say: no hint and no error
+    // still means no details block. It only takes up room when there is a message to show, which
+    // is the point of having written one.
     defaults: {
-        VTextField:    { variant: 'outlined', density: 'compact', hideDetails: true },
-        VTextarea:     { variant: 'outlined', density: 'compact', hideDetails: true },
-        VSelect:       { variant: 'outlined', density: 'compact', hideDetails: true },
-        VAutocomplete: { variant: 'outlined', density: 'compact', hideDetails: true },
-        VCombobox:     { variant: 'outlined', density: 'compact', hideDetails: true },
+        VTextField:    { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+        VTextarea:     { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+        VSelect:       { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+        VAutocomplete: { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+        VCombobox:     { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
         // Toasts at the top of the viewport — buttons can be anywhere on a long page.
         // Per-snackbar overrides (e.g. <v-snackbar location="bottom">) still take precedence.
         VSnackbar:     { location: 'top', timeout: 4000 },

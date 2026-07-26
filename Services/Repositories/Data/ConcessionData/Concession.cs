@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.ConcessionData
+﻿namespace Services.Repositories.Data.ConcessionData
 {
     public class ConcessionProduct
     {

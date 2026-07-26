@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Payments;
 using Services.Repositories.Data.BikeShopData;
@@ -21,41 +21,54 @@ namespace webapi.Controllers
     {
         private readonly IBikeShopRepository _shop;
         private readonly Services.Audit.IAuditLogger _audit;
+        private readonly IDiscountPresetRepository _discounts;
+        private readonly webapi.Security.IManagerPinService _managerPin;
         private readonly IChargeRouter _chargeRouter;
         private readonly IPaymentProvider _payments;
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantLedgerRepository _ledger;
         private readonly Services.Coupons.ICouponValidator _couponValidator;
         private readonly ICouponRepository _coupons;
-        private readonly ISeasonPassRepository _seasonPasses;
+        private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
         private readonly IUserRepository _users;
         private readonly Services.Notifications.INotificationService _notifications;
         private readonly ISmtpEmailer _emailer;
         private readonly ISmsSender _sms;
         private readonly ITenantCreditRepository _credit;
-        private readonly Services.Rewards.IRewardEngine _rewardEngine;
         private readonly IGiftCardRepository _giftCards;
         private readonly Services.GiftCards.IGiftCardValidator _giftCardValidator;
         private readonly ITenantRepository _tenants;
         private readonly ITenantContext _tenantContext;
+        private readonly IPlatformPartRepository _platformParts;
+        private readonly Services.BikeShop.IPartLookupProvider _partLookup;
+        private readonly ILogger<BikeShopRegisterController> _logger;
 
         public BikeShopRegisterController(IBikeShopRepository shop, IChargeRouter chargeRouter,
             IPaymentProvider payments, IFeeCalculator feeCalculator, ITenantLedgerRepository ledger,
             Services.Coupons.ICouponValidator couponValidator, ICouponRepository coupons,
-            ISeasonPassRepository seasonPasses, IUserRepository users,
+            IUserRepository users,
+            Services.Pricing.ISeasonPassPerkResolver perks,
             Services.Notifications.INotificationService notifications,
             ISmtpEmailer emailer, ISmsSender sms, ITenantCreditRepository credit,
-            Services.Rewards.IRewardEngine rewardEngine,
             IGiftCardRepository giftCards, Services.GiftCards.IGiftCardValidator giftCardValidator,
             ITenantRepository tenants,
             ITenantContext tenantContext,
-            Services.Audit.IAuditLogger audit)
+            IPlatformPartRepository platformParts,
+            Services.BikeShop.IPartLookupProvider partLookup,
+            ILogger<BikeShopRegisterController> logger,
+            Services.Audit.IAuditLogger audit,
+            IDiscountPresetRepository discounts,
+            webapi.Security.IManagerPinService managerPin)
         {
+            _platformParts = platformParts;
+            _partLookup = partLookup;
+            _logger = logger;
             _audit = audit;
+            _discounts = discounts;
+            _managerPin = managerPin;
             _emailer = emailer;
             _sms = sms;
             _credit = credit;
-            _rewardEngine = rewardEngine;
             _giftCards = giftCards;
             _giftCardValidator = giftCardValidator;
             _tenants = tenants;
@@ -66,7 +79,7 @@ namespace webapi.Controllers
             _ledger = ledger;
             _couponValidator = couponValidator;
             _coupons = coupons;
-            _seasonPasses = seasonPasses;
+            _perks = perks;
             _users = users;
             _notifications = notifications;
             _tenantContext = tenantContext;
@@ -74,6 +87,153 @@ namespace webapi.Controllers
 
         private Guid TenantId => _tenantContext.TenantId;
         private Guid? UserId => Guid.TryParse(User.FindFirst("UserId")?.Value, out var id) ? id : null;
+
+        /// <summary>
+        /// What did the cashier just scan? One code in, at most one variant out.
+        ///
+        /// This replaces matching in the browser against the whole catalog. That only ever found
+        /// products already downloaded, needed the entire catalog client-side to work at all, and
+        /// compared the code as a raw string: a part stored as a 12-digit UPC-A did not match the
+        /// same part scanned as a 13-digit EAN, which is a thing scanners routinely do.
+        ///
+        /// The code is normalised to a GTIN-14 here (Services.BikeShop.Gtin) and matched on that
+        /// first, then on SKU, then MPN. A code that is not a valid GTIN is not a failure: shop
+        /// SKUs are scanned from the shop's own labels, so it simply falls through.
+        ///
+        /// On a miss it falls through to the shared parts library, so a barcode this shop has
+        /// never carried can still come back with a name instead of a shrug. See Script0248 for
+        /// why that library is safe to share across tenants.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Resolve")]
+        public async Task<IActionResult> Resolve([FromQuery] string code, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var trimmed = code?.Trim() ?? string.Empty;
+            if (trimmed.Length == 0) return new ApiResponses().BadRequestResult("Scan or type a code.");
+
+            var gtin14 = Services.BikeShop.Gtin.Normalize(trimmed);
+            var match = await _shop.ResolveVariantByCode(TenantId, trimmed, gtin14);
+
+            if (match is null)
+            {
+                // A miss is a normal outcome at a counter, not an error: the part may be new. 200
+                // with found=false lets the register offer "add this product" instead of making
+                // the cashier read an error and start again. `gtin14` rides back so that form can
+                // be prefilled with a barcode we already know is well-formed.
+                var suggestion = gtin14 is null ? null : await LookUpSharedLibrary(gtin14, ct);
+                return new ApiResponses().OkResult(new
+                {
+                    found = false,
+                    scanned = trimmed,
+                    gtin14,
+                    // Distinguishes "a real barcode we've never seen" from "someone typed a word":
+                    // the first is worth offering to create, the second is probably a typo.
+                    isValidBarcode = gtin14 is not null,
+                    // Identity only. Whatever this shop charges for the part is this shop's
+                    // business, so there is deliberately no price here to prefill.
+                    suggestion = suggestion is null ? null : new
+                    {
+                        name = suggestion.Name,
+                        brand = suggestion.Brand,
+                        mpn = suggestion.Mpn,
+                        categoryHint = suggestion.CategoryHint,
+                        // Lets the UI say how much to trust it: one shop's word reads differently
+                        // from nine shops independently agreeing.
+                        timesConfirmed = suggestion.TimesConfirmed,
+                    },
+                });
+            }
+
+            // This shop's own catalog just said what this barcode is, which is the strongest
+            // signal the library can get: a real part, in real use, at a real counter. Contribute
+            // it so the next shop to scan the same code gets a name instead of nothing.
+            await ContributeToSharedLibrary(match, gtin14);
+
+            return new ApiResponses().OkResult(new
+            {
+                found = true,
+                scanned = trimmed,
+                variantId = match.Id,
+                productId = match.ProductId,
+                productName = match.ProductName,
+                match.Sku,
+                match.Barcode,
+                match.Gtin14,
+                match.Size,
+                match.Color,
+                match.SalePriceCents,
+                match.TrackingKind,
+                match.AvailableCount,
+            });
+        }
+
+        /// <summary>
+        /// Layers 2 and 4 of the resolver: the shared library, then an external GTIN vendor for a
+        /// code nobody on the platform has ever seen. A vendor answer is cached into the library
+        /// tagged with its source slug, so honouring a "delete our data" clause stays one call to
+        /// PurgeSource. No vendor ships enabled today; see IPartLookupProvider for why.
+        /// </summary>
+        private async Task<PlatformPart?> LookUpSharedLibrary(string gtin14, CancellationToken ct)
+        {
+            try
+            {
+                var known = await _platformParts.GetByGtin(gtin14);
+                if (known is not null || !_partLookup.IsEnabled) return known;
+
+                var found = await _partLookup.Lookup(gtin14, ct);
+                if (found is null) return null;
+
+                // Deliberately NOT via Confirm(): a vendor's answer is not a shop confirming
+                // anything, so it must not inflate times_confirmed, and its source has to name the
+                // vendor rather than claim to be ours.
+                return await _platformParts.CacheFromVendor(_partLookup.SourceSlug, found);
+            }
+            catch (Exception ex)
+            {
+                // The library is an enhancement to a scan, never a dependency of one. If it is
+                // down, the cashier gets the plain "not in your catalog" answer and carries on.
+                _logger.LogWarning(ex, "Shared parts library lookup failed for {Gtin14}", gtin14);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Records this shop's own catalog as confirming what a barcode means. Identity only, and
+        /// idempotent per tenant, so a busy counter scanning one tube all day counts once.
+        ///
+        /// CONTRIBUTES THE MANUFACTURER'S NAME, NEVER THE SHOP'S. match.ProductName is what this
+        /// shop calls the thing, it is tenant-authored free text, and it must never reach a table
+        /// another tenant reads. Only ManufacturerName crosses the line, and a variant without one
+        /// contributes nothing at all rather than falling back.
+        /// </summary>
+        private async Task ContributeToSharedLibrary(ShopScanMatch match, string? gtin14)
+        {
+            // What may be shared, if anything. The rule is a tested pure function rather than an
+            // if-statement here so that reintroducing a fallback to the shop's own product name
+            // fails a test instead of quietly leaking it. See Services.BikeShop.LibraryContribution.
+            var manufacturerName = Services.BikeShop.LibraryContribution
+                .NameToContribute(gtin14, match.ManufacturerName, match.ManufacturerNameSource);
+            if (manufacturerName is null) return;
+
+            // Already linked, so this shop has confirmed this part before and there is nothing to
+            // add. Without this the busiest path in the register pays two writes on EVERY scan
+            // just to re-assert something already true. Goes back to null if the shared entry is
+            // ever purged, which correctly makes the next scan contribute again.
+            if (match.PlatformPartId is not null) return;
+            try
+            {
+                var partId = await _platformParts.Confirm(TenantId, gtin14, manufacturerName,
+                    brand: null, mpn: match.Mpn, categoryHint: null);
+                await _shop.LinkVariantToPlatformPart(match.Id, TenantId, partId);
+            }
+            catch (Exception ex)
+            {
+                // Contributing is a side effect of a scan, not its purpose. Never fail a sale
+                // because the library write did.
+                _logger.LogWarning(ex, "Could not contribute {Gtin14} to the shared parts library", gtin14);
+            }
+        }
 
         [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
         [HttpPost("Sale")]
@@ -153,24 +313,73 @@ namespace webapi.Controllers
             {
                 buyerUserId = (await _users.GetByEmail(TenantId, req.BuyerEmail.Trim()))?.Id;
             }
-            var benefitDiscount = 0;
-            if (buyerUserId is not null && subtotal > 0)
+            // Per-pass benefit first, then the tenant-wide holder discount if no per-pass perk
+            // applies. One resolver so this register, the online store, both rental paths and the
+            // F&B till cannot drift on the precedence.
+            var perk = await _perks.Resolve(buyerUserId, _tenantContext.Tenant, "retail", subtotal, DateTime.UtcNow);
+            var benefitDiscount = perk.DiscountCents;
+
+            // Staff-applied discount from the tenant list, taken after the pass benefit and before
+            // the coupon. Ordering matters because each is computed on what's left: the entitlement
+            // the customer already paid for comes off first, then what the counter chose to give,
+            // then a code the customer brought. Stacking is permitted and simply compounds; the
+            // cap below stops the total ever exceeding the sale.
+            Services.Repositories.Data.DiscountData.DiscountPreset? staffDiscount = null;
+            var staffDiscountCents = 0;
+            Guid? discountAuthorizedBy = null;
+            if (req.DiscountPresetId is Guid presetId)
             {
-                var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
-                    buyerUserId.Value, TenantId, benefitType: "retail", scopeId: null, onDateUtc: DateTime.UtcNow);
-                // One grant is enough for a whole-cart retail discount; take the best.
-                benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(subtotal));
+                staffDiscount = await _discounts.Get(presetId, TenantId);
+                if (staffDiscount is null || !staffDiscount.IsActive)
+                    return new ApiResponses().BadRequestResult("That discount isn't available.");
+                // A discount scoped to food or the gate must not come off a set of grips just
+                // because a cashier knows its id.
+                if (!staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.ShopSale))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{staffDiscount.Name}\" doesn't apply to bike shop sales.");
+
+                // Whether a PIN is needed is the tenant's per-discount choice, and it is decided
+                // here rather than trusted from the client.
+                if (staffDiscount.RequiresManager)
+                {
+                    if (UserId is not Guid staffUserId)
+                        return new ApiResponses().BadRequestResult("Not signed in.");
+                    var pin = await _managerPin.VerifyAsync(TenantId, staffUserId, req.ManagerPin);
+                    if (!pin.Authorized)
+                        return new ApiResponses().BadRequestResult(
+                            pin.Error ?? $"A manager PIN is required to apply \"{staffDiscount.Name}\".");
+                    discountAuthorizedBy = pin.AuthorizedUserId;
+                }
+
+                staffDiscountCents = staffDiscount.DiscountFor(Math.Max(0, subtotal - benefitDiscount));
             }
 
             Services.Repositories.Data.CouponData.CouponApplication? couponApp = null;
             if (!string.IsNullOrWhiteSpace(req.CouponCode))
             {
                 var v = await _couponValidator.ValidateAsync(TenantId, req.CouponCode!,
-                    scope: "shop", eventId: null, subtotalCents: subtotal - benefitDiscount, userId: buyerUserId);
+                    scope: "shop", eventId: null,
+                    subtotalCents: Math.Max(0, subtotal - benefitDiscount - staffDiscountCents), userId: buyerUserId);
                 if (v.error is not null) return new ApiResponses().BadRequestResult(v.error);
                 couponApp = v.application;
             }
-            var discountTotal = Math.Min(subtotal, benefitDiscount + (couponApp?.DiscountCents ?? 0));
+            // Stacking is a tenant policy (Script0254) and defaults to OFF. When off, exactly one
+            // discount applies and it is the largest, so the customer still gets the best deal
+            // going without three of them compounding. Whichever loses is zeroed here rather than
+            // earlier, because each was computed against the remaining base and the comparison
+            // only makes sense once all three are known.
+            var applied = Services.Discounts.DiscountStacking.Resolve(
+                benefitDiscount, staffDiscountCents, couponApp?.DiscountCents ?? 0,
+                _tenantContext.Tenant.AllowDiscountStacking);
+            benefitDiscount = applied.BenefitCents;
+            staffDiscountCents = applied.StaffCents;
+            // Losers are cleared so nothing downstream records a discount that wasn't given: a
+            // dropped coupon must not be marked redeemed, and a dropped staff discount must not be
+            // snapshotted on the sale as though it had been applied.
+            if (applied.CouponCents == 0) couponApp = null;
+            if (staffDiscountCents == 0) { staffDiscount = null; discountAuthorizedBy = null; }
+
+            var discountTotal = Math.Min(subtotal, applied.Total);
 
             // Spread the discount across lines by price share (largest remainder takes the last
             // cents) so per-line tax is computed on what was actually paid for that line.
@@ -196,8 +405,21 @@ namespace webapi.Controllers
             }
             taxTotal = taxTotalComputed;
 
-            // total = discounted goods + tax on the net + tip.
-            var total = subtotal - discountTotal + taxTotal + req.TipCents;
+            // The platform service charge, on the discounted goods and never on tax. Snapshotted
+            // onto the sale so a later settings change cannot rewrite what a past sale owed.
+            //
+            // shop_buyer_paid_service_charge_bps decides only who FUNDS it. At the default 0 the
+            // track absorbs it, `buyerFee` is 0, and the customer's total is exactly what it was
+            // before this existed: no fee line appears on a walk-in buying a tube. The charge is
+            // still owed, and the ledger books it against the track's proceeds.
+            var (shopServiceCharge, buyerFee) = Services.Payments.ServiceChargeSplit.Compute(
+                subtotal - discountTotal,
+                _tenantContext.Tenant.ServiceChargeBps,
+                _tenantContext.Tenant.ShopBuyerPaidServiceChargeBps);
+
+            // total = discounted goods + the buyer's share of the fee + tax on the net. No tip: a
+            // parts sale isn't tipped.
+            var total = subtotal - discountTotal + buyerFee + taxTotal;
 
             // ── Gift card tender (after discounts, before store credit). The balance is debited
             // up front with an atomic conditional decrement; a failed payment hands it back via
@@ -262,9 +484,15 @@ namespace webapi.Controllers
                 Status = "pending",
                 SubtotalCents = subtotal,
                 DiscountCents = discountTotal,
+                // Snapshot which staff discount was used and who allowed it. discount_cents alone
+                // can't answer "why is this $18" once a coupon and a pass benefit can also be in it,
+                // so the label names every source that actually contributed after stacking.
+                DiscountPresetId = staffDiscount?.Id,
+                DiscountLabel = Services.Pricing.SeasonPassPerk.LabelFor(perk, benefitDiscount, staffDiscount?.Name, staffDiscountCents),
+                DiscountAuthorizedByUserId = discountAuthorizedBy,
                 TaxCents = taxTotal,
-                TipCents = req.TipCents,
                 TotalCents = total,
+                ServiceChargeCents = shopServiceCharge,
                 CreditAppliedCents = creditApplied,
                 CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                 GiftCardAppliedCents = giftApplied,
@@ -283,6 +511,31 @@ namespace webapi.Controllers
                 // The gift balance was debited up front; a failed insert must hand it back.
                 await RestoreGiftCard();
                 throw;
+            }
+
+            // A staff-applied discount is money off with nothing the customer had to produce, so it
+            // belongs in the same review surface as refunds and credit grants. Logged at the point
+            // it was applied rather than when the sale settles: a discount taken on a card sale that
+            // then fails is still a thing someone did. The sale row carries the same snapshot; what
+            // this adds is the actor and the address it came from.
+            if (staffDiscount is not null && staffDiscountCents > 0)
+            {
+                await _audit.Log(
+                    "shop.discount_applied",
+                    $"Applied \"{staffDiscount.Name}\" to a shop sale, taking off ${staffDiscountCents / 100m:0.00}",
+                    targetKind: "shop_sale",
+                    targetId: saleId,
+                    tenantId: TenantId,
+                    metadata: new
+                    {
+                        discountName = staffDiscount.Name,
+                        discountPresetId = staffDiscount.Id,
+                        discountCents = staffDiscountCents,
+                        subtotalCents = subtotal,
+                        requiredManager = staffDiscount.RequiresManager,
+                        // Null unless the discount was PIN-gated; names who allowed it.
+                        authorizedByUserId = discountAuthorizedBy,
+                    });
             }
 
             if (creditApplied > 0 &&
@@ -335,11 +588,8 @@ namespace webapi.Controllers
                     await _shop.SetSaleOrderNumber(saleId, orderNumber);
                     try { await _shop.DepleteForSale(saleId, TenantId, UserId); }
                     catch { /* inventory depletion is best-effort; the sale is paid regardless */ }
-                    if (due + giftApplied > 0) await WriteCashLedger(saleId, due, giftApplied);
+                    if (due + giftApplied > 0) await WriteCashLedger(saleId, due, giftApplied, shopServiceCharge);
                     await NotifyLowStock();
-                    // Gift-card value is real customer money, so it earns loyalty like cash does.
-                    try { await _rewardEngine.AwardCreditBack(TenantId, buyerUserId, sale.BuyerEmail, sale.BuyerName, "shop_sale", saleId, due + giftApplied); }
-                    catch { /* loyalty is best-effort; the sale already settled */ }
                     return new ApiResponses().OkResult(new
                     {
                         saleId, receiptToken = receipt, status = "paid", orderNumber, totalCents = total,
@@ -368,12 +618,18 @@ namespace webapi.Controllers
                 foreach (var byCard in removed.GroupBy(r => r.GiftCardId))
                     await _giftCards.RestoreBalance(byCard.Key, byCard.Sum(r => r.AmountCents));
             }
-            // Retail is all-in priced (no rider service charge), so there's no application fee to route.
             PaymentIntentCreated intent;
             ChargePlan plan;
             try
             {
-                plan = _chargeRouter.Plan(tenant, serviceFeeCents: 0, chargeAmountCents: due);
+                // In direct mode the money lands on the track's own Stripe account, so the
+                // application fee is the ONLY way RidePass collects its charge. Route the figure
+                // snapshotted on the sale, not a zero: a zero here would have the ledger book a
+                // cut that never actually moved. It routes whoever funds it, since absorbing the
+                // charge means it comes out of the track's proceeds by design. ChargeRouter clamps
+                // it to the amount being charged, which matters when gift cards or store credit
+                // have shrunk `due` below the fee.
+                plan = _chargeRouter.Plan(tenant, serviceFeeCents: shopServiceCharge, chargeAmountCents: due);
                 if (req.CardPresent)
                 {
                     var locationId = await EnsureTerminalLocation(plan.ConnectedAccountId, ct);
@@ -725,7 +981,6 @@ namespace webapi.Controllers
             sb.AppendLine($"Subtotal {ReceiptMoney(sale.SubtotalCents)}");
             if (sale.DiscountCents > 0) sb.AppendLine($"Discount -{ReceiptMoney(sale.DiscountCents)}");
             if (sale.TaxCents > 0) sb.AppendLine($"Tax {ReceiptMoney(sale.TaxCents)}");
-            if (sale.TipCents > 0) sb.AppendLine($"Tip {ReceiptMoney(sale.TipCents)}");
             sb.AppendLine($"Total {ReceiptMoney(sale.TotalCents)}");
             return sb.ToString();
         }
@@ -751,8 +1006,6 @@ namespace webapi.Controllers
                 sb.Append($"<tr><td>Discount</td><td style=\"text-align:right\">-{ReceiptMoney(sale.DiscountCents)}</td></tr>");
             if (sale.TaxCents > 0)
                 sb.Append($"<tr><td>Tax</td><td style=\"text-align:right\">{ReceiptMoney(sale.TaxCents)}</td></tr>");
-            if (sale.TipCents > 0)
-                sb.Append($"<tr><td>Tip</td><td style=\"text-align:right\">{ReceiptMoney(sale.TipCents)}</td></tr>");
             sb.Append($"<tr><td style=\"font-weight:bold\">Total</td><td style=\"text-align:right;font-weight:bold\">{ReceiptMoney(sale.TotalCents)}</td></tr>");
             sb.Append("</table></div>");
             return sb.ToString();
@@ -783,13 +1036,17 @@ namespace webapi.Controllers
         // holds the cash themselves, so they owe the cut; the gift funds sit wherever the card
         // was bought (platform account in platform mode: owed to the tenant; tenant's own
         // account in direct mode: nothing to move).
-        private async Task WriteCashLedger(Guid saleId, int cashCents, int giftCents = 0)
+        private async Task WriteCashLedger(Guid saleId, int cashCents, int giftCents = 0, int serviceChargeCents = 0)
         {
             try
             {
                 var gross = cashCents + giftCents;
                 var isDirect = _tenantContext.Tenant.StripeChargeMode == "direct";
-                var calc = await _feeCalculator.Calculate(TenantId, gross, 0, 0, DateTime.UtcNow);
+                // The charge snapshotted on the sale, not a zero. FeeCalculator does not compute
+                // one, it only applies the tenant's monthly cap to the figure it is handed, so
+                // passing 0 here is what made every bike shop sale free to the platform while the
+                // memo below claimed the tenant owed something.
+                var calc = await _feeCalculator.Calculate(TenantId, gross, 0, serviceChargeCents, DateTime.UtcNow);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = TenantId,

@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
@@ -46,8 +46,10 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly webapi.Security.IManagerPinService _managerPin;
         private readonly ITenantCreditRepository _credit;
+        private readonly ILogger<ConcessionController> _logger;
         private readonly Services.Audit.IAuditLogger _audit;
-        private readonly Services.Rewards.IRewardEngine _rewardEngine;
+        private readonly IDiscountPresetRepository _discounts;
+        private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
         private readonly ITenantContext _tenantContext;
 
         public ConcessionController(
@@ -69,13 +71,17 @@ namespace webapi.Controllers
             IEventRepository events,
             webapi.Security.IManagerPinService managerPin,
             ITenantCreditRepository credit,
-            Services.Rewards.IRewardEngine rewardEngine,
+            ILogger<ConcessionController> logger,
             ITenantContext tenantContext,
-            Services.Audit.IAuditLogger audit)
+            Services.Audit.IAuditLogger audit,
+            IDiscountPresetRepository discounts,
+            Services.Pricing.ISeasonPassPerkResolver perks)
         {
+            _discounts = discounts;
+            _perks = perks;
             _audit = audit;
             _credit = credit;
-            _rewardEngine = rewardEngine;
+            _logger = logger;
             _concessions = concessions;
             _payments = payments;
             _imageStorage = imageStorage;
@@ -549,59 +555,28 @@ namespace webapi.Controllers
         }
 
         // ── Discount presets ──────────────────────────────────────────────────────────
-        // Readable by any authenticated tenant user (the POS needs the preset buttons). Managed under
-        // CatalogManage like the rest of the menu config.
+        // The discount buttons the F&B POS offers. Reads the tenant-wide discount list (Script0251)
+        // filtered to this surface, so a discount defined once for "food and drink and the bike
+        // shop" shows up in both places without being entered twice. Managing them moved to
+        // Settings -> Discounts; this endpoint is read-only.
         [Authorize]
         [HttpGet("DiscountPresets")]
         public async Task<IActionResult> ListDiscountPresets()
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var presets = await _concessions.ListDiscountPresets(_tenantContext.TenantId, activeOnly: false);
-            return new ApiResponses().OkResult(presets.Select(ToDiscountPresetResponse).ToList());
-        }
-
-        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
-        [HttpPost("DiscountPresets")]
-        public async Task<IActionResult> CreateDiscountPreset([FromBody] ConcessionDiscountPresetRequest req)
-        {
-            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var p = new ConcessionDiscountPreset
+            var presets = await _discounts.ListForSurface(
+                _tenantContext.TenantId, Services.Repositories.Data.DiscountData.DiscountSurfaces.Concession);
+            return new ApiResponses().OkResult(presets.Select(p => new ConcessionDiscountPresetResponse
             {
-                TenantId = _tenantContext.TenantId,
-                Name = req.Name.Trim(),
-                Kind = NormalizeDiscountKind(req.Kind),
-                Value = ClampDiscountValue(NormalizeDiscountKind(req.Kind), req.Value),
-                IsActive = req.IsActive,
-                SortOrder = req.SortOrder,
-            };
-            p.Id = await _concessions.CreateDiscountPreset(p);
-            return new ApiResponses().OkResult(ToDiscountPresetResponse(p));
+                Id = p.Id, Name = p.Name, Kind = p.Kind, Value = p.Value,
+                IsActive = p.IsActive, SortOrder = p.SortOrder, RequiresManager = p.RequiresManager,
+            }).ToList());
         }
 
-        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
-        [HttpPut("DiscountPresets/{id:guid}")]
-        public async Task<IActionResult> UpdateDiscountPreset(Guid id, [FromBody] ConcessionDiscountPresetRequest req)
-        {
-            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var existing = await _concessions.GetDiscountPreset(id, _tenantContext.TenantId);
-            if (existing is null) return new ApiResponses().NotFoundResult("Discount preset not found.");
-            existing.Name = req.Name.Trim();
-            existing.Kind = NormalizeDiscountKind(req.Kind);
-            existing.Value = ClampDiscountValue(existing.Kind, req.Value);
-            existing.IsActive = req.IsActive;
-            existing.SortOrder = req.SortOrder;
-            await _concessions.UpdateDiscountPreset(existing);
-            return new ApiResponses().OkResult(ToDiscountPresetResponse(existing));
-        }
-
-        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
-        [HttpDelete("DiscountPresets/{id:guid}")]
-        public async Task<IActionResult> DeleteDiscountPreset(Guid id)
-        {
-            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            await _concessions.DeleteDiscountPreset(id, _tenantContext.TenantId);
-            return new ApiResponses().OkResult();
-        }
+        // Creating and editing discounts moved to Settings -> Discounts (DiscountController).
+        // The write endpoints that lived here are gone rather than left pointing at
+        // concession_discount_preset: the POS reads the tenant-wide list now, so editing the old
+        // table would have looked like it worked and changed nothing a cashier ever sees.
 
         // ── Comp reasons ──────────────────────────────────────────────────────────────
         [Authorize]
@@ -752,7 +727,7 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (string.IsNullOrWhiteSpace(query)) return new ApiResponses().BadRequestResult("Enter an email or phone.");
             var settings = await _concessions.GetMenuSettings(_tenantContext.TenantId);
-            var (user, hasPass, hasLoam) = await ResolveMemberAsync(query);
+            var (user, hasPass, hasLoam, fbGrant) = await ResolveMemberAsync(query);
             if (user is null) return new ApiResponses().OkResult(new ConcessionMemberLookupResponse { Found = false });
 
             ConcessionMemberPerk? PerkFor(bool eligible, bool enabled, string kind, int value, string label) =>
@@ -764,13 +739,26 @@ namespace webapi.Controllers
                     Label = $"{label}: {DescribeDiscount(kind, value)}",
                 };
 
+            // Same precedence the till applies, so what the cashier is shown is what gets rung.
+            var seasonPassPerk = fbGrant is not null
+                ? new ConcessionMemberPerk
+                {
+                    Eligible = true,
+                    Kind = fbGrant.Benefit.DiscountKind,
+                    Value = fbGrant.Benefit.DiscountValue,
+                    Label = $"{fbGrant.ProductName}: " +
+                            $"{DescribeDiscount(fbGrant.Benefit.DiscountKind, fbGrant.Benefit.DiscountValue)}",
+                }
+                : PerkFor(hasPass, _tenantContext.Tenant.SeasonPassDiscountAppliesTo("concession"),
+                    _tenantContext.Tenant.SeasonPassDiscountKind, _tenantContext.Tenant.SeasonPassDiscountValue,
+                    "Season Pass");
+
             return new ApiResponses().OkResult(new ConcessionMemberLookupResponse
             {
                 Found = true,
                 CustomerName = $"{user.FirstName} {user.LastName}".Trim(),
                 CustomerEmail = user.Email,
-                SeasonPass = PerkFor(hasPass, settings?.SeasonPassDiscountEnabled ?? false,
-                    settings?.SeasonPassDiscountKind ?? "percent", settings?.SeasonPassDiscountValue ?? 0, "Season Pass"),
+                SeasonPass = seasonPassPerk,
                 Loampass = PerkFor(hasLoam, settings?.LoampassDiscountEnabled ?? false,
                     settings?.LoampassDiscountKind ?? "percent", settings?.LoampassDiscountValue ?? 0, "LoamPass"),
             });
@@ -909,23 +897,60 @@ namespace webapi.Controllers
             return result;
         }
 
-        // Resolve an email/phone to a customer and whether they hold an active Season Pass and/or a linked
-        // LoamPass account at this tenant. The LoamPass perk is membership-based (a link is enough) and
-        // does NOT consume an admission credit.
-        private async Task<(User? user, bool seasonPass, bool loampass)> ResolveMemberAsync(string? emailOrPhone)
+        /// <summary>
+        /// What the counter needs to know about a customer: who they are, whether they hold an
+        /// active season pass and/or a linked LoamPass, and the best PER-PASS F&amp;B perk their
+        /// pass carries.
+        ///
+        /// The per-pass grant is the whole point of the tuple's fourth slot. The tenant-wide
+        /// "Season Pass discount" setting treats every pass alike, so a track that gives staff
+        /// half-price food had no way to say so: an employee pass and a customer's season pass
+        /// both came out at the same percentage. <c>ListActiveBenefitGrantsForUser</c> answers per
+        /// product, and it applies the same strictness the gate would (paid, registered, waiver
+        /// signed, in-window, and for an employee pass, the employee still active).
+        /// </summary>
+        private async Task<(User? user, bool seasonPass, bool loampass, SeasonPassBenefitGrant? fbGrant)>
+            ResolveMemberAsync(string? emailOrPhone)
         {
             var q = emailOrPhone?.Trim();
-            if (string.IsNullOrWhiteSpace(q)) return (null, false, false);
+            if (string.IsNullOrWhiteSpace(q)) return (null, false, false, null);
             var tenantId = _tenantContext.TenantId;
             var user = q.Contains('@')
                 ? await _users.GetByEmail(tenantId, q)
                 : await _users.GetByPhoneE164(NormalizeToE164(q)) ?? await _users.GetByEmail(tenantId, q);
-            if (user is null) return (null, false, false);
 
-            var today = TenantToday();
-            var passes = await _seasonPasses.ListMine(user.Id, tenantId);
-            var hasPass = passes.Any(p => p.Status == "paid"
-                && p.ValidFromDate.Date <= today && p.ValidToDate.Date >= today);
+            // GetByPhoneE164 is deliberately global (the Inbox needs it that way), so a phone
+            // number can resolve to a user who belongs to a DIFFERENT tenant. Without this guard a
+            // cashier could type any number and read back that person's name and email. A global
+            // rider account (tenant_id IS NULL) is shared by design and still allowed through;
+            // everything downstream is tenant-scoped anyway, so such a rider simply has no perks
+            // here unless they hold a pass at this track.
+            if (user is not null && user.TenantId is Guid ownerTenantId && ownerTenantId != tenantId)
+            {
+                user = null;
+            }
+            if (user is null) return (null, false, false, null);
+
+            // Deliberately the SAME check the till applies (HasPassValidOn), not a local
+            // status-and-window scan. A looser test here would show the cashier a perk the till
+            // then refuses: a spent ride pack or a deactivated employee's pass would read as
+            // eligible on the lookup and fail on the sale.
+            var hasPass = await _seasonPasses.HasPassValidOn(user.Id, tenantId, DateTime.UtcNow);
+
+            // Best F&B perk across every pass they hold. Someone with an employee pass AND a
+            // customer season pass gets the better of the two rather than whichever sorted first.
+            //
+            // Ranked against a fixed $100 basket, NOT the sale's own subtotal (which the bike shop
+            // can use because it picks inside the sale). One grant is chosen here and then used by
+            // both the counter's lookup and the till, so the number the cashier is shown is always
+            // the number that gets rung. Picking per-basket would let those two disagree whenever a
+            // percent perk and a fixed-amount perk are held together.
+            var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
+                user.Id, tenantId, benefitType: "concession", scopeId: null, onDateUtc: DateTime.UtcNow);
+            var fbGrant = grants
+                .OrderByDescending(g => g.Benefit.DiscountFor(10_000))
+                .ThenByDescending(g => g.Benefit.DiscountKind == "percent")
+                .FirstOrDefault();
 
             var hasLoam = false;
             if (!string.IsNullOrWhiteSpace(_tenantContext.Tenant.LoampassMxDestinationId))
@@ -933,7 +958,7 @@ namespace webapi.Controllers
                 var links = await _loampassLinks.ListByUserId(user.Id, tenantId);
                 hasLoam = links.Count > 0;
             }
-            return (user, hasPass, hasLoam);
+            return (user, hasPass, hasLoam, fbGrant);
         }
 
         private static string NormalizeToE164(string raw)
@@ -969,23 +994,45 @@ namespace webapi.Controllers
             var outcome = new DiscountOutcome();
             var requireManagerManual = settings?.RequireManagerForManualDiscount ?? true;
 
+            // Load every preset this sale references up front. The PIN decision happens before any
+            // discount is resolved, and whether a PRESET needs a manager is now per-discount
+            // configuration (Script0251) rather than a fixed rule, so that decision needs the rows
+            // in hand. One lookup per distinct preset, not one per line.
+            var presetIds = new[] { req.Discount }
+                .Concat(requested.Select(i => i.Discount))
+                .Where(d => d?.Kind == "preset" && d.PresetId is not null)
+                .Select(d => d!.PresetId!.Value)
+                .Distinct()
+                .ToList();
+            var presetsById = new Dictionary<Guid, Services.Repositories.Data.DiscountData.DiscountPreset>();
+            foreach (var pid in presetIds)
+            {
+                var loaded = await _discounts.Get(pid, tenantId);
+                if (loaded is not null) presetsById[pid] = loaded;
+            }
+
             bool NeedsPin(ConcessionDiscountInput? d) =>
                 d != null && (d.Kind == "comp"
-                    || ((d.Kind == "percent" || d.Kind == "amount") && requireManagerManual));
+                    || ((d.Kind == "percent" || d.Kind == "amount") && requireManagerManual)
+                    // A preset carries its own answer: a track can wave through "Military 10%"
+                    // while still gating "Employee 50%".
+                    || (d.Kind == "preset" && d.PresetId is Guid pid
+                        && presetsById.TryGetValue(pid, out var pp) && pp.RequiresManager));
 
             // One PIN authorizes the whole sale. Verify up front if anything needs it.
             if (NeedsPin(req.Discount) || requested.Any(i => NeedsPin(i.Discount)))
             {
                 var pinResult = await _managerPin.VerifyAsync(tenantId, requestingUserId, req.ManagerPin);
                 if (!pinResult.Authorized)
-                    return (false, pinResult.Error ?? "A manager PIN is required to apply a manual discount or comp.", outcome);
+                    return (false, pinResult.Error ?? "A manager PIN is required to apply this discount or comp.", outcome);
                 outcome.AuthorizedByUserId = pinResult.AuthorizedUserId;
                 outcome.AuthorizedByName = pinResult.AuthorizedName;
             }
 
             // Cache member lookups so applying the same perk to several lines hits the DB once.
-            var memberCache = new Dictionary<string, (User? user, bool pass, bool loam)>(StringComparer.OrdinalIgnoreCase);
-            async Task<(User? user, bool pass, bool loam)> ResolveMemberCached(string? key)
+            var memberCache = new Dictionary<string, (User? user, bool pass, bool loam, SeasonPassBenefitGrant? fbGrant)>(
+                StringComparer.OrdinalIgnoreCase);
+            async Task<(User? user, bool pass, bool loam, SeasonPassBenefitGrant? fbGrant)> ResolveMemberCached(string? key)
             {
                 var k = key?.Trim() ?? "";
                 if (memberCache.TryGetValue(k, out var hit)) return hit;
@@ -1002,8 +1049,13 @@ namespace webapi.Controllers
                 {
                     case "preset":
                         if (d.PresetId is null) return (0, "", "", null, null, "Discount preset missing.");
-                        var preset = await _concessions.GetDiscountPreset(d.PresetId.Value, tenantId);
-                        if (preset is null || !preset.IsActive) return (0, "", "", null, null, "That discount preset isn't available.");
+                        // Pre-loaded above; a miss means it isn't this tenant's.
+                        if (!presetsById.TryGetValue(d.PresetId.Value, out var preset) || !preset.IsActive)
+                            return (0, "", "", null, null, "That discount isn't available.");
+                        // Surface check, not decoration: a discount scoped to the bike shop must
+                        // not be applicable to a burger just because a cashier knows its id.
+                        if (!preset.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Concession))
+                            return (0, "", "", null, null, $"\"{preset.Name}\" doesn't apply to food and drink.");
                         return (ComputeDiscountCents(preset.Kind, preset.Value, baseCents), "preset", preset.Name, null, null, null);
                     case "percent":
                         var pb = Math.Clamp(d.Percent ?? 0, 0, 10000);
@@ -1018,21 +1070,41 @@ namespace webapi.Controllers
                         return (ComputeDiscountCents(reason.DefaultKind, reason.DefaultValue, baseCents), "comp", reason.Name, reason.Id, reason.Name, null);
                     case "season_pass":
                     case "loampass":
-                        var (mUser, mPass, mLoam) = await ResolveMemberCached(d.CustomerEmailOrPhone);
+                        var (mUser, mPass, mLoam, mGrant) = await ResolveMemberCached(d.CustomerEmailOrPhone);
                         if (mUser is null) return (0, "", "", null, null, "No customer found for that email or phone.");
                         var isPass = d.Kind == "season_pass";
-                        var enabled = isPass ? (settings?.SeasonPassDiscountEnabled ?? false) : (settings?.LoampassDiscountEnabled ?? false);
+
+                        // The pass perk goes through the shared resolver, so this till, the shop
+                        // register, the online store and both rental paths agree on precedence
+                        // (per-pass beats tenant-wide, and per-pass survives the tenant switch being
+                        // off because it is product configuration, not the loyalty scheme).
+                        // mGrant/mPass above are the LOOKUP's view, used for the error wording.
+                        var passPerk = isPass
+                            ? await _perks.Resolve(mUser.Id, _tenantContext.Tenant, "concession", baseCents, DateTime.UtcNow)
+                            : Services.Pricing.SeasonPassPerk.None;
+
+                        var enabled = isPass
+                            ? mGrant is not null || _tenantContext.Tenant.SeasonPassDiscountAppliesTo("concession")
+                            : (settings?.LoampassDiscountEnabled ?? false);
                         if (!enabled) return (0, "", "", null, null, "That member discount isn't enabled.");
-                        var eligible = isPass ? mPass : mLoam;
+
+                        var eligible = isPass ? passPerk.Any || mGrant is not null : mLoam;
                         if (!eligible) return (0, "", "", null, null, isPass
                             ? "That customer doesn't have an active season pass."
                             : "That customer isn't a linked LoamPass holder.");
                         outcome.PurchaserUserId = mUser.Id;
                         outcome.PurchaserEmail = mUser.Email;
                         outcome.PurchaserName = $"{mUser.FirstName} {mUser.LastName}".Trim();
-                        var mk = isPass ? (settings!.SeasonPassDiscountKind) : (settings!.LoampassDiscountKind);
-                        var mv = isPass ? settings.SeasonPassDiscountValue : settings.LoampassDiscountValue;
-                        return (ComputeDiscountCents(mk, mv, baseCents), d.Kind, isPass ? "Season Pass discount" : "LoamPass discount", null, null, null);
+
+                        if (isPass)
+                        {
+                            // Label comes from the resolver, which names the pass for a per-pass
+                            // perk so the receipt and the comp report say which one was given.
+                            return (passPerk.DiscountCents, d.Kind, passPerk.Label, null, null, null);
+                        }
+                        // LoamPass stays an F&B menu setting: it is specific to the LoamMx integration.
+                        return (ComputeDiscountCents(settings!.LoampassDiscountKind, settings.LoampassDiscountValue, baseCents),
+                            d.Kind, "LoamPass discount", null, null, null);
                     default:
                         return (0, "", "", null, null, "Unknown discount type.");
                 }
@@ -1800,12 +1872,6 @@ namespace webapi.Controllers
                 if (cashSale.TotalCents - creditApplied > 0) await WriteCashLedger(cashSale);   // skip when no money changed hands
                 try { await _concessions.DepleteInventoryForSale(cashSale.Id, tenantId); } catch { /* inventory is best-effort */ }
                 await NotifyLowStock(tenantId);
-                try
-                {
-                    await _rewardEngine.AwardCreditBack(tenantId, cashSale.PurchaserUserId, cashSale.PurchaserEmail,
-                        cashSale.PurchaserName, "concession", cashSale.Id, cashSale.TotalCents - creditApplied);
-                }
-                catch { /* loyalty is best-effort; the sale already settled */ }
                 return new ApiResponses().OkResult(new ConcessionSaleResponse
                 {
                     SaleId = cashSale.Id,

@@ -16,6 +16,13 @@ namespace webapi.Controllers.API.Data.BikeShop
         [Required, RegularExpression("^(cash|card)$")]
         public string PaymentMethod { get; set; } = "card";
 
+        // A tenant-defined staff discount ("Military 10%", "VMBA member") scoped to rentals. The
+        // server resolves the amount from the preset and never trusts a client-sent figure.
+        public Guid? DiscountPresetId { get; set; }
+
+        // Required when the chosen discount is one the tenant marked as needing a manager.
+        public string? ManagerPin { get; set; }
+
         // Card only: also authorize the deposit hold now. Cash bookings record the deposit amount
         // but hold nothing (a cash deposit is a drawer matter, not a Stripe one).
         public bool TakeDepositHold { get; set; } = true;

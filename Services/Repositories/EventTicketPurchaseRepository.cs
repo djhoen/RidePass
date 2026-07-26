@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 
@@ -13,7 +13,6 @@ namespace Services.Repositories
             amount_cents AS AmountCents,
             service_charge_cents AS ServiceChargeCents,
             tax_cents AS TaxCents, tax_rate_bps AS TaxRateBps, tax_inclusive AS TaxInclusive,
-            applied_reward_redemption_id AS AppliedRewardRedemptionId,
             applied_season_pass_purchase_id AS AppliedSeasonPassPurchaseId,
             payment_method AS PaymentMethod,
             status, purchaser_email AS PurchaserEmail, purchaser_name AS PurchaserName,
@@ -45,16 +44,18 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO event_ticket_purchase
                     (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents,
-                     tax_cents, tax_rate_bps, tax_inclusive, applied_reward_redemption_id,
+                     tax_cents, tax_rate_bps, tax_inclusive,
                      applied_season_pass_purchase_id, payment_method,
                      status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete,
-                     waiver_signature_id)
+                     waiver_signature_id,
+                     discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id)
                 VALUES
                     (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents,
-                     @TaxCents, @TaxRateBps, @TaxInclusive, @AppliedRewardRedemptionId,
+                     @TaxCents, @TaxRateBps, @TaxInclusive,
                      @AppliedSeasonPassPurchaseId, @PaymentMethod,
                      @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete,
-                     @WaiverSignatureId)
+                     @WaiverSignatureId,
+                     @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId)
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
             return (row.Id, row.RedemptionToken);
@@ -602,7 +603,7 @@ namespace Services.Repositories
                 WHERE p.tenant_id = @tenantId
                   AND t.event_id = a.event_id
                   AND p.registration_complete = false
-                  AND p.status NOT IN ('cancelled', 'refunded', 'failed')
+                  AND p.status NOT IN ('cancelled', 'refunded', 'failed', 'abandoned')
                   AND (
                         (a.purchaser_user_id IS NOT NULL AND p.purchaser_user_id = a.purchaser_user_id)
                      OR (a.purchaser_user_id IS NULL AND lower(p.purchaser_email) = lower(a.purchaser_email))

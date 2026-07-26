@@ -178,7 +178,6 @@ export class TicketService {
         items: { tierId: string; quantity: number }[]
         email?: string | null
         name?: string | null
-        rewardRedemptionId?: string | null
         couponCode?: string | null
         giftCardCode?: string | null
         // Burn the signed-in rider's store credit as the last tender (server caps at the total).

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Services.Helpers;
 using Services.Repositories.Interfaces;
@@ -7,7 +7,7 @@ namespace Services.Email
 {
     /// <summary>
     /// Sends the rider's confirmation for an EVENT order, from whichever path completed the sale:
-    /// a Stripe payment, a $0 reward voucher, a gift card that covered the cart, a Loam Pass credit,
+    /// a Stripe payment, a $0 cart, a gift card that covered the cart, a Loam Pass credit,
     /// or a cash sale at the counter. Every one of those is a real admission the rider has to be able
     /// to present at the gate, so every one of them gets the same email with the same QR.
     ///

@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.PaymentData
+﻿namespace Services.Repositories.Data.PaymentData
 {
     public class EventTicketPurchase
     {
@@ -18,7 +18,6 @@ namespace Services.Repositories.Data.PaymentData
         public int TaxCents { get; set; }
         public int TaxRateBps { get; set; }
         public bool TaxInclusive { get; set; }
-        public Guid? AppliedRewardRedemptionId { get; set; }
         // Which "credits" season pass funded this ticket (one ride credit burned at checkout).
         // Null for money-funded tickets; drives credit hand-back on refund / failed payment.
         public Guid? AppliedSeasonPassPurchaseId { get; set; }
@@ -70,6 +69,14 @@ namespace Services.Repositories.Data.PaymentData
         // waiver up front) stay "complete"; only the deferred unified-checkout path sets
         // it false and fills registration in afterward.
         public bool RegistrationComplete { get; set; } = true;
+
+        // Staff-applied discount snapshot (Script0257). A counter cart is mixed, so how much came off
+        // is a per-row fact; the preset id, its name at the time, and the manager who authorised it
+        // are what let a discounted sale explain itself later.
+        public int DiscountCents { get; set; }
+        public Guid? DiscountPresetId { get; set; }
+        public string? DiscountLabel { get; set; }
+        public Guid? DiscountAuthorizedByUserId { get; set; }
 
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

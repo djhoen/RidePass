@@ -37,12 +37,6 @@ namespace Services.Repositories.Interfaces
         Task<int> CountActiveOrders(Guid tenantId);
         Task<int> CountActivePrepLines(Guid tenantId);
 
-        // Discount presets
-        Task<List<ConcessionDiscountPreset>> ListDiscountPresets(Guid tenantId, bool activeOnly);
-        Task<ConcessionDiscountPreset?> GetDiscountPreset(Guid id, Guid tenantId);
-        Task<Guid> CreateDiscountPreset(ConcessionDiscountPreset p);
-        Task UpdateDiscountPreset(ConcessionDiscountPreset p);
-        Task DeleteDiscountPreset(Guid id, Guid tenantId);
 
         // Comp reasons
         Task<List<ConcessionCompReason>> ListCompReasons(Guid tenantId, bool activeOnly);
@@ -101,12 +95,16 @@ namespace Services.Repositories.Interfaces
         Task<ConcessionSale?> GetSaleByPaymentIntentId(string paymentIntentId);
         Task<ConcessionSale?> GetSale(Guid id, Guid tenantId);
         Task MarkSalePaid(Guid saleId);
-        Task MarkSaleFailed(Guid saleId);
+        /// <summary>Dead-payment flip from 'pending'. status is 'failed' (Stripe reported a
+        /// declined attempt) or 'abandoned' (no attempt ever completed; reconciler only).</summary>
+        Task MarkSaleFailed(Guid saleId, string status = "failed");
         Task<int> NextOrderNumber(Guid tenantId);
         Task<List<ConcessionSale>> ListOrdersForPurchaser(Guid tenantId, Guid userId, int take = 20);
         Task SetOrderNumber(Guid saleId, int orderNumber);
         Task MarkSaleRefunded(Guid saleId, Guid tenantId);
-        Task<int> FailStalePendingSales(DateTime olderThanUtc);
+        /// <summary>Blind age sweep of pending sales; status as on <see cref="MarkSaleFailed"/>.
+        /// The reconciler's walk-off sweep passes 'abandoned'.</summary>
+        Task<int> FailStalePendingSales(DateTime olderThanUtc, string status = "failed");
 
         // Sale lines + modifiers
         Task<List<ConcessionSaleLine>> GetSaleLines(Guid saleId);

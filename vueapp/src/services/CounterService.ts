@@ -17,7 +17,11 @@ export interface CounterRider {
 }
 
 export interface CounterCartItem {
-    kind: 'pass' | 'event_ticket' | 'extras' | 'membership' | 'rental'
+    // Mirrors CounterCartItem on the server. There is no 'pass' kind: a gate fee or day pass is
+    // sold as an event_ticket tier.
+    kind: 'event_ticket' | 'extras' | 'membership' | 'rental' | 'season_pass'
+    // Per-kind: event_ticket -> tier id, extras -> product id, rental -> shop variant id,
+    // membership -> ignored, season_pass -> SeasonPassProduct id.
     itemId: string
     quantity: number
     // Required when kind === 'extras' (anchors the add-on to a specific event) and when
@@ -60,7 +64,7 @@ export class CounterService {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders`, body)
     }
 
-    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; rewardRedemptionId?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number }) {
+    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
     }
 }

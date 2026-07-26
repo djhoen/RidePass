@@ -53,6 +53,65 @@
                         </template>
                     </v-list-item>
 
+                    <!-- Inline pass-discount config: how much the perk is worth. -->
+                    <v-expand-transition v-if="f.key === 'seasonPassDiscount'">
+                        <div v-if="f.enabled" class="px-4 pb-4 pl-14">
+                            <div class="d-flex ga-3 flex-wrap align-start" style="max-width: 540px">
+                                <v-select v-model="passDiscountKind"
+                                    :items="[{ title: 'Percent off', value: 'percent' }, { title: 'Amount off', value: 'amount' }]"
+                                    density="compact" label="Discount type" :disabled="!!savingKey"
+                                    style="flex: 0 0 180px" hide-details></v-select>
+                                <v-text-field v-model.number="passDiscountAmount" type="number" min="0"
+                                    :step="passDiscountKind === 'amount' ? 0.01 : 1"
+                                    :prefix="passDiscountKind === 'amount' ? '$' : undefined"
+                                    :suffix="passDiscountKind === 'percent' ? '%' : undefined"
+                                    density="compact" label="Amount" :disabled="!!savingKey"
+                                    :error-messages="passDiscountError ? [passDiscountError] : []"
+                                    style="flex: 1 1 160px"></v-text-field>
+                                <v-btn size="small" color="primary" variant="tonal" class="mt-1"
+                                    :loading="savingKey === 'passDiscountValue'"
+                                    :disabled="!passDiscountDirty || !!passDiscountError || !!passSurfaceError"
+                                    @click="savePassDiscount">Save</v-btn>
+                            </div>
+                            <!-- Where it applies. The amount above is shared; these are chosen,
+                                 because a percentage picked for a $9 burger is the same percentage
+                                 off a $6,000 bike. -->
+                            <div class="text-subtitle-2 mt-4 mb-1">Applies to</div>
+                            <div class="d-flex flex-wrap ga-4">
+                                <v-checkbox v-model="passDiscountSurfaces.concession" density="compact"
+                                    hide-details :disabled="!!savingKey" label="Food & drink" />
+                                <v-checkbox v-model="passDiscountSurfaces.retail" density="compact"
+                                    hide-details :disabled="!!savingKey" label="Bike shop" />
+                                <v-checkbox v-model="passDiscountSurfaces.rental" density="compact"
+                                    hide-details :disabled="!!savingKey" label="Rentals" />
+                            </div>
+                            <div v-if="passSurfaceError" class="text-error text-caption mt-1">
+                                {{ passSurfaceError }}
+                            </div>
+                            <!-- Bike margins are nothing like food margins, so a percentage set with
+                                 food in mind is worth a second look before it reaches the shop. -->
+                            <v-alert v-if="passDiscountSurfaces.retail && passDiscountKind === 'percent'
+                                    && passDiscountAmount >= 15"
+                                type="warning" variant="tonal" density="compact" class="mt-3"
+                                style="max-width: 540px">
+                                {{ passDiscountAmount }}% off bike shop sales is a lot on gear margins.
+                                Worth checking that's what you meant.
+                            </v-alert>
+                            <v-alert v-if="unusedSurfaces.length" type="warning" variant="tonal"
+                                density="compact" class="mt-3" style="max-width: 540px">
+                                You've ticked {{ unusedSurfaces.join(' and ') }}, but
+                                {{ unusedSurfaces.length > 1 ? 'those modules are' : 'that module is' }}
+                                turned off, so nothing uses it yet.
+                            </v-alert>
+                            <div class="text-caption text-medium-emphasis mt-3" style="max-width: 540px">
+                                Applied at the counter and online, and at the F&amp;B window when staff
+                                look the customer up. Per-pass perks set under Season Passes or Employee
+                                Passes are separate and keep working with this off. Where both apply the
+                                per-pass one wins, and they never stack.
+                            </div>
+                        </div>
+                    </v-expand-transition>
+
                     <!-- Inline waitlist config: only shown when the toggle is on. -->
                     <v-expand-transition v-if="f.key === 'waitlist'">
                         <div v-if="f.enabled" class="px-4 pb-4 pl-14">
@@ -222,6 +281,30 @@ const features = computed<Feature[]>(() => [
         },
     },
     {
+        key: 'seasonPassDiscount',
+        title: 'Season pass holder discount',
+        description: 'A standing discount for anyone holding an active season pass, at the F&B '
+            + 'window, the bike shop and on rentals. '
+            + 'your track, or run both.',
+        icon: 'mdi-ticket-percent-outline',
+        enabled: branding.seasonPassDiscountEnabled,
+        apply: async (next) => {
+            // Turning it on with nothing to give is a switch that silently does nothing, and the
+            // server rejects it. Seed a conventional 10% so the toggle always lands somewhere
+            // real; the inline editor below is right there to change it.
+            const value = branding.seasonPassDiscountValue > 0 ? branding.seasonPassDiscountValue : 1000
+            const kind = branding.seasonPassDiscountValue > 0 ? branding.seasonPassDiscountKind : 'percent'
+            await tenantService.updateSeasonPassDiscount({
+                enabled: next, kind, value,
+                // Toggling on/off must not silently rewrite where it applies, so carry the current
+                // surfaces through. All three default true, so a fresh setup covers every counter.
+                appliesConcession: branding.seasonPassDiscountAppliesConcession,
+                appliesRetail: branding.seasonPassDiscountAppliesRetail,
+                appliesRental: branding.seasonPassDiscountAppliesRental,
+            })
+        },
+    },
+    {
         key: 'bikeShop',
         title: 'Bike Shop',
         description: 'Sell and rent bikes, gear, and parts, and take in repairs, with full inventory and a retail register.',
@@ -361,7 +444,14 @@ function isPlatformFeature(key: string): boolean {
     return PLATFORM_FEATURE_KEYS.has(key)
 }
 const visibleFeatures = computed(() =>
-    features.value.filter(f => isPlatformFeature(f.key) ? f.enabled : true))
+    features.value.filter(f => {
+        // A discount for season pass holders is meaningless at a track that doesn't sell passes.
+        // Not extended to concessions: that IS switchable on this page, so hiding the card when
+        // F&B is off would make it vanish exactly when someone turns F&B on and looks for it. The
+        // card says so instead.
+        if (f.key === 'seasonPassDiscount' && !branding.seasonPassesEnabled) return false
+        return isPlatformFeature(f.key) ? f.enabled : true
+    }))
 
 const savingKey = ref<string | null>(null)
 const snackbar = ref(false)
@@ -445,6 +535,66 @@ async function saveGiftCardLimits() {
     }
 }
 
+// Inline pass-discount value. Stored as basis points for a percent and cents for an amount; both
+// are hundredths of the unit the admin thinks in, so one /100 covers both (1000 -> 10%, 250 -> $2.50).
+const passDiscountKind = ref<string>(branding.seasonPassDiscountKind || 'percent')
+const passDiscountAmount = ref<number>(branding.seasonPassDiscountValue / 100)
+const passDiscountSurfaces = ref({
+    concession: branding.seasonPassDiscountAppliesConcession,
+    retail: branding.seasonPassDiscountAppliesRetail,
+    rental: branding.seasonPassDiscountAppliesRental,
+})
+const passSurfaceError = computed(() =>
+    passDiscountSurfaces.value.concession || passDiscountSurfaces.value.retail || passDiscountSurfaces.value.rental
+        ? '' : 'Pick at least one place the discount applies.')
+// Ticked surfaces whose module is switched off, so a discount that can never fire says so rather
+// than looking live.
+const unusedSurfaces = computed(() => {
+    const out: string[] = []
+    if (passDiscountSurfaces.value.concession && !branding.concessionsEnabled) out.push('Food & drink')
+    if ((passDiscountSurfaces.value.retail || passDiscountSurfaces.value.rental) && !branding.bikeShopEnabled) {
+        out.push(passDiscountSurfaces.value.retail && passDiscountSurfaces.value.rental
+            ? 'the bike shop' : passDiscountSurfaces.value.retail ? 'Bike shop' : 'Rentals')
+    }
+    return out
+})
+const passDiscountError = computed(() => {
+    const v = passDiscountAmount.value
+    if (!Number.isFinite(v) || v <= 0) return 'Enter how much the discount is worth.'
+    if (passDiscountKind.value === 'percent' && v > 100) return 'A percentage can\'t exceed 100%.'
+    return ''
+})
+const passDiscountDirty = computed(() =>
+    passDiscountKind.value !== (branding.seasonPassDiscountKind || 'percent')
+    || Math.round(passDiscountAmount.value * 100) !== branding.seasonPassDiscountValue
+    || passDiscountSurfaces.value.concession !== branding.seasonPassDiscountAppliesConcession
+    || passDiscountSurfaces.value.retail !== branding.seasonPassDiscountAppliesRetail
+    || passDiscountSurfaces.value.rental !== branding.seasonPassDiscountAppliesRental)
+
+async function savePassDiscount() {
+    if (savingKey.value || passDiscountError.value || passSurfaceError.value) return
+    savingKey.value = 'passDiscountValue'
+    try {
+        await tenantService.updateSeasonPassDiscount({
+            // Saving the value never flips the switch: the toggle owns on/off.
+            enabled: branding.seasonPassDiscountEnabled,
+            kind: passDiscountKind.value,
+            value: Math.round(passDiscountAmount.value * 100),
+            appliesConcession: passDiscountSurfaces.value.concession,
+            appliesRetail: passDiscountSurfaces.value.retail,
+            appliesRental: passDiscountSurfaces.value.rental,
+        })
+        await loadBranding()
+        flash('Pass holder discount saved.', 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error
+            || 'Could not save the pass holder discount. Nothing was changed; check the amount and try again.',
+            'error')
+    } finally {
+        savingKey.value = null
+    }
+}
+
 async function toggle(f: Feature, next: boolean) {
     if (savingKey.value) return
     savingKey.value = f.key
@@ -455,6 +605,13 @@ async function toggle(f: Feature, next: boolean) {
         waitlistConfirmMinutes.value = branding.waitlistConfirmWindowMinutes
         giftCardMin.value = Math.round(branding.giftCardMinCents / 100)
         giftCardMax.value = Math.round(branding.giftCardMaxCents / 100)
+        passDiscountKind.value = branding.seasonPassDiscountKind || 'percent'
+        passDiscountAmount.value = branding.seasonPassDiscountValue / 100
+        passDiscountSurfaces.value = {
+            concession: branding.seasonPassDiscountAppliesConcession,
+            retail: branding.seasonPassDiscountAppliesRetail,
+            rental: branding.seasonPassDiscountAppliesRental,
+        }
         flash(`${f.title} ${next ? 'enabled' : 'disabled'}.`, 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Save failed.', 'error')

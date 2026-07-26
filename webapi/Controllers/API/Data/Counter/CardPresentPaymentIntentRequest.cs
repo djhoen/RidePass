@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace webapi.Controllers.API.Data.Counter
 {
@@ -15,7 +15,6 @@ namespace webapi.Controllers.API.Data.Counter
     {
         [Required] public Guid RiderId { get; set; }
         [Required, MinLength(1)] public List<CounterCartItem> Items { get; set; } = new();
-        public Guid? RewardRedemptionId { get; set; }
         [MaxLength(40)] public string? CouponCode { get; set; }
         [MaxLength(40)] public string? GiftCardCode { get; set; }
     }

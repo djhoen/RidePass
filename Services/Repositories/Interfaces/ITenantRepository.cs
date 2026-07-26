@@ -1,4 +1,4 @@
-using Services.Repositories.Data.TenantData;
+﻿using Services.Repositories.Data.TenantData;
 
 namespace Services.Repositories.Interfaces
 {
@@ -18,11 +18,16 @@ namespace Services.Repositories.Interfaces
             TimeSpan? hoursStart, TimeSpan? hoursEnd);
         /// <summary>Daily staff alert digest: on/off and the per-staffer daily refund threshold.</summary>
         Task UpdateStaffAlertSettings(Guid tenantId, bool enabled, int refundCents);
+        /// <summary>Whether several discounts may combine on one sale (Script0254).</summary>
+        Task UpdateAllowDiscountStacking(Guid tenantId, bool allow);
         Task UpdateRequireEmergencyContact(Guid tenantId, bool require);
         Task UpdateAllowEventSubscriptions(Guid tenantId, bool allow);
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
         /// <summary>Gate wristband issuance on a signed waiver plus a stored ID/age verification.</summary>
         Task UpdateRequireIdForWristband(Guid tenantId, bool require);
+        /// <summary>Who funds the platform service charge on a bike shop sale (bps of the charge).
+        /// 0 = the shop absorbs it; 10000 = the customer pays it.</summary>
+        Task UpdateShopBuyerPaidServiceCharge(Guid tenantId, int buyerPaidBps);
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
         Task SetStripeChargeMode(Guid tenantId, string chargeMode);
@@ -107,6 +112,12 @@ namespace Services.Repositories.Interfaces
         /// <summary>Any spectator ticket tier on any event, ever (drives Spectator Report visibility).</summary>
         Task<bool> HasSpectatorTiers(Guid tenantId);
         Task UpdateConcessionsEnabled(Guid tenantId, bool enabled);
+
+        /// <summary>The standing season-pass-holder discount. Not a
+        /// sub-setting of it, and independent of per-pass benefits.</summary>
+        Task UpdateSeasonPassDiscount(
+            Guid tenantId, bool enabled, string kind, int value,
+            bool appliesConcession, bool appliesRetail, bool appliesRental);
         Task UpdateBlogEnabled(Guid tenantId, bool enabled);
         Task UpdateCancellationPolicy(Guid tenantId, bool allowSelfCancel, int waitlistConfirmWindowMinutes);
         Task UpdateGateLabels(Guid tenantId, string? riderGateLabel, string? spectatorGateLabel);

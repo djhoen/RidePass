@@ -1,11 +1,73 @@
-using Services.Repositories.Data.PaymentData;
+﻿using Services.Repositories.Data.PaymentData;
 
 namespace Services.Repositories.Interfaces
 {
     public interface ISeasonPassRepository
     {
         // Products
-        Task<List<SeasonPassProduct>> ListProductsForTenant(Guid tenantId, bool activeOnly);
+        /// <summary>Admin Employee Passes roster: every staff account on the tenant with the
+        /// employee pass they hold, if any. Staff with no pass are included.</summary>
+        Task<List<EmployeePassRosterRow>> ListEmployeePassRoster(Guid tenantId);
+
+        // ── Upgrades (Script0253) ────────────────────────────────────────────
+        Task<List<SeasonPassUpgradePath>> ListUpgradePaths(Guid tenantId);
+
+        /// <summary>Create or update one offer. Silently writes nothing when either product is
+        /// not this tenant's, or is an employee product.</summary>
+        Task UpsertUpgradePath(Guid tenantId, Guid fromProductId, Guid toProductId, int priceCents, bool isActive);
+
+        Task DeleteUpgradePath(Guid id, Guid tenantId);
+
+        /// <summary>Eligible holders per path today, for the admin matrix.</summary>
+        Task<Dictionary<Guid, int>> CountEligibleHolders(Guid tenantId, DateTime today);
+
+        /// <summary>Upgrades this rider can take right now, one row per (pass, path).</summary>
+        Task<List<SeasonPassUpgradeOffer>> ListUpgradeOffersForUser(Guid userId, Guid tenantId, DateTime today);
+
+        /// <summary>One offer, re-resolved server-side at checkout. Null when unavailable, which
+        /// is what stops a stale or spoofed price being charged.</summary>
+        Task<SeasonPassUpgradeOffer?> GetUpgradeOffer(Guid passPurchaseId, Guid pathId, Guid userId, Guid tenantId, DateTime today);
+
+        /// <summary>Retire the replaced pass. False when it was not 'paid' (already handled).</summary>
+        Task<bool> MarkUpgraded(Guid passPurchaseId, Guid tenantId);
+
+        /// <summary>Carry photo, waiver, holder details, and ID verification onto the replacement.
+        /// Load-bearing: without it the new pass will not scan.</summary>
+        Task CarryRegistrationForward(Guid fromPurchaseId, Guid toPurchaseId, Guid tenantId);
+
+        // ── Buddy passes (Script0247) ────────────────────────────────────────
+        /// <summary>Replace what a buddy-pass entitlement is good for. No-op for a benefit that
+        /// isn't this tenant's buddy_pass row.</summary>
+        Task ReplaceBuddyScopes(Guid benefitId, Guid tenantId, IEnumerable<Guid> eventTypeIds, bool includeWalkUp);
+
+        Task<List<SeasonPassBuddyScope>> ListBuddyScopes(Guid benefitId, Guid tenantId);
+
+        /// <summary>The buddy entitlement behind one paid pass, with remaining count and scopes.
+        /// Null when the product grants none.</summary>
+        Task<SeasonPassBuddyEntitlement?> GetBuddyEntitlement(Guid passPurchaseId, Guid tenantId);
+
+        /// <summary>Spend one buddy admission. CALLER MUST hold the per-pass advisory lock and
+        /// re-check Remaining inside it.</summary>
+        Task<Guid> RedeemBuddyPass(SeasonPassBuddyRedemption r);
+
+        /// <summary>Return a spent credit (entitlement only, no money, admission untouched).
+        /// False when already returned or not this tenant's.</summary>
+        Task<bool> ReturnBuddyCredit(Guid redemptionId, Guid tenantId, Guid returnedByUserId, string reason);
+
+        /// <summary>Buddy usage for the admin report. Returned credits are included and flagged.</summary>
+        Task<List<SeasonPassBuddyRedemption>> ListBuddyRedemptions(Guid tenantId, int take = 200);
+
+        /// <summary>Revoke an issued employee pass. Only an employee product's purchase can be
+        /// revoked here. Returns false when nothing matched (already revoked, or not this tenant's).</summary>
+        Task<bool> RevokeEmployeePass(Guid purchaseId, Guid tenantId, Guid revokedByUserId, string reason);
+
+        /// <summary>True when this employee already holds a live employee pass.</summary>
+        Task<bool> HasLiveEmployeePass(Guid userId, Guid tenantId);
+
+        /// <summary>Tenant's pass products. includeEmployee defaults to false: employee products
+        /// are staff-only grants and must never reach a public read path. Only the admin product
+        /// list opts in.</summary>
+        Task<List<SeasonPassProduct>> ListProductsForTenant(Guid tenantId, bool activeOnly, bool includeEmployee = false);
         Task<SeasonPassProduct?> GetProduct(Guid id, Guid tenantId);
         Task<Guid> CreateProduct(SeasonPassProduct p);
         Task UpdateProduct(SeasonPassProduct p);
@@ -39,6 +101,19 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task<List<SeasonPassBenefitGrant>> ListActiveBenefitGrantsForUser(
             Guid userId, Guid tenantId, string benefitType, Guid? scopeId, DateTime onDateUtc);
+
+        /// <summary>
+        /// Does this user hold a pass that is paid and valid on the given date? Backs the
+        /// TENANT-WIDE holder discount, which is not tied to any one product and so has no benefit
+        /// row to look up.
+        ///
+        /// Deliberately looser than <see cref="ListActiveBenefitGrantsForUser"/>: it does not
+        /// require a photo or a signed waiver. Those gates exist because a per-pass benefit can be
+        /// admission-grade (free entry), where an unverifiable pass is a real fraud risk. Refusing
+        /// a pass holder 10% off a t-shirt because they never uploaded a photo is a support ticket,
+        /// not a control, and the cashier looking them up has no photo to check anyway.
+        /// </summary>
+        Task<bool> HasPassValidOn(Guid userId, Guid tenantId, DateTime onDateUtc);
 
         // Purchases
         Task<(Guid Id, Guid RedemptionToken)> CreatePurchase(SeasonPassPurchase p);

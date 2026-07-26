@@ -540,8 +540,13 @@
                         {{ money(orderTotal(editing)) }} pre-tax (parts taxed at checkout). How is
                         {{ editing.customerName }} paying?
                     </p>
-                    <v-text-field v-model.number="tipDollars" type="number" min="0" step="0.01" prefix="$"
-                        label="Tip (optional)" density="compact" hide-details class="mb-3"></v-text-field>
+                    <v-select v-if="discounts.length" v-model="discountPresetId" :items="discountItems"
+                        label="Discount (optional)" density="compact" variant="outlined" hide-details
+                        clearable class="mb-3"></v-select>
+                    <v-text-field v-if="selectedDiscountNeedsPin" v-model="managerPin" type="password"
+                        label="Manager PIN" density="compact" variant="outlined" hide-details class="mb-3"
+                        prepend-inner-icon="mdi-shield-key"
+                        hint="This discount needs a manager's approval." persistent-hint></v-text-field>
                     <p v-if="billDepositCredit > 0" class="text-body-2 text-success mb-3">
                         Deposit paid: {{ money(billDepositCredit) }} will be applied at checkout.
                     </p>
@@ -647,6 +652,7 @@ import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
 import SignAgreementDialog from '@/components/bikeshop/SignAgreementDialog.vue'
 import { type ShopInspection, type ShopJobTemplate, BikeShopService, type ShopProduct, type ShopWorkOrder, type ShopWorkOrderLine, type UpsertShopWorkOrder, type ShopBikeHistoryRow, type ShopWorkOrderStatusDef } from '@/services/BikeShopService'
 import { branding } from '@/stores/branding'
+import { DiscountService, type DiscountPreset } from '@/services/DiscountService'
 import { getStripe } from '@/helpers/StripeHelper'
 import { useConfirm } from '@/composables/useConfirm'
 import ShopHistoryPanel from '@/components/ShopHistoryPanel.vue'
@@ -1009,7 +1015,8 @@ function openEdit(o: ShopWorkOrder) {
         assignedTechUserId: o.assignedTechUserId,
     }
     depositDollars.value = o.depositCents > 0 ? o.depositCents / 100 : null
-    tipDollars.value = null
+    discountPresetId.value = null
+    managerPin.value = ''
     editorError.value = ''
     newLine.value = { kind: 'labor', description: '', variantId: null, qty: 1, priceDollars: null, hours: null, estMin: null }
     editorOpen.value = true
@@ -1495,7 +1502,19 @@ const billOpen = ref(false)
 const billing = ref(false)
 const billError = ref('')
 const billMethod = ref<'cash' | 'card' | null>(null)
-const tipDollars = ref<number | null>(null)
+
+// Tenant discounts for this counter, fetched pre-filtered so the list can never offer one the
+// bill would then refuse.
+const discountService = new DiscountService()
+const discounts = ref<DiscountPreset[]>([])
+const discountPresetId = ref<string | null>(null)
+const managerPin = ref('')
+const discountItems = computed(() => discounts.value.map(d => ({
+    title: `${d.name} · ${d.label}${d.requiresManager ? '  (needs manager)' : ''}`,
+    value: d.id,
+})))
+const selectedDiscountNeedsPin = computed(() =>
+    !!discounts.value.find(d => d.id === discountPresetId.value)?.requiresManager)
 const excessAction = ref<'refund' | 'credit'>('refund')
 // What's still on the deposit (partial refunds/credit conversions reduce it).
 const billDepositCredit = computed(() =>
@@ -1513,10 +1532,10 @@ async function bill(method: 'cash' | 'card') {
     billMethod.value = method
     billing.value = true
     try {
-        const tipCents = tipDollars.value != null && !isNaN(tipDollars.value)
-            ? Math.max(0, Math.round(tipDollars.value * 100)) : 0
         const r = await service.billWorkOrder(editing.value.id, {
-            paymentMethod: method, tipCents,
+            paymentMethod: method,
+            discountPresetId: discountPresetId.value || null,
+            managerPin: managerPin.value || null,
             excessAction: billDepositCredit.value > 0 ? excessAction.value : null,
         })
         const data = r.data.data
@@ -1609,9 +1628,21 @@ async function reload() {
     } finally { loading.value = false }
 }
 
+async function loadDiscounts() {
+    try {
+        const r = await discountService.forSurface('shop_sale')
+        discounts.value = r.data.data
+    } catch {
+        // The picker is optional; a repair can still be billed without it, so a failure here must
+        // not block the counter. It simply won't offer discounts this session.
+        discounts.value = []
+    }
+}
+
 onMounted(() => {
     reload()
     loadTemplates()
+    loadDiscounts()
     // Advance the running-timer display every 30s (cheap; only matters while a timer runs).
     timeTicker = setInterval(() => { nowMs.value = Date.now() }, 30000)
 })

@@ -1,4 +1,4 @@
-using Services.Payments;
+﻿using Services.Payments;
 using Services.Repositories.Interfaces;
 using webapi.Payments;
 
@@ -9,10 +9,16 @@ namespace webapi.Workers
     /// finds PaymentIntents with still-pending purchase rows past a grace period, asks Stripe
     /// for the real status, and:
     ///   - succeeded  -> finalizes via the shared finalizer (flips to paid, ledger, emails,
-    ///                   rewards) so a missed webhook can't leave a paid customer stuck.
-    ///   - canceled   -> fails the rows, which frees the inventory the pending rows were holding.
+    ///                   ) so a missed webhook can't leave a paid customer stuck.
+    ///   - canceled   -> abandons the rows (no payment attempt ever completed), which frees
+    ///                   the inventory the pending rows were holding.
     ///   - abandoned  -> a PI still awaiting a payment method long after creation (buyer closed
-    ///                   the tab) is failed once past the abandon cutoff, again freeing inventory.
+    ///                   the tab) is abandoned once past the abandon cutoff, again freeing
+    ///                   inventory.
+    /// Both dead outcomes write 'abandoned', never 'failed': 'failed' is reserved for a real
+    /// decline reported by a genuine Stripe payment_intent.payment_failed webhook. It also
+    /// sweeps pending rows that never got a PaymentIntent at all (checkout died before PI
+    /// creation), which the PI-keyed query above is structurally blind to.
     /// All finalizer calls are idempotent, so racing with a late webhook is safe.
     /// </summary>
     public class PendingPurchaseReconciler : BackgroundService
@@ -85,7 +91,9 @@ namespace webapi.Workers
                 }
                 else if (status == "canceled")
                 {
-                    await finalizer.ProcessPaymentIntentAsync(pi.PaymentIntentId, "payment_intent.payment_failed", ct);
+                    // A cancelled PI was never charged, so no attempt was declined: abandonment,
+                    // not failure. A real decline arrives as a payment_failed webhook instead.
+                    await finalizer.ProcessPaymentIntentAsync(pi.PaymentIntentId, "purchase.abandoned", ct);
                 }
                 else if (status != "processing" && pi.OldestCreatedAtUtc < now - AbandonCutoff)
                 {
@@ -105,28 +113,50 @@ namespace webapi.Workers
                     else if (afterCancel == "canceled")
                     {
                         _logger.LogInformation(
-                            "Reconciler failed abandoned PaymentIntent {Pi} (canceled at Stripe; created {Created:o}).",
+                            "Reconciler abandoned PaymentIntent {Pi} (canceled at Stripe; created {Created:o}).",
                             pi.PaymentIntentId, pi.OldestCreatedAtUtc);
-                        await finalizer.ProcessPaymentIntentAsync(pi.PaymentIntentId, "payment_intent.payment_failed", ct);
+                        await finalizer.ProcessPaymentIntentAsync(pi.PaymentIntentId, "purchase.abandoned", ct);
                     }
                     // else (null / unexpected state): leave pending and retry on a later tick.
                 }
             }
 
             // Now release inventory held by abandoned concession card sales (reader cancelled /
-            // walk-off): a pending concession sale older than 30 min is failed so its variant stock
+            // walk-off): a pending concession sale older than 30 min is closed so its variant stock
             // frees up. Runs AFTER the Stripe reconciliation above, so any sale that actually
             // succeeded was already finalized (no longer pending) and is safe from this blind sweep;
-            // only genuine walk-offs remain pending to be failed here.
+            // only genuine walk-offs remain pending. A walk-off completed no payment attempt, so
+            // the sweep writes 'abandoned' (a real decline gets 'failed' from its webhook).
             try
             {
                 var concessions = scope.ServiceProvider.GetRequiredService<IConcessionRepository>();
-                var swept = await concessions.FailStalePendingSales(now - TimeSpan.FromMinutes(30));
-                if (swept > 0) _logger.LogInformation("Reconciler failed {Count} stale pending concession sales.", swept);
+                var swept = await concessions.FailStalePendingSales(now - TimeSpan.FromMinutes(30), "abandoned");
+                if (swept > 0) _logger.LogInformation("Reconciler abandoned {Count} stale pending concession sales.", swept);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Concession stale-pending sweep failed.");
+            }
+
+            // Finally, the bucket the PI-keyed query above can never see: rows whose checkout died
+            // BEFORE a PaymentIntent was stamped (PI creation threw, or the request died mid
+            // flight), so there is no PI to ask Stripe about and they would sit 'pending' forever.
+            // Safe at the same AbandonCutoff because counter cash sales flip to 'paid' in the same
+            // request and every card/online flow stamps its PI within seconds of creating the rows;
+            // nothing legitimate is still PI-less two hours on. The finalizer also hands back what
+            // the checkout debited up front (gift card balance, coupon uses, ride credits, store
+            // credit) since those are taken before PI creation.
+            try
+            {
+                var abandoned = await finalizer.AbandonStalePaymentlessPurchasesAsync(now - AbandonCutoff, ct);
+                if (abandoned > 0)
+                    _logger.LogInformation(
+                        "Reconciler abandoned {Count} stale pending purchase rows that never got a PaymentIntent.",
+                        abandoned);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Paymentless stale-pending sweep failed.");
             }
         }
     }

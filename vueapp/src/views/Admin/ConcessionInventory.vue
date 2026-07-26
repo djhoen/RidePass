@@ -90,7 +90,14 @@
                 <v-card-text>
                     <v-text-field v-model="itemForm.name" label="Name" density="compact" placeholder="Beef patty"></v-text-field>
                     <v-row class="mt-0">
-                        <v-col cols="6"><v-text-field v-model="itemForm.unit" label="Unit" density="compact" class="mt-4" placeholder="each / oz / lb"></v-text-field></v-col>
+                        <v-col cols="6">
+                            <!-- Combobox, not a select: concession units are genuinely open-ended
+                                 (bag-in-box, sleeve, keg) and a fixed list would push someone into
+                                 calling a case "each", which is worse than a free-text label. -->
+                            <v-combobox v-model="itemForm.unit" :items="unitSuggestions" label="Unit"
+                                density="compact" class="mt-4" placeholder="each / oz / lb"
+                                hide-details></v-combobox>
+                        </v-col>
                         <v-col cols="6"><v-text-field v-model.number="itemForm.costDollars" type="number" min="0" step="0.01" prefix="$" label="Unit cost" density="compact" class="mt-4"></v-text-field></v-col>
                     </v-row>
                     <v-text-field v-model.number="itemForm.onHand" type="number" step="0.001" label="On hand" density="compact" class="mt-4"></v-text-field>
@@ -234,6 +241,18 @@ async function loadAll() {
 const itemDialog = ref(false)
 const editingItem = ref<ConcessionInventoryItem | null>(null)
 const itemForm = ref({ name: '', unit: 'each', costDollars: 0, onHand: 0, lowStockThreshold: null as number | null, isActive: true })
+// Units this tenant already uses come first, then the common ones. Cross-tenant consistency is
+// worthless here (nothing aggregates units across tenants); what matters is that one track doesn't
+// end up with "sleeve", "Sleeve" and "sleeves" side by side in its own list.
+const COMMON_UNITS = [
+    'each', 'oz', 'fl oz', 'lb', 'g', 'kg', 'ml', 'l', 'gal',
+    'case', 'box', 'bag', 'sleeve', 'roll', 'pack', 'dozen', 'slice', 'scoop',
+]
+const unitSuggestions = computed(() => {
+    const mine = [...new Set(items.value.map(i => i.unit).filter(Boolean))].sort()
+    return [...mine, ...COMMON_UNITS.filter(u => !mine.includes(u))]
+})
+
 // How many active items are currently low on stock.
 const lowCount = computed(() => items.value.filter(i => i.isActive && i.isLow).length)
 // Keep the parent tab badge in sync as items load and are received/edited/counted. Not immediate:
@@ -254,7 +273,9 @@ async function saveItem() {
     try {
         const t = itemForm.value.lowStockThreshold
         const payload = {
-            name, unit: itemForm.value.unit.trim() || 'each',
+            // Lowercased as well as trimmed: the combobox still allows free text, so without
+            // this "OZ" and "oz" both persist and the list looks careless.
+            name, unit: (itemForm.value.unit ?? '').trim().toLowerCase() || 'each',
             costCents: Math.round((itemForm.value.costDollars || 0) * 100),
             onHand: Number(itemForm.value.onHand) || 0,
             lowStockThreshold: t === null || (t as any) === '' ? null : Number(t),

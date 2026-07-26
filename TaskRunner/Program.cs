@@ -38,6 +38,13 @@ using Services.Sms;
 //     unique index on staff_alert_scan (tenant_id, scan_date) makes the repeat
 //     safe and stops a day being emailed twice.
 //
+//   • Distributor catalog sync (6h tick) — tenant-spanning sweep that pulls each
+//     connected shop's distributor catalog (QBP today) into their own bike shop
+//     catalog, so nobody types manufacturer data by hand. Each connection runs at
+//     most daily; the tick is more frequent only so a newly connected shop doesn't
+//     wait up to 24h for its first pull. Silent when no distributor transport is
+//     wired on this deployment, rather than logging a failure hourly forever.
+//
 //   • SMS billing attacher (60s tick) — drains tenant_billing_event rows
 //     into tenant_ledger_entry as negative sms_charge adjustments so the
 //     monthly drafter rolls SMS costs into total_adjustment_cents. Same
@@ -115,6 +122,24 @@ var quickBooksApi = new QuickBooksApiClient(quickBooksOptions, quickBooksTokens,
 var quickBooksSync = new QuickBooksSyncService(quickBooksRepo, accountingEntryRepo, quickBooksApi,
     tenantRepo, NullLogger<QuickBooksSyncService>.Instance);
 
+// Distributor catalog sync. Tenant-spanning sweep; each tenant's own encrypted dealer
+// credentials are loaded per row, because catalog content feeds are licensed per dealer.
+var distributorCredentialRepo = new DistributorCredentialRepository(dbHelper);
+var bikeShopRepo = new BikeShopRepository(dbHelper);
+var distributorSources = new Services.Distributors.IDistributorCatalogSource[]
+{
+    new Services.Distributors.QbpCatalogSource(
+        NullLogger<Services.Distributors.QbpCatalogSource>.Instance),
+    // Fake distributor for dev/staging; gated on Distributors:EnableSampleSource so the nightly
+    // sweep ignores it entirely in production.
+    new Services.Distributors.SampleCatalogSource(configuration),
+};
+// bikeShopRepo satisfies ICatalogImporter; the sync takes the narrow interface so it stays
+// unit-testable without faking the whole repository.
+var distributorSync = new Services.Distributors.DistributorSyncService(
+    distributorCredentialRepo, bikeShopRepo, distributorSources,
+    NullLogger<Services.Distributors.DistributorSyncService>.Instance);
+
 // Staff alert tripwires. Tenant-spanning sweep, same shape as the QuickBooks sync
 // and for the same reason: a tenant's local day closes at a different UTC moment for
 // each one, so it runs hourly and scans whatever has now finished, with the unique
@@ -141,16 +166,47 @@ var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// Five independent loops. Cancellation token wired so Ctrl-C stops all.
+// Six independent loops. Cancellation token wired so Ctrl-C stops all.
 var dispatcherLoop = Task.Run(() => DispatcherLoop(dispatcher, cts.Token));
 var drafterLoop = Task.Run(() => DrafterLoop(drafter, cts.Token));
 var smsBillingLoop = Task.Run(() => SmsBillingAttachLoop(smsBillingAttacher, cts.Token));
 var quickBooksLoop = Task.Run(() => QuickBooksSyncLoop(quickBooksSync, quickBooksOptions, cts.Token));
 var staffAlertLoop = Task.Run(() => StaffAlertLoop(staffAlertSweep, cts.Token));
+var distributorLoop = Task.Run(() => DistributorSyncLoop(distributorSync, cts.Token));
 
-await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop, quickBooksLoop, staffAlertLoop);
+await Task.WhenAll(dispatcherLoop, drafterLoop, smsBillingLoop, quickBooksLoop, staffAlertLoop,
+    distributorLoop);
 
 Console.WriteLine("TaskRunner stopped.");
+
+static async Task DistributorSyncLoop(Services.Distributors.IDistributorSyncService sync, CancellationToken ct)
+{
+    // Six hours, while each CONNECTION still only syncs daily (the service enforces that). The
+    // gap is so a shop that connects at 9am gets its first pull the same morning instead of
+    // waiting until tomorrow, without any connection being pulled more than once a day.
+    var timer = new PeriodicTimer(TimeSpan.FromHours(6));
+    try
+    {
+        do
+        {
+            try
+            {
+                var summary = await sync.SyncDueTenantsAsync(ct);
+                if (summary.TenantsConsidered > 0)
+                {
+                    Console.WriteLine($"[{DateTime.UtcNow:o}] Distributor sync: connections={summary.TenantsConsidered} "
+                        + $"synced={summary.Synced} skipped={summary.Skipped} failed={summary.Failed}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[{DateTime.UtcNow:o}] Distributor sync loop error: {ex.Message}");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(ct));
+    }
+    catch (OperationCanceledException) { /* shutting down */ }
+}
 
 static async Task StaffAlertLoop(Services.Alerts.StaffAlertSweep sweep, CancellationToken ct)
 {

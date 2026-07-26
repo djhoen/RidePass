@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.Concession
+﻿namespace webapi.Controllers.API.Data.Concession
 {
     // A discount or comp the cashier applied, at either the line or the order level. The server always
     // recomputes the cents from Kind + the referenced config and never trusts a client-sent amount:
@@ -17,5 +17,6 @@ namespace webapi.Controllers.API.Data.Concession
         public Guid? CompReasonId { get; set; }
         // Member perks verify this customer (email or phone); the resolved customer is snapshotted on the sale.
         public string? CustomerEmailOrPhone { get; set; }
+
     }
 }

@@ -91,6 +91,14 @@ namespace Services.Repositories.Data.ExtrasData
         public string? SizeAtPurchase { get; set; }
         public string? ColorAtPurchase { get; set; }
         public string? GenderAtPurchase { get; set; }
+
+        // Staff-applied discount snapshot (Script0257). UnitPriceCentsFrozen stays the list price and
+        // AmountCents becomes what was charged, so the two together plus this explain the gap.
+        public int DiscountCents { get; set; }
+        public Guid? DiscountPresetId { get; set; }
+        public string? DiscountLabel { get; set; }
+        public Guid? DiscountAuthorizedByUserId { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

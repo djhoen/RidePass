@@ -4,15 +4,17 @@ namespace webapi.Controllers.API.Data.Counter
 {
     public class CounterCartItem
     {
-        // "pass" | "event_ticket" | "extras" | "membership"
+        // "event_ticket" | "extras" | "rental" | "membership" | "season_pass"
+        // (A gate fee or day pass is sold as an event_ticket tier — there is no separate "pass" kind.)
         [Required]
         public string Kind { get; set; } = null!;
 
         // Per-kind:
-        //   pass         → PassProduct id
         //   event_ticket → EventTicketTier id
         //   extras       → EventExtraProduct id
+        //   rental       → bike shop variant id; EventId is the lesson it attaches to
         //   membership   → ignored (single tenant-config product); pass any guid
+        //   season_pass  → SeasonPassProduct id
         [Required]
         public Guid ItemId { get; set; }
 

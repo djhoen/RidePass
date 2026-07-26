@@ -52,6 +52,13 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        // Reached from the "Upgrade available" badge on a pass card.
+        path: '/User/PassUpgrade/:passPurchaseId',
+        name: 'PassUpgrade',
+        component: () => import('../views/User/PassUpgrade.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         // Shop purchases: the order number here is what the counter asks for at pickup.
         path: '/User/MyOrders',
         name: 'MyOrders',
@@ -70,12 +77,6 @@ const routes = [
         component: () => import('../views/User/Membership.vue'),
         // Buying a membership requires an account (the purchase needs a user), and the page
         // loads auth-only status on mount, so gate it and let Login return them via ?next.
-        meta: { requiresAuth: true }
-    },
-    {
-        path: '/User/Rewards',
-        name: 'UserRewards',
-        component: () => import('../views/User/Rewards.vue'),
         meta: { requiresAuth: true }
     },
     {
@@ -186,6 +187,31 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'users.manage', hideFooter: true }
     },
     {
+        // Pricing and product configuration, so the same catalog.manage bar as editing the
+        // passes these offers connect.
+        path: '/Admin/PassUpgrades',
+        name: 'AdminPassUpgrades',
+        component: () => import('../views/Admin/PassUpgrades.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
+        // Reporting surface, so reports.view. The credit-return action inside is separately
+        // gated on sales.cancel by the API, which is the permission that actually matters:
+        // a cashier who can spend a credit must not be able to hand it back.
+        path: '/Admin/BuddyPassUsage',
+        name: 'AdminBuddyPassUsage',
+        component: () => import('../views/Admin/BuddyPassUsage.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
+        // Employee passes are staff administration that grants free admission, so the same
+        // users.manage bar as disabling a staff account rather than catalog.manage.
+        path: '/Admin/EmployeePasses',
+        name: 'AdminEmployeePasses',
+        component: () => import('../views/Admin/EmployeePasses.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'users.manage', hideFooter: true }
+    },
+    {
         // No requiresPermission: every staffer can reach this to see their OWN activity. The
         // page itself only offers the whole-track view to holders of audit.view, and the API
         // enforces that independently.
@@ -193,6 +219,12 @@ const routes = [
         name: 'AdminStaffActivity',
         component: () => import('../views/Admin/StaffActivity.vue'),
         meta: { requiresAuth: true, hideFooter: true }
+    },
+    {
+        path: '/Admin/Settings/Discounts',
+        name: 'AdminSettingsDiscounts',
+        component: () => import('../views/Admin/Settings/Discounts.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'settings.manage', hideFooter: true }
     },
     {
         path: '/Admin/Settings/StaffAccess',
@@ -422,12 +454,6 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
     },
     {
-        path: '/Admin/Rewards',
-        name: 'AdminRewards',
-        component: () => import('../views/Admin/Rewards.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
-    },
-    {
         path: '/Admin/Waiver',
         name: 'AdminWaiver',
         component: () => import('../views/Admin/Waiver.vue'),
@@ -536,6 +562,14 @@ const routes = [
         path: '/Admin/Campaigns',
         name: 'AdminCampaigns',
         component: () => import('../views/Admin/Campaigns.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+    },
+    {
+        // Drip campaigns. Separate from Campaigns because a broadcast is sent and done while an
+        // automation runs forever.
+        path: '/Admin/Automations',
+        name: 'AdminAutomations',
+        component: () => import('../views/Admin/Automations.vue'),
         meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
     },
     {

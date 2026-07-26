@@ -410,11 +410,13 @@
                 </v-card-title>
                 <v-card-subtitle>Applying to {{ discountTargetLabel }}</v-card-subtitle>
                 <v-card-text>
-                    <!-- Presets (no PIN needed) -->
+                    <!-- Tenant discounts for this counter. Some may require a manager PIN;
+                         those carry a lock so the prompt isn't a surprise. -->
                     <template v-if="discountPresets.length">
-                        <div class="text-subtitle-2 mb-2">Presets</div>
+                        <div class="text-subtitle-2 mb-2">Discounts</div>
                         <div class="d-flex flex-wrap ga-2 mb-4">
                             <v-btn v-for="p in discountPresets" :key="p.id" variant="tonal" size="small"
+                                :prepend-icon="p.requiresManager ? 'mdi-shield-key' : undefined"
                                 @click="applyPreset(p)">
                                 {{ p.name }} · {{ p.kind === 'percent' ? `${p.value / 100}%` : money(p.value) }}
                             </v-btn>
@@ -1095,7 +1097,10 @@ function cancelPin() {
 
 function applyPreset(p: ConcessionDiscountPreset) {
     const label = p.kind === 'percent' ? `${p.name} (${p.value / 100}% off)` : `${p.name} (${money(p.value)} off)`
-    chooseDiscount({ kind: 'preset', presetId: p.id }, label, false)
+    // Whether a preset needs a manager is per-discount config now, not a fixed rule. The server
+    // re-checks it either way; passing it here just means the cashier is asked for the PIN before
+    // the sale is submitted rather than being rejected after.
+    chooseDiscount({ kind: 'preset', presetId: p.id }, label, p.requiresManager)
 }
 function applyManualPercent() {
     const pct = manualPercent.value

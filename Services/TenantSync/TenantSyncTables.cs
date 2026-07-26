@@ -1,4 +1,4 @@
-namespace Services.TenantSync
+﻿namespace Services.TenantSync
 {
     /// <summary>
     /// The whitelist of per-tenant CONFIG tables copied when promoting a tenant from stage
@@ -7,7 +7,7 @@ namespace Services.TenantSync
     /// that lack a tenant_id are scoped through their parent.
     ///
     /// Deliberately EXCLUDED (never copied): every *_purchase / *_sale / ledger / payout /
-    /// dispute / gift_card / reward_redemption (transactional), users / audit_log /
+    /// dispute / gift_card (transactional), users / audit_log /
     /// notification* / newsletter* / survey responses / waitlist (runtime + audience), and
     /// all SMS / messaging runtime. Tenant-row env-specific columns (Stripe Connect, Twilio,
     /// Terminal, Loampass, embed/custom-domain, daily status) are reset on import, not here.
@@ -31,7 +31,6 @@ namespace Services.TenantSync
             ("concession_product",          "tenant_id = @tenantId"),
             ("concession_variant",          "product_id IN (SELECT id FROM concession_product WHERE tenant_id = @tenantId)"),
             ("coupon",                      "tenant_id = @tenantId"),
-            ("reward_program",              "tenant_id = @tenantId"),
             ("survey",                      "tenant_id = @tenantId"),
             ("survey_question",             "survey_id IN (SELECT id FROM survey WHERE tenant_id = @tenantId)"),
             ("survey_question_choice",      "question_id IN (SELECT q.id FROM survey_question q JOIN survey s ON s.id = q.survey_id WHERE s.tenant_id = @tenantId)"),

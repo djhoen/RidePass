@@ -123,10 +123,11 @@ namespace Services.Payments
             var subtotal = Math.Max(subtotalAfterDiscountCents, 0);
             var deposit = Math.Max(totalDepositCents, 0);
 
-            // Note what is NOT here: `deposit` appears in neither of the next two lines. That
-            // absence is the invariant.
-            var serviceCharge = (int)((long)subtotal * Math.Max(serviceChargeBps, 0) / 10_000L);
-            var riderShare = (int)((long)serviceCharge * Math.Max(riderPaidServiceChargeBps, 0) / 10_000L);
+            // Note what is NOT here: `deposit` is not passed to the split. That absence is the
+            // invariant this class exists to protect. The split itself lives in
+            // ServiceChargeSplit, shared with the bike shop register so the two cannot drift.
+            var (serviceCharge, riderShare) =
+                ServiceChargeSplit.Compute(subtotal, serviceChargeBps, riderPaidServiceChargeBps);
 
             var rentalAmount = subtotal + riderShare;
             return new RentalChargeAmounts(

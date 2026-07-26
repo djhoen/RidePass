@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
 using Services.Payments;
@@ -23,7 +23,7 @@ namespace webapi.Controllers
         private readonly ITenantCreditRepository _credit;
         private readonly ICouponRepository _coupons;
         private readonly Services.Coupons.ICouponValidator _couponValidator;
-        private readonly ISeasonPassRepository _seasonPasses;
+        private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
         private readonly IUserRepository _users;
         private readonly IChargeRouter _chargeRouter;
         private readonly IPaymentProvider _payments;
@@ -31,14 +31,15 @@ namespace webapi.Controllers
 
         public ShopStoreController(IBikeShopRepository shop, ITenantCreditRepository credit,
             ICouponRepository coupons, Services.Coupons.ICouponValidator couponValidator,
-            ISeasonPassRepository seasonPasses, IUserRepository users,
+            IUserRepository users,
+            Services.Pricing.ISeasonPassPerkResolver perks,
             IChargeRouter chargeRouter, IPaymentProvider payments, ITenantContext tenantContext)
         {
             _shop = shop;
             _credit = credit;
             _coupons = coupons;
             _couponValidator = couponValidator;
-            _seasonPasses = seasonPasses;
+            _perks = perks;
             _users = users;
             _chargeRouter = chargeRouter;
             _payments = payments;
@@ -215,7 +216,7 @@ namespace webapi.Controllers
                     var free = await _shop.GetFreeSerializedUnits(line.VariantId, TenantId, startsAt, endsAt);
                     if (free.Count < line.Quantity)
                         return new ApiResponses().BadRequestResult(
-                            $"Only {free.Count} of \"{info.ProductName}\" free for those dates. Pick fewer or a different window.");
+                            $"Only {free.Count} of \"{info.ProductName}\" available for those dates. Pick fewer or a different window.");
                     foreach (var unit in free.Take(line.Quantity))
                     {
                         var lineAmount = perDay * days;
@@ -240,7 +241,7 @@ namespace webapi.Controllers
                     var available = await _shop.GetPoolAvailability(line.VariantId, TenantId, startsAt, endsAt);
                     if (line.Quantity > available)
                         return new ApiResponses().BadRequestResult(
-                            $"Only {available} of \"{info.ProductName}\" free for those dates. Pick fewer or a different window.");
+                            $"Only {available} of \"{info.ProductName}\" available for those dates. Pick fewer or a different window.");
                     var lineAmount = perDay * days * line.Quantity;
                     amount += lineAmount;
                     depositTotal += variant.DepositCents * line.Quantity;
@@ -259,14 +260,9 @@ namespace webapi.Controllers
                 }
             }
 
-            // Season-pass rental benefit (valid on the START date), same as the counter.
-            var benefitDiscount = 0;
-            if (amount > 0)
-            {
-                var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
-                    userId, TenantId, benefitType: "rental", scopeId: null, onDateUtc: startsAt);
-                benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(amount));
-            }
+            // Season-pass rental perk (valid on the START date), same resolver as the counter.
+            var rentalPerk = await _perks.Resolve(userId, _tenantContext.Tenant, "rental", amount, startsAt);
+            var benefitDiscount = rentalPerk.DiscountCents;
             var netRental = amount - benefitDiscount;
 
             // Optional damage waiver ("insurance"): a non-refundable add-on = rate * gross rental
@@ -414,13 +410,8 @@ namespace webapi.Controllers
 
             // Discounts mirror the register: the buyer's pass benefit first, then a coupon on
             // what's left, spread across lines by price share so per-line tax is on the net.
-            var benefitDiscount = 0;
-            if (subtotal > 0)
-            {
-                var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
-                    userId, TenantId, benefitType: "retail", scopeId: null, onDateUtc: DateTime.UtcNow);
-                benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(subtotal));
-            }
+            var retailPerk = await _perks.Resolve(userId, _tenantContext.Tenant, "retail", subtotal, DateTime.UtcNow);
+            var benefitDiscount = retailPerk.DiscountCents;
             Services.Repositories.Data.CouponData.CouponApplication? couponApp = null;
             if (!string.IsNullOrWhiteSpace(req.CouponCode))
             {
@@ -451,7 +442,11 @@ namespace webapi.Controllers
                     ? (int)Math.Round(net * l.TaxRateBps / 10000.0, MidpointRounding.AwayFromZero) : 0;
                 taxTotal += l.TaxCents;
             }
-            var total = subtotal - discountTotal + taxTotal;
+            // Same platform charge the counter takes, computed the same way (ServiceChargeSplit),
+            // so buying online and buying at the till owe the same thing.
+            var (shopServiceCharge, buyerFee) = Services.Payments.ServiceChargeSplit.Compute(
+                subtotal - discountTotal, tenant.ServiceChargeBps, tenant.ShopBuyerPaidServiceChargeBps);
+            var total = subtotal - discountTotal + buyerFee + taxTotal;
 
             // Store credit as the last tender, resolved strictly by the signed-in user.
             Services.Repositories.Data.CreditData.TenantCreditAccount? creditAccount = null;
@@ -480,6 +475,7 @@ namespace webapi.Controllers
                 DiscountCents = discountTotal,
                 TaxCents = taxTotal,
                 TotalCents = total,
+                ServiceChargeCents = shopServiceCharge,
                 CreditAppliedCents = creditApplied,
                 CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                 PricesIncludeTax = false,
@@ -536,7 +532,10 @@ namespace webapi.Controllers
             ChargePlan plan;
             try
             {
-                plan = _chargeRouter.Plan(tenant, serviceFeeCents: 0, chargeAmountCents: due);
+                // Direct mode collects RidePass's charge through the application fee only, so this
+                // has to be the charge snapshotted on the sale rather than a zero. Clamped to
+                // `due` inside ChargeRouter for credit-reduced orders.
+                plan = _chargeRouter.Plan(tenant, serviceFeeCents: shopServiceCharge, chargeAmountCents: due);
                 intent = await _payments.CreatePaymentIntentAsync(due, "usd", metadata, user.Email,
                     connectedAccountId: plan.ConnectedAccountId, applicationFeeCents: plan.ApplicationFeeCents, ct: ct);
             }

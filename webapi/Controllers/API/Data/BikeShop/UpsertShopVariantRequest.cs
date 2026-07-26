@@ -17,6 +17,14 @@ namespace webapi.Controllers.API.Data.BikeShop
         [Range(0, 100_000_000)] public int? CostCents { get; set; }
         [MaxLength(80)] public string? Mpn { get; set; }
 
+        /// <summary>
+        /// The manufacturer's own name for this part. Distinct from the product's Name, which is
+        /// what THIS shop calls it and stays private to this tenant. This is the only field that
+        /// feeds the cross-tenant parts library, so it must be the manufacturer's wording and not
+        /// the shop's; leaving it blank simply means the part is never contributed.
+        /// </summary>
+        [MaxLength(200)] public string? ManufacturerName { get; set; }
+
         // Only meaningful on create; a variant's tracking kind is fixed once stock exists against it.
         [RegularExpression("^(pool|serialized)$")]
         public string TrackingKind { get; set; } = "pool";

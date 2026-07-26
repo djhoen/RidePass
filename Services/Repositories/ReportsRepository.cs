@@ -242,7 +242,11 @@ namespace Services.Repositories
                 LEFT JOIN users u ON u.id = t.purchaser_user_id
                 WHERE t.tenant_id = @tenantId
                   AND tier.event_id = @eventId
-                  AND t.status <> 'cancelled'
+                  -- Roll call keeps 'pending' (an in-flight payment, e.g. a bank transfer
+                  -- still clearing) and 'refunded' (they did attend) visible with their
+                  -- status chip so admins can see them, but a 'failed' row never became a
+                  -- real registration and an 'abandoned' one was never a real person at all.
+                  AND t.status NOT IN ('cancelled','failed','abandoned')
 
                 UNION ALL
 
@@ -337,7 +341,13 @@ namespace Services.Repositories
                                                    AND aspp.tenant_id = t.tenant_id
                 LEFT JOIN season_pass_product asp ON asp.id = aspp.product_id
                 WHERE t.tenant_id = @tenantId
-                  AND t.status <> 'cancelled'
+                  -- This feeds the searchable Rider Report, CSV export, gate messaging and
+                  -- the profile's ""Registered for"" list, none of which surface a status
+                  -- column to distinguish pending/failed from an actual sale. Unlike the
+                  -- Event Riders roll call or the waiver report, there's no chip to soften
+                  -- a 'pending' or 'failed' row, so a real registration is the only thing
+                  -- that belongs here: an allow-list, matching the rider-profile totals fix.
+                  AND t.status IN ('paid','redeemed')
                   AND {AUDIENCE_FILTER}
                   AND {EVENT_WINDOW}";
 
@@ -565,7 +575,10 @@ namespace Services.Repositories
                     SELECT t.*
                     FROM event_ticket_purchase t
                     WHERE t.tenant_id = @tenantId
-                      AND t.status <> 'cancelled'
+                      -- Only a genuinely completed sale counts toward this rider's
+                      -- registrations and spend. 'pending'/'failed'/'abandoned' never
+                      -- collected money and were never a real visit.
+                      AND t.status IN ('paid','redeemed')
                       AND ((@userId::uuid IS NOT NULL AND t.purchaser_user_id = @userId)
                         OR (@email IS NOT NULL AND lower(COALESCE(t.purchaser_email, '')) = lower(@email)))
                 ),
@@ -662,7 +675,12 @@ namespace Services.Repositories
                        ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
                 WHERE p.tenant_id = @tenantId
                   AND tier.event_id = @eventId
-                  AND p.status <> 'cancelled'
+                  -- Safety-relevant: err toward keeping a rider visible rather than dropping
+                  -- them off the ""who has signed"" list. 'pending' and 'refunded' rows may
+                  -- still represent someone who showed up, so they stay. A 'failed' payment
+                  -- never became a valid registration and an 'abandoned' checkout was never a
+                  -- real person at the gate, so those two are the only ones excluded.
+                  AND p.status NOT IN ('cancelled','failed','abandoned')
                 ORDER BY Audience, tier.name, AttendeeName";
             var rows = await _db.Query<EventWaiverSignatureRow>(sql, new { tenantId, eventId });
             return rows.ToList();

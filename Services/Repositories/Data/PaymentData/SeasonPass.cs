@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.PaymentData
+﻿namespace Services.Repositories.Data.PaymentData
 {
     public class SeasonPassProduct
     {
@@ -16,6 +16,12 @@ namespace Services.Repositories.Data.PaymentData
         public int RiderPaidServiceChargeBps { get; set; }
         public bool IsActive { get; set; }
         public int SortOrder { get; set; }
+        /// <summary>
+        /// Staff-only product (Script0242): granted by an admin, never publicly purchasable.
+        /// The repository hides these from every public read path by default; only the admin
+        /// product list opts in. Do not surface an employee product to a rider.
+        /// </summary>
+        public bool IsEmployee { get; set; }
 
         // Landing page (Script0228): a per-product marketing page at /SeasonPasses/{slug}.
         // LandingHtml is raw Tiptap HTML, sanitized at render (RichTextView contract).
@@ -87,6 +93,18 @@ namespace Services.Repositories.Data.PaymentData
         public Guid TenantId { get; set; }
         public Guid PurchaserUserId { get; set; }
         public Guid ProductId { get; set; }
+        /// <summary>
+        /// Admin who approved an employee pass (Script0242). NULL for an ordinary customer
+        /// purchase. Eligibility is automatic; approval is the deliberate act, and this records it.
+        /// </summary>
+        public Guid? IssuedByUserId { get; set; }
+
+        /// <summary>
+        /// The pass this one replaced (Script0253). NULL for an ordinary purchase. The old row
+        /// keeps its history and moves to status 'upgraded', which stops it admitting because
+        /// every admission path already requires 'paid'.
+        /// </summary>
+        public Guid? UpgradedFromPurchaseId { get; set; }
         public Guid? WaiverSignatureId { get; set; }
         public string? StripePaymentIntentId { get; set; }
         // Set for direct charges: the tenant's connected account this pass was charged on.
@@ -120,6 +138,18 @@ namespace Services.Repositories.Data.PaymentData
         public DateTime? IdVerifiedAt { get; set; }
         public Guid? IdVerifiedByUserId { get; set; }
         public DateTime? IdVerifiedDob { get; set; }
+
+        // ── Counter sale (Script0261) ────────────────────────────────────────
+        // The cashier who rang this up. Distinct from IssuedByUserId, which means an admin GRANTING
+        // a free employee pass rather than selling one. NULL for every online purchase.
+        public Guid? SoldByUserId { get; set; }
+        // Staff-applied discount snapshot. AmountCents is what was charged; this is what came off
+        // and why, which cannot be reconstructed later because a preset's name and value both change.
+        public int DiscountCents { get; set; }
+        public Guid? DiscountPresetId { get; set; }
+        public string? DiscountLabel { get; set; }
+        public Guid? DiscountAuthorizedByUserId { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
@@ -202,6 +232,18 @@ namespace Services.Repositories.Data.PaymentData
         public Guid ReservationId { get; set; }
         public Guid EventId { get; set; }
 
+        /// <summary>Whether this pass came from a staff-only (employee) product.</summary>
+        public bool IsEmployeePass { get; set; }
+
+        /// <summary>
+        /// False when this is an employee pass whose holder is no longer an active account on the
+        /// tenant. REPORTED here rather than filtered, so the scan can tell the worker the
+        /// employment ended instead of the pass silently failing at the button. The block itself
+        /// lives on the admission writes, which is the part that cannot be bypassed.
+        /// Always true for a normal customer pass.
+        /// </summary>
+        public bool EmployeeEligible { get; set; } = true;
+
         // The ACCOUNT that bought the pass. Not necessarily the person it admits — a parent buys
         // passes for their kids — so this is only a valid key for waiver lookups when the pass
         // carries no holder signature of its own. See SeasonPassController.CheckIn.
@@ -220,4 +262,135 @@ namespace Services.Repositories.Data.PaymentData
         public Guid? WaiverSignatureId { get; set; }
         public bool ProductRequiresWaiver { get; set; }
     }
+    /// <summary>
+    /// One row of the admin Employee Passes roster: a staff account plus the employee pass they
+    /// hold, if any. PassPurchaseId null = eligible but never approved, which is the default
+    /// state for most of a tenant's staff.
+    /// </summary>
+    public class EmployeePassRosterRow
+    {
+        public Guid UserId { get; set; }
+        public string Email { get; set; } = null!;
+        public string? Name { get; set; }
+        public string? Role { get; set; }
+        /// <summary>users.status: 'active' | 'disabled' | 'suspended' | 'pending'.</summary>
+        public string EmploymentStatus { get; set; } = null!;
+
+        public Guid? PassPurchaseId { get; set; }
+        public string? ProductName { get; set; }
+        /// <summary>'pending' (issued, awaiting payment) | 'paid' | 'refunded'.</summary>
+        public string? PassStatus { get; set; }
+        public int? AmountCents { get; set; }
+        public DateTime? ValidFromDate { get; set; }
+        public DateTime? ValidToDate { get; set; }
+        public DateTime? IssuedAtUtc { get; set; }
+        public string? IssuedByName { get; set; }
+        /// <summary>Photo on file, plus a signature when the product requires one. An issued but
+        /// unregistered pass will not scan at the gate.</summary>
+        public bool IsRegistered { get; set; }
+    }
+    /// <summary>
+    /// One thing a buddy-pass entitlement is good for (Script0247). Exactly one of
+    /// <see cref="EventTypeId"/> / <see cref="IsWalkUp"/> is set. Zero scopes on a benefit means
+    /// the perk admits NOBODY, which is why the server refuses to save one that way.
+    /// </summary>
+    public class SeasonPassBuddyScope
+    {
+        public Guid Id { get; set; }
+        public Guid BenefitId { get; set; }
+        public Guid? EventTypeId { get; set; }
+        public bool IsWalkUp { get; set; }
+        /// <summary>Joined for display: the tenant's own name for the event type.</summary>
+        public string? EventTypeName { get; set; }
+    }
+
+    /// <summary>
+    /// One spent buddy admission. Anchored to an event or (walk-up) a tenant-local date, never
+    /// neither. A returned credit keeps its row: the admission still happened, only the
+    /// entitlement comes back.
+    /// </summary>
+    public class SeasonPassBuddyRedemption
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public Guid PassPurchaseId { get; set; }
+        public Guid BuddyUserId { get; set; }
+        public Guid? EventId { get; set; }
+        public DateTime? CheckInDate { get; set; }
+        public Guid? TicketPurchaseId { get; set; }
+        public int DiscountCents { get; set; }
+        public DateTime RedeemedAt { get; set; }
+        public Guid? RedeemedByUserId { get; set; }
+        public DateTime? CreditReturnedAt { get; set; }
+        public Guid? CreditReturnedByUserId { get; set; }
+        public string? CreditReturnReason { get; set; }
+
+        // Joined for the usage report.
+        public string? BuddyName { get; set; }
+        public string? BuddyEmail { get; set; }
+        public string? HolderName { get; set; }
+        public string? EventTitle { get; set; }
+        public string? RedeemedByName { get; set; }
+        public string? CreditReturnedByName { get; set; }
+    }
+
+    /// <summary>
+    /// A pass's buddy entitlement as the counter needs it: how many the product grants, how many
+    /// are left, what it is worth, and what it is good for.
+    /// </summary>
+    public class SeasonPassBuddyEntitlement
+    {
+        public Guid BenefitId { get; set; }
+        public Guid PassPurchaseId { get; set; }
+        public int Total { get; set; }
+        public int Used { get; set; }
+        public int Remaining => Math.Max(0, Total - Used);
+        /// <summary>'percent' (bps in Value) or 'amount' (cents).</summary>
+        public string DiscountKind { get; set; } = "percent";
+        public int DiscountValue { get; set; }
+        /// <summary>True when the perk covers the admission outright (10000 bps).</summary>
+        public bool IsFree => DiscountKind == "percent" && DiscountValue >= 10000;
+        public List<SeasonPassBuddyScope> Scopes { get; set; } = new();
+    }
+    /// <summary>
+    /// An offer to move from one pass product to another for a set price (Script0253). Flat
+    /// price, not a computed difference: the tenant decides what the move is worth.
+    /// </summary>
+    public class SeasonPassUpgradePath
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public Guid FromProductId { get; set; }
+        public Guid ToProductId { get; set; }
+        public int PriceCents { get; set; }
+        public bool IsActive { get; set; } = true;
+        public DateTime CreatedAt { get; set; }
+
+        // Joined for display.
+        public string? FromProductName { get; set; }
+        public string? ToProductName { get; set; }
+    }
+
+    /// <summary>
+    /// An upgrade a specific holder can take right now: the path, plus the pass it applies to.
+    /// Only returned for passes that are paid and not used up.
+    /// </summary>
+    public class SeasonPassUpgradeOffer
+    {
+        public Guid PathId { get; set; }
+        public Guid PassPurchaseId { get; set; }
+        public Guid FromProductId { get; set; }
+        public string FromProductName { get; set; } = null!;
+        public Guid ToProductId { get; set; }
+        public string ToProductName { get; set; } = null!;
+        public string? ToProductDescription { get; set; }
+        public string ToProductKind { get; set; } = null!;
+        public int? ToProductTotalCredits { get; set; }
+        public DateTime ToValidFromDate { get; set; }
+        public DateTime ToValidToDate { get; set; }
+        public int PriceCents { get; set; }
+    }
+
+
+
 }

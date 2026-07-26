@@ -49,6 +49,8 @@ export interface BrandingState {
     serviceChargeBps: number
     // Renter's share of the service charge on rentals (bps). 10000 = renter pays all.
     rentalRiderPaidServiceChargeBps: number
+    // Buyer's share of the service charge on bike shop sales (bps). 0 = the shop absorbs it.
+    shopBuyerPaidServiceChargeBps: number
     // Rental sales tax (bps). null = never configured, which the admin UI warns about.
     rentalTaxBps: number | null
     rentalTaxServiceChargeTaxable: boolean
@@ -83,6 +85,16 @@ export interface BrandingState {
     extrasEnabled: boolean
     seasonPassesEnabled: boolean
     concessionsEnabled: boolean
+    /** The standing "any active pass holder gets X off" perk. Independent of
+     *  per-pass benefits (which are product config and stay on regardless). */
+    seasonPassDiscountEnabled: boolean
+    /** 'percent' (basis points) or 'amount' (cents). */
+    seasonPassDiscountKind: string
+    seasonPassDiscountValue: number
+    /** Where the perk applies. The amount is shared; the surfaces are chosen. */
+    seasonPassDiscountAppliesConcession: boolean
+    seasonPassDiscountAppliesRetail: boolean
+    seasonPassDiscountAppliesRental: boolean
     bikeShopEnabled: boolean
     rentalInsuranceEnabled: boolean
     rentalInsuranceLabel: string
@@ -170,6 +182,7 @@ const defaults: BrandingState = {
     stripeChargeMode: 'platform',
     serviceChargeBps: 300,
     rentalRiderPaidServiceChargeBps: 10000,
+    shopBuyerPaidServiceChargeBps: 0,
     rentalTaxBps: null,
     rentalTaxServiceChargeTaxable: true,
     shippingName: null,
@@ -203,6 +216,12 @@ const defaults: BrandingState = {
     extrasEnabled: false,
     seasonPassesEnabled: true,
     concessionsEnabled: false,
+    seasonPassDiscountEnabled: false,
+    seasonPassDiscountKind: 'percent',
+    seasonPassDiscountValue: 0,
+    seasonPassDiscountAppliesConcession: true,
+    seasonPassDiscountAppliesRetail: true,
+    seasonPassDiscountAppliesRental: true,
     bikeShopEnabled: false,
     rentalInsuranceEnabled: false,
     rentalInsuranceLabel: 'Damage Protection',
@@ -332,6 +351,7 @@ export async function loadBranding(): Promise<void> {
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'
         branding.serviceChargeBps = data.serviceChargeBps ?? 300
         branding.rentalRiderPaidServiceChargeBps = data.rentalRiderPaidServiceChargeBps ?? 10000
+        branding.shopBuyerPaidServiceChargeBps = data.shopBuyerPaidServiceChargeBps ?? 0
         // Preserve null: it is what distinguishes "never set" from "deliberately 0%".
         branding.rentalTaxBps = data.rentalTaxBps ?? null
         branding.rentalTaxServiceChargeTaxable = data.rentalTaxServiceChargeTaxable ?? true
@@ -366,6 +386,12 @@ export async function loadBranding(): Promise<void> {
         branding.extrasEnabled = !!data.extrasEnabled
         branding.seasonPassesEnabled = data.seasonPassesEnabled !== false   // default true
         branding.concessionsEnabled = !!data.concessionsEnabled
+        branding.seasonPassDiscountEnabled = !!data.seasonPassDiscountEnabled
+        branding.seasonPassDiscountKind = data.seasonPassDiscountKind || 'percent'
+        branding.seasonPassDiscountValue = data.seasonPassDiscountValue ?? 0
+        branding.seasonPassDiscountAppliesConcession = data.seasonPassDiscountAppliesConcession !== false
+        branding.seasonPassDiscountAppliesRetail = data.seasonPassDiscountAppliesRetail !== false
+        branding.seasonPassDiscountAppliesRental = data.seasonPassDiscountAppliesRental !== false
         branding.bikeShopEnabled = !!data.bikeShopEnabled
         branding.rentalInsuranceEnabled = !!data.rentalInsuranceEnabled
         branding.rentalInsuranceLabel = data.rentalInsuranceLabel ?? 'Damage Protection'

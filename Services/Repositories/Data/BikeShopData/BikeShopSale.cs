@@ -25,9 +25,23 @@ namespace Services.Repositories.Data.BikeShopData
         public string Status { get; set; } = "pending";   // pending|paid|failed|refunded
         public int SubtotalCents { get; set; }
         public int DiscountCents { get; set; }
+        /// <summary>Staff-applied discount from the tenant list (Script0251/0252). Null when the
+        /// only discounts were a customer coupon or an automatic season-pass benefit.</summary>
+        public Guid? DiscountPresetId { get; set; }
+        /// <summary>Its name as it read at the time, so renaming the discount later doesn't
+        /// rewrite what an old receipt says.</summary>
+        public string? DiscountLabel { get; set; }
+        /// <summary>Who authorised it, when the discount required a manager PIN.</summary>
+        public Guid? DiscountAuthorizedByUserId { get; set; }
         public int TaxCents { get; set; }
-        public int TipCents { get; set; }
         public int TotalCents { get; set; }
+        /// <summary>
+        /// What RidePass is owed on this sale, snapshotted at sale time so a later change to the
+        /// tenant's settings never rewrites history. Owed whoever funds it: with
+        /// shop_buyer_paid_service_charge_bps at 0 the track absorbs it out of their own margin
+        /// and the customer sees no fee line, but the ledger still books it.
+        /// </summary>
+        public int ServiceChargeCents { get; set; }
         public bool PricesIncludeTax { get; set; }
         public string PaymentMethod { get; set; } = "stripe";   // stripe|stripe_direct|cash|voucher
         public string? StripePaymentIntentId { get; set; }

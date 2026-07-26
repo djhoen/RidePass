@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Services.Helpers;
@@ -354,6 +354,25 @@ namespace webapi.Controllers
             return await GetBranding();
         }
 
+        /// <summary>
+        /// Who funds the platform service charge on a bike shop sale. This never changes WHETHER
+        /// the charge is owed, only whether it is added to the customer's total or absorbed out of
+        /// the shop's margin. Default 0 (absorbed), so turning the charge on never silently put a
+        /// fee line in front of a walk-in customer.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("ShopServiceCharge")]
+        public async Task<IActionResult> UpdateShopServiceCharge(
+            [FromBody] webapi.Controllers.API.Data.BikeShop.UpdateShopServiceChargeRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (request.BuyerPaidBps is < 0 or > 10000)
+                return new ApiResponses().BadRequestResult("The customer's share must be between 0% and 100%.");
+            await _tenants.UpdateShopBuyerPaidServiceCharge(_tenantContext.TenantId, request.BuyerPaidBps);
+            InvalidateTenantCache();
+            return await GetBranding();
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("ExtrasEnabled")]
         public async Task<IActionResult> UpdateExtrasEnabled([FromBody] webapi.Controllers.API.Data.Extras.UpdateExtrasEnabledRequest request)
@@ -391,6 +410,42 @@ namespace webapi.Controllers
         public async Task<IActionResult> UpdateTracksideExportEnabled([FromBody] UpdateTracksideExportEnabledRequest request)
         {
             await _tenants.UpdateTracksideExportEnabled(_tenantContext.TenantId, request.Enabled);
+            return await GetBranding();
+        }
+
+        /// <summary>
+        /// The standing season-pass-holder discount.
+        /// of per-pass benefits, so switching this off never touches an employee pass's perks.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("SeasonPassDiscount")]
+        public async Task<IActionResult> UpdateSeasonPassDiscount([FromBody] UpdateSeasonPassDiscountRequest request)
+        {
+            var kind = string.Equals(request.Kind?.Trim(), "amount", StringComparison.OrdinalIgnoreCase)
+                ? "amount" : "percent";
+            // Clamped rather than rejected: the DB constraint would 500 on an over-100% percent,
+            // and the honest reading of "120% off" is "free", not "fail the request".
+            var value = kind == "percent"
+                ? Math.Clamp(request.Value, 0, 10_000)
+                : Math.Max(0, request.Value);
+
+            // Turning it ON with nothing to give is a switch that silently does nothing, which is
+            // the failure a tenant would never think to look for. Same for on-with-no-surfaces.
+            if (request.Enabled && value <= 0)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Set how much the discount is worth before turning it on.");
+            }
+            if (request.Enabled
+                && !request.AppliesConcession && !request.AppliesRetail && !request.AppliesRental)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Pick at least one place the discount applies, or turn it off.");
+            }
+
+            await _tenants.UpdateSeasonPassDiscount(_tenantContext.TenantId, request.Enabled, kind, value,
+                request.AppliesConcession, request.AppliesRetail, request.AppliesRental);
+            InvalidateTenantCache();
             return await GetBranding();
         }
 
@@ -576,6 +631,7 @@ namespace webapi.Controllers
                 AllowEventSubscriptions = tenant.AllowEventSubscriptions,
                 RequireIdAtCheckin = tenant.RequireIdAtCheckin,
                 RequireIdForWristband = tenant.RequireIdForWristband,
+                ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,
                 StripeConnectStatus = tenant.StripeConnectStatus,
                 StripeChargeMode = tenant.StripeChargeMode,
@@ -629,7 +685,14 @@ namespace webapi.Controllers
                 StaffHoursEnd = tenant.StaffHoursEnd?.ToString(@"hh\:mm"),
                 StaffAlertsEnabled = tenant.StaffAlertsEnabled,
                 StaffAlertRefundCents = tenant.StaffAlertRefundCents,
+                AllowDiscountStacking = tenant.AllowDiscountStacking,
                 ConcessionsEnabled = tenant.ConcessionsEnabled,
+                SeasonPassDiscountEnabled = tenant.SeasonPassDiscountEnabled,
+                SeasonPassDiscountKind = tenant.SeasonPassDiscountKind,
+                SeasonPassDiscountValue = tenant.SeasonPassDiscountValue,
+                SeasonPassDiscountAppliesConcession = tenant.SeasonPassDiscountAppliesConcession,
+                SeasonPassDiscountAppliesRetail = tenant.SeasonPassDiscountAppliesRetail,
+                SeasonPassDiscountAppliesRental = tenant.SeasonPassDiscountAppliesRental,
                 BikeShopEnabled = tenant.BikeShopEnabled,
                 WristbandsEnabled = tenant.WristbandsEnabled,
                 TracksideExportEnabled = tenant.TracksideExportEnabled,

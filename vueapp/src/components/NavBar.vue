@@ -69,9 +69,6 @@
                             prepend-icon="mdi-package-variant-closed">
                             <v-list-item-title>My Orders</v-list-item-title>
                         </v-list-item>
-                        <v-list-item v-if="!isSuperAdmin" to="/User/Rewards" prepend-icon="mdi-trophy">
-                            <v-list-item-title>Rewards</v-list-item-title>
-                        </v-list-item>
                         <v-list-item v-if="!isSuperAdmin" to="/User/SeasonPasses" prepend-icon="mdi-ticket-percent">
                             <v-list-item-title>Season Passes</v-list-item-title>
                         </v-list-item>
@@ -152,7 +149,6 @@
                         <v-list-item to="/User/MyPasses" prepend-icon="mdi-ticket-account" title="My Passes"></v-list-item>
                         <v-list-item v-if="branding.bikeShopEnabled" to="/User/MyOrders"
                             prepend-icon="mdi-package-variant-closed" title="My Orders"></v-list-item>
-                        <v-list-item to="/User/Rewards" prepend-icon="mdi-trophy" title="Rewards"></v-list-item>
                         <v-list-item prepend-icon="mdi-logout" title="Logout" @click="logout"></v-list-item>
                     </v-list-group>
                 </template>
@@ -278,6 +274,7 @@ const allDirectLinks: AdminLink[] = [
     // every staff role should land on the dashboard, and no rider should see it.
     { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null, staffOnly: true },
     { to: '/Admin/Users',     icon: 'mdi-account-multiple', title: 'Users',     perm: Perm.UsersManage },
+    { to: '/Admin/EmployeePasses', icon: 'mdi-card-account-details', title: 'Employee Passes', perm: Perm.UsersManage },
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
     { to: '/Admin/Feedback',  icon: 'mdi-message-text',     title: 'Feedback',  perm: Perm.SettingsManage },
@@ -314,10 +311,12 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan', title: 'Scan Tickets', perm: Perm.SalesRedeem },
             { to: '/Admin/RiderReport', icon: 'mdi-account-group', title: 'Rider Report', perm: Perm.ReportsView },
             { to: '/Admin/SpectatorReport', icon: 'mdi-account-eye', title: 'Spectator Report', perm: Perm.ReportsView, feature: 'sellsSpectatorPasses' },
+            { to: '/Admin/BuddyPassUsage', icon: 'mdi-account-multiple-plus', title: 'Buddy Passes', perm: Perm.ReportsView, feature: 'seasonPassesEnabled' },
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
+            { to: '/Admin/PassUpgrades', icon: 'mdi-arrow-up-bold-box-outline', title: 'Pass Upgrades', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
             { to: '/Admin/Packages',     icon: 'mdi-package-variant-closed', title: 'Packages',    perm: Perm.CatalogManage },
             { to: '/Admin/Extras',       icon: 'mdi-tag-plus',             title: 'Add-ons',       perm: Perm.CatalogManage, feature: 'extrasEnabled' },
         ],
@@ -362,10 +361,10 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-bullhorn',
         links: [
             { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage, feature: 'blogEnabled' },
-            { to: '/Admin/Rewards',     icon: 'mdi-trophy',            title: 'Rewards',     perm: Perm.CatalogManage },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
             { to: '/Admin/Campaigns',   icon: 'mdi-email-newsletter',  title: 'Campaigns',   perm: Perm.CampaignsManage },
+            { to: '/Admin/Automations', icon: 'mdi-robot-outline',     title: 'Automations', perm: Perm.CampaignsManage },
             { to: '/Admin/Suppression', icon: 'mdi-email-off',         title: 'Suppression', perm: Perm.CampaignsManage },
             { to: '/Admin/Surveys',     icon: 'mdi-poll',              title: 'Surveys',     perm: Perm.CampaignsManage },
             { to: '/Admin/Settings/Sms', icon: 'mdi-cellphone-message', title: 'SMS',        perm: Perm.SettingsManage },
@@ -378,6 +377,7 @@ const allGroups: AdminGroup[] = [
         links: [
             { to: '/Admin/Settings/General',  icon: 'mdi-tune',          title: 'General',   perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Features', icon: 'mdi-toggle-switch', title: 'Features',  perm: Perm.SettingsManage },
+            { to: '/Admin/Settings/Discounts', icon: 'mdi-sale', title: 'Discounts', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/StaffAccess', icon: 'mdi-shield-lock-outline', title: 'Staff Access', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/HomePage', icon: 'mdi-home-edit',     title: 'Home Page', perm: Perm.SettingsManage },
             { to: '/Admin/Pages',             icon: 'mdi-file-document-outline', title: 'Pages', perm: Perm.SettingsManage },

@@ -134,10 +134,13 @@ namespace webapi.Controllers
             if (perms.Contains(TenantPermissions.SalesView))
             {
                 // Reads from v_recent_sales (Script0080) so spectator passes,
-                // event tickets, gift cards, rentals, etc. all show up — not
-                // just day passes, which was the historical scope.
-                var rows = await _recentSales.List(_tenantContext.TenantId,
-                    now.AddDays(-30), now.AddDays(1), status: null, limit: 5);
+                // event tickets, gift cards, rentals, etc. all show up - not
+                // just day passes, which was the historical scope. statuses: null
+                // gives the default view (everything except 'abandoned', a checkout
+                // our own reconciler gave up on with no completed payment attempt),
+                // so the widget stops showing dead checkouts as if they were sales.
+                var (rows, _) = await _recentSales.List(_tenantContext.TenantId,
+                    now.AddDays(-30), now.AddDays(1), statuses: null, kinds: null, offset: 0, limit: 5);
                 snapshot.RecentPurchases = rows
                     .Select(r => new RecentPurchaseDto
                     {

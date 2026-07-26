@@ -39,7 +39,9 @@
                 <!-- Chromeless pages have no nav bar to host the impersonation pill;
                      float it top-right so the state is never invisible. -->
                 <ImpersonationMenu v-else floating />
-                <v-main>
+                <!-- Admin screens run full width; see the .admin-wide rule below for why this is
+                     a layout rule here rather than `fluid` sprinkled across ~50 views. -->
+                <v-main :class="{ 'admin-wide': isAdminRoute, 'admin-form': isAdminFormRoute }">
                     <div v-if="embedBlocked" class="embed-blocked">
                         <p class="text-body-2 text-medium-emphasis">{{ embedBlockedMessage }}</p>
                     </div>
@@ -67,6 +69,20 @@ import splashLogo from './assets/helmet.png'
 const theme = useTheme()
 const route = useRoute()
 const router = useRouter()
+
+// Admin and Super Admin screens run edge to edge. Keyed off the PATH rather than route.meta so
+// it holds for every admin route automatically, including ones added later: a full-width policy
+// that has to be remembered per page is one that quietly stops being true.
+const isAdminRoute = computed(() =>
+    route.path.startsWith('/Admin') || route.path.startsWith('/SuperAdmin'))
+
+// Full width is right for the data-dense admin screens it was added for (the rental board, the
+// catalog, reports) and wrong for a settings FORM: at 2500px the eye has to cross the whole
+// monitor from a label to its field, and a two-column row ends up with a canyon down the middle.
+// Route-scoped for the same reason as isAdminRoute: a rule each page has to remember is one that
+// quietly stops being true. Pages that already pick a tighter width inline keep it, because an
+// inline style outranks a stylesheet rule.
+const isAdminFormRoute = computed(() => /^\/Admin\/Settings(\/|$)/.test(route.path))
 
 // True once the initial navigation (including its lazy component chunk) has
 // resolved and route.meta is trustworthy. See the chrome-gating comment above.
@@ -389,6 +405,31 @@ watchEffect(() => {
    theme primary if the variable hasn't been set yet. */
 .v-btn.text-primary {
     color: var(--rp-primary-text-on-light, rgb(var(--v-theme-primary))) !important;
+}
+
+/* ── Admin screens are full width ───────────────────────────────────────────────
+   Vuetify's <v-container> caps its width per breakpoint, which is right for public
+   marketing pages and wrong for a working surface: the Rental Board timeline, the booking
+   tables, the reports and the catalog grids all want the whole monitor, and a 1200px cap
+   on a 2560px screen wastes half of it.
+
+   Done here, once, rather than as `fluid` on each of the ~50 admin views, because the
+   requirement is a POLICY ("admin pages are full width") not a per-page choice. Sprinkling
+   `fluid` means every future admin page has to remember, and the ones that forget are only
+   noticed by eye. Keyed off the route so nothing public is affected.
+
+   This only lifts the container's max-width; its responsive gutters stay, so content still
+   has breathing room at the edges. Views that deliberately constrain a form set max-width on
+   the CARD (e.g. Rentals -> Settings) and are untouched by this. */
+.admin-wide .v-container {
+    max-width: 100%;
+}
+
+/* ...except the settings forms, which are text and inputs rather than tables and timelines.
+   1100px keeps a two-column row (General uses several) side by side while staying inside a
+   comfortable reading measure. Deliberately AFTER the rule above so it wins on specificity. */
+.admin-wide.admin-form .v-container {
+    max-width: 1100px;
 }
 
 /* ── Embedded widgets (html.rp-embed, stamped by the watchEffect in the script) ──

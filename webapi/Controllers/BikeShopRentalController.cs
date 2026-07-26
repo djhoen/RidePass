@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
 using Services.Payments;
@@ -26,27 +26,37 @@ namespace webapi.Controllers
         private readonly IPaymentProvider _payments;
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantLedgerRepository _ledger;
-        private readonly ISeasonPassRepository _seasonPasses;
+        private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
         private readonly IUserRepository _users;
         private readonly IWaiverRepository _waivers;
         private readonly ISmtpEmailer _emailer;
         private readonly IConfiguration _config;
         private readonly ITenantContext _tenantContext;
+        private readonly IDiscountPresetRepository _discounts;
+        private readonly webapi.Security.IManagerPinService _managerPin;
+        private readonly Services.Audit.IAuditLogger _audit;
 
         public BikeShopRentalController(IBikeShopRepository shop, IChargeRouter chargeRouter,
             IPaymentProvider payments, IFeeCalculator feeCalculator, ITenantLedgerRepository ledger,
-            ISeasonPassRepository seasonPasses, IUserRepository users,
+            IUserRepository users,
+            Services.Pricing.ISeasonPassPerkResolver perks,
             IWaiverRepository waivers,
             ISmtpEmailer emailer,
             IConfiguration config,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            IDiscountPresetRepository discounts,
+            webapi.Security.IManagerPinService managerPin,
+            Services.Audit.IAuditLogger audit)
         {
+            _discounts = discounts;
+            _managerPin = managerPin;
+            _audit = audit;
             _shop = shop;
             _chargeRouter = chargeRouter;
             _payments = payments;
             _feeCalculator = feeCalculator;
             _ledger = ledger;
-            _seasonPasses = seasonPasses;
+            _perks = perks;
             _users = users;
             _waivers = waivers;
             _emailer = emailer;
@@ -127,6 +137,32 @@ namespace webapi.Controllers
             return rental is null
                 ? new ApiResponses().NotFoundResult("Rental not found.")
                 : new ApiResponses().OkResult(rental);
+        }
+
+        // ── Rental notes (Script0248) ───────────────────────────────────────────
+        // Staff-only thread on a booking. Separate from ConditionNotes, which records how the
+        // gear came back; overwriting that with booking chatter would lose the damage record.
+
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Rentals/{id:guid}/Notes")]
+        public async Task<IActionResult> ListNotes(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            return new ApiResponses().OkResult(await _shop.ListRentalNotes(id, TenantId));
+        }
+
+        /// <summary>Append an internal note. Never shown to the renter.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpPost("Rentals/{id:guid}/Notes")]
+        public async Task<IActionResult> AddNote(Guid id, [FromBody] AddShopRentalNoteRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var body = req.Body?.Trim();
+            if (string.IsNullOrEmpty(body)) return new ApiResponses().BadRequestResult("The note is empty.");
+            var note = await _shop.AddRentalNote(id, TenantId, body, UserId);
+            return note is null
+                ? new ApiResponses().NotFoundResult("Rental not found.")
+                : new ApiResponses().OkResult(note);
         }
 
         [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
@@ -234,7 +270,7 @@ namespace webapi.Controllers
                     var free = await _shop.GetFreeSerializedUnits(line.VariantId, TenantId, startsAt, endsAt);
                     if (!free.Any(u => u.Id == line.ItemId.Value))
                         return new ApiResponses().BadRequestResult(
-                            $"That \"{infos[line.VariantId].ProductName}\" unit isn't free for this window.");
+                            $"That \"{infos[line.VariantId].ProductName}\" unit isn't available for this window.");
                 }
                 else
                 {
@@ -242,7 +278,7 @@ namespace webapi.Controllers
                     var alreadyInCart = lines.Where(l => l.VariantId == line.VariantId && l.ItemId == null).Sum(l => l.Quantity);
                     if (line.Quantity + alreadyInCart > available)
                         return new ApiResponses().BadRequestResult(
-                            $"Only {available} of \"{infos[line.VariantId].ProductName}\" free for this window.");
+                            $"Only {available} of \"{infos[line.VariantId].ProductName}\" available for this window.");
                 }
 
                 var lineAmount = variant.DailyRateCents.Value * days * line.Quantity;
@@ -271,17 +307,49 @@ namespace webapi.Controllers
             {
                 renterUserId = (await _users.GetByEmail(TenantId, req.RenterEmail.Trim()))?.Id;
             }
-            var benefitDiscount = 0;
-            if (renterUserId is not null && amount > 0)
+            // Judged on the rental's START date, not today, so a pass that expires before the
+            // rental begins does not discount it.
+            var perk = await _perks.Resolve(renterUserId, _tenantContext.Tenant, "rental", amount, startsAt);
+            var benefitDiscount = perk.DiscountCents;
+
+            // Staff-applied discount from the tenant's list (Script0251), scoped to rentals. Resolved
+            // against the pass benefit above through the shared stacking policy so this counter and
+            // the register cannot drift on whether two discounts may combine.
+            Services.Repositories.Data.DiscountData.DiscountPreset? staffDiscount = null;
+            var staffDiscountCents = 0;
+            Guid? discountAuthorizedBy = null;
+            if (req.DiscountPresetId is Guid presetId)
             {
-                var grants = await _seasonPasses.ListActiveBenefitGrantsForUser(
-                    renterUserId.Value, TenantId, benefitType: "rental", scopeId: null, onDateUtc: startsAt);
-                benefitDiscount = grants.Count == 0 ? 0 : grants.Max(g => g.Benefit.DiscountFor(amount));
+                staffDiscount = await _discounts.Get(presetId, TenantId);
+                if (staffDiscount is null || !staffDiscount.IsActive)
+                    return new ApiResponses().BadRequestResult("That discount isn't available.");
+                if (!staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.ShopRental))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{staffDiscount.Name}\" doesn't apply to rentals.");
+                if (staffDiscount.RequiresManager)
+                {
+                    if (UserId is not Guid pinUserId)
+                        return new ApiResponses().BadRequestResult("Not signed in.");
+                    var pin = await _managerPin.VerifyAsync(TenantId, pinUserId, req.ManagerPin);
+                    if (!pin.Authorized)
+                        return new ApiResponses().BadRequestResult(
+                            pin.Error ?? $"A manager PIN is required to apply \"{staffDiscount.Name}\".");
+                    discountAuthorizedBy = pin.AuthorizedUserId;
+                }
+                staffDiscountCents = staffDiscount.DiscountFor(amount);
             }
+            var resolvedDiscounts = Services.Discounts.DiscountStacking.Resolve(
+                benefitDiscount, staffDiscountCents, 0, _tenantContext.Tenant.AllowDiscountStacking);
+            benefitDiscount = resolvedDiscounts.BenefitCents;
+            // Clamped to what is actually left after the pass benefit. Only reachable when the
+            // tenant allows stacking, but without it a "$50 off" against a $30 remainder would be
+            // recorded as $50 come off when only $30 did, and the audit trail would be a lie.
+            staffDiscountCents = Math.Min(resolvedDiscounts.StaffCents, Math.Max(0, amount - benefitDiscount));
 
             // Rentals are all-in priced (no tax line for v1, matching the old rental system).
-            // amount_cents keeps the gross; total_cents is what's actually charged.
-            var netRental = amount - benefitDiscount;
+            // amount_cents keeps the gross; total_cents is what's actually charged. Both discounts
+            // come off here, so the service charge and tax computed below land on the net.
+            var netRental = Math.Max(0, amount - benefitDiscount - staffDiscountCents);
             var tenant = _tenantContext.Tenant;
 
             // Damage waiver, if the renter took it and the track offers it. A non-refundable fee on
@@ -358,8 +426,33 @@ namespace webapi.Controllers
                 DepositCents = depositTotal,
                 PaymentMethod = isCard ? "stripe" : "cash",
                 SoldByUserId = UserId,
+                // Staff discount only. The pass benefit is reconstructible from the renter's pass;
+                // a staff discount is not, so it is the one that has to be snapshotted.
+                DiscountCents = staffDiscountCents,
+                DiscountPresetId = staffDiscountCents > 0 ? staffDiscount?.Id : null,
+                DiscountLabel = Services.Pricing.SeasonPassPerk.LabelFor(perk, benefitDiscount, staffDiscount?.Name, staffDiscountCents),
+                DiscountAuthorizedByUserId = staffDiscountCents > 0 ? discountAuthorizedBy : null,
             };
             var (rentalId, receipt) = await _shop.CreateRental(rental, lines);
+
+            if (staffDiscount is not null && staffDiscountCents > 0)
+            {
+                await _audit.Log(
+                    "shop.discount_applied",
+                    $"Applied \"{staffDiscount.Name}\" to a rental, taking off ${staffDiscountCents / 100m:0.00}",
+                    targetKind: "shop_rental",
+                    targetId: rentalId,
+                    tenantId: TenantId,
+                    metadata: new
+                    {
+                        discountName = staffDiscount.Name,
+                        discountPresetId = staffDiscount.Id,
+                        discountCents = staffDiscountCents,
+                        rentalSubtotalCents = amount,
+                        requiredManager = staffDiscount.RequiresManager,
+                        authorizedByUserId = discountAuthorizedBy,
+                    });
+            }
 
             // ── Cash / $0: paid at the counter now. The deposit is recorded but not held. ─────
             if (!isCard)

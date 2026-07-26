@@ -1,8 +1,8 @@
-using Services.Repositories.Data.BikeShopData;
+﻿using Services.Repositories.Data.BikeShopData;
 
 namespace Services.Repositories.Interfaces
 {
-    public interface IBikeShopRepository
+    public interface IBikeShopRepository : ICatalogImporter
     {
         // ── Categories ────────────────────────────────────────────────────────────
         Task<List<ShopCategory>> ListCategories(Guid tenantId, bool activeOnly);
@@ -23,6 +23,14 @@ namespace Services.Repositories.Interfaces
         /// header aggregates for the whole filtered set. Variants are hydrated for the page only.
         /// </summary>
         Task<ShopCatalogPage> SearchProducts(Guid tenantId, ShopProductQuery query);
+        /// <summary>Resolve a scanned/typed code to one sellable variant: normalised barcode
+        /// first, then SKU, then MPN. Null when nothing matches; never guesses.</summary>
+        Task<ShopScanMatch?> ResolveVariantByCode(Guid tenantId, string code, string? gtin14);
+
+        /// <summary>Links one of this tenant's variants to its entry in the shared parts library.
+        /// The link is identity only; price, cost and stock stay entirely on the variant.</summary>
+        Task<int> LinkVariantToPlatformPart(Guid variantId, Guid tenantId, Guid platformPartId);
+
         Task<ShopProductWithVariants?> GetProduct(Guid id, Guid tenantId);
         Task<Guid> CreateProduct(ShopProduct p);
         Task<int> UpdateProduct(ShopProduct p);
@@ -114,7 +122,9 @@ namespace Services.Repositories.Interfaces
         /// <summary>Flips pending -> paid exactly once. Returns true only for the call that actually
         /// flipped it, so depletion + ledger run a single time under duplicate webhook/reconciler fires.</summary>
         Task<bool> TryMarkSalePaid(Guid id, Guid tenantId);
-        Task MarkSaleFailed(Guid id);
+        /// <summary>Dead-payment flip from 'pending'. status is 'failed' (Stripe reported a
+        /// declined attempt) or 'abandoned' (no attempt ever completed; reconciler only).</summary>
+        Task MarkSaleFailed(Guid id, string status = "failed");
         Task<int> MarkSaleRefunded(Guid id, Guid tenantId, string? note);
 
         /// <summary>Reverses a sale's depletion when the goods came back: pool lines add stock,
@@ -248,7 +258,8 @@ namespace Services.Repositories.Interfaces
         /// <summary>Flips pending -> paid exactly once (idempotent gate for the finalizer).</summary>
         Task<bool> TryMarkRentalPaid(Guid id, Guid tenantId);
         Task SetRentalOrderNumber(Guid id, int orderNumber);
-        Task MarkRentalFailed(Guid id);
+        /// <summary>Dead-payment flip from 'pending'; status as on <see cref="MarkSaleFailed"/>.</summary>
+        Task MarkRentalFailed(Guid id, string status = "failed");
         Task<int> CancelRental(Guid id, Guid tenantId);
 
         /// <summary>paid -> out: hands the gear over. Pool lines decrement stock, serialized units
@@ -310,6 +321,15 @@ namespace Services.Repositories.Interfaces
         /// <summary>Appends an internal note; null if the work order isn't this tenant's.</summary>
         Task<ShopWorkOrderNote?> AddWorkOrderNote(Guid workOrderId, Guid tenantId, string body, Guid? byUserId);
 
+        /// <summary>A rental's internal note thread, newest first.</summary>
+        Task<List<ShopRentalNote>> ListRentalNotes(Guid rentalId, Guid tenantId);
+
+        /// <summary>Append a rental note. Null when the rental isn't this tenant's.</summary>
+        Task<ShopRentalNote?> AddRentalNote(Guid rentalId, Guid tenantId, string body, Guid? byUserId);
+
+        /// <summary>Note counts per rental, for badging a list without an N+1.</summary>
+        Task<Dictionary<Guid, int>> CountRentalNotes(IEnumerable<Guid> rentalIds, Guid tenantId);
+
         /// <summary>Consumes every unconsumed part line (the estimate -> committed transition).</summary>
         Task ConsumePartsForWorkOrder(Guid workOrderId, Guid tenantId, Guid? byUserId);
 
@@ -367,7 +387,13 @@ namespace Services.Repositories.Interfaces
         // ── CSV import + variant matrix ───────────────────────────────────────────
         /// <summary>One-transaction validated catalog import; creates categories/suppliers by
         /// name and writes opening-stock adjustment movements.</summary>
-        Task<ShopImportResult> ImportCatalog(Guid tenantId, List<ShopImportProduct> products, Guid? byUserId);
+        /// <summary>
+        /// Commit a parsed CSV. Creates by default; with <see cref="ShopImportOptions.UpdateExisting"/>
+        /// it matches rows to existing variants (barcode, then MPN, then SKU) and updates them in
+        /// place, writing only the columns the file carried.
+        /// </summary>
+        // Declared on ICatalogImporter, which this inherits, so the distributor sync can depend
+        // on just that one operation and be testable without faking ~180 members.
 
         /// <summary>Inserts each missing size/color combination for a product, skipping combos
         /// (or generated SKUs) that already exist. Returns (created, skipped).</summary>

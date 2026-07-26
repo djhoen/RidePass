@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.Concession
+﻿namespace webapi.Controllers.API.Data.Concession
 {
     // Cart the cashier rang up. Each line is a product + optional chosen variant + qty, with any
     // selected structured modifiers and a free-text note. Tip + payment method apply to the whole sale.
@@ -20,6 +20,7 @@ namespace webapi.Controllers.API.Data.Concession
         // to apply. The server re-verifies the balance and caps at the order total.
         public Guid? CreditAccountId { get; set; }
         public int CreditCents { get; set; }
+
 
         public class SaleLine
         {

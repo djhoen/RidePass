@@ -73,7 +73,7 @@
 
                     <v-divider class="my-4" />
                     <div class="d-flex align-center mb-2"><div class="text-subtitle-2">Price options (tiers)</div><v-spacer /><v-btn size="x-small" variant="tonal" @click="addTier">Add</v-btn></div>
-                    <div v-for="(t, i) in editing.tiers" :key="i" class="d-flex ga-2 align-center mb-2 flex-wrap">
+                    <div v-for="(t, i) in editing.tiers" :key="i" class="d-flex ga-2 align-center mb-4 flex-wrap" style="row-gap: 16px">
                         <v-text-field v-model="t.name" label="Name" density="compact" hide-details style="max-width:150px" />
                         <v-text-field v-model.number="t.priceDollars" label="Price $" type="number" density="compact" hide-details style="max-width:110px" />
                         <v-select v-model="t.dayScope" :items="dayScopes" label="Days" density="compact" hide-details style="max-width:130px" />
@@ -84,7 +84,7 @@
 
                     <v-divider class="my-4" />
                     <div class="d-flex align-center mb-2"><div class="text-subtitle-2">Coached session times</div><v-spacer /><v-btn size="x-small" variant="tonal" @click="addSlot">Add</v-btn></div>
-                    <div v-for="(s, i) in editing.slots" :key="i" class="d-flex ga-2 align-center mb-2 flex-wrap">
+                    <div v-for="(s, i) in editing.slots" :key="i" class="d-flex ga-2 align-center mb-4 flex-wrap" style="row-gap: 16px">
                         <v-select v-model="s.dayScope" :items="dayScopes" label="Days" density="compact" hide-details style="max-width:130px" />
                         <input type="time" v-model="s.startTime" class="pkg-time" />
                         <v-checkbox v-model="s.isAfternoon" label="PM" density="compact" hide-details />
@@ -95,7 +95,7 @@
 
                     <v-divider class="my-4" />
                     <div class="d-flex align-center mb-2"><div class="text-subtitle-2">Included bike &amp; gear</div><v-spacer /><v-btn size="x-small" variant="tonal" @click="addItem">Add</v-btn></div>
-                    <div v-for="(it, i) in editing.items" :key="i" class="d-flex ga-2 align-center mb-2 flex-wrap">
+                    <div v-for="(it, i) in editing.items" :key="i" class="d-flex ga-2 align-center mb-4 flex-wrap" style="row-gap: 16px">
                         <v-select v-model="it.itemType" :items="itemTypes" label="Type" density="compact" hide-details style="max-width:120px" />
                         <v-select v-model="it.variantId" :items="variantItems" item-title="title" item-value="id" label="Rental item" density="compact" hide-details style="max-width:320px" />
                         <v-text-field v-model.number="it.quantity" label="Qty" type="number" density="compact" hide-details style="max-width:90px" />

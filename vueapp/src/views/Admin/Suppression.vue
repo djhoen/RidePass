@@ -9,7 +9,7 @@
         </div>
 
         <p class="text-body-2 text-medium-emphasis mb-6">
-            Addresses here are skipped on every marketing send (campaigns, reward nudges, rider email blasts).
+            Addresses here are skipped on every marketing send (campaigns, rider email blasts).
             Entries come from one-click unsubscribes, spam complaints, hard bounces, or a manual add below.
             Receipts and account emails are unaffected. Platform-wide hard bounces are enforced automatically
             and aren't shown here.

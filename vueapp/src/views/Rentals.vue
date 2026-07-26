@@ -215,7 +215,7 @@ function availForSelected(p: RentalCatalogProduct): number {
 }
 function availabilityLabel(p: RentalCatalogProduct) {
     const n = availForSelected(p)
-    return n > 0 ? `${n} available` : 'None free for these dates'
+    return n > 0 ? `${n} available` : 'None available for these dates'
 }
 function inCartQty(variantId: string) {
     return cart.value.filter(l => l.variantId === variantId).reduce((s, l) => s + l.qty, 0)

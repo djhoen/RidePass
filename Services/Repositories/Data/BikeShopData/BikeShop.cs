@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.BikeShopData
+﻿namespace Services.Repositories.Data.BikeShopData
 {
     // The unified bike shop catalog + inventory. See docs/bike-shop.md. Price and stock live on the
     // variant, not the product; serialized units are ShopItem rows; every stock change is a
@@ -56,7 +56,16 @@ namespace Services.Repositories.Data.BikeShopData
         public Guid TenantId { get; set; }
         public Guid ProductId { get; set; }
         public string? Sku { get; set; }
+        /// <summary>The barcode as typed or imported. Kept verbatim because it is what prints on
+        /// the shop's own label; <see cref="Gtin14"/> is the key anything MATCHES on.</summary>
         public string? Barcode { get; set; }
+        /// <summary>
+        /// Barcode normalised to a 14-digit GTIN, or null when it isn't a valid one. Derived from
+        /// Barcode by the repository on every write, so no caller can set one without the other.
+        /// This is what a register scan compares against: see Services.BikeShop.Gtin for why the
+        /// raw string is not comparable.
+        /// </summary>
+        public string? Gtin14 { get; set; }
         public string? Size { get; set; }
         public string? Color { get; set; }
         public string? Gender { get; set; }
@@ -68,6 +77,22 @@ namespace Services.Repositories.Data.BikeShopData
         public int? CostCents { get; set; }
         /// <summary>Manufacturer part number (vendor part number is VendorPartNumber).</summary>
         public string? Mpn { get; set; }
+        /// <summary>
+        /// The manufacturer's own name for this part, as printed on the box.
+        ///
+        /// This is the ONLY field fed into the cross-tenant platform_part library, and the reason
+        /// it exists: the product's own Name is what THIS shop calls it, is tenant-authored free
+        /// text, and must never be shown to another tenant. Leave this null and the part simply
+        /// isn't contributed.
+        /// </summary>
+        public string? ManufacturerName { get; set; }
+        /// <summary>
+        /// Where ManufacturerName came from: one of Services.BikeShop.ManufacturerNameSource.
+        /// Decides whether that name may be pooled into the shared library, because a distributor's
+        /// licensed content is not ours to redistribute even though it IS a genuine manufacturer
+        /// name. Null means unknown, which is treated as not poolable.
+        /// </summary>
+        public string? ManufacturerNameSource { get; set; }
         public string TrackingKind { get; set; } = "pool";   // pool | serialized
         // Authoritative for pool variants only. For serialized, availability is the count of
         // ShopItems with status 'available'; this stays 0.
@@ -82,6 +107,11 @@ namespace Services.Repositories.Data.BikeShopData
         public int? ReorderLevel { get; set; }
         /// <summary>The supplier's own part number, printed on POs so they can find it.</summary>
         public string? VendorPartNumber { get; set; }
+        /// <summary>This variant's entry in the shared parts library, once a scan has matched the
+        /// two up. Identity link only: price, cost and stock are and stay this tenant's. Null until
+        /// the barcode has been scanned at least once, and back to null if that shared entry is
+        /// ever purged for licensing reasons.</summary>
+        public Guid? PlatformPartId { get; set; }
         public bool IsActive { get; set; } = true;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
@@ -92,6 +122,15 @@ namespace Services.Repositories.Data.BikeShopData
     public class ShopVariantWithStock : ShopVariant
     {
         public int AvailableCount { get; set; }
+    }
+
+    /// <summary>
+    /// A variant resolved from a scanned code, carrying the product name so the register can name
+    /// the line without a second lookup.
+    /// </summary>
+    public class ShopScanMatch : ShopVariantWithStock
+    {
+        public string ProductName { get; set; } = null!;
     }
 
     /// <summary>A product with its variants, for the catalog view.</summary>

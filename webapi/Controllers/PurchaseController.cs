@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Coupons;
 using Services.Helpers;
@@ -30,7 +30,6 @@ namespace webapi.Controllers
         private readonly IDisputeRepository _disputes;
         private readonly IPaymentProvider _payments;
         private readonly IChargeRouter _chargeRouter;
-        private readonly IRewardRepository _rewards;
         private readonly ITenantLedgerRepository _ledger;
         private readonly ITenantCreditRepository _credit;
         private readonly Services.Audit.IAuditLogger _audit;
@@ -63,7 +62,6 @@ namespace webapi.Controllers
             IEventTicketPurchaseRepository ticketPurchases,
             IDisputeRepository disputes,
             IPaymentProvider payments,
-            IRewardRepository rewards,
             ITenantLedgerRepository ledger,
             ICouponRepository coupons,
             ICouponValidator couponValidator,
@@ -98,7 +96,6 @@ namespace webapi.Controllers
             _ticketPurchases = ticketPurchases;
             _disputes = disputes;
             _payments = payments;
-            _rewards = rewards;
             _ledger = ledger;
             _coupons = coupons;
             _couponValidator = couponValidator;
@@ -549,31 +546,9 @@ namespace webapi.Controllers
                 }
             }
 
-            // Voucher only applies for a single-tier-single-quantity cart — the math for
-            // distributing a percent-off across multiple line items isn't worth the complexity.
-            (int? percentOff, string? error) voucherCheck = (null, null);
-            if (request.RewardRedemptionId.HasValue)
-            {
-                if (totalUnits != 1)
-                {
-                    return new ApiResponses().BadRequestResult("Reward vouchers can only be applied to a single ticket. Please remove the voucher or buy 1 ticket at a time.");
-                }
-                if (!purchaserUserId.HasValue)
-                {
-                    return new ApiResponses().BadRequestResult("Please sign in to use a reward voucher.");
-                }
-                voucherCheck = await ValidateVoucher(request.RewardRedemptionId.Value, purchaserUserId.Value, "event_ticket");
-                if (voucherCheck.error is not null) return new ApiResponses().BadRequestResult(voucherCheck.error);
-            }
-
-            // Coupon is mutually exclusive with a reward voucher — UX rule, simpler accounting.
             CouponApplication? couponApp = null;
             if (!string.IsNullOrWhiteSpace(request.CouponCode))
             {
-                if (request.RewardRedemptionId.HasValue)
-                {
-                    return new ApiResponses().BadRequestResult("You can use either a reward voucher or a coupon, not both.");
-                }
                 // Cart-wide subtotal for the coupon: tier price * qty summed (no service charge yet).
                 var cartSubtotal = items.Sum(i => tierLookup[i.TierId].PriceCents * i.Quantity);
                 var validation = await _couponValidator.ValidateAsync(
@@ -629,8 +604,7 @@ namespace webapi.Controllers
                 }
             }
 
-            // Create one purchase row per unit. Each gets its own redemption token (QR);
-            // a voucher (when present) applies to the single unit only.
+            // Create one purchase row per unit. Each gets its own redemption token (QR).
             //
             // Coupon distribution: the validator returned a single discount for the whole cart
             // subtotal. We split it pro-rata across line items by sticker price so each ledger
@@ -720,11 +694,6 @@ namespace webapi.Controllers
                     // beyond that are charged PartyPriceCents. Defaults give plain per-person
                     // pricing, so ordinary tiers are unaffected.
                     var unitPrice = Services.Pricing.PartyPricing.UnitPriceCents(tier, q);
-                    if (voucherCheck.percentOff.HasValue)
-                    {
-                        unitPrice -= unitPrice * voucherCheck.percentOff.Value / 100;
-                    }
-
                     // Pass benefit before the coupon: it's an entitlement the holder already paid
                     // for, so it comes off the sticker price, and a coupon then discounts what's
                     // actually left to pay rather than being swallowed by a free entry.
@@ -765,11 +734,10 @@ namespace webapi.Controllers
                         TaxCents = tax.TaxCents,
                         TaxRateBps = admissionTax.RateBps,
                         TaxInclusive = admissionTax.PricesIncludeTax,
-                        AppliedRewardRedemptionId = (q == 0 && voucherCheck.percentOff.HasValue) ? request.RewardRedemptionId : null,
                         // The funding pass for a credit-covered ticket (burn already done above),
                         // so a refund or failed payment knows which pass gets the ride back.
                         AppliedSeasonPassPurchaseId = passGrant?.ProductKind == "credits" ? passGrant.PassPurchaseId : null,
-                        PaymentMethod = unitAmount == 0 ? "voucher" : "stripe",
+                        PaymentMethod = unitAmount == 0 ? "comped" : "stripe",
                         Status = "pending",
                         PurchaserEmail = purchaserEmail,
                         PurchaserName = purchaserName,
@@ -1023,8 +991,8 @@ namespace webapi.Controllers
             }
             combinedStripeChargeCents -= creditAppliedCents;
 
-            // Free-cart fast path: voucher (single-item 100% off), gift card fully covered, or
-            // store credit covering it all, AND no remaining add-on charges.
+            // Free-cart fast path: gift card fully covered, store credit covering it all, or a
+            // cart that priced to zero, AND no remaining add-on charges.
             if (combinedStripeChargeCents == 0)
             {
                 foreach (var t in createdTickets)
@@ -1033,8 +1001,7 @@ namespace webapi.Controllers
                     // A gift card fully covered this ticket (gcApp set) is NOT a $0 sale: the buyer
                     // paid real money for the card, so the tenant is owed the value. Store-credit
                     // coverage books the same shape (value owed), then the tender's balancing entry
-                    // below nets the credit-funded part back out. A reward voucher (neither) is a
-                    // genuine $0 sale.
+                    // below nets the credit-funded part back out. Anything else is a genuine $0 sale.
                     if (gcApp is not null && perTicketGiftCard.TryGetValue(t.purchase.Id, out var gcAmt) && gcAmt > 0)
                         await InsertGiftCardCoveredLedger(_tenantContext.TenantId, "event_ticket",
                             t.purchase.Id, t.unitAmountCents, t.unitServiceChargeCents);
@@ -1049,10 +1016,6 @@ namespace webapi.Controllers
                 foreach (var exId in extraPurchaseIds)
                 {
                     await _extras.UpdateStatus(exId, "paid");
-                }
-                if (request.RewardRedemptionId.HasValue)
-                {
-                    await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, "event_ticket", first.Id);
                 }
 
                 // A free lesson can still come with a bike carrying a refundable deposit: the fee is
@@ -1542,29 +1505,6 @@ namespace webapi.Controllers
             var amount = (unitPriceCents + riderPortionPerUnit) * quantity;
             var serviceCharge = serviceChargePerUnit * quantity;
             return (amount, serviceCharge);
-        }
-
-        private async Task<(int? percentOff, string? error)> ValidateVoucher(Guid redemptionId, Guid userId, string itemKind)
-        {
-            var redemption = await _rewards.GetRedemption(redemptionId);
-            if (redemption is null || redemption.UserId != userId)
-            {
-                return (null, "That voucher isn't yours.");
-            }
-            if (redemption.RedeemedAt is not null)
-            {
-                return (null, "That voucher has already been used.");
-            }
-            var program = await _rewards.GetProgram(redemption.ProgramId, _tenantContext.TenantId);
-            if (program is null || !program.IsActive)
-            {
-                return (null, "That voucher's program is no longer active.");
-            }
-            if (program.RequirementKind != "any" && program.RequirementKind != itemKind)
-            {
-                return (null, $"That voucher only applies to {(program.RequirementKind == "pass" ? "passes" : "event tickets")}.");
-            }
-            return (program.RewardPercentOff, null);
         }
 
         // Redeem ONE Loam Pass credit to cover a rider's entry to an event, instead of paying by
@@ -2207,7 +2147,10 @@ namespace webapi.Controllers
                     RidepassCutCents = 0,
                     NetToTenantCents = 0,
                     PaymentMethod = "voucher",
-                    Memo = "Free purchase via reward voucher",
+                    // 'voucher' is the long-standing ledger vocabulary for a zero-charge sale and
+                    // is read by the accounting view, so the VALUE stays; only the memo changes,
+                    // because the feature it named no longer exists.
+                    Memo = "Free purchase (no charge)",
                 });
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -2216,7 +2159,7 @@ namespace webapi.Controllers
             }
         }
 
-        // A gift card fully covered this sale. Unlike a reward voucher this is NOT free: the buyer paid
+        // A gift card fully covered this sale. Unlike a zero-priced cart this is NOT free: the buyer paid
         // real money for the card, so the tenant is owed the value delivered. There's no Stripe fee at
         // redemption (no card charge happens now — it happened when the card was bought).
         //   • Platform-charge tenant: the platform holds the gift-card float, so credit the tenant the
@@ -2266,15 +2209,23 @@ namespace webapi.Controllers
         public async Task<IActionResult> ListForAdmin(
             [FromQuery] DateTime? fromUtc,
             [FromQuery] DateTime? toUtc,
-            [FromQuery] string? status,
             [FromQuery] string? email,
-            [FromQuery] string? orderId)
+            [FromQuery] string? orderId,
+            [FromQuery] List<string>? statuses,
+            [FromQuery] List<string>? kinds,
+            [FromQuery] int offset = 0,
+            [FromQuery] int limit = 50,
+            [FromQuery] bool includeAbandoned = false)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             // Reads from v_recent_sales (Script0080) so every sale kind shows up
-            // — day passes, event tickets, gate fees, season passes, memberships,
-            // gift cards, rentals. A practical cap of 500 prevents a stray query
-            // from pulling years of activity.
+            // - day passes, event tickets, gate fees, season passes, memberships,
+            // gift cards, rentals. `statuses` absent/empty defaults to everything
+            // except 'abandoned' (our own reconciler giving up on a checkout that
+            // never saw a completed payment attempt, not a real decline); pass
+            // 'abandoned' explicitly to include it, or set includeAbandoned to lift the
+            // exclusion without naming statuses (the view's eight branches do not share one
+            // status vocabulary, so "list them all" is not a thing a caller can safely do).
             //
             // When the admin searches by email or order id, drop the date window so a
             // match outside the default last-month range still surfaces (the frontend
@@ -2282,7 +2233,14 @@ namespace webapi.Controllers
             var searching = !string.IsNullOrWhiteSpace(email) || !string.IsNullOrWhiteSpace(orderId);
             var from = searching ? (DateTime?)null : fromUtc;
             var to = searching ? (DateTime?)null : toUtc;
-            var rows = await _recentSales.List(_tenantContext.TenantId, from, to, status, limit: 500, email, orderId);
+
+            // Never trust client-supplied paging: a negative offset or an unbounded
+            // limit would either error downstream or let a stray query pull the whole
+            // table. Hard cap at 200 regardless of what the client asks for.
+            var safeOffset = Math.Max(offset, 0);
+            var safeLimit = Math.Clamp(limit <= 0 ? 50 : limit, 1, 200);
+
+            var (rows, total) = await _recentSales.List(_tenantContext.TenantId, from, to, statuses, kinds, safeOffset, safeLimit, email, orderId, includeAbandoned);
             var response = rows.Select(r => new PurchaseResponse
             {
                 Id = r.Id,
@@ -2294,8 +2252,14 @@ namespace webapi.Controllers
                 Status = r.Status,
                 CreatedAt = DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc),
                 RedemptionToken = r.RedemptionToken?.ToString(),
+            }).ToList();
+            return new ApiResponses().OkResult(new
+            {
+                rows = response,
+                total,
+                offset = safeOffset,
+                limit = safeLimit
             });
-            return new ApiResponses().OkResult(response);
         }
 
         // Every line in one order (all sales sharing the anchor's Stripe PaymentIntent), for the

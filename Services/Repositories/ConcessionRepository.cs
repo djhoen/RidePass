@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.ConcessionData;
 using Services.Repositories.Interfaces;
 
@@ -251,43 +251,11 @@ namespace Services.Repositories
                 new { id, tenantId });
         }
 
-        // ── Discount presets ─────────────────────────────────────────────────────────
-        public async Task<List<ConcessionDiscountPreset>> ListDiscountPresets(Guid tenantId, bool activeOnly)
-        {
-            var filter = activeOnly ? "AND is_active = true" : "";
-            var sql = $@"SELECT {DiscountPresetCols} FROM concession_discount_preset
-                        WHERE tenant_id = @tenantId {filter} ORDER BY sort_order, LOWER(name)";
-            return (await _db.Query<ConcessionDiscountPreset>(sql, new { tenantId })).ToList();
-        }
+        // Discount presets moved to discount_preset (Script0251) and DiscountPresetRepository:
+        // one tenant-wide list covering every counter. The readers here were removed with the
+        // endpoints rather than left in place, so nothing can be wired back to the superseded
+        // concession_discount_preset table by accident. That table is dropped in a later migration.
 
-        public async Task<ConcessionDiscountPreset?> GetDiscountPreset(Guid id, Guid tenantId)
-        {
-            var sql = $@"SELECT {DiscountPresetCols} FROM concession_discount_preset
-                        WHERE id = @id AND tenant_id = @tenantId LIMIT 1";
-            return (await _db.Query<ConcessionDiscountPreset>(sql, new { id, tenantId })).FirstOrDefault();
-        }
-
-        public async Task<Guid> CreateDiscountPreset(ConcessionDiscountPreset p)
-        {
-            const string sql = @"
-                INSERT INTO concession_discount_preset (tenant_id, name, kind, value, is_active, sort_order)
-                VALUES (@TenantId, @Name, @Kind, @Value, @IsActive, @SortOrder) RETURNING id";
-            return (await _db.Query<Guid>(sql, p)).First();
-        }
-
-        public async Task UpdateDiscountPreset(ConcessionDiscountPreset p)
-        {
-            const string sql = @"UPDATE concession_discount_preset SET
-                    name = @Name, kind = @Kind, value = @Value, is_active = @IsActive, sort_order = @SortOrder
-                WHERE id = @Id AND tenant_id = @TenantId";
-            await _db.Execute(sql, p);
-        }
-
-        public async Task DeleteDiscountPreset(Guid id, Guid tenantId)
-        {
-            await _db.Execute("DELETE FROM concession_discount_preset WHERE id = @id AND tenant_id = @tenantId",
-                new { id, tenantId });
-        }
 
         // ── Comp reasons ─────────────────────────────────────────────────────────────
         public async Task<List<ConcessionCompReason>> ListCompReasons(Guid tenantId, bool activeOnly)
@@ -665,11 +633,13 @@ namespace Services.Repositories
             await _db.Execute(sql, new { saleId });
         }
 
-        public async Task MarkSaleFailed(Guid saleId)
+        // status: 'failed' when Stripe reported a declined attempt, 'abandoned' when no attempt
+        // ever completed (reconciler / walk-off). Same release of the pending hold either way.
+        public async Task MarkSaleFailed(Guid saleId, string status = "failed")
         {
-            const string sql = @"UPDATE concession_sale SET status = 'failed'
+            const string sql = @"UPDATE concession_sale SET status = @status
                                  WHERE id = @saleId AND status = 'pending'";
-            await _db.Execute(sql, new { saleId });
+            await _db.Execute(sql, new { saleId, status });
         }
 
         public async Task SetOrderNumber(Guid saleId, int orderNumber)
@@ -686,14 +656,16 @@ namespace Services.Repositories
             await _db.Execute(sql, new { saleId, tenantId });
         }
 
-        // Releases inventory held by abandoned card sales (reader cancelled / customer walked off):
-        // a pending sale older than the cutoff is failed so SumSold stops counting it. Returns count.
-        public async Task<int> FailStalePendingSales(DateTime olderThanUtc)
+        // Releases inventory held by dead card sales (reader cancelled / customer walked off):
+        // a pending sale older than the cutoff is closed so SumSold stops counting it. Returns
+        // count. The reconciler passes 'abandoned': a walk-off is not a decline, and a real
+        // decline gets 'failed' from its webhook long before this sweep sees the row.
+        public async Task<int> FailStalePendingSales(DateTime olderThanUtc, string status = "failed")
         {
             const string sql = @"
-                UPDATE concession_sale SET status = 'failed'
+                UPDATE concession_sale SET status = @status
                 WHERE status = 'pending' AND created_at < @olderThanUtc";
-            return await _db.Execute(sql, new { olderThanUtc });
+            return await _db.Execute(sql, new { olderThanUtc, status });
         }
 
         // ── Sale lines + modifiers (receipt / refund / kitchen hydration) ───────────

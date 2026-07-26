@@ -36,6 +36,9 @@ export interface ShopVariant {
     productId: string
     sku: string | null
     barcode: string | null
+    /** The barcode normalised to 14 digits, or null when it isn't a valid GTIN. Derived server-side
+     *  on every write, and the key the register's scan resolver matches on. */
+    gtin14: string | null
     size: string | null
     color: string | null
     gender: string | null
@@ -45,6 +48,10 @@ export interface ShopVariant {
     depositCents: number
     costCents: number | null
     mpn: string | null
+    /** The manufacturer's own name for the part. Separate from the product name, which is what
+     *  THIS shop calls it and is never shown to another tenant. Only this field feeds the shared
+     *  parts library. */
+    manufacturerName: string | null
     trackingKind: ShopTrackingKind
     stockOnHand: number
     availableCount: number
@@ -153,6 +160,8 @@ export interface UpsertShopVariant {
     depositCents: number
     costCents: number | null
     mpn: string | null
+    /** Manufacturer's own name for the part; the only field shared across tenants. */
+    manufacturerName: string | null
     trackingKind: ShopTrackingKind
     lowStockThreshold: number | null
     reorderPoint: number | null
@@ -175,6 +184,51 @@ export interface ShopReorderRow {
     reorderLevel: number | null
     costCents: number | null
     suggestedQty: number
+}
+
+/**
+ * The answer to one scan. `found` discriminates the two shapes: a hit carries everything the
+ * register needs to add a cart line without a second request; a miss carries the normalised
+ * barcode so an "add this product" form can be prefilled.
+ */
+export type ShopScanResolution =
+    | {
+        found: true
+        scanned: string
+        variantId: string
+        productId: string
+        productName: string
+        sku: string | null
+        barcode: string | null
+        gtin14: string | null
+        size: string | null
+        color: string | null
+        salePriceCents: number | null
+        trackingKind: ShopTrackingKind
+        availableCount: number
+    }
+    | {
+        found: false
+        scanned: string
+        /** Null when what was scanned isn't a well-formed barcode at all. */
+        gtin14: string | null
+        /** True for a real barcode we've simply never seen: worth offering to create. */
+        isValidBarcode: boolean
+        /**
+         * What the SHARED parts library knows this barcode to be, when it knows anything. Identity
+         * only, never a price: what this shop charges is this shop's business.
+         */
+        suggestion: ShopPartSuggestion | null
+    }
+
+export interface ShopPartSuggestion {
+    name: string
+    brand: string | null
+    mpn: string | null
+    categoryHint: string | null
+    /** How many DISTINCT shops have independently confirmed this. One shop's word reads very
+     *  differently from nine shops agreeing, so the UI says which it is. */
+    timesConfirmed: number
 }
 
 export interface RingUpLine {
@@ -349,6 +403,15 @@ export interface ShopJobTemplate {
     lines: ShopJobTemplateLine[]
 }
 
+export interface ShopRentalNote {
+    id: string
+    rentalId: string
+    body: string
+    createdByUserId: string | null
+    createdByName: string | null
+    createdAt: string
+}
+
 export class BikeShopService {
     private apiUrl: string
     constructor() { this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? '' }
@@ -484,7 +547,7 @@ export class BikeShopService {
     }
 
     // Register
-    ringUp(req: { lines: RingUpLine[]; paymentMethod: 'cash' | 'card'; buyerName?: string | null; buyerEmail?: string | null; couponCode?: string | null; giftCardCode?: string | null; tipCents?: number; creditAccountId?: string | null; creditCents?: number; cardPresent?: boolean }) {
+    ringUp(req: { lines: RingUpLine[]; paymentMethod: 'cash' | 'card'; buyerName?: string | null; buyerEmail?: string | null; couponCode?: string | null; giftCardCode?: string | null; discountPresetId?: string | null; managerPin?: string | null; creditAccountId?: string | null; creditCents?: number; cardPresent?: boolean }) {
         return axios.post<{ data: RingUpResult }>(`${this.apiUrl}/BikeShopRegister/Sale`, req)
     }
     shopTerminalToken() {
@@ -612,6 +675,53 @@ export class BikeShopService {
         return axios.get<{ data: { available: number; units: ShopItem[] } }>(
             `${this.apiUrl}/BikeShopRental/Availability?variantId=${variantId}&startsAt=${encodeURIComponent(startsAt)}&endsAt=${encodeURIComponent(endsAt)}`)
     }
+    /**
+     * What did the cashier just scan? Resolved SERVER-side against the whole catalog, matching a
+     * normalised GTIN first and then SKU/MPN, so it works for products this browser never loaded
+     * and for barcodes whose printed width differs from the stored one.
+     *
+     * A miss is `found: false` with HTTP 200, not an error: an unrecognised part at a counter is
+     * a normal thing that should offer to create the product, not a red banner.
+     */
+    // ── Distributor sync ──────────────────────────────────────────────────────────────
+    // Credentials are the SHOP's own, obtained from the distributor: catalog content feeds are
+    // licensed per dealer, so RidePass can't hold one key covering every shop.
+    listDistributors() {
+        return axios.get<{ data: DistributorConnection[] }>(`${this.apiUrl}/BikeShopDistributor`)
+    }
+
+    /** Omit password/apiKey to KEEP the stored ones; the UI never shows an existing secret. */
+    connectDistributor(req: {
+        distributor: string
+        accountNumber?: string | null
+        username?: string | null
+        password?: string | null
+        apiKey?: string | null
+        isEnabled: boolean
+    }) {
+        return axios.put<{ data: DistributorConnection[] }>(`${this.apiUrl}/BikeShopDistributor`, req)
+    }
+
+    disconnectDistributor(slug: string) {
+        return axios.delete<{ data: DistributorConnection[] }>(`${this.apiUrl}/BikeShopDistributor/${slug}`)
+    }
+
+    testDistributor(slug: string) {
+        return axios.post<{ data: { ok: boolean; error: string | null } }>(
+            `${this.apiUrl}/BikeShopDistributor/${slug}/Test`)
+    }
+
+    syncDistributor(slug: string) {
+        return axios.post<{ data: { productsSeen: number; variantsCreated: number; variantsUpdated: number } }>(
+            `${this.apiUrl}/BikeShopDistributor/${slug}/Sync`)
+    }
+
+    resolveScan(code: string) {
+        return axios.get<{ data: ShopScanResolution }>(`${this.apiUrl}/BikeShopRegister/Resolve`, {
+            params: { code },
+        })
+    }
+
     listRentals(activeOnly = true, limit = 100) {
         return axios.get<{ data: ShopRental[] }>(`${this.apiUrl}/BikeShopRental/Rentals?activeOnly=${activeOnly}&limit=${limit}`)
     }
@@ -661,6 +771,8 @@ export class BikeShopService {
         // How many riders must each sign the waiver. Omit to let the server default it from the
         // largest line quantity (two bikes = two riders; a bike + helmet is still one).
         ridersRequired?: number | null
+        // Tenant-defined staff discount scoped to rentals; the server resolves the amount.
+        discountPresetId?: string | null; managerPin?: string | null
         renterName?: string | null; renterEmail?: string | null; renterPhone?: string | null
         // Renter took the damage waiver: charges a non-refundable fee and waives the deposit.
         // Ignored server-side when the track doesn't offer it.
@@ -809,7 +921,7 @@ export class BikeShopService {
     removeWorkOrderLine(lineId: string) {
         return axios.delete(`${this.apiUrl}/BikeShopWorkOrder/WorkOrderLines/${lineId}`)
     }
-    billWorkOrder(id: string, req: { paymentMethod: 'cash' | 'card'; tipCents: number; excessAction?: 'refund' | 'credit' | null }) {
+    billWorkOrder(id: string, req: { paymentMethod: 'cash' | 'card'; discountPresetId?: string | null; managerPin?: string | null; excessAction?: 'refund' | 'credit' | null }) {
         return axios.post<{ data: RingUpResult & {
             depositAppliedCents?: number
             depositExcessCents?: number
@@ -852,8 +964,14 @@ export class BikeShopService {
     }
 
     // ── CSV import + variant matrix ──────────────────────────────────────────
-    importCsv(csv: string, dryRun: boolean) {
-        return axios.post<{ data: ShopImportPreview }>(`${this.apiUrl}/BikeShop/ImportCsv?dryRun=${dryRun}`, { csv })
+    /**
+     * `updateExisting` turns the import from a first load into a refresh: rows are matched to what
+     * is already in the catalog (barcode, then MPN, then SKU) and only the columns the file
+     * carried are written. Off, anything that already exists is an error instead.
+     */
+    importCsv(csv: string, dryRun: boolean, updateExisting = false) {
+        return axios.post<{ data: ShopImportPreview }>(
+            `${this.apiUrl}/BikeShop/ImportCsv?dryRun=${dryRun}`, { csv, updateExisting })
     }
     generateVariants(productId: string, req: {
         sizes: string[]; colors: string[]; skuPrefix?: string | null
@@ -989,6 +1107,17 @@ export class BikeShopService {
     cancelStockCount(id: string) {
         return axios.post(`${this.apiUrl}/BikeShop/StockCounts/${id}/Cancel`)
     }
+
+    // ── Rental notes ─────────────────────────────────────────────────────────
+    /** A booking's internal staff thread, newest first. Never shown to the renter. */
+    listRentalNotes(rentalId: string) {
+        return axios.get<{ data: ShopRentalNote[] }>(`${this.apiUrl}/BikeShopRental/Rentals/${rentalId}/Notes`)
+    }
+    /** Append a note. Append-only on purpose: who said it and when is the point. */
+    addRentalNote(rentalId: string, body: string) {
+        return axios.post<{ data: ShopRentalNote }>(
+            `${this.apiUrl}/BikeShopRental/Rentals/${rentalId}/Notes`, { body })
+    }
 }
 
 // ── Sales + stock take types ─────────────────────────────────────────────────
@@ -1013,7 +1142,6 @@ export interface ShopSale {
     subtotalCents: number
     discountCents: number
     taxCents: number
-    tipCents: number
     totalCents: number
     creditAppliedCents?: number
     paymentMethod: string
@@ -1319,10 +1447,17 @@ export interface ShopWorkOrderStatusDef {
 
 export interface ShopImportPreview {
     dryRun: boolean
+    updateExisting: boolean
+    /** Rows that will be CREATED. */
     products: number
     variants: number
+    /** Rows that matched something already in the catalog and will be refreshed in place. */
+    productsUpdated: number
+    variantsUpdated: number
     newCategories: number | string[]
     newSuppliers: number | string[]
+    /** Which fields an update will write. Anything not listed is left as it is. */
+    columns?: string[]
     errors: string[]
 }
 
@@ -1497,4 +1632,22 @@ export interface UpsertShopWorkOrder {
     intakeNotes: string | null
     customerNotes?: string | null
     promisedAt?: string | null
+}
+
+export interface DistributorConnection {
+    slug: string
+    displayName: string
+    /** Whether this deployment can actually talk to them yet. False means connecting it does nothing. */
+    isAvailable: boolean
+    connected: boolean
+    accountNumber: string | null
+    username: string | null
+    isEnabled: boolean
+    hasApiKey: boolean
+    hasPassword: boolean
+    lastSyncAtUtc: string | null
+    lastStatus: string | null
+    lastError: string | null
+    lastProductsSeen: number
+    lastVariantsUpdated: number
 }

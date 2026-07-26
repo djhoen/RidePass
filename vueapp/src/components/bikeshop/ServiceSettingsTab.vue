@@ -82,6 +82,45 @@
         <div class="text-caption text-medium-emphasis mt-2">{{ feePreview }}</div>
         <div v-if="feeError" class="text-error text-caption mt-2">{{ feeError }}</div>
 
+        <v-divider class="my-5"></v-divider>
+
+        <div class="text-subtitle-2 mb-1">Platform service fee</div>
+        <p class="text-body-2 text-medium-emphasis mb-3">
+            Everything you sell in the shop carries the same
+            {{ ((branding.serviceChargeBps ?? 0) / 100).toFixed(2) }}% service fee as events and rentals.
+            That rate is set once for the whole track in
+            <router-link to="/Admin/Settings/General">Settings</router-link>, and all you choose here is
+            who funds it. This covers counter sales, online store orders, and the parts and labor billed
+            out on a work order.
+        </p>
+
+        <v-slider v-model="shopFeePct" :min="0" :max="100" :step="5" thumb-label
+            color="primary" label="Customer pays" style="max-width: 520px" :disabled="savingShopFee">
+            <template #append>
+                <span style="min-width: 52px" class="text-right">{{ shopFeePct }}%</span>
+            </template>
+        </v-slider>
+
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3" style="max-width: 520px">
+            <template v-if="shopFeePct === 100">
+                The customer pays the whole fee. It shows as a "Service fee" line at checkout.
+            </template>
+            <template v-else-if="shopFeePct === 0">
+                You absorb the whole fee. The customer sees no fee line and it comes out of your margin.
+            </template>
+            <template v-else>
+                The customer pays {{ shopFeePct }}% of the fee and you absorb the rest.
+            </template>
+        </v-alert>
+
+        <div class="text-caption text-medium-emphasis mb-3">{{ shopFeePreview }}</div>
+
+        <div class="d-flex align-center ga-3 flex-wrap">
+            <v-btn color="primary" :loading="savingShopFee" :disabled="!shopFeeDirty" @click="saveShopFee">Save</v-btn>
+            <v-btn v-if="shopFeeDirty" variant="text" :disabled="savingShopFee" @click="resetShopFee">Cancel</v-btn>
+        </div>
+        <div v-if="shopFeeError" class="text-error text-caption mt-2">{{ shopFeeError }}</div>
+
         <div v-if="error" class="text-error text-caption mt-2">{{ error }}</div>
         <v-snackbar v-model="snackbar" color="success" :timeout="2500">Saved.</v-snackbar>
     </div>
@@ -218,7 +257,50 @@ async function saveFee() {
     }
 }
 
+// ── Platform service fee split ────────────────────────────────────────────────────────
+// Percent (not bps) for the slider; converted back on save. Default 0 matches the column
+// default: turning the charge on must never silently put a fee line in front of a walk-in.
+const shopFeePct = ref(0)
+const shopFeeOriginal = ref(0)
+const savingShopFee = ref(false)
+const shopFeeError = ref('')
+
+const shopFeeDirty = computed(() => shopFeePct.value !== shopFeeOriginal.value)
+
+// Worked example on a round number, using the same floor-then-floor math as the server
+// (Services/Payments/ServiceChargeSplit.cs), so the preview can't disagree with the receipt.
+const shopFeePreview = computed(() => {
+    const base = 10000
+    const full = Math.floor((base * (branding.serviceChargeBps ?? 0)) / 10000)
+    const customer = Math.floor((full * shopFeePct.value * 100) / 10000)
+    return customer === 0
+        ? `On a $100 sale the fee is $${(full / 100).toFixed(2)} and the customer is charged $100.00.`
+        : `On a $100 sale the fee is $${(full / 100).toFixed(2)}, of which the customer pays `
+          + `$${(customer / 100).toFixed(2)}, so they are charged $${((base + customer) / 100).toFixed(2)} before tax.`
+})
+
+function resetShopFee() { shopFeePct.value = shopFeeOriginal.value }
+
+async function saveShopFee() {
+    if (!shopFeeDirty.value) return
+    savingShopFee.value = true
+    shopFeeError.value = ''
+    try {
+        await tenantService.updateShopServiceCharge({ buyerPaidBps: shopFeePct.value * 100 })
+        shopFeeOriginal.value = shopFeePct.value
+        await loadBranding()
+        snackbar.value = true
+    } catch (e: any) {
+        shopFeeError.value = e.response?.data?.error
+            || 'Could not save who pays the service fee. Try again.'
+    } finally {
+        savingShopFee.value = false
+    }
+}
+
 onMounted(() => {
+    shopFeePct.value = Math.round((branding.shopBuyerPaidServiceChargeBps ?? 0) / 100)
+    shopFeeOriginal.value = shopFeePct.value
     laborRate.value = branding.shopLaborRateCents == null ? null : branding.shopLaborRateCents / 100
     laborOriginal.value = laborRate.value
     feePercent.value = (branding.shopSupplyFeeBps ?? 0) / 100

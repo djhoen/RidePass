@@ -22,6 +22,14 @@ namespace Services.Repositories.Data.MembershipData
         public Guid? CancelledByUserId { get; set; }
         public DateTime? CancelledAt { get; set; }
         public Guid? SoldByUserId { get; set; }
+
+        // Staff-applied discount snapshot (Script0257). PriceCents stays the list price and
+        // AmountCents becomes what was actually charged, so the two together plus this explain the gap.
+        public int DiscountCents { get; set; }
+        public Guid? DiscountPresetId { get; set; }
+        public string? DiscountLabel { get; set; }
+        public Guid? DiscountAuthorizedByUserId { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

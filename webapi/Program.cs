@@ -11,7 +11,6 @@ using Services.Helpers.Interfaces;
 using Services.Audit;
 using Services.Notifications;
 using Services.Payments;
-using Services.Rewards;
 using Services.Coupons;
 using Services.Repositories;
 using Services.Repositories.Data.UserData;
@@ -63,7 +62,25 @@ builder.Services.AddScoped<ILoampassRedemptionRepository, LoampassRedemptionRepo
 builder.Services.AddSingleton<Services.LoamPassMx.ILoamPassMxService, Services.LoamPassMx.LoamPassMxService>();
 builder.Services.AddScoped<IBlackoutRepository, BlackoutRepository>();
 builder.Services.AddScoped<ISeasonPassRepository, SeasonPassRepository>();
+// One place decides a pass holder's discount, so the five tills that ask can't drift on it.
+builder.Services.AddScoped<Services.Pricing.ISeasonPassPerkResolver, Services.Pricing.SeasonPassPerkResolver>();
 builder.Services.AddScoped<IBikeShopRepository, BikeShopRepository>();
+builder.Services.AddScoped<IPlatformPartRepository, PlatformPartRepository>();
+builder.Services.AddScoped<IDistributorCredentialRepository, DistributorCredentialRepository>();
+// Distributor catalog sync. One source per distributor, resolved by slug. The nightly sweep lives
+// in TaskRunner; these registrations serve the settings screen's connect / test / "Sync now".
+builder.Services.AddScoped<Services.Distributors.IDistributorCatalogSource, Services.Distributors.QbpCatalogSource>();
+// A fake distributor for exercising the sync end to end without a dealer account. Its own
+// IsConfigured reads Distributors:EnableSampleSource, which is absent (false) in production, so the
+// card never appears there and nobody can pour invented products into a real shop's inventory.
+builder.Services.AddScoped<Services.Distributors.IDistributorCatalogSource, Services.Distributors.SampleCatalogSource>();
+builder.Services.AddScoped<Services.Distributors.IDistributorSyncService, Services.Distributors.DistributorSyncService>();
+// The sync depends on the narrow ICatalogImporter rather than all ~180 members of
+// IBikeShopRepository, so it can be unit-tested. Same instance either way.
+builder.Services.AddScoped<ICatalogImporter>(sp => sp.GetRequiredService<IBikeShopRepository>());
+// The shared parts library's external lookup layer. Disabled is the deliberate default: turning it
+// on means caching a vendor's product data, which is a licensing decision (see IPartLookupProvider).
+builder.Services.AddScoped<Services.BikeShop.IPartLookupProvider, Services.BikeShop.DisabledPartLookupProvider>();
 builder.Services.AddScoped<ITenantCreditRepository, TenantCreditRepository>();
 builder.Services.AddScoped<IWristbandRepository, WristbandRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
@@ -91,6 +108,7 @@ builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpServ
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
 builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();
+builder.Services.AddScoped<IMarketingAutomationRepository, MarketingAutomationRepository>();
 builder.Services.AddScoped<Services.TenantSync.ITenantSyncRepository, Services.TenantSync.TenantSyncRepository>();
 builder.Services.AddSingleton<webapi.Sync.TenantSyncImageStore>();
 builder.Services.AddHttpClient<webapi.Sync.TenantSyncClient>();
@@ -118,6 +136,7 @@ builder.Services.AddScoped<ITenantLedgerRepository, TenantLedgerRepository>();
 builder.Services.AddScoped<ITenantPayoutRepository, TenantPayoutRepository>();
 builder.Services.AddScoped<IHomePageRepository, HomePageRepository>();
 builder.Services.AddScoped<ICouponRepository, CouponRepository>();
+builder.Services.AddScoped<IDiscountPresetRepository, DiscountPresetRepository>();
 builder.Services.AddScoped<ICouponValidator, CouponValidator>();
 builder.Services.AddScoped<IBundledCouponMinter, BundledCouponMinter>();
 builder.Services.AddScoped<IGiftCardRepository, GiftCardRepository>();
@@ -139,8 +158,6 @@ builder.Services.AddScoped<INotificationPreferenceRepository, NotificationPrefer
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
 builder.Services.AddScoped<IStaffAlertScanRepository, StaffAlertScanRepository>();
-builder.Services.AddScoped<IRewardRepository, RewardRepository>();
-builder.Services.AddScoped<IRewardEngine, RewardEngine>();
 builder.Services.AddScoped<IEventSubscriptionRepository, EventSubscriptionRepository>();
 builder.Services.AddScoped<IEventNotifier, EventNotifier>();
 builder.Services.AddScoped<IAuditLogger, webapi.Helpers.HttpContextAuditLogger>();
@@ -149,6 +166,7 @@ builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
 // One confirmation email per event order, from whichever path completed the sale (Stripe, $0
 // voucher, gift card, Loam Pass credit, counter cash). Scoped: it reads through the repositories.
 builder.Services.AddScoped<Services.Email.IEventOrderConfirmationEmailer, Services.Email.EventOrderConfirmationEmailer>();
+builder.Services.AddScoped<Services.Email.IPurchaseConfirmationEmailer, Services.Email.PurchaseConfirmationEmailer>();
 builder.Services.AddSingleton<IEmailLinkTokens, EmailLinkTokens>();
 // Scoped (not Singleton) because TwilioSmsSender now persists outbound
 // messages to tenant_message via ITenantConversationRepository, which is
@@ -238,6 +256,7 @@ builder.Services.AddHostedService<webapi.Workers.PendingPurchaseReconciler>();
 // tickets, once the checkout is >1h old and at most once per order.
 builder.Services.AddHostedService<webapi.Workers.RegistrationReminderWorker>();
 builder.Services.AddHostedService<webapi.Workers.ShopServiceReminderWorker>();
+builder.Services.AddHostedService<webapi.Workers.MarketingAutomationSweep>();
 builder.Services.AddSingleton<webapi.Helpers.IJwtIssuer, webapi.Helpers.JwtIssuer>();
 // Image storage: DigitalOcean Spaces (S3) when a bucket is configured, else local disk
 // (dev / single-box). Spaces returns absolute bucket URLs, which is what lets a cloned

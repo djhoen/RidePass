@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.TenantData
+﻿namespace Services.Repositories.Data.TenantData
 {
     public class Tenant
     {
@@ -74,6 +74,14 @@ namespace Services.Repositories.Data.TenantData
         /// <summary>Is the renter-paid service fee part of the rental taxable base.</summary>
         public bool RentalTaxServiceChargeTaxable { get; set; } = true;
 
+        /// <summary>
+        /// Share of the service charge the CUSTOMER funds on a bike shop sale (bps). 0 = the track
+        /// absorbs it out of their own margin and the customer sees no fee line, which is the
+        /// default; 10000 = added to what they pay. Either way the charge is owed and booked. The
+        /// RATE is ServiceChargeBps, the same one events use; this only decides who funds it.
+        /// </summary>
+        public int ShopBuyerPaidServiceChargeBps { get; set; }
+
         /// <summary>Tenant-wide rental damage-waiver ("insurance"): an optional add-on at rental
         /// checkout. When bought, the renter pays RentalInsuranceBps of the rental value and the
         /// refundable deposit hold is waived. Off by default.</summary>
@@ -126,6 +134,33 @@ namespace Services.Repositories.Data.TenantData
         /// convention used throughout this class; cast to SeasonPassAdmissionType at the call site.</summary>
         public int SeasonPassAdmissionTypeId { get; set; } = (int)SeasonPassAdmissionType.WalkUp;
         public bool ConcessionsEnabled { get; set; } = false;
+
+        /// <summary>
+        /// The standing "any active season pass holder gets X off" perk. Does NOT govern per-pass
+        /// benefits (season_pass_benefit), which are product configuration.
+        /// </summary>
+        public bool SeasonPassDiscountEnabled { get; set; } = false;
+        /// <summary>'percent' (basis points) or 'amount' (cents).</summary>
+        public string SeasonPassDiscountKind { get; set; } = "percent";
+        public int SeasonPassDiscountValue { get; set; }
+
+        // Where the perk applies. The AMOUNT is shared (a track has one idea of "the pass holder
+        // discount") but the surfaces are a deliberate choice, because a percentage picked with a
+        // $9 burger in mind is the same percentage off a $6,000 bike.
+        public bool SeasonPassDiscountAppliesConcession { get; set; } = true;
+        public bool SeasonPassDiscountAppliesRetail { get; set; } = true;
+        public bool SeasonPassDiscountAppliesRental { get; set; } = true;
+
+        /// <summary>Does the tenant-wide pass discount apply to this benefit surface?</summary>
+        public bool SeasonPassDiscountAppliesTo(string benefitType) => SeasonPassDiscountEnabled && benefitType switch
+        {
+            "concession" => SeasonPassDiscountAppliesConcession,
+            "retail" => SeasonPassDiscountAppliesRetail,
+            "rental" => SeasonPassDiscountAppliesRental,
+            // Events are admission, not a retail perk: a standing "% off for pass holders" must
+            // never quietly become a discount on race entry. Per-pass event benefits handle that.
+            _ => false,
+        };
         public bool BikeShopEnabled { get; set; } = false;
         /// <summary>Days after pickup to email a service reminder. 0 = off, the default: a track
         /// opts in to contacting customers months later rather than discovering it did.</summary>
@@ -166,6 +201,11 @@ namespace Services.Repositories.Data.TenantData
         /// <summary>One staff member's total refunds in a single local day, above which the
         /// digest flags them. Default 50000 ($500).</summary>
         public int StaffAlertRefundCents { get; set; } = 50000;
+
+        /// <summary>Whether more than one discount may combine on a single sale (Script0254).
+        /// False (the default) means the largest single discount applies and the rest are ignored,
+        /// so a pass benefit, a staff discount and a promo code can't compound.</summary>
+        public bool AllowDiscountStacking { get; set; }
         /// <summary>Trackside handout export on the rider reports. A motocross-race
         /// artifact: defaults on for motocross tenants, off for mountain-bike.</summary>
         public bool TracksideExportEnabled { get; set; } = true;

@@ -234,14 +234,16 @@ namespace Services.Repositories
                      quantity, unit_price_cents_frozen, amount_cents, service_charge_cents,
                      status, payment_method,
                      variant_id, size_at_purchase, color_at_purchase, gender_at_purchase,
-                     sold_by_user_id)
+                     sold_by_user_id,
+                     discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id)
                 VALUES
                     (@TenantId, @EventId, @ProductId, @PurchaserUserId,
                      @PurchaserEmail, @PurchaserName, @WaiverSignatureId,
                      @Quantity, @UnitPriceCentsFrozen, @AmountCents, @ServiceChargeCents,
                      @Status, @PaymentMethod,
                      @VariantId, @SizeAtPurchase, @ColorAtPurchase, @GenderAtPurchase,
-                     @SoldByUserId)
+                     @SoldByUserId,
+                     @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId)
                 RETURNING id, redemption_token";
             return (await _db.Query<(Guid Id, Guid RedemptionToken)>(sql, p)).First();
         }

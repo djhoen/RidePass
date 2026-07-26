@@ -16,9 +16,10 @@
                 </v-alert>
                 <template v-else>
                     <div class="preview d-flex justify-center pa-3 mb-1" v-html="previewSvg"></div>
-                    <div class="text-caption text-center text-medium-emphasis mb-3">
+                    <div class="text-caption text-center text-medium-emphasis mb-1">
                         Encoding <strong>{{ barcodeValue }}</strong> (Code 128)
                     </div>
+                    <div class="text-caption text-center text-medium-emphasis mb-3">{{ encodedNote }}</div>
 
                     <v-row dense align="center">
                         <v-col cols="12" sm="5">
@@ -59,8 +60,42 @@ const includeName = ref(true)
 const includePrice = ref(true)
 const printError = ref('')
 
-// The barcode's own number if it has one, else the SKU. Code 128 encodes either as free text.
-const barcodeValue = computed(() => (props.variant?.barcode || props.variant?.sku || '').trim())
+// What gets encoded, in order of preference, and which of the three it turned out to be so the
+// caption can tell staff whether this label will match the manufacturer's.
+//
+// GTIN-14 first: it is exactly what the register's scan resolver matches on, so a label printed
+// for a part stored as a 12-digit UPC-A encodes the same digits as one printed for the same part
+// stored in its 13-digit EAN form. Both would resolve anyway (the server normalises what it
+// receives), but printing the canonical number means two labels for one part are never two
+// different strings, which matters the moment anyone compares them by eye or feeds them elsewhere.
+//
+// Then the raw barcode, for suppliers whose codes aren't valid GTINs. Then the shop's own SKU,
+// which is the common case: you print labels for the things that DIDN'T come with a barcode.
+type EncodedKind = 'gtin' | 'barcode' | 'sku' | 'none'
+const encoded = computed<{ value: string; kind: EncodedKind }>(() => {
+    const v = props.variant
+    const gtin = v?.gtin14?.trim()
+    if (gtin) return { value: gtin, kind: 'gtin' }
+    const barcode = v?.barcode?.trim()
+    if (barcode) return { value: barcode, kind: 'barcode' }
+    const sku = v?.sku?.trim()
+    if (sku) return { value: sku, kind: 'sku' }
+    return { value: '', kind: 'none' }
+})
+const barcodeValue = computed(() => encoded.value.value)
+
+const encodedNote = computed(() => {
+    switch (encoded.value.kind) {
+        case 'gtin':
+            return 'GTIN-14, the same number the register matches a scan on.'
+        case 'barcode':
+            return "This variant's barcode. It isn't a valid GTIN, so it's encoded exactly as entered."
+        case 'sku':
+            return "Your own SKU: this variant has no barcode, so the label won't match a manufacturer's."
+        default:
+            return ''
+    }
+})
 const variantLabel = computed(() => {
     const v = props.variant
     return v ? [v.size, v.color].filter(Boolean).join(' / ') : ''

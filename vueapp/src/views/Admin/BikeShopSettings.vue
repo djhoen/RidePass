@@ -18,6 +18,7 @@
 
         <v-tabs v-model="tab" class="mb-4">
             <v-tab value="service">Service &amp; fees</v-tab>
+            <v-tab value="distributors">Distributors</v-tab>
             <v-tab value="statuses">Work order stages</v-tab>
             <v-tab value="agreements">Agreements</v-tab>
             <v-tab value="inspections">Inspection checklist</v-tab>
@@ -53,6 +54,11 @@
         <!-- ── Service notifications + shop supply fee ──────────────────── -->
         <div v-else-if="tab === 'service'">
             <ServiceSettingsTab />
+        </div>
+
+        <!-- ── Distributor connections (automatic catalog sync) ──────────── -->
+        <div v-else-if="tab === 'distributors'">
+            <DistributorsTab />
         </div>
 
         <!-- ── Work order stages (custom statuses) ──────────────────────── -->
@@ -112,6 +118,7 @@ import { BikeShopService, type ShopTaxCategory } from '@/services/BikeShopServic
 import SimpleCrud from '@/components/bikeshop/SimpleCrud.vue'
 import TaxDialog from '@/components/bikeshop/TaxDialog.vue'
 import ServiceSettingsTab from '@/components/bikeshop/ServiceSettingsTab.vue'
+import DistributorsTab from '@/components/bikeshop/DistributorsTab.vue'
 import WorkOrderStatusesTab from '@/components/bikeshop/WorkOrderStatusesTab.vue'
 import AgreementsTab from '@/components/bikeshop/AgreementsTab.vue'
 import InspectionChecklistTab from '@/components/bikeshop/InspectionChecklistTab.vue'
@@ -121,7 +128,7 @@ const tenantService = new TenantService()
 const route = useRoute()
 
 // ?tab= so the Rentals page's "manage retail tax" link lands straight on Tax.
-const validTabs = ['service', 'statuses', 'agreements', 'inspections', 'tax', 'insurance']
+const validTabs = ['service', 'distributors', 'statuses', 'agreements', 'inspections', 'tax', 'insurance']
 const requested = String(route.query.tab ?? '')
 const tab = ref(validTabs.includes(requested) ? requested : 'service')
 

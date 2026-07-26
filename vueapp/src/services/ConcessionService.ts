@@ -227,15 +227,9 @@ export interface ConcessionDiscountPreset {
     value: number
     isActive: boolean
     sortOrder: number
+    /** Applying it needs a manager PIN. Set per discount under Settings > Discounts. */
+    requiresManager: boolean
 }
-export interface UpsertConcessionDiscountPreset {
-    name: string
-    kind: 'percent' | 'amount'
-    value: number
-    isActive: boolean
-    sortOrder: number
-}
-
 export interface ConcessionCompReason {
     id: string
     name: string
@@ -604,18 +598,11 @@ export class ConcessionService {
         return axios.delete(`${this.apiUrl}/Concession/TaxCategories/${id}`)
     }
 
-    // ── Discount presets ─────────────────────────────────────────────
+    // ── Discounts ────────────────────────────────────────────────────
+    /** The discounts this counter may offer. Read-only: they're defined tenant-wide under
+     *  Settings > Discounts (see DiscountService), so one definition can cover several counters. */
     discountPresets() {
         return axios.get<{ data: ConcessionDiscountPreset[] }>(`${this.apiUrl}/Concession/DiscountPresets`)
-    }
-    createDiscountPreset(req: UpsertConcessionDiscountPreset) {
-        return axios.post<{ data: ConcessionDiscountPreset }>(`${this.apiUrl}/Concession/DiscountPresets`, req)
-    }
-    updateDiscountPreset(id: string, req: UpsertConcessionDiscountPreset) {
-        return axios.put<{ data: ConcessionDiscountPreset }>(`${this.apiUrl}/Concession/DiscountPresets/${id}`, req)
-    }
-    removeDiscountPreset(id: string) {
-        return axios.delete(`${this.apiUrl}/Concession/DiscountPresets/${id}`)
     }
 
     // ── Comp reasons ─────────────────────────────────────────────────
@@ -810,3 +797,4 @@ export class ConcessionService {
         return axios.get<{ data: RiderOrder[] }>(`${this.apiUrl}/Concession/MyOrders`)
     }
 }
+

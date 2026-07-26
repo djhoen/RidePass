@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 
@@ -10,8 +10,9 @@ namespace Services.Repositories
 
         public RecentSalesRepository(IDbHelper db) => _db = db;
 
-        public async Task<List<RecentSalesItem>> List(Guid tenantId, DateTime? fromUtc, DateTime? toUtc, string? status, int limit,
-            string? email = null, string? orderId = null)
+        public async Task<(List<RecentSalesItem> Rows, int Total)> List(Guid tenantId, DateTime? fromUtc, DateTime? toUtc,
+            IReadOnlyCollection<string>? statuses, IReadOnlyCollection<string>? kinds, int offset, int limit,
+            string? email = null, string? orderId = null, bool includeAbandoned = false)
         {
             // Postgres pushes the WHERE clauses into each branch of the UNION ALL
             // inside the view, so per-table indexes (e.g., the per-table
@@ -19,7 +20,25 @@ namespace Services.Repositories
             var where = new List<string> { "tenant_id = @tenantId" };
             if (fromUtc.HasValue) where.Add("created_at >= @fromUtc");
             if (toUtc.HasValue) where.Add("created_at < @toUtc");
-            if (!string.IsNullOrEmpty(status)) where.Add("status = @status");
+
+            // 'abandoned' is our own reconciler giving up on a checkout that never saw a
+            // completed payment attempt, not a real decline. Every existing caller keeps
+            // reading as before by default; a caller that explicitly asks for 'abandoned'
+            // (in statuses) still gets it, and includeAbandoned lifts the exclusion without
+            // naming any status. That flag exists because v_recent_sales has EIGHT branches with
+            // different vocabularies (gift_card runs pending/active/depleted/refunded/void;
+            // shop_rental has post-payment states out/returned/damaged), so a caller trying to say
+            // "show me everything" by listing statuses would silently drop whole kinds.
+            // Blank entries are dropped first: an empty query-string param (?statuses=) binds as a
+            // one-element list containing "", which would otherwise look like a real selection and
+            // match nothing at all instead of falling back to the default view.
+            var statusArray = statuses?.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray() is { Length: > 0 } s2 ? s2 : null;
+            var excludedStatuses = statusArray is null && !includeAbandoned ? new[] { "abandoned" } : null;
+            if (statusArray is not null) where.Add("status = ANY(@statusArray)");
+            if (excludedStatuses is not null) where.Add("status <> ALL(@excludedStatuses)");
+
+            var kindArray = kinds?.Where(k => !string.IsNullOrWhiteSpace(k)).ToArray() is { Length: > 0 } k2 ? k2 : null;
+            if (kindArray is not null) where.Add("kind = ANY(@kindArray)");
 
             // Fuzzy, case-insensitive admin search. Email matches the purchaser email;
             // order id matches the internal purchase id, the rider-facing redemption
@@ -39,6 +58,12 @@ namespace Services.Repositories
                             OR COALESCE(stripe_payment_intent_id, '') ILIKE @orderLike ESCAPE '\')");
             }
 
+            // Never trust caller-supplied paging: a negative offset or a runaway limit
+            // would either error in Postgres or pull far more than a page's worth.
+            var safeOffset = Math.Max(offset, 0);
+            var safeLimit = Math.Clamp(limit <= 0 ? 50 : limit, 1, 200);
+
+            var whereClause = string.Join(" AND ", where);
             var sql = $@"
                 SELECT kind,
                        id,
@@ -51,13 +76,45 @@ namespace Services.Repositories
                        stripe_payment_intent_id AS StripePaymentIntentId,
                        item_name                AS ItemName,
                        created_at               AS CreatedAt,
-                       redemption_token         AS RedemptionToken
+                       redemption_token         AS RedemptionToken,
+                       COUNT(*) OVER()::int     AS Total
                 FROM v_recent_sales
-                WHERE {string.Join(" AND ", where)}
-                ORDER BY created_at DESC
-                LIMIT @limit";
-            var result = await _db.Query<RecentSalesItem>(sql, new { tenantId, fromUtc, toUtc, status, limit, emailLike, orderLike });
-            return result.ToList();
+                WHERE {whereClause}
+                ORDER BY created_at DESC, id DESC
+                OFFSET @safeOffset
+                LIMIT @safeLimit";
+            var queryParams = new
+            {
+                tenantId, fromUtc, toUtc, statusArray, excludedStatuses, kindArray,
+                emailLike, orderLike, safeOffset, safeLimit
+            };
+            var mapped = (await _db.Query<RecentSalesItem, TotalCountRow, (RecentSalesItem Row, int Total)>(
+                sql, (row, totalRow) => (row, totalRow.Total), queryParams, splitOn: "Total")).ToList();
+            var rows = mapped.Select(m => m.Row).ToList();
+
+            // COUNT(*) OVER() rides along with each returned row, so it only comes back when at
+            // least one row survives OFFSET/LIMIT. A page request landing past the end of the
+            // filtered set (stale UI paging, a filter that shrank the result after the client
+            // cached a page) would otherwise report a false total of 0, so fall back to a plain
+            // count in that one case.
+            int total;
+            if (rows.Count > 0)
+            {
+                total = mapped[0].Total;
+            }
+            else
+            {
+                var countSql = $"SELECT COUNT(*)::int FROM v_recent_sales WHERE {whereClause}";
+                total = await _db.ExecuteScalar(countSql, queryParams);
+            }
+
+            return (rows, total);
+        }
+
+        // Multi-mapping target for the COUNT(*) OVER() column tacked onto the row query above.
+        private class TotalCountRow
+        {
+            public int Total { get; set; }
         }
 
         public async Task<List<RecentSalesItem>> ListOrder(Guid tenantId, string kind, Guid id)

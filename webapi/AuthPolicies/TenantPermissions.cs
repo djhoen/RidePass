@@ -84,6 +84,10 @@
             /// able to EDIT the catalog. Reads carry this; every write stays on CatalogManage.
             /// </summary>
             public const string CatalogRead = "TenantPermAny:catalog.manage|shop.counter";
+            // Any counter can read the discount list: a cashier has to see the buttons they're
+            // allowed to press, and the list is configuration rather than customer data. Managing
+            // discounts is SettingsManage, which is a different question entirely.
+            public const string AnyCounter = "TenantPermAny:sales.counter|concessions.counter|shop.counter";
         }
 
         /// <summary>Any-of policies, as (policy name, permissions) so Program.cs registers exactly
@@ -91,6 +95,7 @@
         public static readonly (string PolicyName, string[] Permissions)[] AnyOfPolicies =
         {
             (Policy.CatalogRead, new[] { CatalogManage, ShopCounter }),
+            (Policy.AnyCounter, new[] { SalesCounter, ConcessionsCounter, ShopCounter }),
         };
 
         public static readonly string[] All =

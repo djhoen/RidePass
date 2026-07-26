@@ -63,8 +63,8 @@
                 <v-chip size="small" variant="tonal">
                     {{ visibleResources.length }} resource{{ visibleResources.length === 1 ? '' : 's' }}
                 </v-chip>
-                <v-chip v-if="isToday" size="small" :color="freeNow > 0 ? 'success' : 'error'" variant="tonal">
-                    {{ freeNow }} of {{ totalCapacity }} free right now
+                <v-chip v-if="isToday" size="small" :color="availableNow > 0 ? 'success' : 'error'" variant="tonal">
+                    {{ availableNow }} of {{ totalCapacity }} available right now
                 </v-chip>
                 <v-chip size="small" variant="tonal">
                     {{ visibleSegments.length }} booking{{ visibleSegments.length === 1 ? '' : 's' }} in view
@@ -300,6 +300,43 @@
                                 Cancel
                             </v-btn>
                         </div>
+
+                        <!-- ── Staff notes ──────────────────────────────────
+                             Append-only, so the person who wrote "comped, don't charge" is
+                             still attached to it three weeks later. Internal: the renter
+                             never sees any of this. -->
+                        <v-divider class="my-3"></v-divider>
+                        <div class="d-flex align-center mb-2">
+                            <span class="text-subtitle-2">Staff notes</span>
+                            <v-chip v-if="notes.length" size="x-small" variant="tonal" class="ml-2">
+                                {{ notes.length }}
+                            </v-chip>
+                            <v-spacer></v-spacer>
+                            <span class="text-caption text-medium-emphasis">Not shown to the renter</span>
+                        </div>
+
+                        <v-alert v-if="notesError" type="error" variant="tonal" density="compact" class="mb-2">
+                            {{ notesError }}
+                        </v-alert>
+
+                        <div class="d-flex ga-2 align-start mb-3">
+                            <v-textarea v-model="noteDraft" label="Add a note" rows="2" auto-grow
+                                density="compact" hide-details style="flex: 1"
+                                @keydown.ctrl.enter="addNote"></v-textarea>
+                            <v-btn color="primary" size="small" :loading="savingNote"
+                                :disabled="!noteDraft.trim()" @click="addNote">Add</v-btn>
+                        </div>
+
+                        <div v-if="notesLoading" class="text-caption text-medium-emphasis">Loading notes…</div>
+                        <div v-else-if="notes.length === 0" class="text-caption text-medium-emphasis">
+                            No notes yet.
+                        </div>
+                        <div v-for="n in notes" :key="n.id" class="rental-note">
+                            <div class="text-body-2">{{ n.body }}</div>
+                            <div class="text-caption text-medium-emphasis">
+                                {{ n.createdByName || 'Staff' }} · {{ formatNoteAt(n.createdAt) }}
+                            </div>
+                        </div>
                     </template>
                 </v-card-text>
             </v-card>
@@ -363,6 +400,7 @@ import {
     type ShopRentalBoard,
     type ShopRentalBoardResource,
     type ShopRentalBoardSegment,
+    type ShopRentalNote,
 } from '@/services/BikeShopService'
 import BookRentalDialog, { type BookRentalPreset, type RentableVariantOption } from '@/components/bikeshop/BookRentalDialog.vue'
 import ReturnRentalDialog from '@/components/bikeshop/ReturnRentalDialog.vue'
@@ -459,8 +497,21 @@ async function load() {
     loading.value = true
     loadError.value = ''
     try {
+        // Fetched WIDER than it is drawn. The board's pre-drag availability check (usedOver) can
+        // only reason about the reservations it has been told about, and a window the user can
+        // create is not bounded by the window on screen: a plain click extends two hours past the
+        // click, and the dialog's From/Until fields are freely editable afterwards. Fetching only
+        // the visible hours meant a bike booked at 20:00 looked free to a 19:00 drag, the drag
+        // sailed through, and the server refused the booking a form-fill later. A day of padding
+        // either side costs a handful of rows and closes that blind spot.
+        //
+        // Nothing downstream needs to change: bars outside the view clip to nothing in toBar,
+        // pool spans are computed only at boundaries inside the view, and visibleSegments filters
+        // on overlap for its count.
         const r = await service.rentalBoard(
-            viewStart.value.toISOString(), viewEnd.value.toISOString(), categoryId.value)
+            viewStart.value.subtract(1, 'day').toISOString(),
+            viewEnd.value.add(1, 'day').toISOString(),
+            categoryId.value)
         if (seq !== loadSeq) return
         board.value = r.data.data
     } catch (e: any) {
@@ -503,7 +554,14 @@ const visibleResources = computed(() => {
 const visibleSegments = computed(() => {
     const items = new Set(visibleResources.value.map(r => r.itemId).filter(Boolean) as string[])
     const pools = new Set(visibleResources.value.filter(r => !r.itemId).map(r => r.variantId))
-    return allSegments.value.filter(s => (s.itemId ? items.has(s.itemId) : pools.has(s.variantId)))
+    return allSegments.value.filter(s => {
+        if (!(s.itemId ? items.has(s.itemId) : pools.has(s.variantId))) return false
+        // Overlap with the DRAWN window, not the fetched one. The fetch is padded a day either
+        // side so the drag check can see conflicts off-screen; counting those here would report
+        // bookings the user cannot see on a chip that says "in view".
+        return new Date(s.startsAt).getTime() < viewEndMs.value
+            && new Date(s.endsAt).getTime() > viewStartMs.value
+    })
 })
 
 const groups = computed(() => {
@@ -681,7 +739,7 @@ function usedOver(r: ShopRentalBoardResource, from: number, to: number): number 
 
 const totalCapacity = computed(() =>
     visibleResources.value.filter(isBookable).reduce((sum, r) => sum + r.capacity, 0))
-const freeNow = computed(() =>
+const availableNow = computed(() =>
     visibleResources.value.filter(isBookable).reduce((sum, r) => {
         const used = usedOver(r, nowMs.value, nowMs.value + 1)
         return sum + Math.max(0, r.capacity - used)
@@ -770,7 +828,7 @@ function onDragUp() {
     // bars already on the board.
     const used = usedOver(d.resource, from, to)
     if (used >= d.resource.capacity) {
-        flash(`${rowTitle(d.resource)} is already booked across that window. Pick a free gap.`, 'error')
+        flash(`${rowTitle(d.resource)} is already booked across that window. Pick an open gap.`, 'error')
         return
     }
 
@@ -895,15 +953,68 @@ function openSpan(span: PoolSpan) {
     rentalOpen.value = true
 }
 
+// ── Staff notes on a booking ─────────────────────────────────────────────────
+// Append-only thread, internal. Kept beside the rental rather than folded into
+// conditionNotes, which is the single how-it-came-back record written at return.
+const notes = ref<ShopRentalNote[]>([])
+const notesLoading = ref(false)
+const notesError = ref<string | null>(null)
+const noteDraft = ref('')
+const savingNote = ref(false)
+
+function formatNoteAt(iso: string) {
+    return dayjs(iso).format('MMM D, h:mm a')
+}
+
+async function loadNotes(rentalId: string) {
+    notesLoading.value = true
+    notesError.value = null
+    try {
+        const r = await service.listRentalNotes(rentalId)
+        notes.value = r.data.data
+    } catch (e: any) {
+        notesError.value = e.response?.data?.error
+            || 'Could not load the notes for this booking. Reopen it to try again.'
+    } finally {
+        notesLoading.value = false
+    }
+}
+
+async function addNote() {
+    const body = noteDraft.value.trim()
+    const rentalId = openRentalData.value?.id
+    if (!body || !rentalId) return
+    savingNote.value = true
+    notesError.value = null
+    try {
+        const r = await service.addRentalNote(rentalId, body)
+        // Prepend rather than refetch: the thread is newest-first and the server
+        // returns the row it just wrote, author name included.
+        notes.value = [r.data.data, ...notes.value]
+        noteDraft.value = ''
+    } catch (e: any) {
+        notesError.value = e.response?.data?.error
+            || 'Could not save the note. It has not been added; try again.'
+    } finally {
+        savingNote.value = false
+    }
+}
+
 async function openRental(rentalId: string) {
     spanChoices.value = []
     rentalOpen.value = true
     rentalLoading.value = true
     rentalError.value = ''
     openRentalData.value = null
+    notes.value = []
+    noteDraft.value = ''
+    notesError.value = null
     try {
         const r = await service.getRental(rentalId)
         openRentalData.value = r.data.data
+        // Notes are secondary: load them after the rental so a note failure never
+        // stops the booking itself from opening.
+        loadNotes(rentalId)
     } catch (e: any) {
         rentalError.value = e.response?.data?.error
             || 'Could not open that rental. Close this and try again, or find it on the bookings list.'
@@ -1153,4 +1264,10 @@ onBeforeUnmount(() => {
         transparent 3px,
         transparent 6px);
 }
+
+.rental-note {
+    padding: 6px 0;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.rental-note:first-of-type { border-top: none; }
 </style>

@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -755,7 +755,7 @@ namespace webapi.Controllers
         }
 
         // Populate demo/seed data for a tenant (users, events past/present/future, purchases, waivers,
-        // F&B + orders, gift cards, coupons, rewards, rentals, disputes, newsletter, blackouts, branding,
+        // F&B + orders, gift cards, coupons, rentals, disputes, newsletter, blackouts, branding,
         // bike shop, lesson instructors, customer bikes + inspections). STAGE + LOCAL ONLY: hard-refused
         // on production so it can never touch real data.
         // Safe to re-run: the seeder skips sections that already have data, so a re-run on a seeded

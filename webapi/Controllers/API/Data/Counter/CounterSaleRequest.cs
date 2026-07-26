@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace webapi.Controllers.API.Data.Counter
 {
@@ -21,7 +21,15 @@ namespace webapi.Controllers.API.Data.Counter
         public string? ParentName { get; set; }
         public string? ParentPhone { get; set; }
 
-        public Guid? RewardRedemptionId { get; set; }
+
+        // A tenant-defined staff discount ("Military 10%", "VMBA member") the cashier chose. The
+        // server resolves the amount from the preset and never trusts a client-sent figure. It comes
+        // off ONLY the cart lines whose kind the preset is scoped to, so "10% off event tickets"
+        // leaves a membership in the same cart alone.
+        public Guid? DiscountPresetId { get; set; }
+
+        // Required when the chosen discount is one the tenant marked as needing a manager.
+        public string? ManagerPin { get; set; }
 
         // Store credit as a tender: the account the cashier looked up and how much of its
         // balance to apply. The server re-verifies the balance and caps at the sale total.

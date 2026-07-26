@@ -73,9 +73,17 @@
                         <v-text-field v-model="buyerName" label="Customer name (optional)" density="compact" class="mt-4" hide-details></v-text-field>
                         <v-text-field v-model="buyerEmail" type="email" label="Member email (auto-applies pass perks) / receipt" density="compact" class="mt-4" hide-details></v-text-field>
                         <v-row dense class="mt-2">
-                            <v-col cols="7"><v-text-field v-model="couponCode" label="Promo code" density="compact" hide-details></v-text-field></v-col>
-                            <v-col cols="5"><v-text-field v-model.number="tipDollars" type="number" min="0" step="0.01" label="Tip" prefix="$" density="compact" hide-details></v-text-field></v-col>
+                            <v-col cols="12"><v-text-field v-model="couponCode" label="Promo code" density="compact" hide-details></v-text-field></v-col>
                         </v-row>
+                        <!-- Staff-applied discount, distinct from the promo code above: the customer
+                             brings a code, the cashier chooses one of these. Some need a manager PIN. -->
+                        <v-select v-if="discounts.length" v-model="discountPresetId" :items="discountItems"
+                            label="Discount (optional)" density="compact" variant="outlined" hide-details
+                            clearable class="mt-4"></v-select>
+                        <v-text-field v-if="selectedDiscountNeedsPin" v-model="managerPin" type="password"
+                            label="Manager PIN" density="compact" variant="outlined" hide-details class="mt-4"
+                            prepend-inner-icon="mdi-shield-key"
+                            hint="This discount needs a manager's approval." persistent-hint></v-text-field>
                         <v-text-field v-model="giftCardCode" label="Gift card code" density="compact" hide-details
                             class="mt-4" prepend-inner-icon="mdi-gift"></v-text-field>
 
@@ -172,16 +180,67 @@
             </v-card>
         </v-dialog>
 
+        <!-- ── Scanned a barcode the shared parts library recognises but this shop doesn't stock ──
+             The value here is that the cashier learns WHAT the thing is instead of "no match".
+             Everything shown is identity: no price, because the library holds none by design. -->
+        <v-dialog :model-value="!!unknownPart" max-width="480" @update:model-value="unknownPart = null">
+            <v-card v-if="unknownPart?.suggestion">
+                <v-card-title class="d-flex align-center">
+                    <span>Not in your catalog</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="unknownPart = null"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">
+                        You scanned <strong>{{ unknownPart.scanned }}</strong>. Your shop doesn't carry
+                        it, but other shops on RidePass have identified it:
+                    </p>
+
+                    <div class="text-h6">{{ unknownPart.suggestion.name }}</div>
+                    <div v-if="unknownPart.suggestion.brand" class="text-body-2">
+                        {{ unknownPart.suggestion.brand }}
+                    </div>
+                    <div v-if="unknownPart.suggestion.mpn" class="text-caption text-medium-emphasis">
+                        Part number {{ unknownPart.suggestion.mpn }}
+                    </div>
+                    <div v-if="unknownPart.suggestion.categoryHint" class="text-caption text-medium-emphasis">
+                        Usually filed under {{ unknownPart.suggestion.categoryHint }}
+                    </div>
+
+                    <v-alert type="info" variant="tonal" density="compact" class="mt-4">
+                        {{ suggestionConfidence }}
+                    </v-alert>
+
+                    <p class="text-caption text-medium-emphasis mt-3">
+                        No price is shown because what a part sells for is each shop's own decision.
+                        Add it to your catalog to set yours.
+                    </p>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="unknownPart = null">Close</v-btn>
+                    <!-- Adding a product is a catalog write, so a cashier without catalog rights
+                         gets the identification but not the button. The server enforces this too. -->
+                    <v-btn v-if="canManageCatalog" color="primary" variant="text"
+                        @click="addSuggestedToCatalog">Add to catalog</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackColor" :timeout="3500">{{ snackText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { BikeShopService, type ShopProduct, type ShopVariant, type ShopItem } from '@/services/BikeShopService'
+import { BikeShopService, type ShopProduct, type ShopVariant, type ShopItem, type ShopScanResolution } from '@/services/BikeShopService'
+import { useRouter } from 'vue-router'
+import authHelper from '@/helpers/AuthHelper'
+import { Perm } from '@/helpers/TenantPermissions'
 import { type CreditLookupResult } from '@/services/CreditService'
 import CreditLookupField from '@/components/CreditLookupField.vue'
 import { branding } from '@/stores/branding'
+import { DiscountService, type DiscountPreset } from '@/services/DiscountService'
 import { getStripe } from '@/helpers/StripeHelper'
 import { getTerminal, discoverAndConnect, collectAndProcess } from '@/helpers/TerminalHelper'
 import { printReceipt, type Receipt } from '@/helpers/ReceiptPrinter'
@@ -221,6 +280,20 @@ const buyerEmail = ref('')
 const couponCode = ref('')
 const giftCardCode = ref('')
 
+// Tenant discounts scoped to this counter. Fetched server-side already filtered, so the list can
+// never offer one the sale would then refuse.
+const discountService = new DiscountService()
+const discounts = ref<DiscountPreset[]>([])
+const discountPresetId = ref<string | null>(null)
+const managerPin = ref('')
+const discountItems = computed(() => discounts.value.map(d => ({
+    // The lock tells the cashier a PIN is coming before they pick it, not after.
+    title: `${d.name} · ${d.label}${d.requiresManager ? '  (needs manager)' : ''}`,
+    value: d.id,
+})))
+const selectedDiscountNeedsPin = computed(() =>
+    !!discounts.value.find(d => d.id === discountPresetId.value)?.requiresManager)
+
 // ── Card reader (WisePOS E, same SDK flow as the F&B POS) ──────────────────
 const readerState = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle')
 const readerConnecting = ref(false)
@@ -249,7 +322,6 @@ async function connectReader() {
         readerState.value = 'error'
     } finally { readerConnecting.value = false }
 }
-const tipDollars = ref<number | null>(null)
 
 const busy = ref(false)
 const payMethod = ref<'cash' | 'card' | null>(null)
@@ -276,18 +348,87 @@ const sellableVariants = computed<Tile[]>(() =>
             barcode: v.barcode,
         }))))
 
-// Scanner input: an Enter in the search box with an exact barcode/SKU match adds that variant
-// straight to the cart and clears the box, so a USB scanner just works.
-function scanEnter() {
-    const code = search.value?.trim().toLowerCase()
-    if (!code) return
-    const hit = sellableVariants.value.find(v =>
-        v.barcode?.toLowerCase() === code || v.sku?.toLowerCase() === code)
-    if (hit) {
-        addVariant(hit)
+// Scanner input: an Enter in the search box resolves the code SERVER-side and adds the match to
+// the cart, so a USB scanner just works.
+//
+// Resolved on the server rather than by filtering the loaded catalog, because the old client-side
+// match had two failure modes a shop would hit daily: it could only find products already
+// downloaded into this browser, and it compared the code as a raw string, so a part stored as a
+// 12-digit UPC-A did not match when the scanner emitted the 13-digit EAN form. The server
+// normalises both to a GTIN-14 first.
+const scanning = ref(false)
+const router = useRouter()
+
+// ── Scanned something the shared library knows but this shop doesn't stock ────────────────
+// Held rather than flashed: it carries a name the cashier may want to read out, and on a shop
+// with catalog rights it is the start of adding the product.
+const unknownPart = ref<Extract<ShopScanResolution, { found: false }> | null>(null)
+const canManageCatalog = computed(() => authHelper.hasPermission(Perm.CatalogManage))
+
+// Hands the identity to the catalog page, which opens its new-product dialog already filled in.
+// Only identity travels: the shop still sets its own price, category and stock. The name is the
+// MANUFACTURER'S, used as a starting point for the shop's own product name, which they can change
+// freely afterwards without that ever being visible to another track.
+function addSuggestedToCatalog() {
+    const s = unknownPart.value?.suggestion
+    if (!s) return
+    const gtin = unknownPart.value?.gtin14 ?? unknownPart.value?.scanned ?? ''
+    unknownPart.value = null
+    router.push({
+        path: '/Admin/BikeShop',
+        query: { newName: s.name, newBrand: s.brand ?? undefined, newBarcode: gtin || undefined },
+    })
+}
+
+// "1 shop" is honest about being one shop's word; nine shops agreeing is worth saying out loud.
+const suggestionConfidence = computed(() => {
+    const n = unknownPart.value?.suggestion?.timesConfirmed ?? 0
+    if (n <= 1) return 'Identified by 1 shop on RidePass. Worth a second look before you trust it.'
+    return `Independently confirmed by ${n} shops on RidePass.`
+})
+async function scanEnter() {
+    const code = search.value?.trim()
+    if (!code || scanning.value) return
+    scanning.value = true
+    try {
+        const r = await service.resolveScan(code)
+        const res = r.data.data
+        if (!res.found) {
+            // The shared parts library may still know what this barcode IS even though this shop
+            // has never carried it. Saying "this is a Bontrager tube, you just don't stock it" is a
+            // different and far more actionable message than "no match", so it gets its own panel
+            // rather than a snackbar that vanishes while the cashier is still reading it.
+            if (res.suggestion) { unknownPart.value = res; return }
+            flash(res.isValidBarcode
+                ? `Barcode ${res.scanned} isn't in your catalog yet. Add it as a product first.`
+                : `Nothing matches "${res.scanned}". Check the code, or search by name.`, 'error')
+            return
+        }
+        if (res.salePriceCents == null) {
+            flash(`${res.productName} has no sale price set, so it can't be rung up.`, 'error')
+            return
+        }
+        if (res.availableCount <= 0) {
+            flash(`${res.productName} is out of stock.`, 'error')
+            return
+        }
+        addVariant({
+            key: res.variantId,
+            variantId: res.variantId,
+            productName: res.productName,
+            label: [res.size, res.color].filter(Boolean).join(' / '),
+            salePriceCents: res.salePriceCents,
+            availableCount: res.availableCount,
+            trackingKind: res.trackingKind,
+            sku: res.sku,
+            barcode: res.barcode,
+        })
         search.value = ''
-    } else {
-        flash('No product matches that barcode or SKU.', 'error')
+    } catch (e: any) {
+        flash(e.response?.data?.error
+            || 'Could not look that code up. Check the connection and scan again.', 'error')
+    } finally {
+        scanning.value = false
     }
 }
 
@@ -370,7 +511,8 @@ async function checkout(method: 'cash' | 'card') {
             buyerEmail: buyerEmail.value.trim() || null,
             couponCode: couponCode.value.trim() || null,
             giftCardCode: giftCardCode.value.trim() || null,
-            tipCents: tipDollars.value != null && !isNaN(tipDollars.value) ? Math.round(tipDollars.value * 100) : 0,
+            discountPresetId: discountPresetId.value || null,
+            managerPin: managerPin.value || null,
             creditAccountId: creditAccount.value?.id ?? null,
             creditCents: creditAccount.value?.balanceCents ?? 0,
             cardPresent: useReader,
@@ -463,7 +605,7 @@ function finishSale(orderNumber: number | null, totalCents: number, method: stri
     lastTotal.value = totalCents
     lastMethod.value = method
     // Snapshot the receipt before the cart is cleared. Server-priced facts (tax, discounts, the
-    // full total including tip) come from the ring-up response; line detail from the cart.
+    // full total) come from the ring-up response; line detail from the cart.
     const facts = lastRingUp.value
     lastReceipt.value = {
         header: branding.displayName || 'Receipt',
@@ -476,7 +618,6 @@ function finishSale(orderNumber: number | null, totalCents: number, method: stri
         subtotalCents: facts?.subtotalCents ?? cart.value.reduce((s, l) => s + l.salePriceCents * l.qty, 0),
         discountCents: facts?.discountCents ?? 0, discountLabel: null,
         taxCents: facts?.taxCents ?? 0, pricesIncludeTax: false,
-        tipCents: tipDollars.value != null && !isNaN(tipDollars.value) ? Math.round(tipDollars.value * 100) : 0,
         totalCents: facts?.totalCents ?? totalCents, method,
     }
     doneOpen.value = true
@@ -485,8 +626,9 @@ function finishSale(orderNumber: number | null, totalCents: number, method: stri
     buyerName.value = ''
     buyerEmail.value = ''
     couponCode.value = ''
+    discountPresetId.value = null
+    managerPin.value = ''
     giftCardCode.value = ''
-    tipDollars.value = null
     clearCredit()
     reload()   // refresh stock counts
 }
@@ -532,7 +674,18 @@ async function reload() {
     finally { loading.value = false }
 }
 
-onMounted(reload)
+async function loadDiscounts() {
+    try {
+        const r = await discountService.forSurface('shop_sale')
+        discounts.value = r.data.data
+    } catch {
+        // The picker is optional; a sale can still be rung without it, so a failure here must not
+        // block the register. It simply won't offer discounts this session.
+        discounts.value = []
+    }
+}
+
+onMounted(() => { reload(); loadDiscounts() })
 </script>
 
 <style scoped>

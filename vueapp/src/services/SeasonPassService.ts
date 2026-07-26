@@ -34,6 +34,13 @@ export interface SeasonPassProduct {
     requiresWaiver: boolean
     riderPaidServiceChargeBps: number
     isActive: boolean
+    /** Staff-only product: never listed publicly, never purchasable, granted from
+     *  Admin > Employee Passes. Only ever true on the admin product list. */
+    isEmployee: boolean
+    /** Event types the buddy-pass perk is good for. Empty (with a quantity) is invalid. */
+    buddyEventTypeIds: string[]
+    /** Buddy passes also work on days with no event. Requires the perk to be free. */
+    buddyIncludeWalkUp: boolean
     sortOrder: number
     /** Landing-page fields (null slug = no landing page). Body is Tiptap HTML. */
     slug: string | null
@@ -57,6 +64,13 @@ export interface UpsertSeasonPassProduct {
     requiresWaiver: boolean
     riderPaidServiceChargeBps: number
     isActive: boolean
+    /** Staff-only product: never listed publicly, never purchasable, granted from
+     *  Admin > Employee Passes. Only ever true on the admin product list. */
+    isEmployee: boolean
+    /** Event types the buddy-pass perk is good for. Empty (with a quantity) is invalid. */
+    buddyEventTypeIds: string[]
+    /** Buddy passes also work on days with no event. Requires the perk to be free. */
+    buddyIncludeWalkUp: boolean
     sortOrder: number
     slug: string | null
     heroImageUrl: string | null
@@ -155,8 +169,26 @@ export interface PassReservation {
 export interface PassTodayEvent {
     id: string
     title: string
+    /** So the buddy flow can offer only events the entitlement is good for. */
+    eventTypeId: string
     startsAtUtc: string
     endsAtUtc: string
+}
+
+/** A pass holder's guest-admission entitlement, as the counter needs it. */
+export interface BuddyEntitlement {
+    total: number
+    used: number
+    remaining: number
+    /** True when the perk covers admission outright. Only these redeem today. */
+    isFree: boolean
+    discountKind: string
+    discountValue: number
+    /** Human-readable list of what it's good for, for the panel. */
+    goodFor: string[]
+    /** Event types it covers, for filtering the event picker. */
+    eventTypeIds: string[]
+    coversWalkUpDays: boolean
 }
 
 export interface PassLookup {
@@ -196,6 +228,8 @@ export interface PassLookup {
     holderBirthdate: string | null
     /** Tenant requires waiver + verified ID before a wristband may be issued. */
     requireIdForWristband: boolean
+    /** Null when this pass's product grants no buddy admissions (most products). */
+    buddyPass: BuddyEntitlement | null
 }
 
 export interface VerifyRiderIdResult {
@@ -211,6 +245,102 @@ export interface GateRedeemResult {
     alreadyAdmitted: boolean
     checkedInAtUtc: string | null
     creditsRemaining: number | null
+}
+
+/** One row of the admin Employee Passes roster. */
+export interface EmployeePassRosterItem {
+    userId: string
+    email: string
+    name: string | null
+    role: string | null
+    isActiveEmployee: boolean
+    passPurchaseId: string | null
+    productName: string | null
+    amountCents: number | null
+    validFromDate: string | null
+    validToDate: string | null
+    issuedAtUtc: string | null
+    issuedByName: string | null
+    /** Server-computed so the page and the gate can't disagree. */
+    passState: 'none' | 'pending_payment' | 'not_registered' | 'active' | 'inactive_employee'
+}
+
+export interface EmployeePassProductOption {
+    id: string
+    name: string
+    priceCents: number
+    validFromDate: string
+    validToDate: string
+    isActive: boolean
+    benefits: SeasonPassBenefit[]
+}
+
+export interface EmployeeEventTypeOption {
+    id: string
+    name: string
+    code: string | null
+}
+
+export interface EmployeePassRosterResponse {
+    rows: EmployeePassRosterItem[]
+    products: EmployeePassProductOption[]
+    eventTypes: EmployeeEventTypeOption[]
+    /** Which surfaces honour a per-pass benefit today, so the UI can't promise one that won't apply. */
+    surfaceLive: Record<string, boolean>
+}
+
+export interface BuddyRedemptionItem {
+    id: string
+    holderName: string | null
+    buddyName: string | null
+    buddyEmail: string | null
+    eventTitle: string | null
+    redeemedAtUtc: string
+    redeemedByName: string | null
+    creditReturned: boolean
+    creditReturnedAtUtc: string | null
+    creditReturnedByName: string | null
+    creditReturnReason: string | null
+}
+
+export interface UpgradePathItem {
+    id: string
+    fromProductId: string
+    toProductId: string
+    fromProductName: string | null
+    toProductName: string | null
+    priceCents: number
+    isActive: boolean
+    /** Holders who could take this offer today. */
+    eligibleHolders: number
+}
+
+export interface UpgradeProductOption {
+    id: string
+    name: string
+    kind: string
+    priceCents: number
+    isActive: boolean
+}
+
+export interface UpgradePathsResponse {
+    paths: UpgradePathItem[]
+    products: UpgradeProductOption[]
+}
+
+/** An upgrade the signed-in rider can take on one of their passes. */
+export interface UpgradeOfferItem {
+    pathId: string
+    passPurchaseId: string
+    fromProductName: string
+    toProductId: string
+    toProductName: string
+    toProductDescription: string | null
+    toProductKind: string
+    toProductTotalCredits: number | null
+    toValidFromDate: string
+    toValidToDate: string
+    priceCents: number
 }
 
 export class SeasonPassService {
@@ -286,9 +416,68 @@ export class SeasonPassService {
     clearPassHolderIdVerification(token: string) {
         return axios.post(`${this.apiUrl}/SeasonPass/Pass/${token}/ClearIdVerification`)
     }
+    // ── Upgrades ─────────────────────────────────────────────────────────────
+    /** Admin: every offer plus both axes of the matrix. */
+    listUpgrades() {
+        return axios.get<{ data: UpgradePathsResponse }>(`${this.apiUrl}/SeasonPass/Upgrades`)
+    }
+    /** Admin: write one cell. Upserts on the product pair. */
+    upsertUpgrade(body: { fromProductId: string; toProductId: string; priceCents: number; isActive: boolean }) {
+        return axios.put(`${this.apiUrl}/SeasonPass/Upgrades`, body)
+    }
+    deleteUpgrade(id: string) {
+        return axios.delete(`${this.apiUrl}/SeasonPass/Upgrades/${id}`)
+    }
+    /** Rider: upgrades available on my passes right now. */
+    myUpgrades() {
+        return axios.get<{ data: UpgradeOfferItem[] }>(`${this.apiUrl}/SeasonPass/MyUpgrades`)
+    }
+    /** Rider: take one. Price is re-resolved server-side, so only ids are sent. */
+    buyUpgrade(passPurchaseId: string, pathId: string) {
+        return axios.post<{ data: { passPurchaseId: string; redemptionToken: string; amountCents: number; clientSecret: string | null } }>(
+            `${this.apiUrl}/SeasonPass/Upgrade`, { passPurchaseId, pathId })
+    }
+
+    // ── Buddy passes ─────────────────────────────────────────────────────────
+    /** Spend one of the holder's guest admissions. The holder must be present; scanning their
+     *  pass to get passPurchaseId is what establishes that. */
+    redeemBuddyPass(passPurchaseId: string, buddyUserId: string, tierId: string) {
+        return axios.post<{ data: { redemptionId: string; ticketPurchaseId: string; remaining: number } }>(
+            `${this.apiUrl}/SeasonPass/Buddy/Redeem`, { passPurchaseId, buddyUserId, tierId })
+    }
+    /** Buddy usage for the admin report. Returned credits are included and flagged. */
+    buddyUsage() {
+        return axios.get<{ data: BuddyRedemptionItem[] }>(`${this.apiUrl}/SeasonPass/Buddy/Usage`)
+    }
+    /** Hand a spent credit back to the holder. Entitlement only: no money, admission untouched. */
+    returnBuddyCredit(redemptionId: string, reason: string) {
+        return axios.post(`${this.apiUrl}/SeasonPass/Buddy/${redemptionId}/ReturnCredit`, { reason })
+    }
+
     /** Admin support override of a credits pass's remaining rides (audit-logged, reason required). */
     adjustCredits(passPurchaseId: string, creditsRemaining: number, reason: string) {
         return axios.put(`${this.apiUrl}/SeasonPass/Admin/Purchases/${passPurchaseId}/Credits`,
             { creditsRemaining, reason })
+    }
+
+    // ── Employee passes ──────────────────────────────────────────────────────
+    /** Staff roster with the employee pass each holds, plus the products available to issue. */
+    employeePassRoster() {
+        return axios.get<{ data: EmployeePassRosterResponse }>(`${this.apiUrl}/SeasonPass/Employee/Roster`)
+    }
+    /** Approve and issue an employee pass. Never automatic: this call IS the approval. */
+    issueEmployeePass(userId: string, productId: string) {
+        return axios.post(`${this.apiUrl}/SeasonPass/Employee/Issue`, { userId, productId })
+    }
+    /** Replace what an employee pass grants. Touches only benefit rows, so it can't blank the
+     *  product's landing page or pricing the way a full upsert from this page would. */
+    updateEmployeeBenefits(productId: string, benefits: Array<{
+        benefitType: string; scopeId: string | null; discountKind: string; discountValue: number
+    }>) {
+        return axios.put(`${this.apiUrl}/SeasonPass/Employee/Products/${productId}/Benefits`, { benefits })
+    }
+    /** Withdraw an issued pass. Distinct from the holder simply going inactive. */
+    revokeEmployeePass(passPurchaseId: string, reason: string) {
+        return axios.post(`${this.apiUrl}/SeasonPass/Employee/${passPurchaseId}/Revoke`, { reason })
     }
 }

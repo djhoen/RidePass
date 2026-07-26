@@ -155,6 +155,44 @@
                                 label="Shop purchases" suffix="% off" density="compact" hide-details style="max-width: 170px"
                                 @update:model-value="setSurfacePercent('retail', $event)"></v-text-field>
                         </div>
+
+                        <!-- ── Buddy passes ─────────────────────────────────────── -->
+                        <div class="text-subtitle-2 mt-5 mb-1">Buddy passes</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Guest admissions the holder can spend at the counter, with them present.
+                            Staff look the guest up (or create their account) and redeem one. 0 = none.
+                        </p>
+                        <div class="d-flex ga-3 align-center flex-wrap">
+                            <v-text-field :model-value="buddyQuantity" type="number" min="0" max="50"
+                                label="Per season" density="compact" hide-details style="max-width: 140px"
+                                @update:model-value="setBuddyQuantity($event)"></v-text-field>
+                            <v-select v-if="buddyQuantity > 0" :model-value="buddyIsFree ? 'free' : 'discount'"
+                                :items="[{ title: 'Free entry', value: 'free' }, { title: 'Discount', value: 'discount' }]"
+                                label="Worth" density="compact" hide-details style="max-width: 170px"
+                                @update:model-value="setBuddyMode($event)"></v-select>
+                            <v-text-field v-if="buddyQuantity > 0 && !buddyIsFree" :model-value="buddyPercent"
+                                type="number" min="1" max="99" label="Discount" suffix="% off"
+                                density="compact" hide-details style="max-width: 150px"
+                                @update:model-value="setBuddyPercent($event)"></v-text-field>
+                        </div>
+
+                        <template v-if="buddyQuantity > 0">
+                            <div class="text-caption text-medium-emphasis mt-3 mb-1">
+                                Good for — pick at least one. A buddy pass with nothing ticked admits nobody.
+                            </div>
+                            <div class="d-flex flex-wrap ga-x-4">
+                                <v-checkbox v-for="t in eventTypes" :key="t.id" :label="t.name"
+                                    density="compact" hide-details
+                                    :model-value="form.buddyEventTypeIds.includes(t.id)"
+                                    @update:model-value="toggleBuddyScope(t.id, !!$event)"></v-checkbox>
+                                <v-checkbox v-model="form.buddyIncludeWalkUp" label="Days with no event"
+                                    density="compact" hide-details :disabled="!buddyIsFree"></v-checkbox>
+                            </div>
+                            <div v-if="!buddyIsFree" class="text-caption text-medium-emphasis">
+                                Days with no event need the perk to be free: with no event there's no
+                                ticket price to take a percentage of.
+                            </div>
+                        </template>
                     </template>
 
                     <v-divider class="my-3"></v-divider>
@@ -168,6 +206,13 @@
                         </v-col>
                     </v-row>
                     <v-switch v-model="form.isActive" label="Active" hide-details color="primary"></v-switch>
+                    <v-switch v-model="form.isEmployee" label="Employee pass (staff only)" hide-details
+                        color="primary" class="mt-2"></v-switch>
+                    <div class="text-caption text-medium-emphasis">
+                        Hidden from riders and impossible to buy. Grant it from Admin &gt; Employee
+                        Passes. Only an employee pass may be free, and it stops working the moment
+                        the staff account is deactivated.
+                    </div>
                     </v-window-item>
 
                     <!-- ── Landing page tab ─────────────────────────────────────── -->
@@ -312,6 +357,9 @@ const form = ref({
     requiresWaiver: true,
     riderPaidServiceChargePct: 100,
     isActive: true,
+    isEmployee: false,
+    buddyEventTypeIds: [] as string[],
+    buddyIncludeWalkUp: false,
     slug: '',
     heroImageUrl: null as string | null,
     landingHtml: '',
@@ -415,6 +463,54 @@ function setEventBenefitMode(eventTypeId: string, mode: unknown) {
     // server rejects as a half-filled row.
     b.discountValue = mode === 'free' ? 10000 : 5000
 }
+// Buddy passes are a COUNTABLE grant, so quantity carries the meaning and the discount says
+// what each one is worth. 10000 bps = free entry, which is the common case.
+const buddyBenefit = computed(() => form.value.benefits.find(b => b.benefitType === 'buddy_pass'))
+const buddyQuantity = computed(() => buddyBenefit.value?.quantity ?? 0)
+const buddyIsFree = computed(() => {
+    const b = buddyBenefit.value
+    return !b || (b.discountKind === 'percent' && b.discountValue >= 10000)
+})
+const buddyPercent = computed(() => Math.round((buddyBenefit.value?.discountValue ?? 10000) / 100))
+
+function setBuddyQuantity(v: unknown) {
+    const n = Math.max(0, Math.trunc(Number(v) || 0))
+    if (n <= 0) {
+        form.value.benefits = form.value.benefits.filter(b => b.benefitType !== 'buddy_pass')
+        form.value.buddyEventTypeIds = []
+        form.value.buddyIncludeWalkUp = false
+        return
+    }
+    const b = buddyBenefit.value
+    if (b) b.quantity = n
+    else {
+        form.value.benefits.push({
+            benefitType: 'buddy_pass', scopeId: null,
+            discountKind: 'percent', discountValue: 10000, quantity: n,
+        })
+    }
+}
+function setBuddyMode(mode: unknown) {
+    const b = buddyBenefit.value
+    if (!b) return
+    // Seed a discount at 50 rather than 0, which the server rejects as a half-filled row.
+    b.discountValue = mode === 'free' ? 10000 : 5000
+    // A walk-up scope is only coherent when the perk is free, so drop it when switching away.
+    if (mode !== 'free') form.value.buddyIncludeWalkUp = false
+}
+function setBuddyPercent(v: unknown) {
+    const b = buddyBenefit.value
+    if (!b) return
+    const n = Math.min(99, Math.max(1, Math.trunc(Number(v) || 0)))
+    b.discountValue = n * 100
+}
+function toggleBuddyScope(eventTypeId: string, on: boolean) {
+    const set = new Set(form.value.buddyEventTypeIds)
+    if (on) set.add(eventTypeId)
+    else set.delete(eventTypeId)
+    form.value.buddyEventTypeIds = [...set]
+}
+
 // Whole-surface perks (rentals / bike shop retail): at most one benefit per surface, percent only.
 function surfacePercent(type: 'rental' | 'retail'): number {
     const b = form.value.benefits.find(x => x.benefitType === type)
@@ -479,6 +575,9 @@ function openCreate() {
         requiresWaiver: true,
         riderPaidServiceChargePct: 100,
         isActive: true,
+    isEmployee: false,
+    buddyEventTypeIds: [] as string[],
+    buddyIncludeWalkUp: false,
         slug: '',
         heroImageUrl: null,
         landingHtml: '',
@@ -503,6 +602,9 @@ function openEdit(p: SeasonPassProduct) {
         requiresWaiver: p.requiresWaiver,
         riderPaidServiceChargePct: p.riderPaidServiceChargeBps / 100,
         isActive: p.isActive,
+        isEmployee: p.isEmployee,
+        buddyEventTypeIds: [...(p.buddyEventTypeIds ?? [])],
+        buddyIncludeWalkUp: p.buddyIncludeWalkUp ?? false,
         slug: p.slug ?? '',
         heroImageUrl: p.heroImageUrl,
         landingHtml: p.landingHtml ?? '',
@@ -541,6 +643,9 @@ async function save() {
             requiresWaiver: form.value.requiresWaiver,
             riderPaidServiceChargeBps: Math.round((form.value.riderPaidServiceChargePct || 0) * 100),
             isActive: form.value.isActive,
+            isEmployee: form.value.isEmployee,
+            buddyEventTypeIds: form.value.buddyEventTypeIds,
+            buddyIncludeWalkUp: form.value.buddyIncludeWalkUp,
             sortOrder: 100,
             slug: form.value.slug.trim() || null,
             heroImageUrl: form.value.heroImageUrl,

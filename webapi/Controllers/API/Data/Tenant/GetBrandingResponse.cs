@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.Tenant
+﻿namespace webapi.Controllers.API.Data.Tenant
 {
     public class GetBrandingResponse
     {
@@ -25,6 +25,9 @@ namespace webapi.Controllers.API.Data.Tenant
         public bool AllowEventSubscriptions { get; set; }
         public bool RequireIdAtCheckin { get; set; }
         public bool RequireIdForWristband { get; set; }
+        /// <summary>Customer's share of the platform service charge on a bike shop sale (bps).
+        /// 0 = the shop absorbs it and no fee line is shown at checkout.</summary>
+        public int ShopBuyerPaidServiceChargeBps { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }
         // 'platform' (default) or 'direct'. When 'direct', the SPA must initialize Stripe.js with
@@ -84,7 +87,15 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? StaffHoursEnd { get; set; }
         public bool StaffAlertsEnabled { get; set; }
         public int StaffAlertRefundCents { get; set; } = 50000;
+        /// <summary>Whether several discounts may combine on one sale. Default false.</summary>
+        public bool AllowDiscountStacking { get; set; }
         public bool ConcessionsEnabled { get; set; }
+        public bool SeasonPassDiscountEnabled { get; set; }
+        public string SeasonPassDiscountKind { get; set; } = "percent";
+        public int SeasonPassDiscountValue { get; set; }
+        public bool SeasonPassDiscountAppliesConcession { get; set; }
+        public bool SeasonPassDiscountAppliesRetail { get; set; }
+        public bool SeasonPassDiscountAppliesRental { get; set; }
         public bool BikeShopEnabled { get; set; }
         /// <summary>Days after pickup to email a shop service reminder; 0 = off.</summary>
         public int ShopServiceReminderDays { get; set; }

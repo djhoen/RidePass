@@ -21,7 +21,14 @@ namespace webapi.Controllers.API.Data.BikeShop
         [MaxLength(200)] public string? BuyerEmail { get; set; }
 
         [MaxLength(40)] public string? CouponCode { get; set; }
-        [Range(0, 1_000_000)] public int TipCents { get; set; }
+
+        // A staff-applied discount from the tenant list (Settings > Discounts), scoped to the
+        // 'shop_sale' surface. Separate from CouponCode, which the CUSTOMER supplies: this one the
+        // cashier chooses, which is why it can carry a manager requirement.
+        public Guid? DiscountPresetId { get; set; }
+        // Manager PIN, when the chosen discount is one the tenant marked as needing one. Ignored
+        // otherwise. The server decides whether it was required, never the client.
+        public string? ManagerPin { get; set; }
 
         // Store credit as a tender: the account the cashier looked up and how much of its
         // balance to apply. The server re-verifies the balance and caps at the sale total.

@@ -152,6 +152,55 @@
                                 </v-expansion-panel-text>
                             </v-expansion-panel>
 
+                            <!-- Season passes -->
+                            <v-expansion-panel v-if="branding.seasonPassesEnabled && seasonPasses.length > 0"
+                                value="season_pass">
+                                <v-expansion-panel-title>
+                                    <div class="d-flex align-center ga-2">
+                                        <v-icon>mdi-ticket-account</v-icon>
+                                        <span>Season passes</span>
+                                        <v-chip v-if="cartCount('season_pass') > 0" size="x-small" color="primary" class="ml-1">
+                                            {{ cartCount('season_pass') }}
+                                        </v-chip>
+                                    </div>
+                                </v-expansion-panel-title>
+                                <v-expansion-panel-text>
+                                    <v-card v-for="p in seasonPasses" :key="p.id"
+                                        variant="outlined" class="pa-4 d-flex align-center ga-3 mb-2">
+                                        <v-icon size="40" color="primary">mdi-ticket-account</v-icon>
+                                        <div class="flex-grow-1" style="min-width: 0">
+                                            <div class="text-body-1"><strong>{{ p.name }}</strong></div>
+                                            <div class="text-caption text-medium-emphasis">
+                                                ${{ (p.priceCents / 100).toFixed(2) }} ·
+                                                {{ p.kind === 'credits'
+                                                    ? `${p.totalCredits} visit${p.totalCredits === 1 ? '' : 's'}`
+                                                    : p.kind === 'days_of_week' ? 'Selected days' : 'Unlimited' }}
+                                            </div>
+                                        </div>
+                                        <div class="d-flex align-center ga-1">
+                                            <v-btn size="small" icon variant="outlined"
+                                                :disabled="qtyOf('season_pass', p.id) === 0"
+                                                @click="addSeasonPassToCart(p, -1)">
+                                                <v-icon>mdi-minus</v-icon>
+                                            </v-btn>
+                                            <div style="min-width: 32px; text-align: center">
+                                                <strong>{{ qtyOf('season_pass', p.id) }}</strong>
+                                            </div>
+                                            <v-btn size="small" icon variant="outlined"
+                                                @click="addSeasonPassToCart(p, 1)">
+                                                <v-icon>mdi-plus</v-icon>
+                                            </v-btn>
+                                        </div>
+                                    </v-card>
+                                    <v-alert v-if="cartCount('season_pass') > 0" type="info" variant="tonal"
+                                        density="compact" class="mt-2">
+                                        <strong>This pass won’t scan yet.</strong> The rider has to add a photo
+                                        (and sign, if the pass needs a waiver) under My Passes in their account
+                                        before the gate will admit them. Tell them before they walk away.
+                                    </v-alert>
+                                </v-expansion-panel-text>
+                            </v-expansion-panel>
+
                             <!-- Lesson + optional bike -->
                             <v-expansion-panel value="lesson">
                                 <v-expansion-panel-title>
@@ -235,14 +284,19 @@
 
                         <v-divider class="my-4"></v-divider>
 
-                        <v-select v-if="availableVouchers.length > 0"
-                            v-model="selectedVoucherId"
-                            :items="voucherOptions"
+                        <v-select v-if="discountOptions.length > 0"
+                            v-model="selectedDiscountId"
+                            :items="discountOptions"
                             item-title="title" item-value="value"
-                            label="Apply customer voucher (optional)" density="compact"
-                            clearable hide-details class="mb-3"
-                            hint="Voucher applies to a single add-on or membership line."
-                            persistent-hint></v-select>
+                            label="Apply discount (optional)" density="compact"
+                            clearable hide-details class="mb-3"></v-select>
+                        <v-text-field v-if="selectedDiscount?.requiresManager"
+                            v-model="discountManagerPin"
+                            label="Manager PIN" type="password" density="compact"
+                            inputmode="numeric" autocomplete="off"
+                            class="mb-3"
+                            :hint="'A manager PIN is required to apply ' + selectedDiscount.name + '.'"
+                            persistent-hint></v-text-field>
 
                         <v-alert v-if="!branding.extrasEnabled && !membershipOffered" type="info" variant="tonal" class="mb-3">
                             Nothing is set up to sell at the counter yet. Enable add-ons or configure a membership in Settings.
@@ -274,6 +328,11 @@
                             <div v-if="cartServiceChargeCents > 0" class="d-flex justify-space-between text-caption text-medium-emphasis">
                                 <div>Service charge</div>
                                 <div>${{ (cartServiceChargeCents / 100).toFixed(2) }}</div>
+                            </div>
+                            <div v-if="discountEstimateCents > 0"
+                                 class="d-flex justify-space-between text-caption text-success">
+                                <div>{{ selectedDiscount?.name }}</div>
+                                <div>-${{ (discountEstimateCents / 100).toFixed(2) }}</div>
                             </div>
                             <div class="d-flex justify-space-between text-body-1 mt-1">
                                 <strong>Total</strong>
@@ -430,9 +489,14 @@
                     <v-card-text>
                         <v-alert type="success" variant="tonal" class="mb-3">
                             <span v-if="cashSubmitted">Cash sale recorded — ${{ totalDollars }} collected.</span>
-                            <span v-else-if="totalAmountCents === 0">Voucher applied — no charge.</span>
                             <span v-else>Charged ${{ totalDollars }}.</span>
                             Each line item below has its own QR for redemption.
+                        </v-alert>
+                        <v-alert v-if="lineItems.some(l => l.kind === 'season_pass')"
+                            type="warning" variant="tonal" density="compact" class="mb-4">
+                            <strong>The season pass isn’t usable yet.</strong> The rider must add a photo
+                            (and sign, if the pass requires a waiver) under My Passes before the gate will
+                            admit them. The QR below won’t scan until they do.
                         </v-alert>
                         <div v-for="li in lineItems" :key="li.purchaseId" class="mb-4 d-flex align-center ga-3">
                             <QrCode v-if="hasQr(li)" :value="redeemUrl(li.redemptionToken)" :size="120" />
@@ -465,7 +529,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { CounterService, type CounterRider } from '@/services/CounterService'
@@ -474,7 +538,8 @@ import type { EligibleExtra, EligibleExtraVariant, EventDto, EligibleRental } fr
 import { EventService } from '@/services/EventService'
 import { TicketService, type TicketTier } from '@/services/TicketService'
 import { ExtraService, type ExtraProduct } from '@/services/ExtraService'
-import { RewardService, type RiderRewardRedemption } from '@/services/RewardService'
+import { DiscountService, type DiscountPreset, type DiscountSurface } from '@/services/DiscountService'
+import { SeasonPassService, type SeasonPassProduct } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 import RichTextView from '@/components/RichTextView.vue'
@@ -487,7 +552,7 @@ import { type CreditLookupResult } from '@/services/CreditService'
 import PhoneField from '@/components/PhoneField.vue'
 
 type Customer = CounterRider
-type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental'
+type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
 
 interface CartLine {
     kind: CartKind
@@ -512,7 +577,6 @@ const passService = new PassService()
 const extraService = new ExtraService()
 const eventService = new EventService()
 const ticketService = new TicketService()
-const rewardService = new RewardService()
 
 const stepLabels = ['Customer', 'Cart', 'Waiver', 'Payment', 'Receipt']
 const confirm = useConfirm()
@@ -556,12 +620,115 @@ const extras = ref<ExtraProduct[]>([])
 const loadingExtras = ref(false)
 const cart = ref<CartLine[]>([])
 
-const availableVouchers = ref<RiderRewardRedemption[]>([])
-const selectedVoucherId = ref<string | null>(null)
-const voucherOptions = computed(() => availableVouchers.value.map(v => ({
-    value: v.id,
-    title: `${v.programName} — ${v.rewardPercentOff === 100 ? 'Free' : v.rewardPercentOff + '% off'}`,
+// Tenant-defined staff discounts ("Military 10%", "VMBA member"). The server is the authority on
+// what actually comes off; everything here is to let the cashier pick one and see roughly what it
+// is worth before charging.
+const discountService = new DiscountService()
+const discountPresets = ref<DiscountPreset[]>([])
+const selectedDiscountId = ref<string | null>(null)
+const discountManagerPin = ref('')
+
+/** Cart kinds and discount surfaces share names except rentals, which bill as shop_rental. */
+function surfaceForKind(kind: CartKind): DiscountSurface {
+    return kind === 'rental' ? 'shop_rental' : kind
+}
+
+/** Only discounts that touch something currently in the cart — a cashier should not be offered
+ *  "10% off food" while ringing up a race entry. */
+const applicableDiscounts = computed(() => {
+    const inCart = new Set(cart.value.map(c => surfaceForKind(c.kind)))
+    return discountPresets.value.filter(p => p.surfaces.some(s => inCart.has(s)))
+})
+const discountOptions = computed(() => applicableDiscounts.value.map(p => ({
+    value: p.id,
+    title: `${p.name} — ${p.label}${p.requiresManager ? ' (manager)' : ''}`,
 })))
+const selectedDiscount = computed(() =>
+    applicableDiscounts.value.find(p => p.id === selectedDiscountId.value) ?? null)
+
+/** Mirrors DiscountPreset.DiscountFor on the server: percent is basis points, amount is cents, and
+ *  either way it can never exceed the goods it applies to. */
+/** The counter sells four things, each its own discount surface, so the list is the union of all
+ *  four. A cashier without settings.manage cannot read the full list, hence the per-surface calls. */
+async function loadDiscounts() {
+    const surfaces: DiscountSurface[] = ['event_ticket', 'extras', 'shop_rental', 'membership', 'season_pass']
+    try {
+        const responses = await Promise.all(surfaces.map(s => discountService.forSurface(s)))
+        const byId = new Map<string, DiscountPreset>()
+        for (const r of responses) {
+            for (const p of r.data.data) byId.set(p.id, p)
+        }
+        discountPresets.value = [...byId.values()].sort((a, b) =>
+            a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    } catch (err: any) {
+        // Never render a load failure as "this track has no discounts" — the cashier would charge
+        // full price and the customer would be denied a rate they are entitled to.
+        discountPresets.value = []
+        flash(err.response?.data?.error
+            || 'Couldn’t load this track’s discounts. Reload before charging if one is owed.', 'error')
+    }
+}
+
+// A discount only survives while something it applies to is still in the cart. Dropping the last
+// eligible line would otherwise leave a stale selection that the server rejects at charge time.
+watch(applicableDiscounts, list => {
+    if (selectedDiscountId.value && !list.some(p => p.id === selectedDiscountId.value)) {
+        selectedDiscountId.value = null
+        discountManagerPin.value = ''
+    }
+})
+
+// ── Season passes ───────────────────────────────────────────────────────────
+// GET /SeasonPass/Products is public and already filters to active, non-employee products for this
+// tenant, so counter staff can read it without a new endpoint or permission.
+const seasonPassService = new SeasonPassService()
+const seasonPasses = ref<SeasonPassProduct[]>([])
+async function loadSeasonPasses() {
+    if (!branding.seasonPassesEnabled) return
+    try {
+        const r = await seasonPassService.listActive()
+        seasonPasses.value = r.data.data
+    } catch (err: any) {
+        // Not silent: an empty panel would read as "this track sells no passes" and the counter
+        // would turn away a paying customer.
+        seasonPasses.value = []
+        flash(err.response?.data?.error
+            || 'Couldn’t load season passes. Reload before selling one.', 'error')
+    }
+}
+
+function addSeasonPassToCart(p: SeasonPassProduct, delta: number) {
+    const existing = cart.value.find(c => c.kind === 'season_pass' && c.itemId === p.id)
+    if (existing) {
+        existing.quantity += delta
+        if (existing.quantity <= 0) cart.value.splice(cart.value.indexOf(existing), 1)
+    } else if (delta > 0) {
+        cart.value.push({
+            kind: 'season_pass',
+            itemId: p.id,
+            displayName: p.name,
+            unitPriceCents: p.priceCents,
+            quantity: delta,
+            // Deliberately false even when the product requires a waiver: the pass's waiver belongs
+            // to its HOLDER (often not the buyer) and is captured with the photo during
+            // registration. The counter's waiver step signs the PURCHASER's account waiver, which
+            // would be the wrong person on the pass.
+            requiresWaiver: false,
+            riderPaidServiceChargeBps: p.riderPaidServiceChargeBps,
+        })
+    }
+}
+
+const discountEstimateCents = computed(() => {
+    const p = selectedDiscount.value
+    if (!p) return 0
+    const base = cart.value
+        .filter(c => p.surfaces.includes(surfaceForKind(c.kind)))
+        .reduce((sum, c) => sum + c.unitPriceCents * c.quantity, 0)
+    if (base <= 0) return 0
+    const raw = p.kind === 'percent' ? Math.floor((base * p.value) / 10000) : p.value
+    return Math.min(Math.max(raw, 0), base)
+})
 
 // Map ExtraProduct → EligibleExtra so the existing ExtrasPicker UI works unchanged.
 // "Tenant-wide" means no event eligibility row; per-event inventory doesn't apply.
@@ -747,7 +914,11 @@ const cartServiceChargeCents = computed(() => {
 // Refundable bike deposits: NOT charged with the sale. Recorded on the rental and handled
 // at the shop when the bike goes out (hold or cash, staff's call).
 const cartDepositCents = computed(() => cart.value.reduce((sum, c) => sum + (c.depositCents ?? 0), 0))
-const cartTotalCents = computed(() => cartSubtotalCents.value + cartServiceChargeCents.value)
+// Net of any staff discount so the credit and amount-due estimates below agree with what the
+// customer is about to be charged. Still an estimate either way: like the service charge above it,
+// this figure excludes admission tax, which only the server computes.
+const cartTotalCents = computed(() => Math.max(0,
+    cartSubtotalCents.value + cartServiceChargeCents.value - discountEstimateCents.value))
 const totalDollars = computed(() => {
     const cents = clientSecret.value ? totalAmountCents.value : cartTotalCents.value
     return (cents / 100).toFixed(2)
@@ -788,6 +959,8 @@ onMounted(async () => {
         }
         history.replaceState(null, '', window.location.pathname)
     }
+    void loadDiscounts()
+    void loadSeasonPasses()
     loadingExtras.value = true
     try {
         const [w, x] = await Promise.all([
@@ -823,15 +996,6 @@ async function findCustomer() {
         const r = await counter.findRider(customerEmail.value.trim())
         customer.value = (r.data as any).data
         showCreate.value = false
-        try {
-            const v = await rewardService.listRiderRedemptions(customer.value!.id)
-            availableVouchers.value = ((v.data as any).data as RiderRewardRedemption[]).filter(x => !x.redeemedAtUtc)
-        } catch (err: any) {
-            // Don't render a load failure as "no vouchers" — the cashier would charge full price and
-            // silently skip a reward the rider earned. Warn so they can retry the lookup.
-            availableVouchers.value = []
-            flash(err.response?.data?.error || 'Couldn’t load this rider’s reward vouchers. Retry the lookup before charging.', 'error')
-        }
     } catch (err: any) {
         if (err.response?.status === 404) {
             lookupError.value = `No customer found for "${customerEmail.value.trim()}".`
@@ -977,7 +1141,8 @@ async function createSale(method: 'stripe' | 'cash') {
             signatureDataUrl: willSignWaiver.value ? customerSignatureDataUrl.value : null,
             parentName: signingForMinor ? parentName.value.trim() : null,
             parentPhone: signingForMinor ? parentPhone.value.trim() : null,
-            rewardRedemptionId: selectedVoucherId.value,
+            discountPresetId: selectedDiscountId.value,
+            managerPin: discountManagerPin.value || null,
             paymentMethod: method,
             creditAccountId: creditAccount.value?.id ?? null,
             creditCents: creditAccount.value?.balanceCents ?? 0,
@@ -993,7 +1158,10 @@ async function createSale(method: 'stripe' | 'cash') {
             const credited = data.creditAppliedCents ?? 0
             flash(credited > 0
                 ? `Sale complete: ${moneyCents(credited)} store credit applied, ${moneyCents(data.dueCents ?? 0)} collected.`
-                : method === 'cash' ? 'Cash sale recorded.' : 'Voucher applied — sale complete!', 'success')
+                // Not cash and nothing left to charge: the cart came to zero on its own (a comp or
+                // a fully discounted line). It used to say "Voucher applied", which is no longer a
+                // thing that can happen.
+                : method === 'cash' ? 'Cash sale recorded.' : 'Sale complete — no charge due.', 'success')
             return
         }
 
@@ -1081,8 +1249,8 @@ function reset() {
     paymentError.value = null
     paymentMethod.value = 'card'
     cashSubmitted.value = false
-    selectedVoucherId.value = null
-    availableVouchers.value = []
+    selectedDiscountId.value = null
+    discountManagerPin.value = ''
     catalogPanel.value = 'extras'
     creditAccount.value = null
 }
@@ -1095,6 +1263,7 @@ function kindLabel(kind: string): string {
     switch (kind) {
         case 'extras': return 'Add-on'
         case 'membership': return 'Membership'
+        case 'season_pass': return 'Season pass'
         default: return kind
     }
 }

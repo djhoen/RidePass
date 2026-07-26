@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using webapi.Controllers.API.Data.Extras;
 
 namespace webapi.Controllers.API.Data.Purchase
@@ -16,7 +16,6 @@ namespace webapi.Controllers.API.Data.Purchase
         [Range(1, 50)]
         public int Quantity { get; set; } = 1;
 
-        public Guid? RewardRedemptionId { get; set; }
 
         [MaxLength(40)]
         public string? CouponCode { get; set; }

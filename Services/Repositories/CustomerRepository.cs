@@ -24,7 +24,13 @@ namespace Services.Repositories
         // Common subquery: every (user_id, activity_at, amount_cents, is_paid) row
         // for this tenant across all three purchase tables. Status = 'paid' is the
         // bar for counting toward purchase totals, but un-paid rows still mark the
-        // user as a customer (so support can see them in the list).
+        // user as a customer (so support can see them in the list) - including
+        // 'pending' and 'failed', both of which are a real interaction (a payment
+        // attempt happened). The one exception is 'abandoned': that status means
+        // the reconciler killed a checkout that never had a completed payment
+        // attempt at all, so excluding it (and only it) keeps an empty cart from
+        // minting a customer row or stamping LastActivityAt with the moment
+        // someone closed the tab.
         private const string ActivityCte = @"
             WITH activity AS (
                 SELECT purchaser_user_id AS user_id,
@@ -33,6 +39,7 @@ namespace Services.Repositories
                        (status = 'paid')::int AS is_paid
                 FROM event_ticket_purchase
                 WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
+                  AND status <> 'abandoned'
                 UNION ALL
                 SELECT purchaser_user_id AS user_id,
                        created_at AS activity_at,
@@ -40,6 +47,7 @@ namespace Services.Repositories
                        (status = 'paid')::int AS is_paid
                 FROM season_pass_purchase
                 WHERE tenant_id = @tenantId AND purchaser_user_id IS NOT NULL
+                  AND status <> 'abandoned'
                 UNION ALL
                 SELECT user_id,
                        signed_at AS activity_at,

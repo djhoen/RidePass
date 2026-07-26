@@ -9,14 +9,20 @@
                 prepend-inner-icon="mdi-magnify" style="max-width: 170px"></v-text-field>
             <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 170px"></v-text-field>
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 170px"></v-text-field>
-            <v-select v-model="statusFilter" :items="statusOptions" label="Status" density="compact" hide-details clearable style="max-width: 150px"></v-select>
+            <v-select v-model="statusFilter" :items="STATUS_OPTIONS" label="Status" density="compact" hide-details
+                multiple chips closable-chips clearable style="max-width: 220px"></v-select>
+            <v-select v-model="kindFilter" :items="KIND_OPTIONS" label="Kind" density="compact" hide-details
+                multiple chips closable-chips clearable style="max-width: 220px"></v-select>
         </div>
 
-        <v-progress-linear v-if="searching" indeterminate color="primary" class="mb-2"></v-progress-linear>
-        <v-alert v-if="searchError" type="error" variant="tonal" density="compact" class="mb-2">{{ searchError }}</v-alert>
-        <div v-if="serverResults !== null" class="text-caption text-medium-emphasis mb-2 d-flex align-center ga-1">
+        <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>
+        <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-2">{{ loadError }}</v-alert>
+        <div v-if="!showingAbandoned" class="text-caption text-medium-emphasis mb-2 d-flex align-center ga-1">
             <v-icon icon="mdi-information-outline" size="14"></v-icon>
-            No matches in the selected dates. Showing all-time results for your search.
+            Abandoned checkouts (no payment ever completed) are hidden by default.
+            <v-btn size="x-small" variant="text" color="primary" class="ml-1" @click="showAbandonedStatus">
+                Show abandoned
+            </v-btn>
         </div>
 
         <!-- Disputes carry evidence-due deadlines, so if the check fails say so rather than hiding it. -->
@@ -78,7 +84,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="p in displayRows" :key="p.kind + ':' + p.id">
+                    <tr v-for="p in purchases" :key="p.kind + ':' + p.id">
                         <td>{{ formatWhen(p.createdAt) }}</td>
                         <td>
                             <v-tooltip v-if="orderRef(p)" :text="p.redemptionToken || p.id" location="top">
@@ -101,14 +107,28 @@
                                 @click="openDetails(p)">Details</v-btn>
                         </td>
                     </tr>
-                    <tr v-if="!loading && !loadError && !searching && displayRows.length === 0">
+                    <tr v-if="!loading && !loadError && purchases.length === 0">
                         <td colspan="7" class="text-center text-medium-emphasis py-8">
-                            {{ searchError ? 'Search failed — see the message above.'
-                                : hasQuery ? 'No orders match your search.' : 'No purchases in this range.' }}
+                            {{ hasQuery ? 'No orders match your search.' : 'No purchases match these filters.' }}
                         </td>
                     </tr>
                 </tbody>
             </v-table>
+            <div class="d-flex align-center justify-space-between flex-wrap ga-2 pa-3">
+                <div class="text-caption text-medium-emphasis">
+                    <template v-if="total > 0">
+                        Showing {{ offset + 1 }}-{{ Math.min(offset + purchases.length, total) }} of {{ total }}
+                    </template>
+                    <template v-else>No results</template>
+                </div>
+                <div class="d-flex align-center ga-2">
+                    <v-btn size="small" variant="tonal" :disabled="offset === 0 || loading"
+                        prepend-icon="mdi-chevron-left" @click="prevPage">Previous</v-btn>
+                    <span class="text-caption text-medium-emphasis">Page {{ currentPage }} of {{ totalPages }}</span>
+                    <v-btn size="small" variant="tonal" :disabled="!hasNextPage || loading"
+                        append-icon="mdi-chevron-right" @click="nextPage">Next</v-btn>
+                </div>
+            </div>
         </v-card>
 
         <v-dialog v-model="detailsDialog" max-width="680">
@@ -283,53 +303,64 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { PassService, type PurchaseRow, type TenantDisputeListItem } from '@/services/PassService'
+import { PurchaseService } from '@/services/PurchaseService'
 import { branding } from '@/stores/branding'
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
 
 const service = new PassService()
+const purchaseService = new PurchaseService()
 
 const today = dayjs()
 const rangeFrom = ref(today.startOf('month').format('YYYY-MM-DD'))
 const rangeTo = ref(today.endOf('month').add(1, 'day').format('YYYY-MM-DD'))
-const statusFilter = ref<string | null>(null)
-const statusOptions = ['pending', 'paid', 'failed', 'cancelled', 'refunded', 'redeemed']
 
-// Fuzzy search. We filter the already-loaded (date-bounded) list first; only when that
-// yields nothing do we hit the server for an all-time match (see evaluateSearch).
+// 'abandoned' is intentionally excluded from the default view (see showingAbandoned /
+// showAbandonedStatus below); it's still a selectable option so an admin can filter to it directly.
+const STATUS_OPTIONS = [
+    { title: 'Pending', value: 'pending' },
+    { title: 'Paid', value: 'paid' },
+    { title: 'Failed', value: 'failed' },
+    { title: 'Abandoned', value: 'abandoned' },
+    { title: 'Cancelled', value: 'cancelled' },
+    { title: 'Refunded', value: 'refunded' },
+    { title: 'Redeemed', value: 'redeemed' },
+]
+const statusFilter = ref<string[]>([])
+const kindFilter = ref<string[]>([])
+
+// Empty selection means "server default" (everything except abandoned). Whenever the current
+// selection isn't already showing abandoned rows, offer the one-click way to include them.
+// Toggled by the "Show abandoned" affordance. A flag rather than an expanded status list on
+// purpose: v_recent_sales unions eight tables with DIFFERENT status vocabularies (a live gift card
+// is 'active', a rental in a customer's hands is 'out', an upgraded pass is 'upgraded'), so
+// "select every status" is not expressible and any attempt at it silently hides whole sale kinds.
+const includeAbandoned = ref(false)
+const showingAbandoned = computed(() => includeAbandoned.value || statusFilter.value.includes('abandoned'))
+function showAbandonedStatus() {
+    includeAbandoned.value = true
+}
+
 const emailQuery = ref('')
 const orderIdQuery = ref('')
-// null = not in server mode (show the client-filtered list); an array = all-time results.
-const serverResults = ref<PurchaseRow[] | null>(null)
-const searching = ref(false)
-// Persistent (not just a toast) so a failed all-time search isn't read as "order doesn't exist".
-const searchError = ref<string | null>(null)
-// Monotonic request tokens: a response only applies if it's still the latest of its kind, so a
-// slower older response can't overwrite newer data (out-of-order responses).
-let loadSeq = 0
-let searchSeq = 0
+// Coalesced because Vuetify's clearable X sets the model to null rather than '', and a bare
+// .trim() on it throws inside load(), which surfaces as a misleading load error and then keeps
+// throwing on every later request until the user types into the field again.
+const hasQuery = computed(() => (emailQuery.value ?? '').trim() !== '' || (orderIdQuery.value ?? '').trim() !== '')
 
 const purchases = ref<PurchaseRow[]>([])
+const total = ref(0)
+const offset = ref(0)
+const PAGE_SIZE = 50
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+// Monotonic request token: a response only applies if it's still the latest request, so a slower
+// older response (from a filter change, a search keystroke, or a page click) can't clobber newer data.
+let reqSeq = 0
 
-const hasQuery = computed(() => emailQuery.value.trim() !== '' || orderIdQuery.value.trim() !== '')
-
-// Client-side filter of the loaded range by email and/or order id (id, redemption token).
-// Dashes/#/spaces are stripped so the rider's "Order #3FA85F64" matches the stored token.
-const filtered = computed(() => {
-    const e = emailQuery.value.trim().toLowerCase()
-    const o = orderIdQuery.value.trim().toLowerCase().replace(/[#\s-]/g, '')
-    if (!e && !o) return purchases.value
-    return purchases.value.filter(p => {
-        const emailOk = !e || (p.purchaserEmail ?? '').toLowerCase().includes(e)
-        const hay = ((p.id ?? '') + '|' + (p.redemptionToken ?? '')).toLowerCase().replace(/-/g, '')
-        const orderOk = !o || hay.includes(o)
-        return emailOk && orderOk
-    })
-})
-
-const displayRows = computed(() => serverResults.value ?? filtered.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const currentPage = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
+const hasNextPage = computed(() => offset.value + purchases.value.length < total.value)
 
 // Short, copyable order reference matching the rider-facing "Order #". Prefers the
 // redemption token (what the customer sees); falls back to the internal id.
@@ -418,87 +449,79 @@ function evidenceDueClass(dueUtc: string): string {
 function tz() { return branding.timezone || 'UTC' }
 
 async function load() {
-    // Rapid filter changes can leave two loads in flight; only the latest may apply its result,
-    // so a slower older response can't clobber newer data.
-    const seq = ++loadSeq
+    // Filter changes, search keystrokes, and page clicks can all leave a previous request in
+    // flight; only the latest may apply its result, so a slower older response can't clobber
+    // newer data (out-of-order responses).
+    const seq = ++reqSeq
     loading.value = true
     loadError.value = null
     try {
-        const fromUtc = dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
-        const toUtc = dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
-        const r = await service.listPurchasesForAdmin({
+        const email = (emailQuery.value ?? '').trim() || undefined
+        const orderId = (orderIdQuery.value ?? '').trim().replace(/^#/, '') || undefined
+        // Searching is an all-time lookup; the date window only applies when there's no search.
+        const searching = !!(email || orderId)
+        const fromUtc = searching ? undefined : dayjs.tz(rangeFrom.value + 'T00:00', tz()).utc().toISOString()
+        const toUtc = searching ? undefined : dayjs.tz(rangeTo.value + 'T00:00', tz()).utc().toISOString()
+        const r = await purchaseService.listPurchasesForAdmin({
             fromUtc,
             toUtc,
-            status: statusFilter.value || undefined,
+            email,
+            orderId,
+            statuses: statusFilter.value,
+            kinds: kindFilter.value,
+            offset: offset.value,
+            includeAbandoned: includeAbandoned.value || undefined,
+            limit: PAGE_SIZE,
         })
-        if (seq !== loadSeq) return
-        purchases.value = (r.data as any).data
+        if (seq !== reqSeq) return
+        const payload = r.data.data
+        purchases.value = payload.rows
+        total.value = payload.total
+
+        // The set can shrink under a stale page: refund or cancel a row, reload, and the old offset
+        // now points past the end. Without this the footer reads "Showing 101-100 of 40" over an
+        // empty table while the empty state claims nothing matches. Step back and re-fetch once.
+        if (purchases.value.length === 0 && offset.value > 0 && total.value > 0) {
+            offset.value = Math.max(0, Math.floor((total.value - 1) / PAGE_SIZE) * PAGE_SIZE)
+            await load()
+        }
     } catch (err: any) {
-        if (seq !== loadSeq) return
+        if (seq !== reqSeq) return
+        // Keep whatever rows are already on screen rather than blanking the table - a failed
+        // reload should read as "couldn't refresh", never as "no purchases".
         const msg = err.response?.data?.error ?? 'Couldn’t load purchases. Refresh to try again.'
         loadError.value = msg
         snackbarText.value = msg
         snackbarColor.value = 'error'
         snackbar.value = true
     } finally {
-        if (seq === loadSeq) {
-            loading.value = false
-            // A fresh load changes the candidate set; re-run any active search against it.
-            if (hasQuery.value) evaluateSearch()
-        }
+        if (seq === reqSeq) loading.value = false
     }
 }
 
-// Auto-reload whenever any filter changes. Date pickers fire on commit (not on
-// every keystroke) and v-select fires on selection, so a plain watcher is fine
-// — no debounce needed.
-watch([rangeFrom, rangeTo, statusFilter], () => { load() })
+// Auto-reload whenever a filter changes. Date pickers fire on commit (not on every keystroke)
+// and v-select fires on selection, so no debounce is needed here. A filter change invalidates
+// the current page, so jump back to the first page.
+watch([rangeFrom, rangeTo, statusFilter, kindFilter, includeAbandoned], () => { offset.value = 0; load() })
 
-// Decide where the search results come from: if the loaded range already contains a
-// match, show that (client-side, instant); otherwise query the DB across all time.
-async function evaluateSearch() {
-    searchError.value = null
-    if (!hasQuery.value) { serverResults.value = null; return }
-    if (filtered.value.length > 0) { serverResults.value = null; return }
-    await serverSearch()
-}
-
-async function serverSearch() {
-    // Debounced keystrokes + load()'s re-run can overlap; only the latest search applies its result.
-    const seq = ++searchSeq
-    searching.value = true
-    searchError.value = null
-    try {
-        const r = await service.listPurchasesForAdmin({
-            // Keep the status filter; the controller drops the date window when searching.
-            status: statusFilter.value || undefined,
-            email: emailQuery.value.trim() || undefined,
-            orderId: orderIdQuery.value.trim().replace(/^#/, '') || undefined,
-        })
-        if (seq !== searchSeq) return
-        serverResults.value = (r.data as any).data
-    } catch (err: any) {
-        if (seq !== searchSeq) return
-        // Fall back to the client-filtered list (null), not a fake empty array — an empty array reads
-        // as "this order doesn't exist" during a support call. Keep a persistent error so the admin
-        // knows the SEARCH failed, not that the order is missing.
-        serverResults.value = null
-        const msg = err.response?.data?.error ?? 'Couldn’t search all-time purchases. Try again.'
-        searchError.value = msg
-        snackbarText.value = msg
-        snackbarColor.value = 'error'
-        snackbar.value = true
-    } finally {
-        if (seq === searchSeq) searching.value = false
-    }
-}
-
-// Typing fires per keystroke, so debounce before deciding whether to hit the server.
+// Typing fires per keystroke, so debounce the search fields before hitting the server.
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch([emailQuery, orderIdQuery], () => {
     if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => evaluateSearch(), 300)
+    searchTimer = setTimeout(() => { offset.value = 0; load() }, 300)
 })
+
+function nextPage() {
+    if (!hasNextPage.value) return
+    offset.value += PAGE_SIZE
+    load()
+}
+
+function prevPage() {
+    if (offset.value === 0) return
+    offset.value = Math.max(0, offset.value - PAGE_SIZE)
+    load()
+}
 
 function formatWhen(utc: string): string {
     // Friendly 12-hour format ("May 14, 5:30 PM") — matches the dashboard's
@@ -511,6 +534,9 @@ function statusColor(status: string): string {
         case 'paid': return 'success'
         case 'pending': return 'warning'
         case 'failed': return 'error'
+        // Abandoned is not a decline (no payment attempt ever completed), so it gets its own
+        // neutral color rather than sharing 'failed' red.
+        case 'abandoned': return 'blue-grey'
         case 'cancelled': return 'orange'
         case 'refunded': return 'grey'
         case 'redeemed': return 'primary'
@@ -526,7 +552,10 @@ const KIND_LABELS: Record<string, string> = {
     membership: 'Membership',
     gift_card: 'Gift Card',
     concession: 'Food & Beverage',
+    shop_sale: 'Shop Sale',
+    shop_rental: 'Rental',
 }
+const KIND_OPTIONS = Object.entries(KIND_LABELS).map(([value, title]) => ({ value, title }))
 function kindLabel(kind: string): string {
     return KIND_LABELS[kind] ?? kind
 }

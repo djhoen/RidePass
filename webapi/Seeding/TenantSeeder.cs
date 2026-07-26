@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 using Services.Helpers.Interfaces;
@@ -218,7 +218,6 @@ namespace webapi.Seeding
             s.Memberships = await SeedMembershipsAsync(tenantId, riders);
             s.GiftCards = await SeedGiftCardsAsync(tenantId, riders);
             s.Coupons = await SeedCouponsAsync(tenantId);
-            await SeedRewardsAsync(tenantId, riders);
             s.Disputes = await SeedDisputesAsync(tenantId);
             (s.NewsletterSubscribers, s.Campaigns) = await SeedNewsletterAsync(tenantId, riders, staff);
             s.Blackouts = await SeedBlackoutsAsync(tenantId);
@@ -614,28 +613,6 @@ namespace webapi.Seeding
                 new { tenantId, exp = DateTime.UtcNow.AddMonths(6) });
             return 2;
         }
-
-        // ── Rewards ─────────────────────────────────────────────────────────────
-        private async Task SeedRewardsAsync(Guid tenantId, List<SeedUser> riders)
-        {
-            if (await Any("SELECT 1 FROM reward_program WHERE tenant_id = @tenantId", new { tenantId })) return;
-            var programId = Guid.NewGuid();
-            await Exec(@"
-                INSERT INTO reward_program (id, tenant_id, name, description, enrollment_mode, requirement_kind, requirement_count, reward_percent_off, is_active)
-                VALUES (@id, @tenantId, 'Loyalty Rewards', 'Buy 5 entries, get 50% off the next.', 'auto', 'event_ticket', 5, 50, true)",
-                new { id = programId, tenantId });
-            foreach (var r in riders.Take(10))
-            {
-                await Exec("INSERT INTO reward_enrollment (program_id, user_id) VALUES (@programId, @uid) ON CONFLICT DO NOTHING",
-                    new { programId, uid = r.Id });
-            }
-            foreach (var r in riders.Take(3))
-            {
-                await Exec("INSERT INTO reward_redemption (program_id, user_id) VALUES (@programId, @uid)",
-                    new { programId, uid = r.Id });
-            }
-        }
-
 
         // ── Disputes ─────────────────────────────────────────────────────────────
         private async Task<int> SeedDisputesAsync(Guid tenantId)

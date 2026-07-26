@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.BikeShopData;
 using Services.Repositories.Interfaces;
 
@@ -35,12 +35,14 @@ namespace Services.Repositories
         // count for serialized. Used everywhere a variant is read so callers never special-case it.
         private const string VariantCols = @"
             v.id, v.tenant_id AS TenantId, v.product_id AS ProductId,
-            v.sku, v.barcode, v.size, v.color, v.gender,
+            v.sku, v.barcode, v.gtin14 AS Gtin14, v.size, v.color, v.gender,
             v.sale_price_cents AS SalePriceCents, v.msrp_cents AS MsrpCents, v.daily_rate_cents AS DailyRateCents,
             v.deposit_cents AS DepositCents, v.cost_cents AS CostCents, v.mpn AS Mpn,
+            v.manufacturer_name AS ManufacturerName, v.manufacturer_name_source AS ManufacturerNameSource,
             v.tracking_kind AS TrackingKind, v.stock_on_hand AS StockOnHand,
             v.low_stock_threshold AS LowStockThreshold, v.low_stock_notified_at AS LowStockNotifiedAt,
             v.reorder_point AS ReorderPoint, v.reorder_level AS ReorderLevel, v.vendor_part_number AS VendorPartNumber,
+            v.platform_part_id AS PlatformPartId,
             v.is_active AS IsActive, v.created_at AS CreatedAt, v.updated_at AS UpdatedAt,
             CASE WHEN v.tracking_kind = 'serialized'
                  THEN (SELECT count(*) FROM shop_item i WHERE i.variant_id = v.id AND i.status = 'available')::int
@@ -363,14 +365,62 @@ namespace Services.Repositories
             return (await _db.Query<ShopVariantWithStock>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
+        /// <summary>
+        /// Resolve a scanned or typed code to ONE sellable variant in this tenant, in the order a
+        /// counter would: the normalised barcode first (the scanner's job), then the shop's own
+        /// SKU, then the manufacturer part number (what a customer reads off a box or an invoice).
+        ///
+        /// Server-side and indexed, rather than filtering a catalog shipped whole to the browser:
+        /// a real shop carries thousands of SKUs, and the old client-side match could only ever
+        /// find what had already been downloaded.
+        ///
+        /// Returns null on no match. Never guesses: an ambiguous or unknown code is the caller's
+        /// problem to surface, because quietly ringing up the wrong part is worse than a miss.
+        /// </summary>
+        public async Task<ShopScanMatch?> ResolveVariantByCode(Guid tenantId, string code, string? gtin14)
+        {
+            const string sql = $@"
+                SELECT {VariantCols}, p.name AS ProductName
+                FROM shop_variant v
+                JOIN shop_product p ON p.id = v.product_id AND p.tenant_id = @tenantId
+                WHERE v.tenant_id = @tenantId AND v.is_active AND p.is_active
+                  AND (
+                        (@gtin14::text IS NOT NULL AND v.gtin14 = @gtin14)
+                     OR (v.sku IS NOT NULL AND lower(v.sku) = lower(@code))
+                     OR (v.mpn IS NOT NULL AND lower(v.mpn) = lower(@code))
+                  )
+                -- Barcode beats SKU beats MPN when a code somehow matches more than one field:
+                -- the scanner's reading is the most specific thing we have.
+                ORDER BY CASE
+                    WHEN @gtin14::text IS NOT NULL AND v.gtin14 = @gtin14 THEN 0
+                    WHEN v.sku IS NOT NULL AND lower(v.sku) = lower(@code) THEN 1
+                    ELSE 2 END
+                LIMIT 1";
+            return (await _db.Query<ShopScanMatch>(sql, new { tenantId, code, gtin14 })).FirstOrDefault();
+        }
+
+        // Tenant-scoped like every other variant write, even though the id on the other end of the
+        // link is shared: a caller must not be able to stamp a link onto another shop's row.
+        // IS DISTINCT FROM keeps a re-scan of an already-linked variant from writing at all, which
+        // matters because this runs on the scan path.
+        public Task<int> LinkVariantToPlatformPart(Guid variantId, Guid tenantId, Guid platformPartId)
+            => _db.Execute(@"
+                UPDATE shop_variant SET platform_part_id = @platformPartId
+                WHERE id = @variantId AND tenant_id = @tenantId
+                  AND platform_part_id IS DISTINCT FROM @platformPartId",
+                new { variantId, tenantId, platformPartId });
+
         public async Task<Guid> CreateVariant(ShopVariant v)
         {
+            v.Gtin14 = Services.BikeShop.Gtin.Normalize(v.Barcode);
             const string sql = @"
-                INSERT INTO shop_variant (tenant_id, product_id, sku, barcode, size, color, gender,
-                    sale_price_cents, msrp_cents, daily_rate_cents, deposit_cents, cost_cents, mpn, tracking_kind,
+                INSERT INTO shop_variant (tenant_id, product_id, sku, barcode, gtin14, size, color, gender,
+                    sale_price_cents, msrp_cents, daily_rate_cents, deposit_cents, cost_cents, mpn,
+                    manufacturer_name, manufacturer_name_source, tracking_kind,
                     stock_on_hand, low_stock_threshold, reorder_point, reorder_level, vendor_part_number, is_active)
-                VALUES (@TenantId, @ProductId, @Sku, @Barcode, @Size, @Color, @Gender,
-                    @SalePriceCents, @MsrpCents, @DailyRateCents, @DepositCents, @CostCents, @Mpn, @TrackingKind,
+                VALUES (@TenantId, @ProductId, @Sku, @Barcode, @Gtin14, @Size, @Color, @Gender,
+                    @SalePriceCents, @MsrpCents, @DailyRateCents, @DepositCents, @CostCents, @Mpn,
+                    @ManufacturerName, @ManufacturerNameSource, @TrackingKind,
                     @StockOnHand, @LowStockThreshold, @ReorderPoint, @ReorderLevel, @VendorPartNumber, @IsActive)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, v)).First();
@@ -379,10 +429,21 @@ namespace Services.Repositories
         // stock_on_hand is intentionally NOT updatable here: it moves only through AdjustPoolStock /
         // receiving, so the movement ledger stays the whole story. An admin editing a variant can't
         // silently rewrite the count.
-        public Task<int> UpdateVariant(ShopVariant v) => _db.Execute(@"
-            UPDATE shop_variant SET sku = @Sku, barcode = @Barcode, size = @Size, color = @Color,
+        public Task<int> UpdateVariant(ShopVariant v)
+        {
+            // Derived here rather than at the call sites so barcode and gtin14 can never disagree:
+            // an edit that changed one without the other would leave the register matching a code
+            // the product no longer carries.
+            v.Gtin14 = Services.BikeShop.Gtin.Normalize(v.Barcode);
+            return UpdateVariantCore(v);
+        }
+
+        private Task<int> UpdateVariantCore(ShopVariant v) => _db.Execute(@"
+            UPDATE shop_variant SET sku = @Sku, barcode = @Barcode, gtin14 = @Gtin14, size = @Size, color = @Color,
                 gender = @Gender, sale_price_cents = @SalePriceCents, msrp_cents = @MsrpCents, daily_rate_cents = @DailyRateCents,
-                deposit_cents = @DepositCents, cost_cents = @CostCents, mpn = @Mpn, is_active = @IsActive,
+                deposit_cents = @DepositCents, cost_cents = @CostCents, mpn = @Mpn,
+                manufacturer_name = @ManufacturerName, manufacturer_name_source = @ManufacturerNameSource,
+                is_active = @IsActive,
                 low_stock_threshold = @LowStockThreshold,
                 reorder_point = @ReorderPoint, reorder_level = @ReorderLevel, vendor_part_number = @VendorPartNumber,
                 -- Raising/clearing the threshold resets the alert episode so the new rule re-fires.
@@ -784,7 +845,9 @@ namespace Services.Repositories
         private const string SaleCols = @"
             id, tenant_id AS TenantId, buyer_user_id AS BuyerUserId, buyer_email AS BuyerEmail,
             buyer_name AS BuyerName, status, subtotal_cents AS SubtotalCents, discount_cents AS DiscountCents,
-            tax_cents AS TaxCents, tip_cents AS TipCents, total_cents AS TotalCents,
+            discount_preset_id AS DiscountPresetId, discount_label AS DiscountLabel,
+            discount_authorized_by_user_id AS DiscountAuthorizedByUserId,
+            tax_cents AS TaxCents, total_cents AS TotalCents, service_charge_cents AS ServiceChargeCents,
             prices_include_tax AS PricesIncludeTax, payment_method AS PaymentMethod,
             stripe_payment_intent_id AS StripePaymentIntentId, stripe_connected_account_id AS StripeConnectedAccountId,
             order_number AS OrderNumber, sold_by_user_id AS SoldByUserId, work_order_id AS WorkOrderId,
@@ -810,20 +873,26 @@ namespace Services.Repositories
             var stmts = new List<(string Sql, object? Param)>
             {
                 (@"INSERT INTO shop_sale (id, tenant_id, buyer_user_id, buyer_email, buyer_name, status,
-                        subtotal_cents, discount_cents, tax_cents, tip_cents, total_cents, prices_include_tax,
+                        subtotal_cents, discount_cents, tax_cents, total_cents, service_charge_cents,
+                        prices_include_tax,
+                        discount_preset_id, discount_label, discount_authorized_by_user_id,
                         payment_method, sold_by_user_id, work_order_id, deposit_applied_cents,
                         credit_applied_cents, credit_account_id, gift_card_applied_cents, gift_card_id,
                         order_channel, receipt_token)
                    VALUES (@id, @TenantId, @BuyerUserId, @BuyerEmail, @BuyerName, @Status,
-                        @SubtotalCents, @DiscountCents, @TaxCents, @TipCents, @TotalCents, @PricesIncludeTax,
+                        @SubtotalCents, @DiscountCents, @TaxCents, @TotalCents, @ServiceChargeCents,
+                        @PricesIncludeTax,
+                        @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId,
                         @PaymentMethod, @SoldByUserId, @WorkOrderId, @DepositAppliedCents,
                         @CreditAppliedCents, @CreditAccountId, @GiftCardAppliedCents, @GiftCardId,
                         @OrderChannel, @receipt)",
                     new
                     {
                         id = saleId, sale.TenantId, sale.BuyerUserId, sale.BuyerEmail, sale.BuyerName,
-                        sale.Status, sale.SubtotalCents, sale.DiscountCents, sale.TaxCents, sale.TipCents,
-                        sale.TotalCents, sale.PricesIncludeTax, sale.PaymentMethod, sale.SoldByUserId,
+                        sale.Status, sale.SubtotalCents, sale.DiscountCents, sale.TaxCents,
+                        sale.TotalCents, sale.ServiceChargeCents, sale.PricesIncludeTax,
+                        sale.DiscountPresetId, sale.DiscountLabel, sale.DiscountAuthorizedByUserId,
+                        sale.PaymentMethod, sale.SoldByUserId,
                         sale.WorkOrderId, sale.DepositAppliedCents, sale.CreditAppliedCents, sale.CreditAccountId,
                         sale.GiftCardAppliedCents, sale.GiftCardId, sale.OrderChannel, receipt,
                     }),
@@ -891,9 +960,12 @@ namespace Services.Repositories
             return rows.Any();
         }
 
-        public Task MarkSaleFailed(Guid id) => _db.Execute(
-            "UPDATE shop_sale SET status = 'failed', updated_at = now() WHERE id = @id AND status = 'pending'",
-            new { id });
+        // status: 'failed' when Stripe reported a declined attempt, 'abandoned' when no attempt
+        // ever completed (reconciler cutoff / cancelled PI). Same release of the pending hold
+        // either way; the split exists so reporting can tell declines from walk-aways.
+        public Task MarkSaleFailed(Guid id, string status = "failed") => _db.Execute(
+            "UPDATE shop_sale SET status = @status, updated_at = now() WHERE id = @id AND status = 'pending'",
+            new { id, status });
 
         public Task<int> MarkSaleRefunded(Guid id, Guid tenantId, string? note) => _db.Execute(@"
             UPDATE shop_sale SET status = 'refunded', refunded_at = now(), refund_note = @note, updated_at = now()
@@ -2109,11 +2181,13 @@ namespace Services.Repositories
                 (@"INSERT INTO shop_rental (id, tenant_id, renter_user_id, renter_name, renter_email, renter_phone,
                         waiver_signature_id, starts_at, ends_at, status, amount_cents, tax_cents, total_cents,
                         service_charge_cents, riders_required, insurance_cents, insurance_label_snapshot,
-                        deposit_cents, payment_method, sold_by_user_id, receipt_token, event_id)
+                        deposit_cents, payment_method, sold_by_user_id, receipt_token, event_id,
+                        discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id)
                    VALUES (@id, @TenantId, @RenterUserId, @RenterName, @RenterEmail, @RenterPhone,
                         @WaiverSignatureId, @StartsAt, @EndsAt, @Status, @AmountCents, @TaxCents, @TotalCents,
                         @ServiceChargeCents, @RidersRequired, @InsuranceCents, @InsuranceLabelSnapshot,
-                        @DepositCents, @PaymentMethod, @SoldByUserId, @receipt, @EventId)",
+                        @DepositCents, @PaymentMethod, @SoldByUserId, @receipt, @EventId,
+                        @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId)",
                     new
                     {
                         id = rentalId, rental.TenantId, rental.RenterUserId, rental.RenterName, rental.RenterEmail,
@@ -2121,6 +2195,8 @@ namespace Services.Repositories
                         rental.AmountCents, rental.TaxCents, rental.TotalCents, rental.ServiceChargeCents, rental.RidersRequired,
                         rental.InsuranceCents, rental.InsuranceLabelSnapshot, rental.DepositCents,
                         rental.PaymentMethod, rental.SoldByUserId, receipt, rental.EventId,
+                        rental.DiscountCents, rental.DiscountPresetId, rental.DiscountLabel,
+                        rental.DiscountAuthorizedByUserId,
                     }),
             };
             foreach (var l in lines)
@@ -2298,9 +2374,11 @@ namespace Services.Repositories
             "UPDATE shop_rental SET order_number = @orderNumber, updated_at = now() WHERE id = @id",
             new { id, orderNumber });
 
-        public Task MarkRentalFailed(Guid id) => _db.Execute(
-            "UPDATE shop_rental SET status = 'failed', updated_at = now() WHERE id = @id AND status = 'pending'",
-            new { id });
+        // status: 'failed' for a real decline, 'abandoned' for a checkout that never completed
+        // a payment attempt (see MarkSaleFailed).
+        public Task MarkRentalFailed(Guid id, string status = "failed") => _db.Execute(
+            "UPDATE shop_rental SET status = @status, updated_at = now() WHERE id = @id AND status = 'pending'",
+            new { id, status });
 
         public Task<int> CancelRental(Guid id, Guid tenantId) => _db.Execute(
             // Only before checkout — once gear is out, the path is Return, not Cancel.
@@ -2696,6 +2774,64 @@ namespace Services.Repositories
                 ORDER BY n.created_at DESC", new { workOrderId, tenantId })).ToList();
         }
 
+        // ── Rental notes (Script0248) ───────────────────────────────────────────
+        private const string RentalNoteCols = @"
+            n.id, n.rental_id AS RentalId, n.body,
+            n.created_by_user_id AS CreatedByUserId,
+            TRIM(CONCAT_WS(' ', u.first_name, u.last_name)) AS CreatedByName,
+            n.created_at AS CreatedAt";
+
+        /// <summary>A rental's note thread, newest first. Tenant-scoped directly on the note.</summary>
+        public async Task<List<ShopRentalNote>> ListRentalNotes(Guid rentalId, Guid tenantId)
+        {
+            var sql = $@"
+                SELECT {RentalNoteCols}
+                FROM shop_rental_note n
+                LEFT JOIN users u ON u.id = n.created_by_user_id
+                WHERE n.rental_id = @rentalId AND n.tenant_id = @tenantId
+                ORDER BY n.created_at DESC";
+            return (await _db.Query<ShopRentalNote>(sql, new { rentalId, tenantId })).ToList();
+        }
+
+        /// <summary>
+        /// Append a note. Returns null when the rental isn't this tenant's, so the caller 404s
+        /// instead of silently writing an orphan note keyed to a foreign booking.
+        /// </summary>
+        public async Task<ShopRentalNote?> AddRentalNote(Guid rentalId, Guid tenantId, string body, Guid? byUserId)
+        {
+            // Verify the parent belongs to this tenant before attaching a note to it.
+            var ok = (await _db.Query<int>(
+                "SELECT 1 FROM shop_rental WHERE id = @rentalId AND tenant_id = @tenantId",
+                new { rentalId, tenantId })).Any();
+            if (!ok) return null;
+
+            var id = Guid.NewGuid();
+            await _db.Execute(@"
+                INSERT INTO shop_rental_note (id, tenant_id, rental_id, body, created_by_user_id)
+                VALUES (@id, @tenantId, @rentalId, @body, @byUserId)",
+                new { id, tenantId, rentalId, body, byUserId });
+
+            return (await _db.Query<ShopRentalNote>($@"
+                SELECT {RentalNoteCols}
+                FROM shop_rental_note n
+                LEFT JOIN users u ON u.id = n.created_by_user_id
+                WHERE n.id = @id", new { id })).FirstOrDefault();
+        }
+
+        /// <summary>Note counts for a set of rentals, so the board can badge without N+1.</summary>
+        public async Task<Dictionary<Guid, int>> CountRentalNotes(IEnumerable<Guid> rentalIds, Guid tenantId)
+        {
+            var ids = rentalIds.Distinct().ToArray();
+            if (ids.Length == 0) return new Dictionary<Guid, int>();
+            const string sql = @"
+                SELECT rental_id AS RentalId, COUNT(*)::int AS Count
+                FROM shop_rental_note
+                WHERE tenant_id = @tenantId AND rental_id = ANY(@ids)
+                GROUP BY rental_id";
+            var rows = await _db.Query<(Guid RentalId, int Count)>(sql, new { tenantId, ids });
+            return rows.ToDictionary(r => r.RentalId, r => r.Count);
+        }
+
         public async Task<ShopWorkOrderNote?> AddWorkOrderNote(Guid workOrderId, Guid tenantId, string body, Guid? byUserId)
         {
             // Verify the parent belongs to this tenant before attaching a note to it.
@@ -3052,8 +3188,10 @@ namespace Services.Repositories
         /// suppliers by name, then products, variants, and opening-stock 'adjustment' movements
         /// so imported counts reconcile against the movement ledger like everything else.
         /// </summary>
-        public async Task<ShopImportResult> ImportCatalog(Guid tenantId, List<ShopImportProduct> products, Guid? byUserId)
+        public async Task<ShopImportResult> ImportCatalog(Guid tenantId, List<ShopImportProduct> products,
+            Guid? byUserId, ShopImportOptions? options = null)
         {
+            var opts = options ?? new ShopImportOptions();
             var result = new ShopImportResult();
             var stmts = new List<(string Sql, object? Param)>();
 
@@ -3061,6 +3199,111 @@ namespace Services.Repositories
                 .ToDictionary(c => c.Name.Trim().ToLowerInvariant(), c => c.Id);
             var existingSuppliers = (await ListSuppliers(tenantId, activeOnly: false))
                 .ToDictionary(s => s.Name.Trim().ToLowerInvariant(), s => s.Id);
+
+            // ── Match indexes, only when updating ────────────────────────────────────────
+            // A catalog refresh has to find the row it is refreshing. Identity strength runs
+            // barcode > MPN > SKU: a GTIN identifies the product globally, an MPN identifies it
+            // within a brand, and a SKU is only ever the shop's own word for it.
+            var byGtin = new Dictionary<string, Guid>();
+            var byMpn = new Dictionary<string, Guid>();
+            var bySku = new Dictionary<string, Guid>();
+            // The reverse of byGtin: which barcode a candidate variant is already known to carry.
+            // Needed so an MPN/SKU fallback can refuse to match a variant whose barcode is known
+            // and DIFFERENT. See MatchVariant.
+            var gtinByVariant = new Dictionary<Guid, string>();
+            var productIdsByName = new Dictionary<string, Guid>();
+            if (opts.UpdateExisting)
+            {
+                foreach (var p in await ListProducts(tenantId, activeOnly: false))
+                {
+                    productIdsByName.TryAdd(p.Name.Trim().ToLowerInvariant(), p.Id);
+                    foreach (var v in p.Variants)
+                    {
+                        if (!string.IsNullOrWhiteSpace(v.Gtin14))
+                        {
+                            byGtin.TryAdd(v.Gtin14!, v.Id);
+                            gtinByVariant.TryAdd(v.Id, v.Gtin14!);
+                        }
+                        if (!string.IsNullOrWhiteSpace(v.Mpn)) byMpn.TryAdd(v.Mpn!.Trim().ToLowerInvariant(), v.Id);
+                        if (!string.IsNullOrWhiteSpace(v.Sku)) bySku.TryAdd(v.Sku!.Trim().ToLowerInvariant(), v.Id);
+                    }
+                }
+            }
+
+            // Writes ONLY the columns the file carried. stock_on_hand is never among them by
+            // design: stock moves through the movement ledger so the count always has a story, and
+            // a catalog refresh is not a stocktake.
+            static void AddVariantUpdate(List<(string, object?)> batch, Guid tenantId, Guid variantId,
+                ShopImportVariant v, ShopImportOptions opts)
+            {
+                var sets = new List<string>();
+                void Set(string column, string assignment)
+                {
+                    if (opts.PresentColumns.Contains(column)) sets.Add(assignment);
+                }
+                Set(ShopImportColumn.Sku, "sku = @Sku");
+                Set(ShopImportColumn.Barcode, "barcode = @Barcode");
+                Set(ShopImportColumn.Barcode, "gtin14 = @gtin14");
+                Set(ShopImportColumn.Mpn, "mpn = @Mpn");
+                Set(ShopImportColumn.ManufacturerName, "manufacturer_name = @ManufacturerName");
+                // Provenance moves with the name, never independently: a row whose name came from
+                // an upload must be labelled as such so LibraryContribution can judge it.
+                Set(ShopImportColumn.ManufacturerName, "manufacturer_name_source = @manufacturerNameSource");
+                Set(ShopImportColumn.VendorPartNumber, "vendor_part_number = @VendorPartNumber");
+                Set(ShopImportColumn.Size, "size = @Size");
+                Set(ShopImportColumn.Color, "color = @Color");
+                Set(ShopImportColumn.Gender, "gender = @Gender");
+                Set(ShopImportColumn.Price, "sale_price_cents = @SalePriceCents");
+                Set(ShopImportColumn.Msrp, "msrp_cents = @MsrpCents");
+                Set(ShopImportColumn.Cost, "cost_cents = @CostCents");
+                Set(ShopImportColumn.DailyRate, "daily_rate_cents = @DailyRateCents");
+                Set(ShopImportColumn.Deposit, "deposit_cents = @DepositCents");
+                Set(ShopImportColumn.LowStock, "low_stock_threshold = @LowStockThreshold");
+                if (sets.Count == 0) return;
+
+                batch.Add(($@"UPDATE shop_variant SET {string.Join(", ", sets)}, updated_at = now()
+                              WHERE id = @variantId AND tenant_id = @tenantId",
+                    new
+                    {
+                        variantId, tenantId, v.Sku, v.Barcode,
+                        gtin14 = Services.BikeShop.Gtin.Normalize(v.Barcode),
+                        v.Mpn, v.ManufacturerName, manufacturerNameSource = opts.ManufacturerNameSource,
+                        v.VendorPartNumber, v.Size, v.Color, v.Gender,
+                        v.SalePriceCents, v.MsrpCents, v.CostCents, v.DailyRateCents,
+                        v.DepositCents, v.LowStockThreshold,
+                    }));
+            }
+
+            Guid? MatchVariant(ShopImportVariant v)
+            {
+                var gtin = Services.BikeShop.Gtin.Normalize(v.Barcode);
+                if (gtin is not null && byGtin.TryGetValue(gtin, out var byBarcode)) return byBarcode;
+
+                // Falling back to MPN or SKU must never land on a variant whose barcode is already
+                // known to be a DIFFERENT one: two rows carrying different barcodes are two
+                // different items, and a shared identifier is not evidence otherwise.
+                //
+                // This is not hypothetical. Manufacturers routinely reuse one MPN across a size
+                // run, so without this guard a jersey in S/M/L imports as ONE variant: the first
+                // size is created, then every later size matches it on MPN and overwrites it. The
+                // shop silently ends up with a third of their apparel, and a nightly distributor
+                // sync would redo the damage every night.
+                //
+                // A candidate with NO known barcode is still fair game: that is the useful case of
+                // a feed filling in the barcode on a row the shop typed by hand.
+                bool BarcodeConflicts(Guid candidate) =>
+                    gtin is not null
+                    && gtinByVariant.TryGetValue(candidate, out var known)
+                    && !string.Equals(known, gtin, StringComparison.Ordinal);
+
+                if (!string.IsNullOrWhiteSpace(v.Mpn)
+                    && byMpn.TryGetValue(v.Mpn.Trim().ToLowerInvariant(), out var byPart)
+                    && !BarcodeConflicts(byPart)) return byPart;
+                if (!string.IsNullOrWhiteSpace(v.Sku)
+                    && bySku.TryGetValue(v.Sku.Trim().ToLowerInvariant(), out var bySkuId)
+                    && !BarcodeConflicts(bySkuId)) return bySkuId;
+                return null;
+            }
 
             Guid? ResolveByName(string? name, Dictionary<string, Guid> existing, string table, List<string> created)
             {
@@ -3079,39 +3322,98 @@ namespace Services.Repositories
             {
                 var categoryId = ResolveByName(p.CategoryName, existingCategories, "shop_category", result.NewCategories);
                 var supplierId = ResolveByName(p.SupplierName, existingSuppliers, "shop_supplier", result.NewSuppliers);
-                var productId = Guid.NewGuid();
-                stmts.Add((@"
-                    INSERT INTO shop_product (id, tenant_id, category_id, supplier_id, name, description, brand,
-                        is_sellable, is_rentable)
-                    VALUES (@productId, @tenantId, @categoryId, @supplierId, @name, @description, @brand,
-                        @sellable, @rentable)",
-                    new
+
+                // An update run attaches to the product that is already there rather than making a
+                // second one with the same name.
+                var existingProductId = opts.UpdateExisting
+                    && productIdsByName.TryGetValue(p.Name.Trim().ToLowerInvariant(), out var foundProduct)
+                    ? foundProduct : (Guid?)null;
+                var productId = existingProductId ?? Guid.NewGuid();
+
+                if (existingProductId is null)
+                {
+                    stmts.Add((@"
+                        INSERT INTO shop_product (id, tenant_id, category_id, supplier_id, name, description, brand,
+                            is_sellable, is_rentable)
+                        VALUES (@productId, @tenantId, @categoryId, @supplierId, @name, @description, @brand,
+                            @sellable, @rentable)",
+                        new
+                        {
+                            productId, tenantId, categoryId, supplierId,
+                            name = p.Name.Trim(),
+                            description = string.IsNullOrWhiteSpace(p.Description) ? null : p.Description.Trim(),
+                            brand = string.IsNullOrWhiteSpace(p.Brand) ? null : p.Brand.Trim(),
+                            sellable = p.Variants.Any(v => v.SalePriceCents is not null) || p.Variants.All(v => v.DailyRateCents is null),
+                            rentable = p.Variants.Any(v => v.DailyRateCents is not null),
+                        }));
+                    productIdsByName.TryAdd(p.Name.Trim().ToLowerInvariant(), productId);
+                    result.Products++;
+                }
+                else
+                {
+                    // Only what the file carried. A distributor refresh with no description column
+                    // must not blank the description the shop wrote.
+                    var sets = new List<string>();
+                    if (opts.PresentColumns.Contains(ShopImportColumn.Description)) sets.Add("description = @description");
+                    if (opts.PresentColumns.Contains(ShopImportColumn.Brand)) sets.Add("brand = @brand");
+                    if (p.CategoryName is not null) sets.Add("category_id = @categoryId");
+                    if (p.SupplierName is not null) sets.Add("supplier_id = @supplierId");
+                    if (sets.Count > 0)
                     {
-                        productId, tenantId, categoryId, supplierId,
-                        name = p.Name.Trim(),
-                        description = string.IsNullOrWhiteSpace(p.Description) ? null : p.Description.Trim(),
-                        brand = string.IsNullOrWhiteSpace(p.Brand) ? null : p.Brand.Trim(),
-                        sellable = p.Variants.Any(v => v.SalePriceCents is not null) || p.Variants.All(v => v.DailyRateCents is null),
-                        rentable = p.Variants.Any(v => v.DailyRateCents is not null),
-                    }));
-                result.Products++;
+                        stmts.Add(($@"UPDATE shop_product SET {string.Join(", ", sets)}, updated_at = now()
+                                      WHERE id = @productId AND tenant_id = @tenantId",
+                            new
+                            {
+                                productId, tenantId, categoryId, supplierId,
+                                description = string.IsNullOrWhiteSpace(p.Description) ? null : p.Description!.Trim(),
+                                brand = string.IsNullOrWhiteSpace(p.Brand) ? null : p.Brand!.Trim(),
+                            }));
+                    }
+                    result.ProductsUpdated++;
+                }
 
                 foreach (var v in p.Variants)
                 {
+                    var matchedVariantId = opts.UpdateExisting ? MatchVariant(v) : null;
+                    if (matchedVariantId is Guid existingVariantId)
+                    {
+                        AddVariantUpdate(stmts, tenantId, existingVariantId, v, opts);
+                        result.VariantsUpdated++;
+                        continue;
+                    }
+
                     var variantId = Guid.NewGuid();
+                    var gtin14 = Services.BikeShop.Gtin.Normalize(v.Barcode);
                     stmts.Add((@"
-                        INSERT INTO shop_variant (id, tenant_id, product_id, sku, barcode, size, color, gender,
-                            sale_price_cents, cost_cents, daily_rate_cents, deposit_cents, tracking_kind,
-                            stock_on_hand, low_stock_threshold)
-                        VALUES (@variantId, @tenantId, @productId, @Sku, @Barcode, @Size, @Color, @Gender,
-                            @SalePriceCents, @CostCents, @DailyRateCents, @DepositCents, @TrackingKind,
-                            @Stock, @LowStockThreshold)",
+                        INSERT INTO shop_variant (id, tenant_id, product_id, sku, barcode, gtin14, size, color, gender,
+                            mpn, manufacturer_name, manufacturer_name_source, vendor_part_number, sale_price_cents, msrp_cents, cost_cents, daily_rate_cents,
+                            deposit_cents, tracking_kind, stock_on_hand, low_stock_threshold)
+                        VALUES (@variantId, @tenantId, @productId, @Sku, @Barcode, @gtin14, @Size, @Color, @Gender,
+                            @Mpn, @ManufacturerName, @manufacturerNameSource, @VendorPartNumber, @SalePriceCents, @MsrpCents, @CostCents, @DailyRateCents,
+                            @DepositCents, @TrackingKind, @Stock, @LowStockThreshold)",
                         new
                         {
-                            variantId, tenantId, productId, v.Sku, v.Barcode, v.Size, v.Color, v.Gender,
-                            v.SalePriceCents, v.CostCents, v.DailyRateCents, v.DepositCents, v.TrackingKind,
-                            v.Stock, v.LowStockThreshold,
+                            variantId, tenantId, productId, v.Sku, v.Barcode, gtin14, v.Size, v.Color, v.Gender,
+                            v.Mpn, v.ManufacturerName,
+                            manufacturerNameSource = v.ManufacturerName is null ? null : opts.ManufacturerNameSource,
+                            v.VendorPartNumber, v.SalePriceCents, v.MsrpCents, v.CostCents, v.DailyRateCents,
+                            v.DepositCents, v.TrackingKind, v.Stock, v.LowStockThreshold,
                         }));
+
+                    // Feed the match indexes as we go, so a file listing the same part twice
+                    // updates the row the first line created instead of colliding on the unique
+                    // index halfway through the batch.
+                    if (opts.UpdateExisting)
+                    {
+                        if (gtin14 is not null)
+                        {
+                            byGtin.TryAdd(gtin14, variantId);
+                            gtinByVariant.TryAdd(variantId, gtin14);
+                        }
+                        if (!string.IsNullOrWhiteSpace(v.Mpn)) byMpn.TryAdd(v.Mpn!.Trim().ToLowerInvariant(), variantId);
+                        if (!string.IsNullOrWhiteSpace(v.Sku)) bySku.TryAdd(v.Sku!.Trim().ToLowerInvariant(), variantId);
+                    }
+
                     if (v.Stock > 0)
                     {
                         stmts.Add((@"

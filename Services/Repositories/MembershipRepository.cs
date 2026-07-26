@@ -52,11 +52,13 @@ namespace Services.Repositories
                 INSERT INTO membership_purchase
                     (tenant_id, user_id, name_at_purchase, price_cents, duration_kind,
                      valid_from_utc, valid_to_utc, amount_cents, service_charge_cents,
-                     payment_method, status, sold_by_user_id)
+                     payment_method, status, sold_by_user_id,
+                     discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id)
                 VALUES
                     (@TenantId, @UserId, @NameAtPurchase, @PriceCents, @DurationKind,
                      @ValidFromUtc, @ValidToUtc, @AmountCents, @ServiceChargeCents,
-                     @PaymentMethod, @Status, @SoldByUserId)
+                     @PaymentMethod, @Status, @SoldByUserId,
+                     @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, p)).First();
         }

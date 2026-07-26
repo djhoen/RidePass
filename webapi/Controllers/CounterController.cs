@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -34,7 +34,6 @@ namespace webapi.Controllers
         private readonly IPaymentProvider _payments;
         private readonly IChargeRouter _chargeRouter;
         private readonly IPasswordHasher<User> _passwordHasher;
-        private readonly IRewardRepository _rewards;
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly ITenantLedgerRepository _ledger;
         private readonly IEventExtraRepository _extras;
@@ -46,10 +45,14 @@ namespace webapi.Controllers
         private readonly IDbHelper _db;
         private readonly ITenantCreditRepository _credit;
         private readonly webapi.Payments.IStripePurchaseFinalizer _finalizer;
-        private readonly Services.Rewards.IRewardEngine _rewardEngine;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantTaxRepository _tax;
         private readonly IConfiguration _config;
+        private readonly IDiscountPresetRepository _discounts;
+        private readonly webapi.Security.IManagerPinService _managerPin;
+        private readonly Services.Audit.IAuditLogger _audit;
+        private readonly ISeasonPassRepository _passes;
+        private readonly Services.Email.IPurchaseConfirmationEmailer _purchaseEmails;
 
         public CounterController(
             IUserRepository users,
@@ -60,7 +63,6 @@ namespace webapi.Controllers
             IPaymentProvider payments,
             IChargeRouter chargeRouter,
             IPasswordHasher<User> passwordHasher,
-            IRewardRepository rewards,
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             ITenantLedgerRepository ledger,
             IEventExtraRepository extras,
@@ -75,11 +77,19 @@ namespace webapi.Controllers
             IConfiguration config,
             ITenantCreditRepository credit,
             webapi.Payments.IStripePurchaseFinalizer finalizer,
-            Services.Rewards.IRewardEngine rewardEngine)
+            IDiscountPresetRepository discounts,
+            webapi.Security.IManagerPinService managerPin,
+            Services.Audit.IAuditLogger audit,
+            ISeasonPassRepository passes,
+            Services.Email.IPurchaseConfirmationEmailer purchaseEmails)
         {
+            _discounts = discounts;
+            _managerPin = managerPin;
+            _audit = audit;
+            _passes = passes;
+            _purchaseEmails = purchaseEmails;
             _credit = credit;
             _finalizer = finalizer;
-            _rewardEngine = rewardEngine;
             _users = users;
             _waivers = waivers;
             _events = events;
@@ -88,7 +98,6 @@ namespace webapi.Controllers
             _payments = payments;
             _chargeRouter = chargeRouter;
             _passwordHasher = passwordHasher;
-            _rewards = rewards;
             _orderConfirmations = orderConfirmations;
             _ledger = ledger;
             _extras = extras;
@@ -276,6 +285,10 @@ namespace webapi.Controllers
                                         int DepositCents, List<Guid> PickedUnits)>();
             // Memberships: at most one per cart (every rider has exactly one active membership at a time).
             (CounterCartItem Item, int PriceCents, int ServiceChargeCents)? membershipItem = null;
+            // Season passes: one purchase row per unit, exactly as the online flow does, so a parent
+            // buying three passes gets three rows each with its own QR and its own holder to register.
+            var seasonPassItems = new List<(CounterCartItem Item, SeasonPassProduct Product,
+                                            int UnitAmountCents, int UnitServiceChargeCents)>();
             int totalCents = 0;
             int ticketTaxCents = 0;   // admission tax contained in totalCents (for the response)
             bool waiverRequiredByCart = false;
@@ -520,6 +533,37 @@ namespace webapi.Controllers
                     membershipItem = (item, tenant.MembershipPriceCents, serviceCharge);
                     totalCents += tenant.MembershipPriceCents;
                 }
+                else if (item.Kind == "season_pass")
+                {
+                    if (!tenant.SeasonPassesEnabled)
+                    {
+                        return new ApiResponses().BadRequestResult("Season passes aren't sold at this track.");
+                    }
+                    var passProduct = await _passes.GetProduct(item.ItemId, _tenantContext.TenantId);
+                    if (passProduct is null || !passProduct.IsActive)
+                    {
+                        return new ApiResponses().BadRequestResult("That season pass isn't available.");
+                    }
+                    // Employee passes are granted by an admin, never sold. Refused here as well as
+                    // hidden from the counter's list, because this takes a product id straight from
+                    // the request and hiding a thing is not the same as refusing it.
+                    if (passProduct.IsEmployee)
+                    {
+                        return new ApiResponses().BadRequestResult("That pass is issued to staff, not sold.");
+                    }
+                    // Same pricing as the online flow: the rider's share of the service charge rides
+                    // on top of the list price, and the full charge is recorded on the row.
+                    var (passAmount, passServiceCharge) = ComputeWithServiceCharge(
+                        passProduct.PriceCents, quantity: 1, tenant.ServiceChargeBps,
+                        passProduct.RiderPaidServiceChargeBps);
+                    seasonPassItems.Add((item, passProduct, passAmount, passServiceCharge));
+                    totalCents += passAmount * item.Quantity;
+                    // Deliberately does NOT set waiverRequiredByCart. The pass's waiver belongs to
+                    // its HOLDER, who is often not the buyer (a parent buying for a child), and is
+                    // collected with the photo in CompleteRegistration via SignRegistrant. The
+                    // counter only signs the purchaser's own account waiver, which would be the
+                    // wrong person's signature on the pass.
+                }
                 else
                 {
                     return new ApiResponses().BadRequestResult($"Unsupported cart item kind: {item.Kind}");
@@ -530,62 +574,201 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Cart total must be positive.");
             }
 
-            // Voucher: applies to ONE unit of ONE qualifying line. Day-pass lines must be
-            // quantity=1 to be eligible (we don't split rows). Tickets are 1-row-per-unit
-            // already so the first ticket of the chosen line gets the discount.
-            int? voucherTicketIdx = null;
-            int voucherPercentOff = 0;
-            if (request.RewardRedemptionId.HasValue)
+            // The staff-applied discount from the tenant's list (Script0251) is validated and PRICED
+            // here before it is applied, so totalCents is final before anything is charged.
+            // The staff discount the cashier chose. Only the cart lines whose kind the preset is
+            // scoped to are eligible, because a counter cart is mixed: "10% off event tickets" has to
+            // come off the race entry and leave a membership in the same sale alone.
+            Services.Repositories.Data.DiscountData.DiscountPreset? staffDiscount = null;
+            var staffCandidateCents = 0;
+            Guid? discountAuthorizedBy = null;
+            if (request.DiscountPresetId is Guid staffPresetId)
             {
-                var voucher = await _rewards.GetRedemption(request.RewardRedemptionId.Value);
-                if (voucher is null || voucher.UserId != rider.Id)
+                staffDiscount = await _discounts.Get(staffPresetId, _tenantContext.TenantId);
+                if (staffDiscount is null || !staffDiscount.IsActive)
                 {
-                    return new ApiResponses().BadRequestResult("That voucher isn't this rider's.");
+                    return new ApiResponses().BadRequestResult("That discount isn't available.");
                 }
-                if (voucher.RedeemedAt is not null)
+                // Priced against list prices here purely so the candidate can be compared. The
+                // amount that actually comes off is worked out again below, against whatever the
+                // lines are really worth by then.
+                var eligibleBase = 0;
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.EventTicket))
                 {
-                    return new ApiResponses().BadRequestResult("That voucher has already been used.");
+                    foreach (var e in ticketItems) eligibleBase += e.Tier.PriceCents * e.Item.Quantity;
                 }
-                var voucherProgram = await _rewards.GetProgram(voucher.ProgramId, _tenantContext.TenantId);
-                if (voucherProgram is null || !voucherProgram.IsActive)
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Extras))
                 {
-                    return new ApiResponses().BadRequestResult("That voucher's program is no longer active.");
+                    foreach (var e in extrasItems) eligibleBase += e.UnitPriceFrozen * e.Item.Quantity;
                 }
-                voucherPercentOff = voucherProgram.RewardPercentOff;
-                var allowsTicket = voucherProgram.RequirementKind is "event_ticket" or "any";
-
-                if (allowsTicket && ticketItems.Count > 0)
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.ShopRental))
                 {
-                    voucherTicketIdx = 0;
+                    foreach (var r in rentalItems) eligibleBase += r.FeeCents;
                 }
-                if (voucherTicketIdx is null)
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Membership)
+                    && membershipItem is not null)
+                {
+                    eligibleBase += membershipItem.Value.PriceCents;
+                }
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.SeasonPass))
+                {
+                    foreach (var e in seasonPassItems) eligibleBase += e.Product.PriceCents * e.Item.Quantity;
+                }
+                if (eligibleBase <= 0)
                 {
                     return new ApiResponses().BadRequestResult(
-                        "No qualifying line for this voucher — pick a race entry or gate fee.");
+                        $"\"{staffDiscount.Name}\" doesn't apply to anything in this cart.");
+                }
+                if (staffDiscount.RequiresManager)
+                {
+                    if (cashierId is not Guid pinUserId)
+                    {
+                        return new ApiResponses().BadRequestResult("Not signed in.");
+                    }
+                    var pin = await _managerPin.VerifyAsync(_tenantContext.TenantId, pinUserId, request.ManagerPin);
+                    if (!pin.Authorized)
+                    {
+                        return new ApiResponses().BadRequestResult(
+                            pin.Error ?? $"A manager PIN is required to apply \"{staffDiscount.Name}\".");
+                    }
+                    discountAuthorizedBy = pin.AuthorizedUserId;
+                }
+                staffCandidateCents = staffDiscount.DiscountFor(eligibleBase);
+            }
+
+            var resolvedDiscounts = Services.Discounts.DiscountStacking.Resolve(
+                0, staffCandidateCents, 0, tenant.AllowDiscountStacking);
+
+            // Apply the staff discount. It is spread across the eligible lines in proportion to what
+            // each is worth, then every touched line has its service charge and tax recomputed on the
+            // NET. Recomputing matters: leaving tax on the pre-discount price would overcharge the
+            // customer on every discounted sale, which is the sort of error nobody notices until an
+            // audit. Adjustments are worked out here rather than during the write-out below so that
+            // totalCents is final before anything is charged or written.
+            var staffDiscountCents = 0;
+            var unitAdjust = new Dictionary<(string Kind, int Entry, int Unit), (int Amount, int ServiceCharge, int Tax, int Discount)>();
+            var rentalDiscounts = new int[rentalItems.Count];
+            var membershipDiscountCents = 0;
+            var membershipAmountCents = membershipItem?.PriceCents ?? 0;
+            var membershipServiceChargeCents = membershipItem?.ServiceChargeCents ?? 0;
+            if (staffDiscount is not null && resolvedDiscounts.StaffCents > 0)
+            {
+                // One target per row that will actually be written, because tickets and extras write
+                // one purchase row per unit. Spreading at row granularity is what lets the per-row
+                // discount_cents values sum exactly to what the customer was told came off.
+                var targets = new List<(string Kind, int Entry, int Unit, int Base)>();
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.EventTicket))
+                {
+                    for (var e = 0; e < ticketItems.Count; e++)
+                    {
+                        var unitBase = ticketItems[e].Tier.PriceCents;
+                        for (var u = 0; u < ticketItems[e].Item.Quantity; u++)
+                        {
+                            targets.Add(("event_ticket", e, u, unitBase));
+                        }
+                    }
+                }
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Extras))
+                {
+                    for (var e = 0; e < extrasItems.Count; e++)
+                    {
+                        for (var u = 0; u < extrasItems[e].Item.Quantity; u++)
+                        {
+                            targets.Add(("extras", e, u, extrasItems[e].UnitPriceFrozen));
+                        }
+                    }
+                }
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.ShopRental))
+                {
+                    for (var e = 0; e < rentalItems.Count; e++)
+                    {
+                        targets.Add(("rental", e, 0, rentalItems[e].FeeCents));
+                    }
+                }
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Membership)
+                    && membershipItem is not null)
+                {
+                    targets.Add(("membership", 0, 0, membershipItem.Value.PriceCents));
+                }
+                if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.SeasonPass))
+                {
+                    for (var e = 0; e < seasonPassItems.Count; e++)
+                    {
+                        for (var u = 0; u < seasonPassItems[e].Item.Quantity; u++)
+                        {
+                            targets.Add(("season_pass", e, u, seasonPassItems[e].Product.PriceCents));
+                        }
+                    }
                 }
 
-                // Recompute discounted line + adjust totalCents.
-                if (voucherTicketIdx is int tki)
+                // Re-priced against what the lines are worth NOW rather than against list prices.
+                var actualBase = targets.Sum(t => t.Base);
+                staffDiscountCents = Math.Min(staffDiscount.DiscountFor(actualBase), actualBase);
+                var spread = Services.Discounts.DiscountSpread.Across(
+                    targets.Select(t => t.Base).ToList(), staffDiscountCents);
+                staffDiscountCents = spread.Sum();   // the clamped truth, after the split
+
+                for (var i = 0; i < targets.Count; i++)
                 {
-                    var entry = ticketItems[tki];
-                    var discountedPrice = entry.Tier.PriceCents - (entry.Tier.PriceCents * voucherPercentOff / 100);
-                    var (newPreTax, newUnitSc) = ComputeWithServiceCharge(
-                        discountedPrice, 1, tenant.ServiceChargeBps, entry.Tier.RiderPaidServiceChargeBps);
-                    var newTax = AdmissionTax.Compute(discountedPrice, newPreTax - discountedPrice, admissionTax);
-                    totalCents -= entry.UnitAmountCents;
-                    totalCents += newTax.AmountToChargeCents;
-                    ticketTaxCents += newTax.TaxCents - entry.UnitTaxCents;
-                    // Stash the discounted unit by pre-pending a synthetic entry of qty=1 and trimming the original.
-                    var trimmedItem = new CounterCartItem { Kind = entry.Item.Kind, ItemId = entry.Item.ItemId, Quantity = entry.Item.Quantity - 1 };
-                    var discountedItem = new CounterCartItem { Kind = entry.Item.Kind, ItemId = entry.Item.ItemId, Quantity = 1 };
-                    ticketItems.RemoveAt(tki);
-                    ticketItems.Insert(0, (discountedItem, entry.Tier, newTax.AmountToChargeCents, newUnitSc, newTax.TaxCents));
-                    if (trimmedItem.Quantity > 0)
+                    var (kind, e, u, unitBase) = targets[i];
+                    var off = spread[i];
+                    if (off <= 0) continue;
+                    var net = Math.Max(0, unitBase - off);
+
+                    if (kind == "event_ticket")
                     {
-                        ticketItems.Insert(1, (trimmedItem, entry.Tier, entry.UnitAmountCents, entry.UnitServiceChargeCents, entry.UnitTaxCents));
+                        var entry = ticketItems[e];
+                        var (preTax, sc) = ComputeWithServiceCharge(
+                            net, 1, tenant.ServiceChargeBps, entry.Tier.RiderPaidServiceChargeBps);
+                        var tx = AdmissionTax.Compute(net, preTax - net, admissionTax);
+                        totalCents += tx.AmountToChargeCents - entry.UnitAmountCents;
+                        ticketTaxCents += tx.TaxCents - entry.UnitTaxCents;
+                        unitAdjust[(kind, e, u)] = (tx.AmountToChargeCents, sc, tx.TaxCents, off);
                     }
-                    voucherTicketIdx = 0;   // discounted entry is now at index 0
+                    else if (kind == "extras")
+                    {
+                        var entry = extrasItems[e];
+                        var (amount, sc) = ComputeWithServiceCharge(
+                            net, 1, tenant.ServiceChargeBps, entry.Product.RiderPaidServiceChargeBps);
+                        totalCents += amount - entry.UnitAmountCents;
+                        unitAdjust[(kind, e, u)] = (amount, sc, 0, off);
+                    }
+                    else if (kind == "rental")
+                    {
+                        // The platform's cut is a share of the fee, so it has to be recomputed too —
+                        // otherwise a discounted rental would owe the platform more than it collected.
+                        var r = rentalItems[e];
+                        var newCut = net == 0 ? 0
+                            : (await _feeCalculator.Calculate(_tenantContext.TenantId, net, 0, 0, DateTime.UtcNow)).RidepassCutCents;
+                        totalCents += net - r.FeeCents;
+                        rentalDiscounts[e] = off;
+                        rentalItems[e] = (r.Bike, r.EventId, r.StartsAtUtc, r.EndsAtUtc, r.Quantity,
+                            r.FrozenRate, net, newCut, r.DepositCents, r.PickedUnits);
+                    }
+                    else if (kind == "season_pass")
+                    {
+                        var entry = seasonPassItems[e];
+                        var (amount, sc) = ComputeWithServiceCharge(
+                            net, 1, tenant.ServiceChargeBps, entry.Product.RiderPaidServiceChargeBps);
+                        totalCents += amount - entry.UnitAmountCents;
+                        unitAdjust[(kind, e, u)] = (amount, sc, 0, off);
+                    }
+                    else if (kind == "membership" && membershipItem is not null)
+                    {
+                        membershipDiscountCents = off;
+                        membershipAmountCents = net;
+                        membershipServiceChargeCents = (int)((long)net * tenant.ServiceChargeBps / 10_000L);
+                        totalCents += net - membershipItem.Value.PriceCents;
+                    }
                 }
+            }
+
+            if (totalCents < 0)
+            {
+                // Belt and braces: every discount above is clamped to the line it comes off, so this
+                // should be unreachable. It is here because a negative total would otherwise become a
+                // negative charge, and refusing the sale is far better than paying the customer.
+                return new ApiResponses().BadRequestResult("Discounts exceed the cart total.");
             }
 
             // Sign waiver on rider's behalf if any cart item requires it and they haven't already signed.
@@ -628,7 +811,7 @@ namespace webapi.Controllers
 
             var purchaserName = $"{rider.FirstName} {rider.LastName}".Trim();
             var lineItems = new List<CounterSaleLineItem>();
-            // Parallel list with the per-row service charge so cash + free-voucher ledger
+            // Parallel list with the per-row service charge so cash + zero-charge ledger
             // writes can use the right ridepass_cut for each row.
             var ledgerLines = new List<(string Kind, Guid PurchaseId, int Gross, int ServiceCharge)>();
 
@@ -693,20 +876,25 @@ namespace webapi.Controllers
                 var (item, tier, unitAmount, unitServiceCharge, unitTax) = ticketItems[tkiIdx];
                 for (int i = 0; i < item.Quantity; i++)
                 {
-                    // The discounted entry was placed at index 0 with Quantity=1, so the voucher
-                    // applies to that single ticket only; the rest stay full price.
-                    var applyVoucherHere = tkiIdx == voucherTicketIdx && i == 0;
+                    // A staff discount is spread per ROW, so each unit of this line reads its own
+                    // recomputed amount, service charge and tax rather than the line's shared figures.
+                    var adj = unitAdjust.TryGetValue(("event_ticket", tkiIdx, i), out var tAdj)
+                        ? tAdj
+                        : (Amount: unitAmount, ServiceCharge: unitServiceCharge, Tax: unitTax, Discount: 0);
                     var t = new EventTicketPurchase
                     {
                         TenantId = _tenantContext.TenantId,
                         TierId = tier.Id,
                         PurchaserUserId = rider.Id,
-                        AmountCents = unitAmount,
-                        ServiceChargeCents = unitServiceCharge,
-                        TaxCents = unitTax,
+                        AmountCents = adj.Amount,
+                        ServiceChargeCents = adj.ServiceCharge,
+                        TaxCents = adj.Tax,
+                        DiscountCents = adj.Discount,
+                        DiscountPresetId = adj.Discount > 0 ? staffDiscount?.Id : null,
+                        DiscountLabel = adj.Discount > 0 ? staffDiscount?.Name : null,
+                        DiscountAuthorizedByUserId = adj.Discount > 0 ? discountAuthorizedBy : null,
                         TaxRateBps = admissionTax.RateBps,
                         TaxInclusive = admissionTax.PricesIncludeTax,
-                        AppliedRewardRedemptionId = applyVoucherHere ? request.RewardRedemptionId : null,
                         PaymentMethod = paymentMethod,
                         Status = "pending",
                         PurchaserEmail = rider.Email,
@@ -725,9 +913,9 @@ namespace webapi.Controllers
                         DisplayName = tier.Name,
                         Quantity = 1,
                         UnitPriceCents = tier.PriceCents,
-                        LineAmountCents = unitAmount,
+                        LineAmountCents = adj.Amount,
                     });
-                    ledgerLines.Add(("event_ticket", created.Id, unitAmount, unitServiceCharge));
+                    ledgerLines.Add(("event_ticket", created.Id, adj.Amount, adj.ServiceCharge));
                 }
             }
             }
@@ -740,10 +928,15 @@ namespace webapi.Controllers
             // attrs frozen on the row. 'extras' is a valid ledger source_kind (Script0099), so
             // cash extras flow through ledgerLines below and get a sale ledger row like everything
             // else; the Stripe path's ledger rows are written by the webhook finalizer instead.
-            foreach (var (item, product, variant, unitAmount, unitServiceCharge, unitPriceFrozen) in extrasItems)
+            for (var exIdx = 0; exIdx < extrasItems.Count; exIdx++)
             {
+                var (item, product, variant, unitAmount, unitServiceCharge, unitPriceFrozen) = extrasItems[exIdx];
                 for (int i = 0; i < item.Quantity; i++)
                 {
+                    // As with tickets, a staff discount is spread per row, so each unit carries its own.
+                    var adj = unitAdjust.TryGetValue(("extras", exIdx, i), out var xAdj)
+                        ? xAdj
+                        : (Amount: unitAmount, ServiceCharge: unitServiceCharge, Tax: 0, Discount: 0);
                     var ep = new EventExtraPurchase
                     {
                         TenantId = _tenantContext.TenantId,
@@ -755,8 +948,12 @@ namespace webapi.Controllers
                         WaiverSignatureId = product.RequiresWaiver ? waiverSignatureId : null,
                         Quantity = 1,
                         UnitPriceCentsFrozen = unitPriceFrozen,
-                        AmountCents = unitAmount,
-                        ServiceChargeCents = unitServiceCharge,
+                        AmountCents = adj.Amount,
+                        ServiceChargeCents = adj.ServiceCharge,
+                        DiscountCents = adj.Discount,
+                        DiscountPresetId = adj.Discount > 0 ? staffDiscount?.Id : null,
+                        DiscountLabel = adj.Discount > 0 ? staffDiscount?.Name : null,
+                        DiscountAuthorizedByUserId = adj.Discount > 0 ? discountAuthorizedBy : null,
                         Status = "pending",
                         PaymentMethod = paymentMethod,
                         VariantId = variant?.Id,
@@ -782,16 +979,17 @@ namespace webapi.Controllers
                         DisplayName = displayName,
                         Quantity = 1,
                         UnitPriceCents = unitPriceFrozen,
-                        LineAmountCents = unitAmount,
+                        LineAmountCents = adj.Amount,
                     });
-                    ledgerLines.Add(("extras", created.Id, unitAmount, unitServiceCharge));
+                    ledgerLines.Add(("extras", created.Id, adj.Amount, adj.ServiceCharge));
                 }
             }
             // Lesson bike rentals: one shop_rental per cart line, reserved for the lesson window
             // (window overlap holds the capacity), with serialized units assigned on the lines.
             // Ledger gross = fee only; the deposit is recorded on the rental, not charged.
-            foreach (var r in rentalItems)
+            for (var rIdx = 0; rIdx < rentalItems.Count; rIdx++)
             {
+                var r = rentalItems[rIdx];
                 var bikeLabel = string.Join(" / ", new[] { r.Bike.Size, r.Bike.Color, r.Bike.Gender }
                     .Where(x => !string.IsNullOrWhiteSpace(x)));
                 var rentalLines = new List<Services.Repositories.Data.BikeShopData.ShopRentalLine>();
@@ -817,6 +1015,18 @@ namespace webapi.Controllers
                         LineAmountCents = r.FeeCents,
                     });
                 }
+                // r.FeeCents is already net of any staff discount, so the rental's own lines have to
+                // come down with it — otherwise the header would disagree with the sum of its lines.
+                if (rentalDiscounts[rIdx] > 0 && rentalLines.Count > 0)
+                {
+                    var lineSpread = Services.Discounts.DiscountSpread.Across(
+                        rentalLines.Select(l => l.LineAmountCents).ToList(), rentalDiscounts[rIdx]);
+                    for (var li = 0; li < rentalLines.Count; li++)
+                    {
+                        rentalLines[li].LineAmountCents =
+                            Math.Max(0, rentalLines[li].LineAmountCents - lineSpread[li]);
+                    }
+                }
                 var (rid, rToken) = await _shop.CreateRental(new Services.Repositories.Data.BikeShopData.ShopRental
                 {
                     TenantId = _tenantContext.TenantId,
@@ -834,6 +1044,10 @@ namespace webapi.Controllers
                     PaymentMethod = paymentMethod == "cash" ? "cash" : "stripe",
                     SoldByUserId = cashierId,
                     EventId = r.EventId,
+                    DiscountCents = rentalDiscounts[rIdx],
+                    DiscountPresetId = rentalDiscounts[rIdx] > 0 ? staffDiscount?.Id : null,
+                    DiscountLabel = rentalDiscounts[rIdx] > 0 ? staffDiscount?.Name : null,
+                    DiscountAuthorizedByUserId = rentalDiscounts[rIdx] > 0 ? discountAuthorizedBy : null,
                 }, rentalLines);
                 lineItems.Add(new CounterSaleLineItem
                 {
@@ -859,12 +1073,18 @@ namespace webapi.Controllers
                     TenantId = tenant.Id,
                     UserId = rider.Id,
                     NameAtPurchase = tenant.MembershipName,
+                    // PriceCents stays the list price; AmountCents is what was actually charged, so a
+                    // discounted membership still records what it would have cost.
                     PriceCents = priceCents,
                     DurationKind = tenant.MembershipDurationKind,
                     ValidFromUtc = now,
                     ValidToUtc = validTo,
-                    AmountCents = priceCents,
-                    ServiceChargeCents = serviceCharge,
+                    AmountCents = membershipAmountCents,
+                    ServiceChargeCents = membershipServiceChargeCents,
+                    DiscountCents = membershipDiscountCents,
+                    DiscountPresetId = membershipDiscountCents > 0 ? staffDiscount?.Id : null,
+                    DiscountLabel = membershipDiscountCents > 0 ? staffDiscount?.Name : null,
+                    DiscountAuthorizedByUserId = membershipDiscountCents > 0 ? discountAuthorizedBy : null,
                     Status = "pending",
                     PaymentMethod = paymentMethod,
                     SoldByUserId = cashierId,
@@ -878,9 +1098,81 @@ namespace webapi.Controllers
                     DisplayName = tenant.MembershipName,
                     Quantity = 1,
                     UnitPriceCents = priceCents,
-                    LineAmountCents = priceCents,
+                    LineAmountCents = membershipAmountCents,
                 });
-                ledgerLines.Add(("membership", purchase.Id, priceCents, serviceCharge));
+                ledgerLines.Add(("membership", purchase.Id, membershipAmountCents, membershipServiceChargeCents));
+            }
+
+            // Season passes: one row per unit so each carries its own QR and its own holder. Created
+            // deliberately INCOMPLETE — no holder, no photo, no waiver — exactly as the online flow
+            // does, because the absence of a photo is what stops the gate admitting an unregistered
+            // pass. The rider finishes registration from their account; the counter UI says so.
+            for (var spIdx = 0; spIdx < seasonPassItems.Count; spIdx++)
+            {
+                var (item, product, unitAmount, unitServiceCharge) = seasonPassItems[spIdx];
+                for (var i = 0; i < item.Quantity; i++)
+                {
+                    var adj = unitAdjust.TryGetValue(("season_pass", spIdx, i), out var spAdj)
+                        ? spAdj
+                        : (Amount: unitAmount, ServiceCharge: unitServiceCharge, Tax: 0, Discount: 0);
+                    var passPurchase = new SeasonPassPurchase
+                    {
+                        TenantId = _tenantContext.TenantId,
+                        PurchaserUserId = rider.Id,
+                        ProductId = product.Id,
+                        AmountCents = adj.Amount,
+                        ServiceChargeCents = adj.ServiceCharge,
+                        PaymentMethod = paymentMethod,
+                        Status = "pending",
+                        PurchaserEmail = rider.Email,
+                        PurchaserName = purchaserName,
+                        ValidFromDate = product.ValidFromDate,
+                        ValidToDate = product.ValidToDate,
+                        // Only a credits pass carries a balance; an unlimited or day-of-week pass
+                        // must stay NULL or the gate would decrement a counter it doesn't use.
+                        CreditsRemaining = product.Kind == "credits" ? product.TotalCredits : null,
+                        SoldByUserId = cashierId,
+                        DiscountCents = adj.Discount,
+                        DiscountPresetId = adj.Discount > 0 ? staffDiscount?.Id : null,
+                        DiscountLabel = adj.Discount > 0 ? staffDiscount?.Name : null,
+                        DiscountAuthorizedByUserId = adj.Discount > 0 ? discountAuthorizedBy : null,
+                    };
+                    var (spId, spToken) = await _passes.CreatePurchase(passPurchase);
+                    lineItems.Add(new CounterSaleLineItem
+                    {
+                        Kind = "season_pass",
+                        PurchaseId = spId,
+                        RedemptionToken = spToken,
+                        DisplayName = product.Name,
+                        Quantity = 1,
+                        UnitPriceCents = product.PriceCents,
+                        LineAmountCents = adj.Amount,
+                    });
+                    ledgerLines.Add(("season_pass", spId, adj.Amount, adj.ServiceCharge));
+                }
+            }
+
+            // Record the giveaway now the rows exist, and deliberately before payment: an override
+            // that a manager authorised is worth logging whether or not the card went through, and a
+            // declined card is not a reason to lose the record of who approved what.
+            if (staffDiscount is not null && staffDiscountCents > 0)
+            {
+                await _audit.Log(
+                    "counter.discount_applied",
+                    $"Applied \"{staffDiscount.Name}\" at the counter, taking off ${staffDiscountCents / 100m:0.00}",
+                    targetKind: "user",
+                    targetId: rider.Id,
+                    tenantId: _tenantContext.TenantId,
+                    metadata: new
+                    {
+                        discountName = staffDiscount.Name,
+                        discountPresetId = staffDiscount.Id,
+                        discountCents = staffDiscountCents,
+                        cartTotalCents = totalCents,
+                        requiredManager = staffDiscount.RequiresManager,
+                        authorizedByUserId = discountAuthorizedBy,
+                        purchaseIds = lineItems.Select(l => l.PurchaseId).ToArray(),
+                    });
             }
 
             // ── Store credit tender (Script0195): the cashier looked the account up; verify it,
@@ -935,6 +1227,7 @@ namespace webapi.Controllers
                     if (kind == "event_ticket") await _ticketPurchases.UpdateStatus(purchaseId, "paid");
                     else if (kind == "membership") await _memberships.UpdateStatus(purchaseId, "paid");
                     else if (kind == "extras") await _extras.UpdateStatus(purchaseId, "paid");
+                    else if (kind == "season_pass") await _passes.UpdatePurchaseStatus(purchaseId, "paid");
                     else if (kind == "shop_rental")
                     {
                         if (await _shop.TryMarkRentalPaid(purchaseId, _tenantContext.TenantId))
@@ -960,27 +1253,11 @@ namespace webapi.Controllers
                     }
                     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
                 }
-                if (request.RewardRedemptionId.HasValue)
-                {
-                    var first = lineItems[0];
-                    await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, first.Kind, first.PurchaseId);
-                }
-
                 await BookTenderNow();
-
-                // Credit-back loyalty on the cash actually collected, keyed to the first line so
-                // a retried submit can't double-award.
-                try
-                {
-                    await _rewardEngine.AwardCreditBack(_tenantContext.TenantId, rider.Id, rider.Email,
-                        $"{rider.FirstName} {rider.LastName}".Trim(), "event_ticket",
-                        lineItems[0].PurchaseId, dueCents);
-                }
-                catch { /* loyalty is best-effort; the sale already settled */ }
 
                 // A cash sale at the counter never touches Stripe, so nothing else would email the
                 // rider. They still want the entry in their inbox and on their account.
-                await SendCounterConfirmations(lineItems);
+                await SendCounterConfirmations(lineItems, rider.Email, purchaserName);
 
                 return new ApiResponses().OkResult(new CounterSaleResponse
                 {
@@ -993,7 +1270,8 @@ namespace webapi.Controllers
                 });
             }
 
-            // Free-cart fast path (rare — happens only when a 100%-off voucher zeroes out a single-line cart).
+            // Free-cart fast path: a staff discount
+            // (Script0251) large enough to take the whole cart to nothing.
             if (totalCents == 0)
             {
                 foreach (var li in lineItems)
@@ -1001,6 +1279,7 @@ namespace webapi.Controllers
                     if (li.Kind == "event_ticket") await _ticketPurchases.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "extras") await _extras.UpdateStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "membership") await _memberships.UpdateStatus(li.PurchaseId, "paid");
+                    else if (li.Kind == "season_pass") await _passes.UpdatePurchaseStatus(li.PurchaseId, "paid");
                     else if (li.Kind == "shop_rental")
                     {
                         if (await _shop.TryMarkRentalPaid(li.PurchaseId, _tenantContext.TenantId))
@@ -1022,19 +1301,16 @@ namespace webapi.Controllers
                             RidepassCutCents = 0,
                             NetToTenantCents = 0,
                             PaymentMethod = "voucher",
-                            Memo = "Free purchase via reward voucher",
+                            // 'voucher' stays as the ledger's long-standing vocabulary for a
+                            // zero-charge sale; only the memo, which named a removed feature, changes.
+                            Memo = "Free purchase (no charge)",
                         });
                     }
                     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
                 }
-                if (request.RewardRedemptionId.HasValue)
-                {
-                    var first = lineItems[0];
-                    await _rewards.MarkRedemptionUsed(request.RewardRedemptionId.Value, first.Kind, first.PurchaseId);
-                }
 
-                // Free at the counter (a 100%-off voucher) is still an admission: same email, same QR.
-                await SendCounterConfirmations(lineItems);
+                // Free at the counter is still an admission: same email, same QR.
+                await SendCounterConfirmations(lineItems, rider.Email, purchaserName);
 
                 return new ApiResponses().OkResult(new CounterSaleResponse
                 {
@@ -1138,6 +1414,14 @@ namespace webapi.Controllers
                         await _shop.SetRentalPaymentIntent(li.PurchaseId, intent.IntentId);
                         if (chargePlan.IsDirect)
                             await _shop.MarkRentalDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+                        break;
+                    case "season_pass":
+                        // Stamping the PI id is all the card path needs: the webhook finalizer sweeps
+                        // every row pointing at this PaymentIntent regardless of kind, and handles the
+                        // status flip, the ledger entry and the per-pass email itself.
+                        await _passes.SetPurchaseStripePaymentIntentId(li.PurchaseId, intent.IntentId);
+                        if (chargePlan.IsDirect)
+                            await _passes.MarkPurchaseDirectCharge(li.PurchaseId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
                         break;
                 }
             }
@@ -1331,12 +1615,23 @@ namespace webapi.Controllers
             return locationId;
         }
 
-        // Confirmation for the counter paths that settle without Stripe (cash, and a voucher that
+        // Confirmation for the counter paths that settle without Stripe (cash, and a discount that
         // zeroes the cart). Card sales are confirmed off the webhook instead, so they don't come
         // through here and can't double-send. Event tickets carry the order; a cart of only add-ons
         // still confirms, so a walk-up spectator gate fee reaches the buyer's inbox.
-        private async Task SendCounterConfirmations(List<CounterSaleLineItem> lineItems)
+        private async Task SendCounterConfirmations(List<CounterSaleLineItem> lineItems,
+            string riderEmail, string riderName)
         {
+            // Season passes first and unconditionally. They are not part of an event order, so the
+            // ticket/add-on early-return below (deliberate: a ticket email already lists its add-ons)
+            // must not swallow them. One email per pass, because each carries its own QR.
+            foreach (var pass in lineItems.Where(l => l.Kind == "season_pass"))
+            {
+                await _purchaseEmails.SendAsync(_tenantContext.TenantId, riderEmail, riderName,
+                    pass.RedemptionToken, "season_pass", pass.LineAmountCents, validOnDate: null,
+                    isGuest: false);
+            }
+
             var ticketIds = lineItems.Where(l => l.Kind == "event_ticket").Select(l => l.PurchaseId).ToList();
             if (ticketIds.Count > 0)
             {

@@ -17,6 +17,16 @@
                     <v-col cols="4"><v-text-field v-model="form.barcode" label="Barcode" density="compact" hide-details></v-text-field></v-col>
                     <v-col cols="4"><v-text-field v-model="form.mpn" label="Mfr part # (MPN)" density="compact" hide-details></v-text-field></v-col>
                 </v-row>
+                <!-- The one field that leaves this tenant. Everything else about the product,
+                     including its name, stays private, so the hint says which is which. -->
+                <v-row dense class="mt-2">
+                    <v-col cols="12">
+                        <v-text-field v-model="form.manufacturerName" label="Manufacturer's name for this part"
+                            density="compact" persistent-hint
+                            placeholder="e.g. Bontrager Standard Tube 700x25"
+                            hint="Optional. The name on the box, not your own. Shared with other RidePass shops so a scan of this barcode identifies the part; your own product name is never shared."></v-text-field>
+                    </v-col>
+                </v-row>
                 <v-row dense class="mt-2">
                     <v-col cols="4"><v-text-field v-model.number="salePrice" type="number" min="0" step="0.01" label="Sale price" prefix="$" density="compact" hide-details></v-text-field></v-col>
                     <v-col cols="4"><v-text-field v-model.number="msrp" type="number" min="0" step="0.01" label="MSRP" prefix="$" density="compact" hide-details persistent-hint hint="Compare-at"></v-text-field></v-col>
@@ -72,7 +82,17 @@
 import { ref, watch } from 'vue'
 import { BikeShopService, type ShopProduct, type ShopVariant, type UpsertShopVariant } from '@/services/BikeShopService'
 
-const props = defineProps<{ modelValue: boolean; product: ShopProduct | null; variant: ShopVariant | null }>()
+const props = defineProps<{
+    modelValue: boolean
+    product: ShopProduct | null
+    variant: ShopVariant | null
+    /**
+     * Seeds for a NEW variant when the user got here by scanning a barcode at the register that
+     * the shared parts library recognised. Saves retyping a 14-digit number and the manufacturer's
+     * wording they were just shown. Ignored when editing, where the row is the truth.
+     */
+    prefill?: { barcode?: string | null; manufacturerName?: string | null } | null
+}>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'saved'): void; (e: 'flash', text: string, color?: 'success' | 'error'): void }>()
 
 const service = new BikeShopService()
@@ -90,7 +110,8 @@ const lowStockAt = ref<number | null>(null)
 
 function blank(): UpsertShopVariant {
     return { sku: null, barcode: null, size: null, color: null, gender: null, salePriceCents: null,
-        msrpCents: null, dailyRateCents: null, depositCents: 0, costCents: null, mpn: null, trackingKind: 'pool',
+        msrpCents: null, dailyRateCents: null, depositCents: 0, costCents: null, mpn: null,
+        manufacturerName: null, trackingKind: 'pool',
         lowStockThreshold: null, reorderPoint: null, reorderLevel: null, vendorPartNumber: null, isActive: true }
 }
 const toCents = (d: number | null) => (d == null || isNaN(d) ? null : Math.round(d * 100))
@@ -104,10 +125,14 @@ watch(() => props.modelValue, (open) => {
     form.value = v
         ? { sku: v.sku, barcode: v.barcode, size: v.size, color: v.color, gender: v.gender, salePriceCents: v.salePriceCents,
             msrpCents: v.msrpCents, dailyRateCents: v.dailyRateCents, depositCents: v.depositCents, costCents: v.costCents,
-            mpn: v.mpn, trackingKind: v.trackingKind,
+            mpn: v.mpn, manufacturerName: v.manufacturerName, trackingKind: v.trackingKind,
             lowStockThreshold: v.lowStockThreshold, reorderPoint: v.reorderPoint, reorderLevel: v.reorderLevel,
             vendorPartNumber: v.vendorPartNumber, isActive: v.isActive }
-        : blank()
+        : {
+            ...blank(),
+            barcode: props.prefill?.barcode ?? null,
+            manufacturerName: props.prefill?.manufacturerName ?? null,
+        }
     salePrice.value = toDollars(form.value.salePriceCents)
     msrp.value = toDollars(form.value.msrpCents)
     lowStockAt.value = form.value.lowStockThreshold
@@ -133,6 +158,7 @@ async function save() {
             salePriceCents: toCents(salePrice.value),
             msrpCents: toCents(msrp.value),
             mpn: form.value.mpn?.trim() || null,
+            manufacturerName: form.value.manufacturerName?.trim() || null,
             costCents: toCents(cost.value),
             dailyRateCents: props.product.isRentable ? toCents(dailyRate.value) : null,
             depositCents: toCents(deposit.value) ?? 0,

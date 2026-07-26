@@ -31,6 +31,15 @@
             </v-tabs>
 
             <div v-if="productsTab === 'catalog'">
+            <!-- Came here from the register with a scanned barcode. The product form can't hold the
+                 barcode (it lives on the variant, which is created afterwards), so keep it on
+                 screen rather than making the user walk back to the register and scan again. -->
+            <v-alert v-if="scannedPrefill?.barcode" type="info" variant="tonal" density="compact" closable
+                class="mb-3" @click:close="scannedPrefill = null">
+                Save the product, then add a variant to it: the scanned barcode
+                (<strong>{{ scannedPrefill.barcode }}</strong>) and the manufacturer's name are
+                filled in for you, so the scanner finds it next time.
+            </v-alert>
             <div class="d-flex mb-3 ga-2 flex-wrap align-center">
                 <v-text-field v-model="search" density="compact" hide-details clearable
                     prepend-inner-icon="mdi-magnify" label="Search name or SKU"
@@ -292,9 +301,9 @@
 
         <!-- ── Dialogs ──────────────────────────────────────────────────── -->
         <ProductDialog v-model="productDialog" :product="editingProduct" :categories="categories"
-            :suppliers="suppliers" @saved="onStockChanged" @flash="flash" />
+            :suppliers="suppliers" :prefill="newProductPrefill" @saved="onStockChanged" @flash="flash" />
         <VariantDialog v-model="variantDialog" :product="variantProduct" :variant="editingVariant"
-            @saved="onStockChanged" @flash="flash" />
+            :prefill="scannedPrefill" @saved="onStockChanged" @flash="flash" />
         <AdjustStockDialog v-model="adjustDialog" :variant="adjustVariant" @saved="onStockChanged" @flash="flash" />
         <BarcodeLabelDialog v-model="labelDialog" :variant="labelVariant" :product-name="labelProductName" />
         <ItemsDialog v-model="itemsDialog" :variant="itemsVariant" @changed="onStockChanged" @flash="flash" />
@@ -475,6 +484,34 @@ const importDialog = ref(false)
 const matrixDialog = ref(false); const matrixProduct = ref<ShopProduct | null>(null)
 
 function openProduct(p: ShopProduct | null = null) { editingProduct.value = p; productDialog.value = true }
+
+// ── Arriving from the register with a barcode the shared parts library recognised ──────────
+// The cashier scanned something this shop doesn't carry, the library knew what it was, and they
+// clicked "Add to catalog". Open the new-product dialog already filled in rather than making them
+// retype a name they were just shown. Only identity crosses over: price, category and stock are
+// this shop's to set. The barcode rides along so it can be typed onto the variant afterwards.
+// The product name is seeded from the manufacturer's, but it is the shop's OWN name from that
+// point on: they can rename it freely and no other tenant ever sees it. The manufacturer's wording
+// is kept separately and rides onto the variant, because that is the only field that is shared.
+const newProductPrefill = ref<{ name?: string | null; brand?: string | null } | null>(null)
+const scannedPrefill = ref<{ barcode?: string | null; manufacturerName?: string | null } | null>(null)
+onMounted(() => {
+    const name = typeof route.query.newName === 'string' ? route.query.newName : null
+    if (!name) return
+    newProductPrefill.value = {
+        name,
+        brand: typeof route.query.newBrand === 'string' ? route.query.newBrand : null,
+    }
+    scannedPrefill.value = {
+        barcode: typeof route.query.newBarcode === 'string' ? route.query.newBarcode : null,
+        // Same string as the seeded product name today, but they diverge the moment the shop
+        // renames the product, which is exactly the point of keeping them apart.
+        manufacturerName: name,
+    }
+    productDialog.value = true
+    // Drop the params so a refresh (or a back-navigation) doesn't reopen the dialog.
+    router.replace({ query: { ...route.query, newName: undefined, newBrand: undefined, newBarcode: undefined } })
+})
 function openMatrix(p: ShopProduct) { matrixProduct.value = p; matrixDialog.value = true }
 // An import can create categories + suppliers alongside products; refresh all three lists.
 function onImported() { onStockChanged(); reloadCategories(); reloadSuppliers() }

@@ -23,6 +23,18 @@
                     <v-btn icon="mdi-close" variant="text" size="small" :disabled="booking" @click="close"></v-btn>
                 </v-card-title>
                 <v-card-text>
+                    <!-- Clicking an empty slot on the Rental Board is how most bookings start, and
+                         the board happily shows yesterday. Backdating is legitimate (writing up a
+                         walk-up that already went out), so this warns loudly rather than blocking. -->
+                    <v-alert v-if="startsInPast" type="warning" variant="tonal" density="compact"
+                        prominent class="mb-4" icon="mdi-clock-alert-outline">
+                        <div class="text-subtitle-1 font-weight-bold">This time has already occurred</div>
+                        <div class="text-body-2">
+                            {{ pastWindowMessage }} Booking it anyway records the rental as if it went
+                            out then. Change the dates above if that isn't what you meant.
+                        </div>
+                    </v-alert>
+
                     <v-row dense>
                         <v-col cols="6"><v-text-field v-model="form.startsAt" type="datetime-local" label="From" density="compact" hide-details></v-text-field></v-col>
                         <v-col cols="6"><v-text-field v-model="form.endsAt" type="datetime-local" label="Until" density="compact" hide-details></v-text-field></v-col>
@@ -56,10 +68,28 @@
                         <v-btn icon="mdi-close" size="x-small" variant="text" @click="form.lines.splice(i, 1)"></v-btn>
                     </div>
 
+                    <v-select v-if="discountOptions.length > 0"
+                        v-model="selectedDiscountId"
+                        :items="discountOptions"
+                        item-title="title" item-value="value"
+                        label="Apply discount (optional)" density="compact"
+                        clearable hide-details class="mt-4"></v-select>
+                    <v-text-field v-if="selectedDiscount?.requiresManager"
+                        v-model="discountManagerPin"
+                        label="Manager PIN" type="password" density="compact"
+                        inputmode="numeric" autocomplete="off" class="mt-4"
+                        :hint="'A manager PIN is required to apply ' + selectedDiscount.name + '.'"
+                        persistent-hint></v-text-field>
+
                     <v-divider class="my-3"></v-divider>
                     <div class="d-flex justify-space-between text-body-2">
                         <span>{{ days }} day{{ days === 1 ? '' : 's' }} × gear</span>
                         <span>{{ money(estimateCents) }}</span>
+                    </div>
+                    <div v-if="estimateDiscountCents > 0"
+                         class="d-flex justify-space-between text-body-2 text-success">
+                        <span>{{ selectedDiscount?.name }}</span>
+                        <span>-{{ money(estimateDiscountCents) }}</span>
                     </div>
                     <!-- Damage waiver, offered only when the track has it configured. Placed with
                          the money, above the total, because taking it changes both the total and
@@ -165,9 +195,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
+import { tenantWallClockToIso, tenantWallClockToMs, tenantWallClockNow } from '@/helpers/TenantTime'
 import { BikeShopService } from '@/services/BikeShopService'
+import { DiscountService, type DiscountPreset } from '@/services/DiscountService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
 
@@ -201,6 +233,32 @@ const emit = defineEmits<{
 }>()
 
 const service = new BikeShopService()
+const discountService = new DiscountService()
+
+// Tenant-defined staff discounts scoped to rentals ("VMBA member 15% off"). The server is the
+// authority on what comes off; this is so the counter can pick one and quote it.
+const discountPresets = ref<DiscountPreset[]>([])
+const selectedDiscountId = ref<string | null>(null)
+const discountManagerPin = ref('')
+const discountOptions = computed(() => discountPresets.value.map(p => ({
+    value: p.id,
+    title: `${p.name} — ${p.label}${p.requiresManager ? ' (manager)' : ''}`,
+})))
+const selectedDiscount = computed(() =>
+    discountPresets.value.find(p => p.id === selectedDiscountId.value) ?? null)
+
+async function loadDiscounts() {
+    try {
+        const r = await discountService.forSurface('shop_rental')
+        discountPresets.value = r.data.data
+    } catch (err: any) {
+        // Never render a load failure as "this track has no discounts" — the counter would charge
+        // full price and the renter would be denied a rate they are entitled to.
+        discountPresets.value = []
+        flash(err.response?.data?.error
+            || 'Couldn’t load rental discounts. Reload before charging if one is owed.', 'error')
+    }
+}
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
 function flash(t: string, c: 'success' | 'error' = 'success') { emit('notify', t, c) }
 function close() { emit('update:modelValue', false) }
@@ -221,11 +279,51 @@ const form = ref({
     insurance: false,
 })
 
+// The From/Until fields hold a WALL CLOCK reading at the track, not a browser-local instant: that
+// is what the labels mean to a counter operator, and it is what the Rental Board writes into the
+// preset. tenantWallClockToMs/Iso do the conversion; see TenantTime for why `new Date()` is wrong.
 const windowValid = computed(() => !!form.value.startsAt && !!form.value.endsAt
-    && new Date(form.value.endsAt) > new Date(form.value.startsAt))
+    && tenantWallClockToMs(form.value.endsAt) > tenantWallClockToMs(form.value.startsAt))
+// Compared against Date.now() rather than a captured timestamp so the warning clears on its own
+// if the operator sits on the dialog and edits the start forward past "now".
+const nowTick = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval> | null = null
+
+const startsInPast = computed(() => {
+    if (!form.value.startsAt) return false
+    const ms = tenantWallClockToMs(form.value.startsAt)
+    return Number.isFinite(ms) && ms < nowTick.value
+})
+
+// Hand-rolled rather than dayjs's relativeTime, matching the Rentals page: the plugin is not
+// registered in main.ts and picking it up only because some other component imported it first is
+// a load-order accident waiting to happen.
+function agoLabel(ms: number): string {
+    const mins = Math.round((nowTick.value - ms) / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins} min ago`
+    if (mins < 60 * 36) return `${Math.round(mins / 60)} hr ago`
+    return `${Math.round(mins / 1440)} days ago`
+}
+
+// Says HOW far back, because "already occurred" reads very differently for five minutes ago
+// (a walk-up being written up now) than for last month (almost certainly a wrong date).
+const pastWindowMessage = computed(() => {
+    if (!startsInPast.value) return ''
+    const startMs = tenantWallClockToMs(form.value.startsAt)
+    const endMs = form.value.endsAt ? tenantWallClockToMs(form.value.endsAt) : NaN
+    const wholeWindowPast = Number.isFinite(endMs) && endMs < nowTick.value
+    return wholeWindowPast
+        ? `The whole window is in the past: it started ${agoLabel(startMs)} and has already ended.`
+        : `It starts ${agoLabel(startMs)}.`
+})
+
+onMounted(() => { nowTimer = setInterval(() => { nowTick.value = Date.now() }, 30_000) })
+onBeforeUnmount(() => { if (nowTimer) clearInterval(nowTimer) })
+
 const days = computed(() => {
     if (!windowValid.value) return 1
-    const hours = (new Date(form.value.endsAt).getTime() - new Date(form.value.startsAt).getTime()) / 36e5
+    const hours = (tenantWallClockToMs(form.value.endsAt) - tenantWallClockToMs(form.value.startsAt)) / 36e5
     return Math.max(1, Math.ceil(hours / 24))
 })
 const estimateCents = computed(() => form.value.lines.reduce((s, l) => s + l.dailyRateCents * days.value * l.quantity, 0))
@@ -249,8 +347,22 @@ const estimateDepositBeforeWaiverCents = computed(() =>
 const estimateDepositCents = computed(() =>
     estimateInsuranceCents.value > 0 ? 0 : estimateDepositBeforeWaiverCents.value)
 
-/** The rental subtotal the fee and tax are computed on: gear plus the waiver, never the deposit. */
-const estimateSubtotalCents = computed(() => estimateCents.value + estimateInsuranceCents.value)
+/** Mirrors DiscountPreset.DiscountFor on the server: percent is basis points, amount is cents,
+ *  and either way it can never exceed the gear it comes off. Priced on the GROSS gear, matching
+ *  the server, which discounts the rental before the waiver fee is added. */
+const estimateDiscountCents = computed(() => {
+    const p = selectedDiscount.value
+    if (!p || estimateCents.value <= 0) return 0
+    const raw = p.kind === 'percent'
+        ? Math.floor((estimateCents.value * p.value) / 10000)
+        : p.value
+    return Math.min(Math.max(raw, 0), estimateCents.value)
+})
+
+/** The rental subtotal the fee and tax are computed on: gear less any discount, plus the waiver,
+ *  never the deposit. The waiver stays a percentage of the GROSS, as on the server. */
+const estimateSubtotalCents = computed(() =>
+    Math.max(0, estimateCents.value - estimateDiscountCents.value) + estimateInsuranceCents.value)
 
 // Suggested rider count: the largest single line quantity. Two bikes means two riders, while a
 // bike plus a helmet is still one person. Staff can override; the server takes what we send.
@@ -292,14 +404,20 @@ watch(() => props.modelValue, async open => {
     if (!open) return
     const p = props.preset
     form.value = {
-        startsAt: p?.startsAt || dayjs().format('YYYY-MM-DDTHH:mm'),
-        endsAt: p?.endsAt || dayjs().add(1, 'day').format('YYYY-MM-DDTHH:mm'),
+        // Seeded from the TRACK's clock, matching how the fields are read back.
+        startsAt: p?.startsAt || tenantWallClockNow(),
+        endsAt: p?.endsAt || dayjs(tenantWallClockNow()).add(1, 'day').format('YYYY-MM-DDTHH:mm'),
         lines: [], ridersRequired: 1, renterName: '', renterEmail: '', renterPhone: '',
         // Never carried over: the waiver is a decision the renter in front of you makes, and
         // inheriting the last customer's answer is how someone gets charged for one silently.
         insurance: false,
     }
     bookError.value = ''
+    // Never carried over either: a discount is a decision about THIS renter, and inheriting the
+    // last customer's rate is how a track gives away money it never meant to.
+    selectedDiscountId.value = null
+    discountManagerPin.value = ''
+    void loadDiscounts()
     ridersTouched = false
     pickVariantId.value = p?.variantId ?? null
     if (p?.variantId) await addLine(p.itemId)
@@ -307,7 +425,11 @@ watch(() => props.modelValue, async open => {
 
 /**
  * Adds the currently picked variant to the booking. `wantItemId` pins a specific serialized unit
- * (the board's "book THIS bike"); without it a serialized line takes the first free unit.
+ * (the board's "book THIS bike"); without it a serialized line takes the first available unit.
+ *
+ * Clears the picker on success, so the control reads as "what am I adding next" rather than
+ * leaving the just-added item selected while it also sits in the list below. Left alone on
+ * failure, so the operator can adjust the window and press Add again without re-picking.
  */
 async function addLine(wantItemId?: string) {
     const meta = props.rentableVariants.find(v => v.id === pickVariantId.value)
@@ -315,24 +437,25 @@ async function addLine(wantItemId?: string) {
     checkingAvailability.value = true
     try {
         const r = await service.rentalAvailability(meta.id,
-            new Date(form.value.startsAt).toISOString(), new Date(form.value.endsAt).toISOString())
+            tenantWallClockToIso(form.value.startsAt), tenantWallClockToIso(form.value.endsAt))
         const { available, units } = r.data.data
         if (available <= 0) {
-            bookError.value = 'Nothing free for that window.'
-            flash('Nothing free for that window.', 'error')
+            const msg = `No ${meta.name} is available for that window.`
+            bookError.value = msg
+            flash(msg, 'error')
             return
         }
         if (meta.trackingKind === 'serialized') {
             const used = new Set(form.value.lines.map(l => l.itemId).filter(Boolean))
-            // A pinned unit must actually be free: someone else may have booked it between the
-            // board rendering and this click, and the server would reject the booking anyway.
+            // A pinned unit must actually be available: someone else may have booked it between
+            // the board rendering and this click, and the server would reject the booking anyway.
             const unit = wantItemId
                 ? units.find(u => u.id === wantItemId && !used.has(u.id))
                 : units.find(u => !used.has(u.id))
             if (!unit) {
                 const msg = wantItemId
-                    ? 'That unit is no longer free for this window. Pick another or change the times.'
-                    : 'Every free unit is already on this booking.'
+                    ? 'That unit isn\'t available for this window. Pick another or change the times.'
+                    : 'Every available unit is already on this booking.'
                 bookError.value = msg
                 flash(msg, 'error')
                 return
@@ -342,16 +465,22 @@ async function addLine(wantItemId?: string) {
                 unitLabel: unit.label + (unit.serial ? ' · ' + unit.serial : ''),
                 quantity: 1, maxQuantity: 1, dailyRateCents: meta.dailyRateCents, depositCents: meta.depositCents,
             })
+            pickVariantId.value = null
         } else {
             const existing = form.value.lines.find(l => l.variantId === meta.id && !l.itemId)
             if (existing) {
-                if (existing.quantity < available) existing.quantity++
-                else flash('No more free for that window.', 'error')
+                if (existing.quantity < available) {
+                    existing.quantity++
+                    pickVariantId.value = null
+                } else {
+                    flash(`Only ${available} of ${meta.name} available for that window.`, 'error')
+                }
             } else {
                 form.value.lines.push({
                     variantId: meta.id, name: meta.name, quantity: 1, maxQuantity: available,
                     dailyRateCents: meta.dailyRateCents, depositCents: meta.depositCents,
                 })
+                pickVariantId.value = null
             }
         }
     } catch (e: any) {
@@ -369,11 +498,13 @@ async function book(method: 'cash' | 'card') {
         const r = await service.bookRental({
             lines: form.value.lines.map(l => ({ variantId: l.variantId, quantity: l.quantity, itemId: l.itemId ?? null })),
             ridersRequired: Math.max(1, form.value.ridersRequired || 1),
-            startsAt: new Date(form.value.startsAt).toISOString(),
-            endsAt: new Date(form.value.endsAt).toISOString(),
+            startsAt: tenantWallClockToIso(form.value.startsAt),
+            endsAt: tenantWallClockToIso(form.value.endsAt),
             paymentMethod: method,
             takeDepositHold: true,
             insurance: waiverTaken.value,
+            discountPresetId: selectedDiscountId.value,
+            managerPin: discountManagerPin.value || null,
             renterName: form.value.renterName.trim() || null,
             renterEmail: form.value.renterEmail.trim() || null,
             renterPhone: form.value.renterPhone.trim() || null,

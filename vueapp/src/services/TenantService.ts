@@ -59,6 +59,21 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/RentalSettings`, req)
     }
 
+    /** Enable, kind and value travel together: on-with-no-value is a switch that does nothing. */
+    async updateSeasonPassDiscount(req: {
+        enabled: boolean; kind: string; value: number
+        appliesConcession: boolean; appliesRetail: boolean; appliesRental: boolean
+    }) {
+        return axios.put(`${this.apiUrl}/Tenant/SeasonPassDiscount`, req)
+    }
+
+    // Bike shop -> Settings: who funds the platform service fee on a retail sale.
+    // buyerPaidBps 10000 = the customer pays it as a line on their total, 0 = the shop absorbs it.
+    // As with rentals the RATE is the tenant service charge and is not set here.
+    async updateShopServiceCharge(req: { buyerPaidBps: number }) {
+        return axios.put(`${this.apiUrl}/Tenant/ShopServiceCharge`, req)
+    }
+
     async updateShopSupplyFee(req: { bps: number; capCents: number | null; label: string }) {
         return axios.put(`${this.apiUrl}/Tenant/ShopSupplyFee`, req)
     }

@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using Services.Helpers;
@@ -522,6 +522,12 @@ namespace webapi.Controllers
             v.DepositCents = req.DepositCents;
             v.CostCents = req.CostCents;
             v.Mpn = Blank(req.Mpn);
+            v.ManufacturerName = Blank(req.ManufacturerName);
+            // A human at the shop typed this, so it is RidePass's own data and poolable. Set here
+            // rather than trusted from the request: the client must not be able to label a name as
+            // coming from a source it didn't come from.
+            v.ManufacturerNameSource = v.ManufacturerName is null
+                ? null : Services.BikeShop.ManufacturerNameSource.Shop;
             v.LowStockThreshold = req.LowStockThreshold;
             v.ReorderPoint = req.ReorderPoint;
             v.ReorderLevel = req.ReorderLevel;
@@ -724,51 +730,87 @@ namespace webapi.Controllers
             if (!_tenantContext.Tenant.BikeShopEnabled)
                 return new ApiResponses().BadRequestResult("The bike shop isn't turned on for this track.");
 
-            var (products, errors) = ParseImportCsv(req.Csv);
+            var (products, errors, presentColumns) = ParseImportCsv(req.Csv);
 
-            // Validate against the live catalog: duplicate names, SKUs, and barcodes.
             var existing = await _shop.ListProducts(TenantId, activeOnly: false);
-            var existingNames = existing.Select(p => p.Name.Trim().ToLowerInvariant()).ToHashSet();
-            var existingSkus = existing.SelectMany(p => p.Variants)
-                .Where(v => !string.IsNullOrWhiteSpace(v.Sku)).Select(v => v.Sku!.Trim().ToLowerInvariant()).ToHashSet();
-            var existingBarcodes = existing.SelectMany(p => p.Variants)
-                .Where(v => !string.IsNullOrWhiteSpace(v.Barcode)).Select(v => v.Barcode!.Trim()).ToHashSet();
-            foreach (var p in products)
+
+            // Two modes, because "import" means two different jobs. The default REFUSES anything
+            // that already exists, which is right for a first load into a live catalog: a silent
+            // rewrite of prices nobody asked for is worse than an error. `update` is the refresh
+            // job, matching each row to what is already there (barcode, then MPN, then SKU) and
+            // writing only the columns the file carried.
+            if (req.UpdateExisting)
             {
-                if (existingNames.Contains(p.Name.Trim().ToLowerInvariant()))
-                    errors.Add($"\"{p.Name}\": a product with this name already exists. Rename it in the file or delete the existing one.");
-                foreach (var v in p.Variants)
+                // Nothing to reject: a collision IS the match. Row-level parse errors still stand.
+            }
+            else
+            {
+                var existingNames = existing.Select(p => p.Name.Trim().ToLowerInvariant()).ToHashSet();
+                var existingSkus = existing.SelectMany(p => p.Variants)
+                    .Where(v => !string.IsNullOrWhiteSpace(v.Sku)).Select(v => v.Sku!.Trim().ToLowerInvariant()).ToHashSet();
+                // Compared on the NORMALISED barcode, so a file listing a part as a 13-digit EAN
+                // is caught against the same part stored as a 12-digit UPC instead of sailing
+                // through and failing later on the unique index.
+                var existingGtins = existing.SelectMany(p => p.Variants)
+                    .Select(v => v.Gtin14).Where(g => !string.IsNullOrWhiteSpace(g)).ToHashSet();
+                foreach (var p in products)
                 {
-                    if (v.Sku is not null && existingSkus.Contains(v.Sku.Trim().ToLowerInvariant()))
-                        errors.Add($"\"{p.Name}\": SKU {v.Sku} is already used by an existing product.");
-                    if (v.Barcode is not null && existingBarcodes.Contains(v.Barcode.Trim()))
-                        errors.Add($"\"{p.Name}\": barcode {v.Barcode} is already used by an existing product.");
+                    if (existingNames.Contains(p.Name.Trim().ToLowerInvariant()))
+                        errors.Add($"\"{p.Name}\": a product with this name already exists. Turn on \"Update existing\" to refresh it, or rename it in the file.");
+                    foreach (var v in p.Variants)
+                    {
+                        if (v.Sku is not null && existingSkus.Contains(v.Sku.Trim().ToLowerInvariant()))
+                            errors.Add($"\"{p.Name}\": SKU {v.Sku} is already used by an existing product.");
+                        var gtin = Services.BikeShop.Gtin.Normalize(v.Barcode);
+                        if (gtin is not null && existingGtins.Contains(gtin))
+                            errors.Add($"\"{p.Name}\": barcode {v.Barcode} is already used by an existing product.");
+                    }
                 }
             }
 
+            var options = new ShopImportOptions
+            {
+                UpdateExisting = req.UpdateExisting,
+                PresentColumns = presentColumns,
+            };
+
             if (dryRun || errors.Count > 0)
             {
-                return errors.Count > 0 && !dryRun
-                    ? new ApiResponses().BadRequestResult("The file has errors. Fix them and try again.")
-                    : new ApiResponses().OkResult(new
-                    {
-                        dryRun = true,
-                        products = products.Count,
-                        variants = products.Sum(p => p.Variants.Count),
-                        newCategories = products.Select(p => p.CategoryName).Where(c => c != null).Distinct().Count(),
-                        newSuppliers = products.Select(p => p.SupplierName).Where(s => s != null).Distinct().Count(),
-                        errors,
-                    });
+                if (errors.Count > 0 && !dryRun)
+                    return new ApiResponses().BadRequestResult("The file has errors. Fix them and try again.");
+
+                // Split the preview into created vs updated so the operator knows which job they
+                // are about to run. "247 variants" reads the same whether it is 247 new parts or
+                // 247 price changes to a live catalog, and those deserve different confidence.
+                var (willCreateVariants, willUpdateVariants, willUpdateProducts) =
+                    PreviewImportCounts(products, existing, req.UpdateExisting);
+                return new ApiResponses().OkResult(new
+                {
+                    dryRun = true,
+                    updateExisting = req.UpdateExisting,
+                    products = products.Count - willUpdateProducts,
+                    productsUpdated = willUpdateProducts,
+                    variants = willCreateVariants,
+                    variantsUpdated = willUpdateVariants,
+                    newCategories = products.Select(p => p.CategoryName).Where(c => c != null).Distinct().Count(),
+                    newSuppliers = products.Select(p => p.SupplierName).Where(s => s != null).Distinct().Count(),
+                    // What an update will actually write. Anything not listed is left alone.
+                    columns = presentColumns.OrderBy(c => c).ToList(),
+                    errors,
+                });
             }
             if (products.Count == 0)
                 return new ApiResponses().BadRequestResult("The file has no product rows.");
 
-            var result = await _shop.ImportCatalog(TenantId, products, UserId);
+            var result = await _shop.ImportCatalog(TenantId, products, UserId, options);
             return new ApiResponses().OkResult(new
             {
                 dryRun = false,
+                updateExisting = req.UpdateExisting,
                 products = result.Products,
+                productsUpdated = result.ProductsUpdated,
                 variants = result.Variants,
+                variantsUpdated = result.VariantsUpdated,
                 newCategories = result.NewCategories,
                 newSuppliers = result.NewSuppliers,
                 errors = new List<string>(),
@@ -802,14 +844,52 @@ namespace webapi.Controllers
 
         // Header-driven CSV parse into grouped products. Returns row-level errors with 1-based
         // line numbers (header = line 1) so the fix-up loop in a spreadsheet is painless.
-        private static (List<ShopImportProduct> Products, List<string> Errors) ParseImportCsv(string csv)
+        /// <summary>
+        /// What the commit WOULD do, using the same matching order the repository uses (barcode,
+        /// then MPN, then SKU) so the preview cannot promise one thing and the run do another.
+        /// </summary>
+        private static (int CreateVariants, int UpdateVariants, int UpdateProducts) PreviewImportCounts(
+            List<ShopImportProduct> products, List<ShopProductWithVariants> existing, bool updateExisting)
+        {
+            var all = products.Sum(p => p.Variants.Count);
+            if (!updateExisting) return (all, 0, 0);
+
+            var byGtin = new HashSet<string>();
+            var byMpn = new HashSet<string>();
+            var bySku = new HashSet<string>();
+            var names = new HashSet<string>();
+            foreach (var p in existing)
+            {
+                names.Add(p.Name.Trim().ToLowerInvariant());
+                foreach (var v in p.Variants)
+                {
+                    if (!string.IsNullOrWhiteSpace(v.Gtin14)) byGtin.Add(v.Gtin14!);
+                    if (!string.IsNullOrWhiteSpace(v.Mpn)) byMpn.Add(v.Mpn!.Trim().ToLowerInvariant());
+                    if (!string.IsNullOrWhiteSpace(v.Sku)) bySku.Add(v.Sku!.Trim().ToLowerInvariant());
+                }
+            }
+
+            var updates = 0;
+            foreach (var v in products.SelectMany(p => p.Variants))
+            {
+                var gtin = Services.BikeShop.Gtin.Normalize(v.Barcode);
+                var matched = (gtin is not null && byGtin.Contains(gtin))
+                    || (!string.IsNullOrWhiteSpace(v.Mpn) && byMpn.Contains(v.Mpn.Trim().ToLowerInvariant()))
+                    || (!string.IsNullOrWhiteSpace(v.Sku) && bySku.Contains(v.Sku.Trim().ToLowerInvariant()));
+                if (matched) updates++;
+            }
+            var productUpdates = products.Count(p => names.Contains(p.Name.Trim().ToLowerInvariant()));
+            return (all - updates, updates, productUpdates);
+        }
+
+        private static (List<ShopImportProduct> Products, List<string> Errors, HashSet<string> PresentColumns) ParseImportCsv(string csv)
         {
             var errors = new List<string>();
             var rows = SplitCsv(csv);
             if (rows.Count < 2)
             {
                 errors.Add("The file needs a header row plus at least one product row.");
-                return (new List<ShopImportProduct>(), errors);
+                return (new List<ShopImportProduct>(), errors, new HashSet<string>());
             }
 
             // Header mapping: case/space/underscore-insensitive.
@@ -820,14 +900,27 @@ namespace webapi.Controllers
             if (cProduct < 0)
             {
                 errors.Add("The header row needs a \"Product\" column.");
-                return (new List<ShopImportProduct>(), errors);
+                return (new List<ShopImportProduct>(), errors, new HashSet<string>());
             }
             var cDesc = Col("description");
             var cBrand = Col("brand");
             var cCategory = Col("category");
             var cSupplier = Col("supplier", "vendor");
             var cSku = Col("sku");
-            var cBarcode = Col("barcode", "upc");
+            var cBarcode = Col("barcode", "upc", "ean", "gtin");
+            // What a distributor export leads with. MPN is the second thing an update matches on
+            // after the barcode, so accepting the column is what makes a QBP-shaped file useful.
+            var cMpn = Col("mpn", "manufacturerpartnumber", "partnumber");
+            var cVendorPart = Col("vendorpartnumber", "vendorpart", "vendorsku");
+            // The manufacturer's own wording for the part, distinct from the product name a shop
+            // types. This is the ONLY field that feeds the cross-tenant parts library, so a
+            // distributor export carrying it is the cleanest way to fill that library legitimately.
+            // Aliases here must be UNAMBIGUOUSLY manufacturer-scoped. A bare "productname" is
+            // deliberately NOT accepted: cProduct already claims it as the shop's own name for the
+            // row, so accepting it here would copy a tenant-authored name into the one field that
+            // gets shared across tenants, which is the exact leak this column exists to prevent.
+            var cMfrName = Col("manufacturername", "mfrname", "manufacturerproductname", "mfrproductname");
+            var cMsrp = Col("msrp", "listprice", "retailprice");
             var cSize = Col("size");
             var cColor = Col("color", "colour");
             var cGender = Col("gender");
@@ -904,10 +997,14 @@ namespace webapi.Controllers
                 {
                     Sku = sku,
                     Barcode = barcode,
+                    Mpn = Cell(row, cMpn),
+                    ManufacturerName = Cell(row, cMfrName),
+                    VendorPartNumber = Cell(row, cVendorPart),
                     Size = Cell(row, cSize),
                     Color = Cell(row, cColor),
                     Gender = Cell(row, cGender),
                     SalePriceCents = Money(cPrice, "price"),
+                    MsrpCents = Money(cMsrp, "msrp"),
                     CostCents = Money(cCost, "cost"),
                     DailyRateCents = Money(cDailyRate, "daily rate"),
                     DepositCents = Money(cDeposit, "deposit") ?? 0,
@@ -940,7 +1037,28 @@ namespace webapi.Controllers
                 }
                 product.Variants.Add(variant);
             }
-            return (products, errors);
+            // Which columns the FILE carried, so an update writes only those. An absent column and
+            // an empty cell are very different things: a cost-only refresh must not blank prices.
+            var present = new HashSet<string>();
+            void Present(int idx, string key) { if (idx >= 0) present.Add(key); }
+            Present(cDesc, ShopImportColumn.Description);
+            Present(cBrand, ShopImportColumn.Brand);
+            Present(cSku, ShopImportColumn.Sku);
+            Present(cBarcode, ShopImportColumn.Barcode);
+            Present(cMpn, ShopImportColumn.Mpn);
+            Present(cVendorPart, ShopImportColumn.VendorPartNumber);
+            Present(cMfrName, ShopImportColumn.ManufacturerName);
+            Present(cSize, ShopImportColumn.Size);
+            Present(cColor, ShopImportColumn.Color);
+            Present(cGender, ShopImportColumn.Gender);
+            Present(cPrice, ShopImportColumn.Price);
+            Present(cMsrp, ShopImportColumn.Msrp);
+            Present(cCost, ShopImportColumn.Cost);
+            Present(cDailyRate, ShopImportColumn.DailyRate);
+            Present(cDeposit, ShopImportColumn.Deposit);
+            Present(cLow, ShopImportColumn.LowStock);
+
+            return (products, errors, present);
         }
 
         // Minimal RFC-4180-ish CSV split: quoted fields, doubled quotes, CR/LF line ends.

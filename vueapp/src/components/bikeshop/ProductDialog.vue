@@ -20,7 +20,11 @@
             <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
                 <v-window v-model="tab">
                     <v-window-item value="details">
-                        <v-text-field v-model="form.name" label="Name" density="compact" hide-details></v-text-field>
+                        <!-- Call it whatever suits your shop. This name is yours: it is never
+                             shown to another track. The manufacturer's name, which IS shared, is a
+                             separate field on the variant. -->
+                        <v-text-field v-model="form.name" label="Name" density="compact"
+                            persistent-hint hint="What your shop calls it. Only your staff and customers ever see this."></v-text-field>
                         <v-textarea v-model="form.description" label="Description" density="compact" rows="2" class="mt-4" hide-details></v-textarea>
                         <v-row dense class="mt-2">
                             <v-col cols="6"><v-text-field v-model="form.brand" label="Brand" density="compact" hide-details></v-text-field></v-col>
@@ -126,7 +130,18 @@ import { useDragReorder } from '@/composables/useDragReorder'
 import { useConfirm } from '@/composables/useConfirm'
 import { absoluteUrl } from '@/helpers/ImageUrl'
 
-const props = defineProps<{ modelValue: boolean; product: ShopProduct | null; categories: ShopCategory[]; suppliers: ShopSupplier[] }>()
+const props = defineProps<{
+    modelValue: boolean
+    product: ShopProduct | null
+    categories: ShopCategory[]
+    suppliers: ShopSupplier[]
+    /**
+     * Seed values for a NEW product, from the shared parts library when a cashier scanned a
+     * barcode nobody in this shop had entered. Identity only; the shop still sets its own price,
+     * category and stock. Ignored when editing an existing product, where the row is the truth.
+     */
+    prefill?: { name?: string | null; brand?: string | null } | null
+}>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'saved'): void; (e: 'flash', text: string, color?: 'success' | 'error'): void }>()
 
 const service = new BikeShopService()
@@ -257,7 +272,7 @@ watch(() => props.modelValue, (open) => {
     form.value = p
         ? { name: p.name, description: p.description, brand: p.brand, imageUrl: p.imageUrl, categoryId: p.categoryId,
             supplierId: p.supplierId, isSellable: p.isSellable, isPublished: p.isPublished, isRentable: p.isRentable, isActive: p.isActive, sortOrder: p.sortOrder }
-        : blank()
+        : { ...blank(), name: props.prefill?.name ?? '', brand: props.prefill?.brand ?? null }
     loadImages()
 })
 

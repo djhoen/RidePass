@@ -1,10 +1,9 @@
-using Services.Helpers;
+﻿using Services.Helpers;
 using Services.Notifications;
 using Services.Payments;
 using Services.Repositories.Data.ExtrasData;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
-using Services.Rewards;
 
 namespace webapi.Payments
 {
@@ -21,8 +20,6 @@ namespace webapi.Payments
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantLedgerRepository _ledger;
         private readonly INotificationService _notifications;
-        private readonly IRewardEngine _rewardEngine;
-        private readonly IRewardRepository _rewards;
         private readonly IUserRepository _users;
         private readonly ISeasonPassRepository _seasonPasses;
         private readonly ITenantRepository _tenants;
@@ -38,7 +35,9 @@ namespace webapi.Payments
         private readonly IBikeShopRepository _shop;
         private readonly IPackageRepository _packages;
         private readonly ITenantCreditRepository _credit;
+        private readonly IPendingPurchaseRepository _pendingPurchases;
         private readonly IEmailSuppressionRepository _suppression;
+        private readonly Services.Email.IPurchaseConfirmationEmailer _purchaseEmails;
         private readonly ISmtpEmailer _emailer;
         private readonly Services.Helpers.ISmsSender _sms;
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
@@ -52,8 +51,6 @@ namespace webapi.Payments
             IFeeCalculator feeCalculator,
             ITenantLedgerRepository ledger,
             INotificationService notifications,
-            IRewardEngine rewardEngine,
-            IRewardRepository rewards,
             IUserRepository users,
             ISeasonPassRepository seasonPasses,
             ITenantRepository tenants,
@@ -69,7 +66,9 @@ namespace webapi.Payments
             IBikeShopRepository shop,
             IPackageRepository packages,
             ITenantCreditRepository credit,
+            IPendingPurchaseRepository pendingPurchases,
             IEmailSuppressionRepository suppression,
+            Services.Email.IPurchaseConfirmationEmailer purchaseEmails,
             ISmtpEmailer emailer,
             Services.Helpers.ISmsSender sms,
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
@@ -81,8 +80,6 @@ namespace webapi.Payments
             _feeCalculator = feeCalculator;
             _ledger = ledger;
             _notifications = notifications;
-            _rewardEngine = rewardEngine;
-            _rewards = rewards;
             _users = users;
             _seasonPasses = seasonPasses;
             _tenants = tenants;
@@ -98,7 +95,9 @@ namespace webapi.Payments
             _shop = shop;
             _packages = packages;
             _credit = credit;
+            _pendingPurchases = pendingPurchases;
             _suppression = suppression;
+            _purchaseEmails = purchaseEmails;
             _emailer = emailer;
             _sms = sms;
             _orderConfirmations = orderConfirmations;
@@ -109,6 +108,22 @@ namespace webapi.Payments
 
         public async Task ProcessPaymentIntentAsync(string paymentIntentId, string eventType, CancellationToken ct = default)
         {
+            // "purchase.abandoned" is synthesized only by our own reconciler when a checkout was
+            // never completed (the PI got cancelled, or sat past the abandon cutoff with no
+            // completed attempt). It is a dead payment exactly like a real Stripe decline, so
+            // every failure branch below keys off deadStatus rather than the event name: the ONLY
+            // difference between the two outcomes is the status written, and sharing the branches
+            // guarantees the teardown (discount restore, ride credit hand-back, store credit
+            // reversal) can never drift apart. A genuine payment_intent.payment_failed webhook
+            // still lands in 'failed', preserving 'failed' = Stripe reported a declined attempt.
+            var deadStatus = eventType switch
+            {
+                "payment_intent.payment_failed" => "failed",
+                "purchase.abandoned" => "abandoned",
+                _ => null,
+            };
+            var deadReason = deadStatus == "abandoned" ? "checkout abandoned" : "payment failed";
+
             // A counter sale can attach multiple purchase rows (mixed kinds) to one PaymentIntent,
             // so iterate everything that points at this PI rather than stopping after the first match.
             var tickets = await _ticketPurchases.ListByStripePaymentIntentId(paymentIntentId);
@@ -177,8 +192,10 @@ namespace webapi.Payments
                         _ = _giftCardDelivery.SendDeliveryEmail(giftCard);
                     }
                 }
-                else if (eventType == "payment_intent.payment_failed")
+                else if (deadStatus is not null)
                 {
+                    // Void covers both a decline and an abandonment: the card's own status
+                    // vocabulary has no 'abandoned', and 'void' already means "never became live".
                     await _giftCards.Void(giftCard.Id);
                 }
                 return;
@@ -210,9 +227,9 @@ namespace webapi.Payments
                     // otherwise it would double-count the PI fee in the ledger.
                     await OnMembershipPaid(membership, membershipOwnsTheFee: tickets.Count == 0, isDirect);
                 }
-                else if (eventType == "payment_intent.payment_failed" && membership.Status == "pending")
+                else if (deadStatus is not null && membership.Status == "pending")
                 {
-                    await _memberships.UpdateStatus(membership.Id, "failed");
+                    await _memberships.UpdateStatus(membership.Id, deadStatus);
                 }
                 if (tickets.Count == 0 && seasonPasses.Count == 0 && extras.Count == 0)
                 {
@@ -236,10 +253,10 @@ namespace webapi.Payments
                         && membership is null && seasonPasses.Count == 0;
                     await OnExtrasPaid(paymentIntentId, extras, extrasOwnTheFee, isDirect, ticketsOnPi: tickets.Count > 0);
                 }
-                else if (eventType == "payment_intent.payment_failed")
+                else if (deadStatus is not null)
                 {
                     foreach (var x in extras.Where(e => e.Status == "pending"))
-                        await _extras.UpdateStatus(x.Id, "failed");
+                        await _extras.UpdateStatus(x.Id, deadStatus);
                 }
                 if (tickets.Count == 0 && seasonPasses.Count == 0)
                 {
@@ -255,12 +272,12 @@ namespace webapi.Payments
                 {
                     await OnConcessionPaid(concessionSale);
                 }
-                else if (eventType == "payment_intent.payment_failed" && concessionSale.Status == "pending")
+                else if (deadStatus is not null && concessionSale.Status == "pending")
                 {
-                    await _concessions.MarkSaleFailed(concessionSale.Id);
+                    await _concessions.MarkSaleFailed(concessionSale.Id, deadStatus);
                     // Hand back any store credit the POS redeemed as a tender.
                     if (concessionSale.CreditAppliedCents > 0)
-                        await _credit.ReverseRedeem(concessionSale.TenantId, "concession_sale", concessionSale.Id, "payment failed");
+                        await _credit.ReverseRedeem(concessionSale.TenantId, "concession_sale", concessionSale.Id, deadReason);
                 }
                 return;
             }
@@ -272,14 +289,14 @@ namespace webapi.Payments
                 {
                     await OnShopSalePaid(shopSale);
                 }
-                else if (eventType == "payment_intent.payment_failed" && shopSale.Status == "pending")
+                else if (deadStatus is not null && shopSale.Status == "pending")
                 {
-                    await _shop.MarkSaleFailed(shopSale.Id);
+                    await _shop.MarkSaleFailed(shopSale.Id, deadStatus);
                     // Hand back any coupon use the register recorded at ring-up.
                     await RestoreDiscountsFor("shop_sale", new[] { shopSale.Id });
                     // And any store credit it redeemed as a tender.
                     if (shopSale.CreditAppliedCents > 0)
-                        await _credit.ReverseRedeem(shopSale.TenantId, "shop_sale", shopSale.Id, "payment failed");
+                        await _credit.ReverseRedeem(shopSale.TenantId, "shop_sale", shopSale.Id, deadReason);
                 }
                 return;
             }
@@ -296,9 +313,9 @@ namespace webapi.Payments
                         && seasonPasses.Count == 0 && membership is null;
                     await OnShopRentalPaid(shopRental, rentalOwnsTheFee);
                 }
-                else if (eventType == "payment_intent.payment_failed" && shopRental.Status == "pending")
+                else if (deadStatus is not null && shopRental.Status == "pending")
                 {
-                    await _shop.MarkRentalFailed(shopRental.Id);
+                    await _shop.MarkRentalFailed(shopRental.Id, deadStatus);
                 }
                 if (tickets.Count == 0 && seasonPasses.Count == 0)
                 {
@@ -315,9 +332,10 @@ namespace webapi.Payments
                 {
                     await OnShopWoDepositPaid(shopWoDeposit);
                 }
-                else if (eventType == "payment_intent.payment_failed" && shopWoDeposit.DepositPaidAt is null)
+                else if (deadStatus is not null && shopWoDeposit.DepositPaidAt is null)
                 {
                     // Drop the dead PI so the customer's next visit to the link can start fresh.
+                    // No status to write here, so a decline and an abandonment act identically.
                     await _shop.ClearWorkOrderDepositIntent(shopWoDeposit.Id, shopWoDeposit.TenantId);
                 }
                 return;
@@ -330,7 +348,10 @@ namespace webapi.Payments
             {
                 if (eventType == "payment_intent.succeeded" && packagePurchase.Status == "pending")
                     await OnPackagePaid(packagePurchase);
-                else if (eventType == "payment_intent.payment_failed" && packagePurchase.Status == "pending")
+                // Defensive for "purchase.abandoned": package PIs aren't in the reconciler's stale
+                // union, so only real webhooks reach here in practice; the package writer only
+                // knows 'failed', which is an acceptable label if the synthetic event ever lands.
+                else if (deadStatus is not null && packagePurchase.Status == "pending")
                     await OnPackageFailed(packagePurchase);
                 return;
             }
@@ -355,28 +376,97 @@ namespace webapi.Payments
                     if (paidTender is not null) await BookCreditTenderEntry(paidTender, reduceNet: !isDirect);
                     break;
                 case "payment_intent.payment_failed":
-                    var failedTickets = tickets.Where(p => p.Status == "pending").ToList();
-                    foreach (var t in failedTickets)
-                        await _ticketPurchases.UpdateStatus(t.Id, "failed");
-                    if (failedTickets.Count > 0)
-                        await RestoreDiscountsFor("event_ticket", failedTickets.Select(t => t.Id).ToList());
-                    // Credit-funded tickets on a dead payment: hand the ride back to the funding
-                    // pass. ClearAppliedSeasonPass is single-winner, so a webhook/reconciler race
-                    // can't double-credit.
-                    foreach (var t in failedTickets.Where(t => t.AppliedSeasonPassPurchaseId.HasValue))
-                    {
-                        var cleared = await _ticketPurchases.ClearAppliedSeasonPass(t.Id, t.TenantId);
-                        if (cleared > 0)
-                            await _seasonPasses.IncrementCredits(t.AppliedSeasonPassPurchaseId!.Value, t.TenantId);
-                    }
-                    foreach (var sp in seasonPasses.Where(p => p.Status == "pending"))
-                        await _seasonPasses.UpdatePurchaseStatus(sp.Id, "failed");
-                    // Hand back any store credit this checkout debited.
-                    var failedTender = await _credit.GetCheckoutTenderByPaymentIntentId(paymentIntentId);
-                    if (failedTender is not null)
-                        await _credit.ReverseRedeem(failedTender.TenantId, "credit_tender", failedTender.Id, "payment failed");
+                case "purchase.abandoned":
+                    await OnPaymentDead(paymentIntentId, tickets, seasonPasses, deadStatus!, deadReason);
                     break;
             }
+        }
+
+        // One body for both dead-payment outcomes ON PURPOSE: the terminal status is the only
+        // difference between a real decline ('failed') and the reconciler's abandonment
+        // ('abandoned'). A copy-pasted twin would drift, and the likely casualty is exactly the
+        // part that is easy to forget: abandoned checkouts silently stopping the discount
+        // restore or the ride-credit hand-back to the funding season pass.
+        private async Task OnPaymentDead(string paymentIntentId, List<EventTicketPurchase> tickets,
+            List<SeasonPassPurchase> seasonPasses, string status, string reason)
+        {
+            var deadTickets = tickets.Where(p => p.Status == "pending").ToList();
+            foreach (var t in deadTickets)
+                await _ticketPurchases.UpdateStatus(t.Id, status);
+            if (deadTickets.Count > 0)
+                await RestoreDiscountsFor("event_ticket", deadTickets.Select(t => t.Id).ToList());
+            // Credit-funded tickets on a dead payment: hand the ride back to the funding
+            // pass. ClearAppliedSeasonPass is single-winner, so a webhook/reconciler race
+            // can't double-credit.
+            foreach (var t in deadTickets.Where(t => t.AppliedSeasonPassPurchaseId.HasValue))
+            {
+                var cleared = await _ticketPurchases.ClearAppliedSeasonPass(t.Id, t.TenantId);
+                if (cleared > 0)
+                    await _seasonPasses.IncrementCredits(t.AppliedSeasonPassPurchaseId!.Value, t.TenantId);
+            }
+            foreach (var sp in seasonPasses.Where(p => p.Status == "pending"))
+                await _seasonPasses.UpdatePurchaseStatus(sp.Id, status);
+            // Hand back any store credit this checkout debited.
+            var deadTender = await _credit.GetCheckoutTenderByPaymentIntentId(paymentIntentId);
+            if (deadTender is not null)
+                await _credit.ReverseRedeem(deadTender.TenantId, "credit_tender", deadTender.Id, reason);
+        }
+
+        /// <summary>
+        /// The PI-less bucket: rows created 'pending' whose checkout died before a PaymentIntent
+        /// was stamped, leaving nothing for the PI-keyed reconciliation to ask Stripe about.
+        /// Safe to abandon on age alone because counter cash sales flip to 'paid' inside the
+        /// same request and every card/online flow stamps its PI seconds after creating the
+        /// rows; nothing legitimate is still PI-less at the reconciler's two-hour cutoff.
+        /// Because checkout debits gift cards, coupons, ride credits, and store credit BEFORE
+        /// creating the PI, this sweep runs the same hand-backs as the dead-payment path above
+        /// (reusing RestoreDiscountsFor so the two cannot drift).
+        /// </summary>
+        public async Task<int> AbandonStalePaymentlessPurchasesAsync(DateTime olderThanUtc, CancellationToken ct = default)
+        {
+            var strays = await _pendingPurchases.ListStalePendingWithoutPaymentIntent(olderThanUtc);
+            var total = 0;
+            foreach (var group in strays.GroupBy(s => s.TableName))
+            {
+                if (ct.IsCancellationRequested) break;
+
+                // The mark re-checks pending + PI-less, so only rows it actually flipped get the
+                // hand-backs; a row that gained a PI since listing belongs to the PI path.
+                var flipped = (await _pendingPurchases.MarkAbandonedWithoutPaymentIntent(
+                    group.Key, group.Select(s => s.Id).ToList())).ToHashSet();
+                total += flipped.Count;
+                if (flipped.Count == 0) continue;
+
+                switch (group.Key)
+                {
+                    case "event_ticket_purchase":
+                        await RestoreDiscountsFor("event_ticket", flipped.ToList());
+                        foreach (var s in group.Where(g => flipped.Contains(g.Id) && g.AppliedSeasonPassPurchaseId.HasValue))
+                        {
+                            var cleared = await _ticketPurchases.ClearAppliedSeasonPass(s.Id, s.TenantId);
+                            if (cleared > 0)
+                                await _seasonPasses.IncrementCredits(s.AppliedSeasonPassPurchaseId!.Value, s.TenantId);
+                        }
+                        break;
+                    case "shop_sale":
+                        await RestoreDiscountsFor("shop_sale", flipped.ToList());
+                        foreach (var s in group.Where(g => flipped.Contains(g.Id) && g.CreditAppliedCents > 0))
+                            await _credit.ReverseRedeem(s.TenantId, "shop_sale", s.Id, "checkout abandoned");
+                        break;
+                    case "concession_sale":
+                        foreach (var s in group.Where(g => flipped.Contains(g.Id) && g.CreditAppliedCents > 0))
+                            await _credit.ReverseRedeem(s.TenantId, "concession_sale", s.Id, "checkout abandoned");
+                        break;
+                    case "season_pass_purchase":
+                        // A pass checkout can carry a gift card and a coupon, both recorded against
+                        // the anchor pass row. Without this the sweep would mark the pass abandoned
+                        // and keep the money: the gift card stays debited and the coupon stays used,
+                        // for a pass the buyer never received.
+                        await RestoreDiscountsFor("season_pass", flipped.ToList());
+                        break;
+                }
+            }
+            return total;
         }
 
         /// <summary>
@@ -497,6 +587,33 @@ namespace webapi.Payments
 
                 await _seasonPasses.UpdatePurchaseStatus(pass.Id, "paid");
                 pass.Status = "paid";
+
+                // Upgrade (Script0253): the replacement is paid, so retire the pass it replaces
+                // and carry the holder's registration across. Done HERE rather than at checkout
+                // because until the money lands the rider still owns the old pass, and retiring
+                // it early would strand them with nothing if the payment failed.
+                //
+                // Best-effort and ordered so the worst case is recoverable: if the carry-forward
+                // fails the rider re-registers, which is annoying; if MarkUpgraded failed after a
+                // successful carry they would briefly hold two live passes, which is worse, so
+                // the retire runs first and is guarded on 'paid' for duplicate webhooks.
+                if (pass.UpgradedFromPurchaseId is Guid oldPassId)
+                {
+                    try
+                    {
+                        if (await _seasonPasses.MarkUpgraded(oldPassId, pass.TenantId))
+                        {
+                            await _seasonPasses.CarryRegistrationForward(oldPassId, pass.Id, pass.TenantId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "Upgrade finalization failed for pass {New} replacing {Old}; the new pass is paid.",
+                            pass.Id, oldPassId);
+                    }
+                }
+
                 try
                 {
                     var calc = await _feeCalculator.Calculate(pass.TenantId, pass.AmountCents, stripeFeeForPass,
@@ -665,15 +782,6 @@ namespace webapi.Payments
                 _logger.LogDebug("Ledger entry for concession sale {Id} already exists; skipping.", sale.Id);
             }
 
-            try
-            {
-                await _rewardEngine.AwardCreditBack(sale.TenantId, sale.PurchaserUserId, sale.PurchaserEmail,
-                    sale.PurchaserName, "concession", sale.Id, sale.TotalCents - sale.CreditAppliedCents);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Credit-back failed for concession sale {Id}", sale.Id);
-            }
         }
 
         // Mirrors ConcessionController.NotifyIfReady: texts the rider once when their online order is
@@ -757,7 +865,11 @@ namespace webapi.Payments
                 // gift purchases book nothing, so its revenue is recognized here at redemption
                 // (the PI itself charged gross minus the gift amount).
                 var collected = sale.TotalCents - sale.DepositAppliedCents - sale.CreditAppliedCents;
-                var calc = await _feeCalculator.Calculate(sale.TenantId, collected, stripeFee, 0, DateTime.UtcNow, isDirect);
+                // The charge snapshotted on the sale at ring-up. FeeCalculator does not compute a
+                // charge, it only caps the one it is handed, so a literal 0 here meant every card
+                // bike shop sale settled with a RidepassCut of nothing.
+                var calc = await _feeCalculator.Calculate(sale.TenantId, collected, stripeFee,
+                    sale.ServiceChargeCents, DateTime.UtcNow, isDirect);
                 await _ledger.Insert(new TenantLedgerEntry
                 {
                     TenantId = sale.TenantId,
@@ -779,15 +891,7 @@ namespace webapi.Payments
                 _logger.LogDebug("Ledger entry for shop sale {Id} already exists; skipping.", sale.Id);
             }
 
-            try
-            {
-                await _rewardEngine.AwardCreditBack(sale.TenantId, sale.BuyerUserId, sale.BuyerEmail, sale.BuyerName,
-                    "shop_sale", sale.Id, sale.TotalCents - sale.DepositAppliedCents - sale.CreditAppliedCents);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Credit-back failed for shop sale {Id}", sale.Id);
-            }
+            
         }
 
         private async Task OnShopWoDepositPaid(Services.Repositories.Data.BikeShopData.ShopWorkOrder wo)
@@ -937,57 +1041,12 @@ namespace webapi.Payments
                 await _shop.MarkRentalFailed(pkg.ShopRentalId.Value);
         }
 
-        private async Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
-            string kind, int amountCents, DateTime? validOnDate, bool isGuest)
-        {
-            if (!_emailer.IsConfigured) return;
-            // Skip hard-bounced addresses (scope='all'); a dead address only inflates the
-            // account-wide bounce rate. Marketing opt-outs don't block a transactional receipt.
-            if (await _suppression.IsSuppressed(toEmail, tenantId, marketing: false)) return;
-            try
-            {
-                var tenant = await _tenants.GetById(tenantId);
-                if (tenant is null) return;
-                var apex = _config["App:RootDomain"] ?? "ridepass.io";
-                var baseUrl = $"https://{tenant.Subdomain}.{apex}";
-                var qrUrl = $"{baseUrl}/api/Qr/{redemptionToken}";
-                var profileUrl = $"{baseUrl}/User/MyPasses";
-
-                var (subject, kindLabel) = kind switch
-                {
-                    "pass" => ($"Your {tenant.DisplayName} day pass", "pass"),
-                    "event_ticket" => ($"Your {tenant.DisplayName} admission", "admission"),
-                    "season_pass" => ($"Your {tenant.DisplayName} season pass", "season pass"),
-                    _ => ($"Your {tenant.DisplayName} purchase", "purchase"),
-                };
-
-                var validLine = validOnDate.HasValue
-                    ? $"<p>Valid on <strong>{validOnDate.Value:dddd, MMMM d, yyyy}</strong>.</p>"
-                    : string.Empty;
-
-                // Guests have no account, so point them at signup (email prefilled) instead of a
-                // My-Passes link they can't use; logged-in riders get the account link as before.
-                var accountLine = isGuest
-                    ? $@"<p>Want to manage your entries, check in faster next time, and get race-day and waitlist alerts?
-<a href=""{baseUrl}/SignUp?email={Uri.EscapeDataString(toEmail)}"">Create your free account</a>.</p>"
-                    : $@"<p>You can also find this {kindLabel} on your account at <a href=""{profileUrl}"">{profileUrl}</a>.</p>";
-
-                var html = $@"<p>Hi {System.Net.WebUtility.HtmlEncode(toName)},</p>
-<p>Thanks for your {kindLabel} from <strong>{System.Net.WebUtility.HtmlEncode(tenant.DisplayName)}</strong>.
-Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
-{validLine}
-<p>Show this QR at the gate to be checked in:</p>
-<p><img src=""{qrUrl}"" alt=""Your QR code"" width=""240"" height=""240"" style=""border:1px solid #ddd; padding:6px; background:#fff"" /></p>
-<p>If your email client doesn't show the image, open <a href=""{qrUrl}"">this link</a> on your phone — it'll display the QR.</p>
-{accountLine}";
-
-                await _emailer.Send(toEmail, subject, html, null, Services.Email.TenantEmailIdentity.For(tenant));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to send {Kind} confirmation email to {Email}", kind, toEmail);
-            }
-        }
+        // Delegates to the shared emailer so the counter's cash path and this webhook path cannot
+        // drift on what a confirmation looks like. See Services/Email/PurchaseConfirmationEmailer.cs.
+        private Task SendPurchaseEmailAsync(Guid tenantId, string toEmail, string toName, Guid redemptionToken,
+            string kind, int amountCents, DateTime? validOnDate, bool isGuest) =>
+            _purchaseEmails.SendAsync(tenantId, toEmail, toName, redemptionToken, kind, amountCents,
+                validOnDate, isGuest);
 
         // Race-entry bundled coupons: separate email so the rider has the codes inline,
         // not buried inside the regular ticket confirmation. Sent best-effort — failure
@@ -1046,7 +1105,6 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                 .Where(t => t.Status != "paid" && t.Status != "redeemed")
                 .Select(t => (Kind: "event_ticket", Id: t.Id, TenantId: t.TenantId, Gross: t.AmountCents,
                               ServiceCharge: t.ServiceChargeCents,
-                              RewardRedemptionId: t.AppliedRewardRedemptionId,
                               MarkPaid: (Func<Task>)(async () => {
                                   await _ticketPurchases.UpdateStatus(t.Id, "paid");
                                   t.Status = "paid";
@@ -1108,11 +1166,6 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                     _logger.LogDebug("Ledger entry for {Kind} {Id} already exists; skipping.", line.Kind, line.Id);
                 }
 
-                if (line.RewardRedemptionId.HasValue)
-                {
-                    await _rewards.MarkRedemptionUsed(line.RewardRedemptionId.Value, line.Kind, line.Id);
-                }
-
                 // Phase-2 race-entry bundles: when the just-paid line is an event ticket whose
                 // tier carries a bundled-coupon config, mint the codes for the buyer. Idempotent
                 // — duplicate webhook deliveries find existing rows and short-circuit.
@@ -1153,45 +1206,6 @@ Total: <strong>${(amountCents / 100m):0.00}</strong>.</p>
                 await _orderConfirmations.SendForTickets(emailTenantId, paidTicketIds);
             }
 
-            // Run loyalty rewards once per (tenant, rider). Guest ticket purchases (no user) are skipped.
-            var rewardActors = tickets
-                .Where(t => t.PurchaserUserId.HasValue)
-                .Select(t => (TenantId: t.TenantId, UserId: t.PurchaserUserId, Email: t.PurchaserEmail, Name: t.PurchaserName))
-                .Where(a => a.UserId.HasValue)
-                .GroupBy(a => (a.TenantId, a.UserId!.Value))
-                .Select(g => g.First());
-            foreach (var actor in rewardActors)
-            {
-                try
-                {
-                    var firstName = actor.Name?.Split(' ').FirstOrDefault() ?? "rider";
-                    await _rewardEngine.ProcessPaidPurchase(actor.TenantId, actor.UserId!.Value, actor.Email, firstName);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Reward engine failed for tenant {TenantId} user {UserId}", actor.TenantId, actor.UserId);
-                }
-            }
-
-            // Credit-back loyalty: once per (tenant, rider) on this checkout's ticket spend, keyed
-            // to the rider's lowest ticket id so webhook + reconciler re-fires stay idempotent.
-            var creditBackActors = tickets
-                .Where(t => t.Status == "paid" && t.PurchaserUserId.HasValue)
-                .GroupBy(t => (t.TenantId, UserId: t.PurchaserUserId!.Value));
-            foreach (var g in creditBackActors)
-            {
-                try
-                {
-                    var first = g.OrderBy(t => t.Id).First();
-                    await _rewardEngine.AwardCreditBack(g.Key.TenantId, g.Key.UserId,
-                        first.PurchaserEmail, first.PurchaserName,
-                        "event_ticket", first.Id, g.Sum(t => t.AmountCents));
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Credit-back failed for tenant {TenantId} user {UserId}", g.Key.TenantId, g.Key.UserId);
-                }
-            }
         }
     }
 }

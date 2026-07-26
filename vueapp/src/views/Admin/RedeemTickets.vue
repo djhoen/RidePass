@@ -428,8 +428,133 @@
                         </v-btn>
                     </div>
                 </template>
+
+                <!-- ── Buddy passes ────────────────────────────────────────────
+                     Only rendered when the product grants them. The holder is standing
+                     here (we scanned their pass), which is the whole precondition. -->
+                <template v-if="pass.buddyPass">
+                    <v-divider class="my-3"></v-divider>
+                    <div class="d-flex align-center ga-2 flex-wrap">
+                        <v-icon size="18" color="primary">mdi-account-multiple-plus</v-icon>
+                        <span class="text-body-2">
+                            <strong>{{ pass.buddyPass.remaining }}</strong> of
+                            {{ pass.buddyPass.total }} buddy passes left
+                        </span>
+                        <v-chip v-if="pass.buddyPass.goodFor.length" size="x-small" variant="tonal">
+                            <v-tooltip activator="parent" location="top">
+                                Good for: {{ pass.buddyPass.goodFor.join(', ') }}
+                            </v-tooltip>
+                            {{ pass.buddyPass.goodFor.join(', ') }}
+                        </v-chip>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" variant="tonal" color="primary"
+                            :disabled="!!buddyBlock" @click="openBuddy">
+                            <v-tooltip v-if="buddyBlock" activator="parent" location="top">
+                                {{ buddyBlock }}
+                            </v-tooltip>
+                            Bring a buddy
+                        </v-btn>
+                    </div>
+                    <p v-if="buddyBlock" class="text-caption text-medium-emphasis mt-1 mb-0">
+                        {{ buddyBlock }}
+                    </p>
+                </template>
             </v-card-text>
         </v-card>
+
+        <!-- ── Bring a buddy ───────────────────────────────────────────────── -->
+        <v-dialog v-model="buddyOpen" max-width="520">
+            <v-card v-if="pass">
+                <v-card-title class="d-flex align-center">
+                    <span>Bring a buddy</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="buddyBusy"
+                        @click="buddyOpen = false"></v-btn>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text>
+                    <v-alert v-if="buddyError" type="error" variant="tonal" density="compact" class="mb-3">
+                        {{ buddyError }}
+                    </v-alert>
+
+                    <p class="text-body-2 mb-1">
+                        Using one of <strong>{{ pass.holderName || pass.purchaserName }}</strong>'s
+                        buddy passes ({{ pass.buddyPass?.remaining }} left).
+                    </p>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        The guest needs an account. Look them up, or create one here.
+                    </p>
+
+                    <!-- Step 1: the guest -->
+                    <div v-if="!buddyRider" class="d-flex ga-2 align-start">
+                        <v-text-field v-model="buddyEmail" label="Guest email" density="compact"
+                            hide-details style="flex: 1" @keyup.enter="findBuddy"></v-text-field>
+                        <v-btn :loading="buddyFinding" :disabled="!buddyEmail.trim()"
+                            @click="findBuddy">Find</v-btn>
+                    </div>
+                    <div v-else class="d-flex align-center ga-2 mb-2">
+                        <v-icon size="18" color="success">mdi-account-check</v-icon>
+                        <span class="text-body-2">{{ buddyRider.firstName }} {{ buddyRider.lastName }}</span>
+                        <span class="text-caption text-medium-emphasis">{{ buddyRider.email }}</span>
+                        <v-spacer></v-spacer>
+                        <v-btn variant="text" size="small" @click="clearBuddyRider">Change</v-btn>
+                    </div>
+
+                    <!-- Step 1b: no account yet, so make one at the window -->
+                    <template v-if="buddyNotFound && !buddyRider">
+                        <v-alert type="info" variant="tonal" density="compact" class="mt-3 mb-2">
+                            No account for that email. Create one to admit them.
+                        </v-alert>
+                        <div class="d-flex ga-2">
+                            <v-text-field v-model="buddyFirst" label="First name" density="compact"
+                                hide-details style="flex: 1"></v-text-field>
+                            <v-text-field v-model="buddyLast" label="Last name" density="compact"
+                                hide-details style="flex: 1"></v-text-field>
+                        </div>
+                        <v-text-field v-model="buddyDob" type="date" label="Date of birth"
+                            density="compact" hide-details class="mt-4"></v-text-field>
+                        <div class="d-flex ga-2 mt-4">
+                            <v-text-field v-model="buddyEcName" label="Emergency contact"
+                                density="compact" hide-details style="flex: 1"></v-text-field>
+                            <v-text-field v-model="buddyEcPhone" label="Their phone"
+                                density="compact" hide-details style="flex: 1"></v-text-field>
+                        </div>
+                        <v-btn class="mt-3" color="primary" size="small" :loading="buddyCreating"
+                            :disabled="!canCreateBuddy" @click="createBuddy">Create account</v-btn>
+                    </template>
+
+                    <!-- Step 2: what admits them -->
+                    <template v-if="buddyRider">
+                        <v-divider class="my-3"></v-divider>
+                        <div v-if="buddyEligibleEvents.length === 0" class="text-body-2 text-medium-emphasis">
+                            Nothing running today that this buddy pass is good for.
+                            <span v-if="pass.buddyPass?.goodFor.length">
+                                It covers: {{ pass.buddyPass.goodFor.join(', ') }}.
+                            </span>
+                        </div>
+                        <template v-else>
+                            <v-select v-model="buddyEventId" :items="buddyEventItems" label="Event"
+                                density="compact" hide-details></v-select>
+                            <v-select v-model="buddyTierId" :items="buddyTierItems" label="Entry option"
+                                density="compact" hide-details class="mt-4"
+                                :loading="buddyTiersLoading" :disabled="!buddyEventId"></v-select>
+                            <p class="text-caption text-medium-emphasis mt-2 mb-0">
+                                They'll still need to sign the waiver and add their details before the
+                                gate will pass them.
+                            </p>
+                        </template>
+                    </template>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" :disabled="buddyBusy" @click="buddyOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="buddyRedeeming"
+                        :disabled="!buddyRider || !buddyTierId" @click="redeemBuddy">
+                        Use a buddy pass
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <!-- ── Verify ID / age ─────────────────────────────────────────────── -->
         <v-dialog v-model="verifyIdOpen" max-width="440">
@@ -535,10 +660,12 @@ import { TicketService, type OrderLookup, type OrderItem, type OrderWaiverAttend
 import { branding } from '@/stores/branding'
 import { WristbandService } from '@/services/WristbandService'
 import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService'
+import { CounterService, type CounterRider } from '@/services/CounterService'
 
 const service = new TicketService()
 const wristbands = new WristbandService()
 const seasonPasses = new SeasonPassService()
+const counter = new CounterService()
 
 const manualInput = ref('')
 const searchInput = ref('')
@@ -558,6 +685,167 @@ const tab = ref<'items' | 'waivers'>('items')
 // Season pass (walk-up gate redemption): populated when a scanned token turns out to be a
 // pass rather than an order. Mutually exclusive with `order`.
 const pass = ref<PassLookup | null>(null)
+
+// ── Buddy passes ─────────────────────────────────────────────────────────────
+// The holder is present by construction: we only get here from scanning their pass.
+const buddyOpen = ref(false)
+const buddyEmail = ref('')
+const buddyRider = ref<CounterRider | null>(null)
+const buddyNotFound = ref(false)
+const buddyFinding = ref(false)
+const buddyCreating = ref(false)
+const buddyRedeeming = ref(false)
+const buddyError = ref<string | null>(null)
+const buddyFirst = ref('')
+const buddyLast = ref('')
+const buddyDob = ref('')
+const buddyEcName = ref('')
+const buddyEcPhone = ref('')
+const buddyEventId = ref<string | null>(null)
+const buddyTierId = ref<string | null>(null)
+const buddyTiers = ref<Array<{ id: string; name: string; priceCents: number }>>([])
+const buddyTiersLoading = ref(false)
+
+const buddyBusy = computed(() => buddyFinding.value || buddyCreating.value || buddyRedeeming.value)
+
+// Why the button is unavailable, said once so the tooltip and the caption agree.
+const buddyBlock = computed(() => {
+    const b = pass.value?.buddyPass
+    if (!b) return null
+    if (b.remaining <= 0) return `All ${b.total} buddy passes have been used this season.`
+    // Phase 1 redeems the free perk end to end; a partial discount has to be priced through
+    // the counter's ticket path, so the server refuses it and the button says so up front.
+    if (!b.isFree) return "Discounted buddy passes can't be redeemed here yet."
+    if (b.goodFor.length === 0) return 'These buddy passes are not set up for any event type yet.'
+    return null
+})
+
+// Only today's events whose type the entitlement covers: offering the rest would mean a
+// confident click followed by a server refusal.
+const buddyEligibleEvents = computed(() => {
+    const ids = pass.value?.buddyPass?.eventTypeIds ?? []
+    return (pass.value?.todaysEvents ?? []).filter(e => ids.includes(e.eventTypeId))
+})
+const buddyEventItems = computed(() =>
+    buddyEligibleEvents.value.map(e => ({ value: e.id, title: `${e.title} (${formatInTenant(e.startsAtUtc)})` })))
+const buddyTierItems = computed(() =>
+    buddyTiers.value.map(t => ({ value: t.id, title: t.name })))
+
+const canCreateBuddy = computed(() =>
+    buddyEmail.value.trim().length > 3 && buddyFirst.value.trim().length > 0
+    && buddyLast.value.trim().length > 0 && !!buddyDob.value)
+
+function resetBuddy() {
+    buddyEmail.value = ''
+    buddyRider.value = null
+    buddyNotFound.value = false
+    buddyError.value = null
+    buddyFirst.value = ''
+    buddyLast.value = ''
+    buddyDob.value = ''
+    buddyEcName.value = ''
+    buddyEcPhone.value = ''
+    buddyEventId.value = null
+    buddyTierId.value = null
+    buddyTiers.value = []
+}
+
+function openBuddy() {
+    resetBuddy()
+    // One eligible event is the common case, so skip a pointless choice.
+    if (buddyEligibleEvents.value.length === 1) buddyEventId.value = buddyEligibleEvents.value[0].id
+    buddyOpen.value = true
+}
+
+function clearBuddyRider() {
+    buddyRider.value = null
+    buddyNotFound.value = false
+    buddyError.value = null
+}
+
+async function findBuddy() {
+    const email = buddyEmail.value.trim()
+    if (!email) return
+    buddyFinding.value = true
+    buddyError.value = null
+    buddyNotFound.value = false
+    try {
+        const r = await counter.findRider(email)
+        buddyRider.value = r.data.data
+    } catch (e: any) {
+        // A 404 is the ordinary "new guest" path, not an error worth alarming staff about.
+        if (e.response?.status === 404) {
+            buddyNotFound.value = true
+        } else {
+            buddyError.value = e.response?.data?.error
+                ?? 'Could not look that guest up. Check the email and try again.'
+        }
+    } finally {
+        buddyFinding.value = false
+    }
+}
+
+async function createBuddy() {
+    buddyCreating.value = true
+    buddyError.value = null
+    try {
+        const r = await counter.createRider({
+            email: buddyEmail.value.trim(),
+            firstName: buddyFirst.value.trim(),
+            lastName: buddyLast.value.trim(),
+            birthdate: buddyDob.value,
+            emergencyContactName: buddyEcName.value.trim() || undefined,
+            emergencyContactPhone: buddyEcPhone.value.trim() || undefined,
+        })
+        buddyRider.value = r.data.data
+        buddyNotFound.value = false
+    } catch (e: any) {
+        buddyError.value = e.response?.data?.error
+            ?? 'Could not create that account. Nothing was saved; check the details and try again.'
+    } finally {
+        buddyCreating.value = false
+    }
+}
+
+async function loadBuddyTiers(eventId: string) {
+    buddyTiersLoading.value = true
+    buddyTierId.value = null
+    buddyTiers.value = []
+    try {
+        const r = await service.listActiveTiers(eventId)
+        buddyTiers.value = r.data.data.map((t: any) => ({ id: t.id, name: t.name, priceCents: t.priceCents }))
+        if (buddyTiers.value.length === 1) buddyTierId.value = buddyTiers.value[0].id
+    } catch (e: any) {
+        buddyError.value = e.response?.data?.error
+            ?? 'Could not load the entry options for that event. Pick it again to retry.'
+    } finally {
+        buddyTiersLoading.value = false
+    }
+}
+
+watch(buddyEventId, id => { if (id) loadBuddyTiers(id) })
+
+async function redeemBuddy() {
+    if (!pass.value || !buddyRider.value || !buddyTierId.value) return
+    buddyRedeeming.value = true
+    buddyError.value = null
+    try {
+        const r = await seasonPasses.redeemBuddyPass(
+            pass.value.id, buddyRider.value.id, buddyTierId.value)
+        // Reflect the spend without a full re-scan; the server is authoritative and returns it.
+        if (pass.value.buddyPass) {
+            pass.value.buddyPass.remaining = r.data.data.remaining
+            pass.value.buddyPass.used = pass.value.buddyPass.total - r.data.data.remaining
+        }
+        buddyOpen.value = false
+        flash(`Buddy pass used for ${buddyRider.value.firstName}. They still need to register.`, 'success')
+    } catch (e: any) {
+        buddyError.value = e.response?.data?.error
+            ?? 'Could not use the buddy pass. Nothing was spent; try again.'
+    } finally {
+        buddyRedeeming.value = false
+    }
+}
 const passToken = ref<string | null>(null)
 const passEventId = ref<string | null>(null)
 const admitting = ref(false)

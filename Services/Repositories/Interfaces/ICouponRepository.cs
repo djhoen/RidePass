@@ -1,10 +1,10 @@
-using Services.Repositories.Data.CouponData;
+﻿using Services.Repositories.Data.CouponData;
 
 namespace Services.Repositories.Interfaces
 {
     /// <summary>
     /// Tenant-managed promo codes that riders apply at checkout. Distinct from
-    /// reward vouchers (RewardRedemption) — coupons are typed in, scope-filtered,
+    /// Coupons are typed in, scope-filtered,
     /// and have reuse limits across users + per-user.
     /// </summary>
     public interface ICouponRepository

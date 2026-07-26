@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.TenantData;
 using Services.Repositories.Interfaces;
 
@@ -29,6 +29,7 @@ namespace Services.Repositories
             rental_rider_paid_service_charge_bps AS RentalRiderPaidServiceChargeBps,
             rental_tax_bps AS RentalTaxBps,
             rental_tax_service_charge_taxable AS RentalTaxServiceChargeTaxable,
+            shop_buyer_paid_service_charge_bps AS ShopBuyerPaidServiceChargeBps,
             rental_insurance_enabled AS RentalInsuranceEnabled,
             rental_insurance_label AS RentalInsuranceLabel,
             rental_insurance_bps AS RentalInsuranceBps,
@@ -62,6 +63,12 @@ namespace Services.Repositories
             season_passes_enabled AS SeasonPassesEnabled,
             season_pass_admission_type_id AS SeasonPassAdmissionTypeId,
             concessions_enabled AS ConcessionsEnabled,
+            season_pass_discount_enabled AS SeasonPassDiscountEnabled,
+            season_pass_discount_kind AS SeasonPassDiscountKind,
+            season_pass_discount_value AS SeasonPassDiscountValue,
+            season_pass_discount_applies_concession AS SeasonPassDiscountAppliesConcession,
+            season_pass_discount_applies_retail AS SeasonPassDiscountAppliesRetail,
+            season_pass_discount_applies_rental AS SeasonPassDiscountAppliesRental,
             bike_shop_enabled AS BikeShopEnabled,
             shop_service_reminder_days AS ShopServiceReminderDays,
             shop_ready_notify_email AS ShopReadyNotifyEmail,
@@ -77,6 +84,7 @@ namespace Services.Repositories
             staff_hours_end AS StaffHoursEnd,
             staff_alerts_enabled AS StaffAlertsEnabled,
             staff_alert_refund_cents AS StaffAlertRefundCents,
+            allow_discount_stacking AS AllowDiscountStacking,
             trackside_export_enabled AS TracksideExportEnabled,
             blog_enabled AS BlogEnabled,
             dynamic_pricing_enabled AS DynamicPricingEnabled,
@@ -176,6 +184,14 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, mode, allowedCidrs, hoursStart, hoursEnd });
         }
 
+        /// <summary>Whether several discounts may combine on one sale. Off means the largest
+        /// single discount wins.</summary>
+        public async Task UpdateAllowDiscountStacking(Guid tenantId, bool allow)
+        {
+            const string sql = "UPDATE tenant SET allow_discount_stacking = @allow WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, allow });
+        }
+
         /// <summary>Enable or disable the daily staff alert digest and set the per-staffer daily
         /// refund total that trips it.</summary>
         public async Task UpdateStaffAlertSettings(Guid tenantId, bool enabled, int refundCents)
@@ -218,6 +234,12 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET require_id_for_wristband = @require WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, require });
+        }
+
+        public async Task UpdateShopBuyerPaidServiceCharge(Guid tenantId, int buyerPaidBps)
+        {
+            const string sql = "UPDATE tenant SET shop_buyer_paid_service_charge_bps = @buyerPaidBps WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, buyerPaidBps });
         }
 
         public async Task SetStripeConnectAccount(Guid tenantId, string accountId, string status)
@@ -601,6 +623,25 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET wristbands_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateSeasonPassDiscount(
+            Guid tenantId, bool enabled, string kind, int value,
+            bool appliesConcession, bool appliesRetail, bool appliesRental)
+        {
+            const string sql = @"
+                UPDATE tenant
+                SET season_pass_discount_enabled = @enabled,
+                    season_pass_discount_kind    = @kind,
+                    season_pass_discount_value   = @value,
+                    season_pass_discount_applies_concession = @appliesConcession,
+                    season_pass_discount_applies_retail     = @appliesRetail,
+                    season_pass_discount_applies_rental     = @appliesRental
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new
+            {
+                tenantId, enabled, kind, value, appliesConcession, appliesRetail, appliesRental,
+            });
         }
 
         public async Task UpdateConcessionsEnabled(Guid tenantId, bool enabled)

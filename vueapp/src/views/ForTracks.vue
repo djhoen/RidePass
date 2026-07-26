@@ -276,7 +276,7 @@ const trackManagementFeatures = [
     { icon: 'mdi-file-sign', title: 'Digital waivers', text: 'Unlimited waivers where you control who is required to sign and for what events' },
     { icon: 'mdi-account-group', title: 'Rider CRM', text: 'Every rider, purchase, and visit in one customer profile.' },
     { icon: 'mdi-chart-line', title: 'Reports & dashboards', text: 'Daily sales, event turnout, and who is riding.' },
-    { icon: 'mdi-bullhorn', title: 'Built-in marketing', text: 'Email and text campaigns, loyalty rewards, coupons, and surveys.' },
+    { icon: 'mdi-bullhorn', title: 'Built-in marketing', text: 'Email and text campaigns, coupons, and surveys.' },
 ]
 
 const pointOfSaleFeatures = [

@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
 using Services.Payments;
@@ -30,15 +30,24 @@ namespace webapi.Controllers
         private readonly ILogger<BikeShopWorkOrderController> _logger;
         private readonly IConfiguration _config;
         private readonly ITenantCreditRepository _credit;
-        private readonly Services.Rewards.IRewardEngine _rewardEngine;
+        private readonly IDiscountPresetRepository _discounts;
+        private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
+        private readonly webapi.Security.IManagerPinService _managerPin;
+        private readonly Services.Audit.IAuditLogger _audit;
 
         public BikeShopWorkOrderController(IBikeShopRepository shop, IChargeRouter chargeRouter,
             IPaymentProvider payments, IFeeCalculator feeCalculator, ITenantLedgerRepository ledger,
             ITenantContext tenantContext, Services.Helpers.ISmtpEmailer emailer, IConfiguration config,
-            ITenantCreditRepository credit, Services.Rewards.IRewardEngine rewardEngine,
-            Services.Helpers.ISmsSender sms, ILogger<BikeShopWorkOrderController> logger)
+            ITenantCreditRepository credit,
+            Services.Helpers.ISmsSender sms, ILogger<BikeShopWorkOrderController> logger,
+            IDiscountPresetRepository discounts, webapi.Security.IManagerPinService managerPin,
+            Services.Pricing.ISeasonPassPerkResolver perks,
+            Services.Audit.IAuditLogger audit)
         {
-            _rewardEngine = rewardEngine;
+            _discounts = discounts;
+            _perks = perks;
+            _managerPin = managerPin;
+            _audit = audit;
             _shop = shop;
             _chargeRouter = chargeRouter;
             _payments = payments;
@@ -912,7 +921,93 @@ namespace webapi.Controllers
                 }
             }
 
-            var total = subtotal + taxTotal + req.TipCents;
+            // Season pass holder perk. 'retail' is the right surface for the same reason the staff
+            // discount uses 'shop_sale': a repair bills out as a shop sale, so a perk that covers
+            // the bike shop covers work done on a bike too. Applies to labour and the supply fee as
+            // well as parts, matching the staff discount below rather than inventing a second rule
+            // (if a track ever wants labour carved out, this and the staff spread are the two
+            // places, and it should be a decision rather than a difference nobody chose).
+            var perk = await _perks.Resolve(
+                wo.CustomerUserId, _tenantContext.Tenant, "retail", subtotal, DateTime.UtcNow);
+            var benefitDiscount = perk.DiscountCents;
+
+            // Staff-applied discount. Scoped to 'shop_sale' because that is what a repair bills
+            // out as, so one "VMBA 15% off bike shop" covers a repair as well as a set of grips.
+            Services.Repositories.Data.DiscountData.DiscountPreset? staffDiscount = null;
+            var staffDiscountCents = 0;
+            Guid? discountAuthorizedBy = null;
+            if (req.DiscountPresetId is Guid presetId)
+            {
+                staffDiscount = await _discounts.Get(presetId, TenantId);
+                if (staffDiscount is null || !staffDiscount.IsActive)
+                    return new ApiResponses().BadRequestResult("That discount isn't available.");
+                if (!staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.ShopSale))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{staffDiscount.Name}\" doesn't apply to bike shop work.");
+                if (staffDiscount.RequiresManager)
+                {
+                    if (UserId is not Guid staffUserId)
+                        return new ApiResponses().BadRequestResult("Not signed in.");
+                    var pin = await _managerPin.VerifyAsync(TenantId, staffUserId, req.ManagerPin);
+                    if (!pin.Authorized)
+                        return new ApiResponses().BadRequestResult(
+                            pin.Error ?? $"A manager PIN is required to apply \"{staffDiscount.Name}\".");
+                    discountAuthorizedBy = pin.AuthorizedUserId;
+                }
+                staffDiscountCents = staffDiscount.DiscountFor(Math.Max(0, subtotal - benefitDiscount));
+            }
+
+            // A repair can now carry two discounts (the holder perk and a staff discount), so this
+            // goes through the shared stacking policy like the register: with stacking off exactly
+            // one survives and it is the larger, so the customer still gets the best deal going.
+            var stacked = Services.Discounts.DiscountStacking.Resolve(
+                benefitDiscount, staffDiscountCents, 0, _tenantContext.Tenant.AllowDiscountStacking);
+            benefitDiscount = stacked.BenefitCents;
+            staffDiscountCents = stacked.StaffCents;
+            // Cleared so nothing downstream records a discount that wasn't given: a dropped staff
+            // discount must not be snapshotted on the sale or sent for review as though it applied.
+            if (staffDiscountCents == 0) { staffDiscount = null; discountAuthorizedBy = null; }
+            var discountTotal = Math.Min(subtotal, benefitDiscount + staffDiscountCents);
+
+            // Spread it across the billable lines and recompute tax on the net, exactly as the
+            // register does. Leaving tax on the gross would overcharge the customer on a discounted
+            // repair, which is the sort of error nobody spots until an audit.
+            if (discountTotal > 0 && subtotal > 0)
+            {
+                var handedOut = 0;
+                for (var i = 0; i < saleLines.Count; i++)
+                {
+                    var l = saleLines[i];
+                    var lineBase = l.UnitPriceCents * l.Quantity;
+                    l.DiscountCents = i == saleLines.Count - 1
+                        ? discountTotal - handedOut
+                        : (int)((long)discountTotal * lineBase / subtotal);
+                    handedOut += l.DiscountCents;
+                }
+                var recomputed = 0;
+                foreach (var l in saleLines)
+                {
+                    var net = Math.Max(0, l.UnitPriceCents * l.Quantity - l.DiscountCents);
+                    l.TaxCents = l.TaxRateBps > 0
+                        ? (int)Math.Round(net * l.TaxRateBps / 10000.0, MidpointRounding.AwayFromZero)
+                        : 0;
+                    recomputed += l.TaxCents;
+                }
+                taxTotal = recomputed;
+            }
+
+            // A repair bills out as a shop_sale, so it carries the platform charge like any other
+            // shop sale, computed by the same ServiceChargeSplit. That INCLUDES labour lines. If a
+            // track should not owe a charge on labour, this is the one place to carve it out
+            // (the sale is tagged with WorkOrderId below), but it should be a decision rather than
+            // an accident of which controller happened to build the sale.
+            var billingTenant = _tenantContext.Tenant;
+            // Charged on the DISCOUNTED subtotal: the platform's cut follows what the track
+            // actually collected, not what it would have collected at full price.
+            var netSubtotal = Math.Max(0, subtotal - discountTotal);
+            var (shopServiceCharge, buyerFee) = Services.Payments.ServiceChargeSplit.Compute(
+                netSubtotal, billingTenant.ServiceChargeBps, billingTenant.ShopBuyerPaidServiceChargeBps);
+            var total = netSubtotal + buyerFee + taxTotal;
             // A paid deposit prepays part of the job: the payment collects the remainder and the
             // ledger books only that (the deposit has its own entry). What's still available on
             // the deposit is what was paid minus anything already refunded/credited back.
@@ -987,9 +1082,14 @@ namespace webapi.Controllers
                 BuyerEmail = wo.CustomerEmail,
                 Status = "pending",
                 SubtotalCents = subtotal,
+                DiscountCents = discountTotal,
+                DiscountPresetId = staffDiscount?.Id,
+                DiscountLabel = Services.Pricing.SeasonPassPerk.LabelFor(
+                    perk, benefitDiscount, staffDiscount?.Name, staffDiscountCents),
+                DiscountAuthorizedByUserId = discountAuthorizedBy,
                 TaxCents = taxTotal,
-                TipCents = req.TipCents,
                 TotalCents = total,
+                ServiceChargeCents = shopServiceCharge,
                 DepositAppliedCents = depositCredit,
                 PaymentMethod = isCard ? "stripe" : "cash",
                 SoldByUserId = UserId,
@@ -997,6 +1097,28 @@ namespace webapi.Controllers
             };
             var (saleId, receipt) = await _shop.CreateSale(sale, saleLines);
             await _shop.SetWorkOrderSale(id, TenantId, saleId);
+
+            // Same review surface as the register's discounts and every refund: money off with
+            // nothing the customer had to produce.
+            if (staffDiscount is not null && staffDiscountCents > 0)
+            {
+                await _audit.Log(
+                    "shop.discount_applied",
+                    $"Applied \"{staffDiscount.Name}\" to a repair bill, taking off ${staffDiscountCents / 100m:0.00}",
+                    targetKind: "shop_sale",
+                    targetId: saleId,
+                    tenantId: TenantId,
+                    metadata: new
+                    {
+                        discountName = staffDiscount.Name,
+                        discountPresetId = staffDiscount.Id,
+                        discountCents = staffDiscountCents,
+                        subtotalCents = subtotal,
+                        workOrderId = id,
+                        requiredManager = staffDiscount.RequiresManager,
+                        authorizedByUserId = discountAuthorizedBy,
+                    });
+            }
 
             if (!isCard)
             {
@@ -1006,8 +1128,6 @@ namespace webapi.Controllers
                     await _shop.SetSaleOrderNumber(saleId, orderNumber);
                     if (due > 0) await WriteCashLedger(saleId, due);
                     await _shop.MarkWorkOrderPickedUpBySale(saleId);
-                    try { await _rewardEngine.AwardCreditBack(TenantId, wo.CustomerUserId, wo.CustomerEmail, wo.CustomerName, "shop_sale", saleId, due); }
-                    catch { /* loyalty is best-effort; the pickup already settled */ }
                     return new ApiResponses().OkResult(new { saleId, receiptToken = receipt, status = "paid", orderNumber,
                         totalCents = total, depositAppliedCents = depositCredit, dueCents = due,
                         depositExcessCents = depositExcess, excessAction = excessHandled,
@@ -1030,7 +1150,11 @@ namespace webapi.Controllers
             ChargePlan plan;
             try
             {
-                plan = _chargeRouter.Plan(tenant, serviceFeeCents: 0, chargeAmountCents: due);
+                // Same as the register and the online store: in direct mode the application fee is
+                // how RidePass collects, so route the charge snapshotted on the bill-out sale.
+                // Clamped to `due` inside ChargeRouter, which matters here because a paid deposit
+                // can leave very little still owing.
+                plan = _chargeRouter.Plan(tenant, serviceFeeCents: shopServiceCharge, chargeAmountCents: due);
                 intent = await _payments.CreatePaymentIntentAsync(due, "usd", metadata, sale.BuyerEmail,
                     connectedAccountId: plan.ConnectedAccountId, applicationFeeCents: plan.ApplicationFeeCents, ct: ct);
             }

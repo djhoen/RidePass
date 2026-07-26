@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Coupons;
 using Services.Helpers;
@@ -23,6 +23,8 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IUserRepository _users;
+        private readonly IEventTicketTierRepository _tiers;
+        private readonly IEventTicketPurchaseRepository _ticketPurchases;
         private readonly IPaymentProvider _payments;
         private readonly IChargeRouter _chargeRouter;
         private readonly ICouponRepository _coupons;
@@ -45,6 +47,8 @@ namespace webapi.Controllers
             IEventRepository events,
             ITenantEventTypeRepository eventTypes,
             IUserRepository users,
+            IEventTicketTierRepository tiers,
+            IEventTicketPurchaseRepository ticketPurchases,
             IPaymentProvider payments,
             IChargeRouter chargeRouter,
             ICouponRepository coupons,
@@ -66,6 +70,8 @@ namespace webapi.Controllers
             _events = events;
             _eventTypes = eventTypes;
             _users = users;
+            _tiers = tiers;
+            _ticketPurchases = ticketPurchases;
             _payments = payments;
             _chargeRouter = chargeRouter;
             _coupons = coupons;
@@ -117,6 +123,12 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().NotFoundResult("This pass isn't available.");
             }
+            // Employee products are staff grants, not merchandise. Same 404 as not-found so a
+            // guessed slug or id cannot even confirm one exists.
+            if (product.IsEmployee && !isStaff)
+            {
+                return new ApiResponses().NotFoundResult("This pass isn't available.");
+            }
             // Slug URLs are the marketing surface: a draft slug 404s (same message as
             // not-found so its existence isn't leaked). Id lookups are the embed widget,
             // which must keep working for passes with no landing at all — the product is
@@ -155,7 +167,9 @@ namespace webapi.Controllers
         [HttpGet("Products/Admin")]
         public async Task<IActionResult> ListForAdmin()
         {
-            var products = await _passes.ListProductsForTenant(_tenantContext.TenantId, activeOnly: false);
+            // The only caller that includes employee products: this is where they are configured.
+            var products = await _passes.ListProductsForTenant(
+                _tenantContext.TenantId, activeOnly: false, includeEmployee: true);
             return new ApiResponses().OkResult(await ToResponses(products));
         }
 
@@ -166,6 +180,14 @@ namespace webapi.Controllers
             if (request.ValidToDate < request.ValidFromDate)
             {
                 return new ApiResponses().BadRequestResult("Valid-to date must be on or after valid-from date.");
+            }
+            // A free product is only legal for an employee grant. Mirrors the database's
+            // chk_season_pass_product_price so the API refuses what the DB would refuse anyway,
+            // with a message that explains it instead of surfacing a constraint violation.
+            if (request.PriceCents < 1 && !request.IsEmployee)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "A pass has to cost something. Only an employee pass can be free.");
             }
             if (request.Kind == "credits" && (request.TotalCredits is null || request.TotalCredits <= 0))
             {
@@ -190,6 +212,7 @@ namespace webapi.Controllers
                 RequiresWaiver = request.RequiresWaiver,
                 RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps,
                 IsActive = request.IsActive,
+                IsEmployee = request.IsEmployee,
                 SortOrder = request.SortOrder,
                 HeroImageUrl = Trim(request.HeroImageUrl),
                 LandingHtml = Trim(request.LandingHtml),
@@ -212,6 +235,14 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult("Valid-to date must be on or after valid-from date.");
             }
+            // A free product is only legal for an employee grant. Mirrors the database's
+            // chk_season_pass_product_price so the API refuses what the DB would refuse anyway,
+            // with a message that explains it instead of surfacing a constraint violation.
+            if (request.PriceCents < 1 && !request.IsEmployee)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "A pass has to cost something. Only an employee pass can be free.");
+            }
             existing.Name = request.Name.Trim();
             existing.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
             existing.PriceCents = request.PriceCents;
@@ -223,6 +254,7 @@ namespace webapi.Controllers
             existing.RequiresWaiver = request.RequiresWaiver;
             existing.RiderPaidServiceChargeBps = request.RiderPaidServiceChargeBps;
             existing.IsActive = request.IsActive;
+            existing.IsEmployee = request.IsEmployee;
             existing.SortOrder = request.SortOrder;
             existing.HeroImageUrl = Trim(request.HeroImageUrl);
             existing.LandingHtml = Trim(request.LandingHtml);
@@ -375,6 +407,27 @@ namespace webapi.Controllers
                 {
                     return "Buddy passes need a quantity — how many the pass includes per season.";
                 }
+                if (b.BenefitType == "buddy_pass")
+                {
+                    // Zero scopes = a perk that admits nobody. Rejected rather than defaulted to
+                    // "everywhere": the permissive reading silently hands out free race entries.
+                    if (request.BuddyEventTypeIds.Count == 0 && !request.BuddyIncludeWalkUp)
+                    {
+                        return "Choose at least one event type (or walk-up days) the buddy passes are good for.";
+                    }
+                    if (request.BuddyEventTypeIds.Any(id => !eventTypeIds.Contains(id)))
+                    {
+                        return "One of the buddy pass event types doesn't exist at this track.";
+                    }
+                    // With no event there is no tier and no price, so a percentage has nothing to
+                    // take a percentage OF. Free is the only coherent walk-up buddy pass.
+                    var buddyFree = b.DiscountKind == "percent" && b.DiscountValue >= 10_000;
+                    if (request.BuddyIncludeWalkUp && !buddyFree)
+                    {
+                        return "A buddy pass valid on days with no event has to cover admission outright — "
+                             + "there's no ticket price to discount.";
+                    }
+                }
             }
 
             // Duplicates would violate the unique index and, worse, double-apply at checkout if it
@@ -392,6 +445,19 @@ namespace webapi.Controllers
                 DiscountValue = b.DiscountValue,
                 Quantity = b.Quantity,
             }));
+
+            // Scopes hang off the buddy benefit row, so they can only be written after
+            // ReplaceBenefits has created it (the old row and its id are gone by then).
+            if (benefits.Any(b => b.BenefitType == "buddy_pass"))
+            {
+                var saved = await _passes.ListBenefits(productId, _tenantContext.TenantId);
+                var buddyBenefit = saved.FirstOrDefault(b => b.BenefitType == "buddy_pass");
+                if (buddyBenefit is not null)
+                {
+                    await _passes.ReplaceBuddyScopes(buddyBenefit.Id, _tenantContext.TenantId,
+                        request.BuddyEventTypeIds, request.BuddyIncludeWalkUp);
+                }
+            }
 
             await _passes.ReplacePerks(productId, benefits
                 .Where(b => b.BenefitType == "event" && b.ScopeId.HasValue && b.DiscountKind == "percent")
@@ -429,6 +495,676 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        // ── Upgrades (Script0253) ───────────────────────────────────────────────
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpGet("Upgrades")]
+        public async Task<IActionResult> ListUpgrades()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var paths = await _passes.ListUpgradePaths(_tenantContext.TenantId);
+            var counts = await _passes.CountEligibleHolders(_tenantContext.TenantId, TenantToday());
+            var products = (await _passes.ListProductsForTenant(
+                    _tenantContext.TenantId, activeOnly: false, includeEmployee: false))
+                .ToList();
+
+            return new ApiResponses().OkResult(new UpgradePathsResponse
+            {
+                Paths = paths.Select(x => new UpgradePathItem
+                {
+                    Id = x.Id,
+                    FromProductId = x.FromProductId,
+                    ToProductId = x.ToProductId,
+                    FromProductName = x.FromProductName,
+                    ToProductName = x.ToProductName,
+                    PriceCents = x.PriceCents,
+                    IsActive = x.IsActive,
+                    EligibleHolders = counts.GetValueOrDefault(x.Id, 0),
+                }).ToList(),
+                // Employee products are excluded by the repository default, which is also what
+                // keeps them off both axes of the matrix.
+                Products = products.Select(x => new UpgradeProductOption
+                {
+                    Id = x.Id,
+                    Name = x.Name,
+                    Kind = x.Kind,
+                    PriceCents = x.PriceCents,
+                    IsActive = x.IsActive,
+                }).ToList(),
+            });
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("Upgrades")]
+        public async Task<IActionResult> UpsertUpgrade([FromBody] UpsertUpgradePathRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (request.FromProductId == request.ToProductId)
+            {
+                return new ApiResponses().BadRequestResult("A pass can't upgrade to itself.");
+            }
+            await _passes.UpsertUpgradePath(_tenantContext.TenantId,
+                request.FromProductId, request.ToProductId, request.PriceCents, request.IsActive);
+            return new ApiResponses().OkResult();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpDelete("Upgrades/{id:guid}")]
+        public async Task<IActionResult> DeleteUpgrade(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            await _passes.DeleteUpgradePath(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
+        }
+
+        /// <summary>Upgrades the signed-in rider can take right now, one per (pass, offer).</summary>
+        [Authorize]
+        [HttpGet("MyUpgrades")]
+        public async Task<IActionResult> MyUpgrades()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var offers = await _passes.ListUpgradeOffersForUser(userId, _tenantContext.TenantId, TenantToday());
+            return new ApiResponses().OkResult(offers.Select(ToUpgradeOfferItem).ToList());
+        }
+
+        private static UpgradeOfferItem ToUpgradeOfferItem(SeasonPassUpgradeOffer o) => new()
+        {
+            PathId = o.PathId,
+            PassPurchaseId = o.PassPurchaseId,
+            FromProductName = o.FromProductName,
+            ToProductId = o.ToProductId,
+            ToProductName = o.ToProductName,
+            ToProductDescription = o.ToProductDescription,
+            ToProductKind = o.ToProductKind,
+            ToProductTotalCredits = o.ToProductTotalCredits,
+            ToValidFromDate = o.ToValidFromDate,
+            ToValidToDate = o.ToValidToDate,
+            PriceCents = o.PriceCents,
+        };
+
+        /// <summary>
+        /// Take an upgrade. Creates the replacement pass and charges the path price; the OLD pass
+        /// is not touched until the money lands (StripePurchaseFinalizer), because until then the
+        /// rider still owns it and retiring it early would strand them with nothing.
+        /// </summary>
+        [Authorize]
+        [HttpPost("Upgrade")]
+        public async Task<IActionResult> BuyUpgrade([FromBody] BuyUpgradeRequest request, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!_tenantContext.Tenant.SeasonPassesEnabled)
+            {
+                return new ApiResponses().BadRequestResult("Season passes aren't sold at this track.");
+            }
+            if (!TryGetUserId(out var userId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var user = await _users.GetById(userId);
+            if (user is null) return new ApiResponses().BadRequestResult("User not found.");
+
+            // Serialize concurrent upgrades of the same pass. Without it a double-submit gets two
+            // replacements past the eligibility read (which only excludes replacements that already
+            // exist), and on the free path both settle immediately, so the rider ends up holding a
+            // pass they were never issued. Same per-pass lock contract the redeem paths use.
+            await using var upgradeLock = await _db.AcquireAdvisoryLock($"season-pass-upgrade:{request.PassPurchaseId}");
+
+            // Re-resolved server-side, under the lock: the client sends only ids, so a stale price
+            // it was shown, or a hand-edited one, can never be what gets charged.
+            var offer = await _passes.GetUpgradeOffer(
+                request.PassPurchaseId, request.PathId, userId, _tenantContext.TenantId, TenantToday());
+            if (offer is null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "That upgrade isn't available any more. Your pass may have been used up, expired, or already upgraded.");
+            }
+
+            var replacement = new SeasonPassPurchase
+            {
+                TenantId = _tenantContext.TenantId,
+                PurchaserUserId = userId,
+                ProductId = offer.ToProductId,
+                UpgradedFromPurchaseId = offer.PassPurchaseId,
+                AmountCents = offer.PriceCents,
+                ServiceChargeCents = 0,
+                // A free upgrade never touches Stripe, so it is 'voucher' and immediately paid,
+                // matching how every other zero-value issue in the codebase is recorded.
+                PaymentMethod = offer.PriceCents <= 0 ? "voucher" : "stripe",
+                Status = offer.PriceCents <= 0 ? "paid" : "pending",
+                PurchaserEmail = user.Email,
+                PurchaserName = $"{user.FirstName} {user.LastName}".Trim(),
+                ValidFromDate = offer.ToValidFromDate,
+                ValidToDate = offer.ToValidToDate,
+                // Credits deliberately do NOT carry from the old pass: upgrading a part-used pack
+                // is buying a different thing, not topping one up.
+                CreditsRemaining = offer.ToProductTotalCredits,
+            };
+            var (newId, token) = await _passes.CreatePurchase(replacement);
+
+            if (offer.PriceCents <= 0)
+            {
+                // Nothing to charge, so do here what the finalizer would have done on payment.
+                if (await _passes.MarkUpgraded(offer.PassPurchaseId, _tenantContext.TenantId))
+                {
+                    await _passes.CarryRegistrationForward(offer.PassPurchaseId, newId, _tenantContext.TenantId);
+                }
+                await _audit.Log(
+                    "season_pass.upgraded",
+                    $"Upgraded {offer.FromProductName} to {offer.ToProductName} (free)",
+                    targetKind: "season_pass_purchase", targetId: newId,
+                    tenantId: _tenantContext.TenantId,
+                    metadata: new { from = offer.PassPurchaseId, pathId = offer.PathId });
+
+                return new ApiResponses().OkResult(new
+                {
+                    passPurchaseId = newId,
+                    redemptionToken = token,
+                    amountCents = 0,
+                    clientSecret = (string?)null,
+                });
+            }
+
+            var metadata = new Dictionary<string, string>
+            {
+                ["tenant_id"] = _tenantContext.TenantId.ToString(),
+                ["sale_kind"] = "season_pass",
+                ["season_pass_upgrade_from"] = offer.PassPurchaseId.ToString(),
+            };
+            PaymentIntentCreated intent;
+            ChargePlan chargePlan;
+            try
+            {
+                chargePlan = _chargeRouter.Plan(_tenantContext.Tenant, 0, offer.PriceCents);
+                intent = await _payments.CreatePaymentIntentAsync(
+                    offer.PriceCents, "usd", metadata, user.Email,
+                    connectedAccountId: chargePlan.ConnectedAccountId,
+                    applicationFeeCents: chargePlan.ApplicationFeeCents, ct: ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new ApiResponses().BadRequestResult(ex.Message);
+            }
+
+            await _passes.SetPurchaseStripePaymentIntentId(newId, intent.IntentId);
+            if (chargePlan.IsDirect)
+            {
+                await _passes.MarkPurchaseDirectCharge(newId, _tenantContext.TenantId, chargePlan.ConnectedAccountId!);
+            }
+
+            return new ApiResponses().OkResult(new
+            {
+                passPurchaseId = newId,
+                redemptionToken = token,
+                amountCents = offer.PriceCents,
+                clientSecret = intent.ClientSecret,
+            });
+        }
+
+        /// <summary>The tenant's local date, which is what "not used up" is measured against.</summary>
+        private DateTime TenantToday()
+        {
+            var tz = _tenantContext.Tenant?.Timezone;
+            if (string.IsNullOrWhiteSpace(tz)) return DateTime.UtcNow.Date;
+            try
+            {
+                return TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(tz)).Date;
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return DateTime.UtcNow.Date;
+            }
+        }
+
+        // ── Buddy passes (Script0247) ────────────────────────────────────────────
+        // The holder must be present and staff perform the redemption, which is why there is no
+        // rider-facing endpoint here and no transferable code anywhere: the holder's pass is
+        // scanned to produce PassPurchaseId, and that scan IS the presence proof.
+
+        [Authorize(Policy = TenantPermissions.Policy.SalesCounter)]
+        [HttpPost("Buddy/Redeem")]
+        public async Task<IActionResult> RedeemBuddyPass([FromBody] RedeemBuddyPassRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var staffId)) return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var pass = await _passes.GetPurchase(request.PassPurchaseId);
+            if (pass is null || pass.TenantId != _tenantContext.TenantId)
+            {
+                return new ApiResponses().NotFoundResult("That pass isn't from this track.");
+            }
+            if (pass.Status != "paid")
+            {
+                return new ApiResponses().BadRequestResult("That pass isn't active, so it grants nothing.");
+            }
+            var today = DateTime.UtcNow.Date;
+            if (today < pass.ValidFromDate.Date || today > pass.ValidToDate.Date)
+            {
+                return new ApiResponses().BadRequestResult("That pass isn't valid today.");
+            }
+
+            var ent = await _passes.GetBuddyEntitlement(request.PassPurchaseId, _tenantContext.TenantId);
+            if (ent is null)
+            {
+                return new ApiResponses().BadRequestResult("This pass doesn't include buddy passes.");
+            }
+            if (ent.Scopes.Count == 0)
+            {
+                // Configured with a quantity but nothing to spend it on. Say so plainly rather
+                // than "no buddy passes left", which would send staff hunting the wrong problem.
+                return new ApiResponses().BadRequestResult(
+                    "This pass's buddy passes aren't set up for any event type yet. An admin needs to finish configuring them.");
+            }
+            // Phase 1 covers the free perk end to end. A partial discount has to be priced through
+            // the counter's ticket path (service charge, admission tax, price ladders), which is a
+            // separate piece of work; refusing here is better than silently admitting for free.
+            if (!ent.IsFree)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Discounted buddy passes can't be redeemed at the counter yet — only ones that cover admission outright.");
+            }
+
+            var buddy = await _users.GetById(request.BuddyUserId);
+            if (buddy is null) return new ApiResponses().NotFoundResult("That guest account doesn't exist.");
+            if (buddy.Id == pass.PurchaserUserId)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "A buddy pass is for bringing someone else. The holder is already admitted by their own pass.");
+            }
+
+            var tier = await _tiers.GetById(request.TierId, _tenantContext.TenantId);
+            if (tier is null || !tier.IsActive) return new ApiResponses().BadRequestResult("That entry option isn't available.");
+            var ev = await _events.GetById(tier.EventId, _tenantContext.TenantId);
+            if (ev is null || ev.Status != "scheduled" || ev.EndsAt < DateTime.UtcNow)
+            {
+                return new ApiResponses().BadRequestResult("That event isn't running.");
+            }
+            if (!ent.Scopes.Any(sc => sc.EventTypeId == ev.EventTypeId))
+            {
+                var goodFor = string.Join(", ", ent.Scopes
+                    .Select(sc => sc.IsWalkUp ? "days with no event" : sc.EventTypeName ?? "an event type"));
+                return new ApiResponses().BadRequestResult(
+                    $"This pass's buddy passes aren't valid for this kind of event. Good for: {goodFor}.");
+            }
+
+            // Everything above is read-only validation. From here the count must not move under
+            // us: two registers serving the same family would otherwise both see "1 remaining"
+            // and both write. Same per-pass lock contract CreateWalkUpGateCheckIn documents.
+            await using var padlock = await _db.AcquireAdvisoryLock($"buddy-pass:{request.PassPurchaseId}");
+
+            var fresh = await _passes.GetBuddyEntitlement(request.PassPurchaseId, _tenantContext.TenantId);
+            if (fresh is null || fresh.Remaining <= 0)
+            {
+                return new ApiResponses().BadRequestResult(
+                    $"All {ent.Total} buddy passes on this pass have been used this season.");
+            }
+
+            // The buddy is admitted like any other rider: their own ticket, their own QR, and
+            // registration still outstanding so the waiver is collected by the normal path rather
+            // than skipped. RegistrationComplete=false is what makes the gate ask for it.
+            var ticket = new EventTicketPurchase
+            {
+                TenantId = _tenantContext.TenantId,
+                TierId = tier.Id,
+                PurchaserUserId = buddy.Id,
+                AmountCents = 0,
+                ServiceChargeCents = 0,
+                TaxCents = 0,
+                TaxRateBps = 0,
+                PaymentMethod = "voucher",
+                Status = "paid",
+                PurchaserEmail = buddy.Email,
+                PurchaserName = $"{buddy.FirstName} {buddy.LastName}".Trim(),
+                SoldByUserId = staffId,
+                RegistrationComplete = false,
+            };
+            var created = await _ticketPurchases.Create(ticket);
+
+            var redemptionId = await _passes.RedeemBuddyPass(new SeasonPassBuddyRedemption
+            {
+                TenantId = _tenantContext.TenantId,
+                PassPurchaseId = request.PassPurchaseId,
+                BuddyUserId = buddy.Id,
+                EventId = ev.Id,
+                TicketPurchaseId = created.Id,
+                DiscountCents = tier.PriceCents,
+                RedeemedByUserId = staffId,
+            });
+
+            await _audit.Log(
+                "season_pass.buddy_redeemed",
+                $"Redeemed a buddy pass from {pass.PurchaserName}'s pass for {ticket.PurchaserName} at {ev.Title}",
+                targetKind: "season_pass_buddy_redemption",
+                targetId: redemptionId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { passPurchaseId = request.PassPurchaseId, buddyUserId = buddy.Id, eventId = ev.Id, ticketId = created.Id });
+
+            return new ApiResponses().OkResult(new
+            {
+                redemptionId,
+                ticketPurchaseId = created.Id,
+                redemptionToken = created.RedemptionToken,
+                remaining = fresh.Remaining - 1,
+                // The buddy still owes a waiver and rider details before the gate will pass them.
+                requiresRegistration = true,
+            });
+        }
+
+        /// <summary>
+        /// Hand a spent buddy credit back. SalesCancel, not SalesCounter: a cashier who can spend
+        /// a credit at the window must not also be able to hand it back. Not SalesRefund either,
+        /// because no money moves.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesCancel)]
+        [HttpPost("Buddy/{redemptionId:guid}/ReturnCredit")]
+        public async Task<IActionResult> ReturnBuddyCredit(Guid redemptionId, [FromBody] ReturnBuddyCreditRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var adminId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var reason = request.Reason?.Trim();
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                return new ApiResponses().BadRequestResult("A reason is required to return a buddy credit.");
+            }
+
+            var ok = await _passes.ReturnBuddyCredit(redemptionId, _tenantContext.TenantId, adminId, reason);
+            if (!ok)
+            {
+                return new ApiResponses().NotFoundResult("That buddy pass credit was already returned, or isn't from this track.");
+            }
+
+            await _audit.Log(
+                "season_pass.buddy_credit_returned",
+                $"Returned a buddy pass credit — {reason}",
+                targetKind: "season_pass_buddy_redemption",
+                targetId: redemptionId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { reason });
+
+            return new ApiResponses().OkResult();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Buddy/Usage")]
+        public async Task<IActionResult> BuddyUsage()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rows = await _passes.ListBuddyRedemptions(_tenantContext.TenantId);
+            // Returned credits are included and flagged, never filtered out: hiding them makes the
+            // free admissions they explain look like they came from nowhere.
+            return new ApiResponses().OkResult(rows.Select(r => new BuddyRedemptionItem
+            {
+                Id = r.Id,
+                HolderName = r.HolderName,
+                BuddyName = string.IsNullOrWhiteSpace(r.BuddyName) ? r.BuddyEmail : r.BuddyName,
+                BuddyEmail = r.BuddyEmail,
+                EventTitle = r.EventTitle,
+                RedeemedAtUtc = DateTime.SpecifyKind(r.RedeemedAt, DateTimeKind.Utc),
+                RedeemedByName = string.IsNullOrWhiteSpace(r.RedeemedByName) ? null : r.RedeemedByName,
+                CreditReturned = r.CreditReturnedAt.HasValue,
+                CreditReturnedAtUtc = r.CreditReturnedAt.HasValue
+                    ? DateTime.SpecifyKind(r.CreditReturnedAt.Value, DateTimeKind.Utc) : null,
+                CreditReturnedByName = string.IsNullOrWhiteSpace(r.CreditReturnedByName) ? null : r.CreditReturnedByName,
+                CreditReturnReason = r.CreditReturnReason,
+            }).ToList());
+        }
+
+        // ── Employee passes (Script0242) ─────────────────────────────────────────
+        // Staff-only passes: granted by an admin, never bought. Gated on UsersManage rather than
+        // CatalogManage because issuing one is staff administration that grants free admission,
+        // the same bar as disabling a staff account.
+        //
+        // Eligibility (an active account on this tenant) is automatic and grants nothing.
+        // Approval is the deliberate act these endpoints record. Nothing here auto-issues.
+
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [HttpGet("Employee/Roster")]
+        public async Task<IActionResult> EmployeePassRoster()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rows = await _passes.ListEmployeePassRoster(_tenantContext.TenantId);
+            var products = (await _passes.ListProductsForTenant(
+                    _tenantContext.TenantId, activeOnly: false, includeEmployee: true))
+                .Where(x => x.IsEmployee)
+                .ToList();
+            var eventTypes = await _eventTypes.GetAllForTenant(_tenantContext.TenantId);
+            var benefitsByProduct = await _passes.ListBenefitsForProducts(
+                products.Select(x => x.Id), _tenantContext.TenantId);
+
+            return new ApiResponses().OkResult(new EmployeePassRosterResponse
+            {
+                Rows = rows.Select(r =>
+                {
+                    var active = string.Equals(r.EmploymentStatus, "active", StringComparison.OrdinalIgnoreCase);
+                    return new EmployeePassRosterItem
+                    {
+                        UserId = r.UserId,
+                        Email = r.Email,
+                        Name = string.IsNullOrWhiteSpace(r.Name) ? null : r.Name,
+                        Role = r.Role,
+                        IsActiveEmployee = active,
+                        PassPurchaseId = r.PassPurchaseId,
+                        ProductName = r.ProductName,
+                        AmountCents = r.AmountCents,
+                        ValidFromDate = r.ValidFromDate,
+                        ValidToDate = r.ValidToDate,
+                        IssuedAtUtc = r.IssuedAtUtc.HasValue
+                            ? DateTime.SpecifyKind(r.IssuedAtUtc.Value, DateTimeKind.Utc) : null,
+                        IssuedByName = string.IsNullOrWhiteSpace(r.IssuedByName) ? null : r.IssuedByName,
+                        // Computed here, not in the page, so the label can never disagree with the
+                        // rule the gate actually applies. Order matters: employment first, because
+                        // an inactive employee's pass is void whatever else is true of it.
+                        PassState =
+                            r.PassPurchaseId is null ? "none"
+                            : !active ? "inactive_employee"
+                            : r.PassStatus == "pending" ? "pending_payment"
+                            : !r.IsRegistered ? "not_registered"
+                            : "active",
+                    };
+                }).ToList(),
+                Products = products.Select(x => new EmployeePassProductOption
+                {
+                    Id = x.Id,
+                    Name = x.Name,
+                    PriceCents = x.PriceCents,
+                    ValidFromDate = x.ValidFromDate,
+                    ValidToDate = x.ValidToDate,
+                    IsActive = x.IsActive,
+                    Benefits = benefitsByProduct.TryGetValue(x.Id, out var bs)
+                        ? bs.Select(b => new SeasonPassBenefitInput
+                        {
+                            BenefitType = b.BenefitType,
+                            ScopeId = b.ScopeId,
+                            DiscountKind = b.DiscountKind,
+                            DiscountValue = b.DiscountValue,
+                            Quantity = b.Quantity,
+                            ScopeName = b.ScopeId.HasValue
+                                ? eventTypes.FirstOrDefault(t => t.Id == b.ScopeId.Value)?.Name
+                                : null,
+                        }).ToList()
+                        : new List<SeasonPassBenefitInput>(),
+                }).ToList(),
+                EventTypes = eventTypes.Select(t => new EmployeeEventTypeOption
+                {
+                    Id = t.Id,
+                    Name = t.Name,
+                    Code = t.Code,
+                }).ToList(),
+                // Honesty about what a configured discount will actually do: offering a control
+                // that silently does nothing is worse than not offering it. All four surfaces now
+                // read the benefit model at their tills, F&B included (the concession POS resolves
+                // a per-pass 'concession' benefit and prefers it over the tenant-wide setting).
+                // Kept as a map rather than hardcoded true in the client so a surface can be turned
+                // off again without a frontend release.
+                SurfaceLive = new Dictionary<string, bool>
+                {
+                    ["event"] = true,
+                    ["retail"] = true,
+                    ["rental"] = true,
+                    ["concession"] = true,
+                },
+            });
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [HttpPost("Employee/Issue")]
+        public async Task<IActionResult> IssueEmployeePass([FromBody] IssueEmployeePassRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var adminId)) return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var product = await _passes.GetProduct(request.ProductId, _tenantContext.TenantId);
+            if (product is null) return new ApiResponses().NotFoundResult("Pass product not found.");
+            if (!product.IsEmployee)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "That's a customer pass product. Only an employee pass product can be issued from here.");
+            }
+            if (!product.IsActive)
+            {
+                return new ApiResponses().BadRequestResult("That employee pass product is inactive.");
+            }
+
+            // Eligibility: an ACTIVE account on THIS tenant. Both halves matter — a rider account
+            // (tenant_id null) is not an employee, and a disabled one would receive a pass that
+            // could not admit them.
+            var employee = await _users.GetById(request.UserId);
+            if (employee is null || employee.TenantId != _tenantContext.TenantId)
+            {
+                return new ApiResponses().NotFoundResult("That person isn't a staff member at this track.");
+            }
+            if (!string.Equals(employee.Status, "active", StringComparison.OrdinalIgnoreCase))
+            {
+                return new ApiResponses().BadRequestResult(
+                    "That staff account isn't active, so a pass issued to it wouldn't work. Re-activate them first.");
+            }
+            if (await _passes.HasLiveEmployeePass(request.UserId, _tenantContext.TenantId))
+            {
+                return new ApiResponses().BadRequestResult("That employee already has a pass. Revoke it first to re-issue.");
+            }
+
+            // A free pass is 'paid' with no money path (payment_method 'voucher', the established
+            // convention for a zero-value issue). A priced one lands 'pending' and grants nothing
+            // until it is settled — every admission path already requires 'paid', so the guard is
+            // the existing one rather than a new rule.
+            var free = product.PriceCents <= 0;
+            var purchase = new SeasonPassPurchase
+            {
+                TenantId = _tenantContext.TenantId,
+                PurchaserUserId = request.UserId,
+                ProductId = product.Id,
+                IssuedByUserId = adminId,
+                AmountCents = product.PriceCents,
+                ServiceChargeCents = 0,
+                PaymentMethod = "voucher",
+                Status = free ? "paid" : "pending",
+                PurchaserEmail = employee.Email,
+                PurchaserName = $"{employee.FirstName} {employee.LastName}".Trim(),
+                ValidFromDate = product.ValidFromDate,
+                ValidToDate = product.ValidToDate,
+                CreditsRemaining = product.TotalCredits,
+            };
+            var (purchaseId, token) = await _passes.CreatePurchase(purchase);
+
+            await _audit.Log(
+                "season_pass.employee_issued",
+                $"Issued the {product.Name} employee pass to {purchase.PurchaserName} ({employee.Email})"
+                    + (free ? " (free)" : $" at ${product.PriceCents / 100m:0.00}, awaiting payment"),
+                targetKind: "season_pass_purchase",
+                targetId: purchaseId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { employeeUserId = request.UserId, productId = product.Id, product.PriceCents });
+
+            return new ApiResponses().OkResult(new
+            {
+                passPurchaseId = purchaseId,
+                redemptionToken = token,
+                status = purchase.Status,
+                // The pass exists but will not scan until the employee adds a photo and signs.
+                // Surfaced so the page can say so rather than implying they are good to ride.
+                requiresRegistration = true,
+            });
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [HttpPut("Employee/Products/{productId:guid}/Benefits")]
+        public async Task<IActionResult> UpdateEmployeeBenefits(
+            Guid productId, [FromBody] UpdateEmployeeBenefitsRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var product = await _passes.GetProduct(productId, _tenantContext.TenantId);
+            if (product is null) return new ApiResponses().NotFoundResult("Pass product not found.");
+            if (!product.IsEmployee)
+            {
+                // This endpoint is UsersManage, not CatalogManage. Letting it touch a customer
+                // product would be a quiet privilege escalation into the catalog.
+                return new ApiResponses().BadRequestResult(
+                    "That's a customer pass. Edit its perks under Season Passes.");
+            }
+
+            var rows = new List<SeasonPassBenefit>();
+            foreach (var b in request.Benefits)
+            {
+                // A zero-value discount is a row that grants nothing; drop it rather than storing
+                // noise the tills have to evaluate. Buddy passes are the exception (quantity is
+                // the grant), but they are not offered here.
+                if (b.BenefitType == "buddy_pass") continue;
+                if (b.DiscountValue <= 0) continue;
+                if (b.DiscountKind == "percent" && b.DiscountValue > 10000)
+                {
+                    return new ApiResponses().BadRequestResult("A percentage discount can't exceed 100%.");
+                }
+                rows.Add(new SeasonPassBenefit
+                {
+                    TenantId = _tenantContext.TenantId,
+                    PassProductId = productId,
+                    BenefitType = b.BenefitType,
+                    ScopeId = b.BenefitType == "event" ? b.ScopeId : null,
+                    DiscountKind = b.DiscountKind,
+                    DiscountValue = b.DiscountValue,
+                    Quantity = null,
+                });
+            }
+
+            await _passes.ReplaceBenefits(productId, _tenantContext.TenantId, rows);
+            await _audit.Log(
+                "season_pass.employee_perks_updated",
+                $"Updated employee perks on {product.Name} ({rows.Count} in effect)",
+                targetKind: "season_pass_product",
+                targetId: productId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { benefits = rows.Select(r => new { r.BenefitType, r.ScopeId, r.DiscountKind, r.DiscountValue }) });
+
+            return new ApiResponses().OkResult();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [HttpPost("Employee/{purchaseId:guid}/Revoke")]
+        public async Task<IActionResult> RevokeEmployeePass(Guid purchaseId, [FromBody] RevokeEmployeePassRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryGetUserId(out var adminId)) return new ApiResponses().BadRequestResult("Invalid token.");
+            var reason = request.Reason?.Trim();
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                return new ApiResponses().BadRequestResult("A reason is required to revoke an employee pass.");
+            }
+
+            var ok = await _passes.RevokeEmployeePass(purchaseId, _tenantContext.TenantId, adminId, reason);
+            if (!ok)
+            {
+                return new ApiResponses().NotFoundResult("That employee pass no longer exists or was already revoked.");
+            }
+
+            await _audit.Log(
+                "season_pass.employee_revoked",
+                $"Revoked an employee pass — {reason}",
+                targetKind: "season_pass_purchase",
+                targetId: purchaseId,
+                tenantId: _tenantContext.TenantId,
+                metadata: new { reason });
+
+            return new ApiResponses().OkResult();
+        }
+
         // ── Rider purchase ────────────────────────────────────────────────────────
         [Authorize]
         [HttpPost("Buy")]
@@ -455,6 +1191,13 @@ namespace webapi.Controllers
                 if (item.Quantity < 1) return new ApiResponses().BadRequestResult("Pass quantity must be at least 1.");
                 var p = await _passes.GetProduct(item.ProductId, _tenantContext.TenantId);
                 if (p is null || !p.IsActive) return new ApiResponses().BadRequestResult("Pass is not available.");
+                // Employee passes are granted by an admin, never bought. Rejected here as well as
+                // hidden from the product list, because this endpoint takes a product id straight
+                // from the request and hiding a thing is not the same as refusing it.
+                if (p.IsEmployee)
+                {
+                    return new ApiResponses().BadRequestResult("This pass isn't available for purchase.");
+                }
                 lines.Add((p, item.Quantity));
             }
             if (lines.Count == 0) return new ApiResponses().BadRequestResult("Add at least one pass to continue.");
@@ -899,6 +1642,19 @@ namespace webapi.Controllers
 
             var product = await _passes.GetProduct(pass.ProductId, _tenantContext.TenantId);
             if (product is null) return new ApiResponses().BadRequestResult("Pass product missing — contact the tenant.");
+            // Employee pass (Script0242): holding capacity with a pass that cannot admit you is
+            // worse than a plain refusal, because the slot is gone for someone who could use it.
+            // The caller is the holder (checked above), so their own account decides.
+            if (product.IsEmployee)
+            {
+                var holder = await _users.GetById(userId);
+                if (holder is null || holder.TenantId != _tenantContext.TenantId
+                    || !string.Equals(holder.Status, "active", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "This employee pass is no longer active. Check with the track office.");
+                }
+            }
             if (product.Kind == "days_of_week" && product.ValidDaysOfWeek is { Length: > 0 })
             {
                 var dow = (int)ev.StartsAt.DayOfWeek;       // 0=Sun..6=Sat
@@ -1018,6 +1774,9 @@ namespace webapi.Controllers
             // ID / age. Resolved through the shared service so this display and the wristband
             // gate always agree about who counts as verified.
             var idStatus = await _idVerification.StatusForPass(pass, _tenantContext.TenantId);
+            // Buddy entitlement (Script0247). Null for a product that grants none, which is most
+            // of them, so the scan screen shows the panel only when there is something to spend.
+            var buddy = await _passes.GetBuddyEntitlement(pass.Id, _tenantContext.TenantId);
 
             return new ApiResponses().OkResult(new
             {
@@ -1031,6 +1790,29 @@ namespace webapi.Controllers
                 pass.PhotoDataUrl,
                 WaiverSigned = waiverSigned,
                 WaiverBlockReason = waiverBlockReason,
+                // Employee pass whose holder is no longer active staff (Script0242). Surfaced as
+                // its own reason rather than letting the scan look fine and the button fail: the
+                // worker has to be able to tell the person WHY they are not getting in.
+                EmployeePassBlockReason = ctx is { IsEmployeePass: true, EmployeeEligible: false }
+                    ? "This is a staff pass and the employee is no longer active. It can't be used."
+                    : null,
+                // What this holder can spend on a guest, so the counter can offer it on the same
+                // scan that proved the holder is standing there.
+                BuddyPass = buddy is null ? null : new BuddyEntitlementResponse
+                {
+                    Total = buddy.Total,
+                    Used = buddy.Used,
+                    Remaining = buddy.Remaining,
+                    IsFree = buddy.IsFree,
+                    DiscountKind = buddy.DiscountKind,
+                    DiscountValue = buddy.DiscountValue,
+                    GoodFor = buddy.Scopes
+                        .Select(sc => sc.IsWalkUp ? "Days with no event" : sc.EventTypeName ?? "An event type")
+                        .ToList(),
+                    EventTypeIds = buddy.Scopes.Where(sc => sc.EventTypeId.HasValue)
+                        .Select(sc => sc.EventTypeId!.Value).ToList(),
+                    CoversWalkUpDays = buddy.Scopes.Any(sc => sc.IsWalkUp),
+                },
                 IdVerified = idStatus.Verified,
                 IdVerifiedAtUtc = idStatus.VerifiedAtUtc,
                 IdVerifiedByName = idStatus.VerifiedByName,
@@ -1056,6 +1838,10 @@ namespace webapi.Controllers
                 {
                     e.Id,
                     e.Title,
+                    // Carried so the buddy flow can offer only the events this holder's
+                    // entitlement is good for, instead of listing all of today's and failing
+                    // at redeem with "not valid for this kind of event".
+                    e.EventTypeId,
                     StartsAtUtc = DateTime.SpecifyKind(e.StartsAt, DateTimeKind.Utc),
                     EndsAtUtc = DateTime.SpecifyKind(e.EndsAt, DateTimeKind.Utc),
                 }),
@@ -1532,6 +2318,15 @@ namespace webapi.Controllers
                 products.Select(p => p.Id), _tenantContext.TenantId);
             var eventTypeNames = (await _eventTypes.GetAllForTenant(_tenantContext.TenantId))
                 .ToDictionary(t => t.Id, t => t.Name);
+            // Buddy scopes hang off the buddy benefit, so resolve them per product that has one.
+            // Products per tenant are few and only some carry a buddy perk, so this is a handful
+            // of lookups rather than something worth a bulk query.
+            var buddyScopes = new Dictionary<Guid, List<SeasonPassBuddyScope>>();
+            foreach (var (pid, bs) in benefitsByProduct)
+            {
+                var buddy = bs.FirstOrDefault(b => b.BenefitType == "buddy_pass");
+                if (buddy is not null) buddyScopes[pid] = await _passes.ListBuddyScopes(buddy.Id, _tenantContext.TenantId);
+            }
 
             return products.Select(p =>
             {
@@ -1550,6 +2345,11 @@ namespace webapi.Controllers
                     RequiresWaiver = p.RequiresWaiver,
                     RiderPaidServiceChargeBps = p.RiderPaidServiceChargeBps,
                     IsActive = p.IsActive,
+                    IsEmployee = p.IsEmployee,
+                    BuddyEventTypeIds = buddyScopes.TryGetValue(p.Id, out var bsc)
+                        ? bsc.Where(x => x.EventTypeId.HasValue).Select(x => x.EventTypeId!.Value).ToList()
+                        : new List<Guid>(),
+                    BuddyIncludeWalkUp = buddyScopes.TryGetValue(p.Id, out var bsc2) && bsc2.Any(x => x.IsWalkUp),
                     SortOrder = p.SortOrder,
                     Slug = p.Slug,
                     HeroImageUrl = p.HeroImageUrl,

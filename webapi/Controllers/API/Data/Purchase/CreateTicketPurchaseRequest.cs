@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using webapi.Controllers.API.Data.Extras;
 
 namespace webapi.Controllers.API.Data.Purchase
@@ -19,11 +19,9 @@ namespace webapi.Controllers.API.Data.Purchase
         [MaxLength(120)]
         public string? Name { get; set; }
 
-        // Vouchers only valid when the cart is exactly one tier with quantity = 1.
-        public Guid? RewardRedemptionId { get; set; }
 
         // Optional tenant-issued coupon code (typed by the rider). Stacks with neither
-        // reward vouchers nor other coupons — first valid one wins, second is rejected.
+        // other coupons — first valid one wins, second is rejected.
         [MaxLength(40)]
         public string? CouponCode { get; set; }
 

@@ -148,9 +148,14 @@ const buyCard = ref<any>(null)
 const slugOrId = computed(() => String(route.params.slug ?? route.params.id ?? ''))
 
 // SeasonPassCheckout takes the products-list shape; the landing payload carries the same
-// fields plus content, so pad the two list-only fields it never reads meaningfully here.
+// fields plus content, so pad the list-only fields it never reads meaningfully here.
+// isEmployee is always false: this is the PUBLIC landing endpoint, which 404s an employee
+// product outright, so anything that reaches here is a customer product by construction.
 const checkoutProducts = computed<SeasonPassProduct[]>(() =>
-    landing.value ? [{ ...landing.value, isActive: true, sortOrder: 0, perks: [] }] : [])
+    landing.value
+        ? [{ ...landing.value, isActive: true, isEmployee: false, buddyEventTypeIds: [],
+             buddyIncludeWalkUp: false, sortOrder: 0, perks: [] }]
+        : [])
 
 const heroStyle = computed(() => {
     const url = absoluteUrl(landing.value?.heroImageUrl ?? null) || branding.heroImageUrl

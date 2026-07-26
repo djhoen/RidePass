@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.BikeShopData
+﻿namespace Services.Repositories.Data.BikeShopData
 {
     // Rentals on the unified shop catalog. A rental books catalog variants for a half-open window
     // [StartsAt, EndsAt); booking reserves CAPACITY by window overlap, and physical stock moves at
@@ -53,6 +53,14 @@ namespace Services.Repositories.Data.BikeShopData
         /// waiver from an emailed link instead of at the counter.</summary>
         public Guid SignatureRequestToken { get; set; }
         public DateTime? SignatureRequestSentAt { get; set; }
+
+        // Staff-applied discount snapshot (Script0257), set when a rental is discounted at the gate
+        // counter as part of a lesson booking.
+        public int DiscountCents { get; set; }
+        public Guid? DiscountPresetId { get; set; }
+        public string? DiscountLabel { get; set; }
+        public Guid? DiscountAuthorizedByUserId { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
@@ -104,4 +112,20 @@ namespace Services.Repositories.Data.BikeShopData
         public string? ParentName { get; set; }
         public DateTime SignedAtUtc { get; set; }
     }
+    /// <summary>
+    /// One entry in a rental's staff note thread (Script0248). Append-only and internal: nothing
+    /// here is shown to the renter. Distinct from ConditionNotes, which is the single
+    /// how-it-came-back record written at return.
+    /// </summary>
+    public class ShopRentalNote
+    {
+        public Guid Id { get; set; }
+        public Guid RentalId { get; set; }
+        public string Body { get; set; } = null!;
+        public Guid? CreatedByUserId { get; set; }
+        /// <summary>Author's display name, resolved via join; null if the account is gone.</summary>
+        public string? CreatedByName { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
 }

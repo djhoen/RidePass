@@ -43,6 +43,14 @@
                         <v-btn variant="text" size="small" class="mt-2" @click="expanded[p.id] = false">Hide</v-btn>
                     </div>
 
+                    <!-- An upgrade the holder can still take on this pass. Placed under the QR
+                         because it's an offer, not a check-in action. -->
+                    <v-btn v-if="upgradesByPass[p.id]?.length" variant="tonal" color="primary" block
+                        class="mt-2" prepend-icon="mdi-arrow-up-bold-circle-outline"
+                        :to="`/User/PassUpgrade/${p.id}`">
+                        Upgrade available
+                    </v-btn>
+
                     <div class="d-flex align-center flex-wrap ga-1 mt-2">
                         <v-btn v-if="canShareRegistration(p)" size="small" variant="text" color="primary"
                             prepend-icon="mdi-share-variant" @click="openRegistrationShare(p)">
@@ -271,6 +279,7 @@ import SocialShare from '@/components/SocialShare.vue'
 import { BikeShopService, type MyShopRental } from '@/services/BikeShopService'
 import { WaitlistService, type MyWaitlistEntry } from '@/services/WaitlistService'
 import { ExtraService, kindIcon, kindLabel, type MyExtra } from '@/services/ExtraService'
+import { SeasonPassService, type UpgradeOfferItem } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 import QrCode from '@/components/QrCode.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -280,6 +289,7 @@ const confirm = useConfirm()
 
 const waitlistService = new WaitlistService()
 const extraService = new ExtraService()
+const seasonPassService = new SeasonPassService()
 
 const purchases = ref<MyPurchase[]>([])
 const rentals = ref<MyShopRental[]>([])
@@ -292,6 +302,8 @@ const loadError = ref('')
 const expanded = reactive<Record<string, boolean>>({})
 // Coupons grouped by their issuing purchase id so the per-card render stays simple.
 const couponsByPurchase = reactive<Record<string, MyCoupon[]>>({})
+// Upgrade offers grouped the same way, keyed by the pass they apply to.
+const upgradesByPass = reactive<Record<string, UpgradeOfferItem[]>>({})
 
 onMounted(() => {
     handlePaymentRedirect()
@@ -330,6 +342,21 @@ async function load() {
             if (!key) continue
             if (!couponsByPurchase[key]) couponsByPurchase[key] = []
             couponsByPurchase[key].push(c)
+        }
+        // Upgrade offers, bucketed by the pass they apply to. Same one-round-trip shape
+        // as coupons above.
+        for (const k of Object.keys(upgradesByPass)) delete upgradesByPass[k]
+        if (branding.seasonPassesEnabled) {
+            try {
+                const ur = await seasonPassService.myUpgrades()
+                for (const o of (ur.data as any).data as UpgradeOfferItem[]) {
+                    if (!upgradesByPass[o.passPurchaseId]) upgradesByPass[o.passPurchaseId] = []
+                    upgradesByPass[o.passPurchaseId].push(o)
+                }
+            } catch (e: any) {
+                flash(e.response?.data?.error
+                    || 'Could not check for pass upgrades. Refresh if you were expecting one.', 'error')
+            }
         }
         // Rentals live on the bike shop now; only load when the module is on.
         if (branding.bikeShopEnabled) {

@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace webapi.Controllers.API.Data.SeasonPass
 {
@@ -10,7 +10,13 @@ namespace webapi.Controllers.API.Data.SeasonPass
         [MaxLength(2000)]
         public string? Description { get; set; }
 
-        [Range(1, 10_000_000)]
+        /// <summary>
+        /// Zero is allowed only when <see cref="IsEmployee"/> is true; the controller enforces
+        /// that, mirroring the chk_season_pass_product_price database constraint. A free
+        /// CUSTOMER product would be publicly listed and would fail at checkout, because Buy
+        /// builds a PaymentIntent per order and has no zero-charge path.
+        /// </summary>
+        [Range(0, 10_000_000)]
         public int PriceCents { get; set; }
 
         [Required]
@@ -33,6 +39,29 @@ namespace webapi.Controllers.API.Data.SeasonPass
         public int RiderPaidServiceChargeBps { get; set; } = 10000;
 
         public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// Staff-only product: granted from Admin &gt; Employee Passes, never publicly listed and
+        /// never purchasable. Marking an existing customer product as employee hides it from
+        /// riders, so the admin UI should say so before saving.
+        /// </summary>
+        public bool IsEmployee { get; set; }
+
+        /// <summary>
+        /// Event types the buddy-pass entitlement is good for (Script0247). The quantity lives on
+        /// the buddy_pass benefit; this is the SET of things it can be spent on, which is a
+        /// different cardinality and so cannot live on the benefit row.
+        ///
+        /// An empty set with a buddy quantity is rejected: it would configure a perk that admits
+        /// nobody, and the permissive reading ("valid everywhere") is the expensive way to be
+        /// wrong, because it hands out free race entries.
+        /// </summary>
+        public List<Guid> BuddyEventTypeIds { get; set; } = new();
+
+        /// <summary>Whether buddy passes also work on days with no event at all (walk-up).
+        /// Requires the perk to cover admission outright: with no event there is no tier and no
+        /// price to take a percentage of.</summary>
+        public bool BuddyIncludeWalkUp { get; set; }
 
         public int SortOrder { get; set; } = 100;
 
@@ -73,6 +102,12 @@ namespace webapi.Controllers.API.Data.SeasonPass
         public bool RequiresWaiver { get; set; }
         public int RiderPaidServiceChargeBps { get; set; }
         public bool IsActive { get; set; }
+        /// <summary>Staff-only product. Only ever true on the admin list; the public list
+        /// excludes these entirely.</summary>
+        public bool IsEmployee { get; set; }
+        /// <summary>Event types the buddy-pass perk is good for. Empty = not configured.</summary>
+        public List<Guid> BuddyEventTypeIds { get; set; } = new();
+        public bool BuddyIncludeWalkUp { get; set; }
         public int SortOrder { get; set; }
 
         // Landing page fields. Product counts per tenant are small, so carrying the body in

@@ -446,17 +446,22 @@
                                     at the POS. The LoamPass discount is a perk and does not use a LoamPass credit.
                                 </p>
 
+                                <!-- Moved to Settings > Features (Script0260). Leaving an editable
+                                     copy here would give two controls writing to different columns,
+                                     and the till only reads one. -->
                                 <div class="text-subtitle-2 font-weight-bold mb-1">Season Pass</div>
-                                <v-switch v-model="menuStyle.seasonPassDiscountEnabled" label="Give Season Pass holders a discount"
-                                    color="primary" density="compact" hide-details></v-switch>
-                                <div v-if="menuStyle.seasonPassDiscountEnabled" class="d-flex ga-3 mt-3">
-                                    <v-select v-model="menuStyle.seasonPassDiscountKind" :items="discountKindItems"
-                                        label="Type" density="compact" hide-details style="width: 150px"></v-select>
-                                    <v-text-field v-model.number="seasonPassValueDisplay" type="number" min="0"
-                                        :step="menuStyle.seasonPassDiscountKind === 'amount' ? 0.01 : 1"
-                                        :prefix="menuStyle.seasonPassDiscountKind === 'amount' ? '$' : undefined"
-                                        :suffix="menuStyle.seasonPassDiscountKind === 'percent' ? '%' : undefined"
-                                        label="Amount" density="compact" hide-details style="width: 150px"></v-text-field>
+                                <div class="d-flex align-center ga-3 flex-wrap mb-1">
+                                    <span class="text-body-2">
+                                        <template v-if="branding.seasonPassDiscountEnabled">
+                                            Pass holders get
+                                            <strong>{{ passDiscountLabel }}</strong> here.
+                                        </template>
+                                        <template v-else>
+                                            Pass holders get no standing discount here.
+                                        </template>
+                                    </span>
+                                    <v-btn size="small" variant="text" color="primary"
+                                        to="/Admin/Settings/Features">Change in Settings</v-btn>
                                 </div>
 
                                 <v-divider class="my-4"></v-divider>
@@ -474,26 +479,21 @@
                                 </div>
                             </v-card>
 
-                            <!-- Discount presets (quick POS discount buttons) -->
+                            <!-- Discounts moved to Settings > Discounts, where one definition can
+                                 cover F&B, the bike shop and the gate at once rather than being
+                                 re-entered per counter. Editing them here would have written to a
+                                 table the POS no longer reads. -->
                             <v-card variant="outlined" class="pa-4 mb-4">
                                 <div class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center ga-2">
-                                    <v-icon size="small" color="primary">mdi-sale</v-icon> Discount presets
+                                    <v-icon size="small" color="primary">mdi-sale</v-icon> Discounts
                                 </div>
                                 <p class="text-caption text-medium-emphasis mb-3">
-                                    Quick discounts a cashier can tap at the POS (for example "$1 off" or "10% off").
+                                    Discounts a cashier can tap at the POS are set up for the whole track now, so
+                                    one "Military 10%" covers food, the shop and the gate. You can also choose which
+                                    of them need a manager's PIN.
                                 </p>
-                                <div v-for="(d, i) in discountRows" :key="d.id || ('new' + i)" class="d-flex align-center ga-2 mt-3">
-                                    <v-text-field v-model="d.name" label="Name" density="compact" hide-details style="flex: 1"></v-text-field>
-                                    <v-select v-model="d.kind" :items="discountKindItems" label="Type" density="compact"
-                                        hide-details style="width: 130px"></v-select>
-                                    <v-text-field v-model.number="d.displayValue" type="number" min="0"
-                                        :step="d.kind === 'amount' ? 0.01 : 1"
-                                        :prefix="d.kind === 'amount' ? '$' : undefined"
-                                        :suffix="d.kind === 'percent' ? '%' : undefined"
-                                        label="Value" density="compact" hide-details style="width: 120px"></v-text-field>
-                                    <v-btn icon="mdi-close" variant="text" size="small" @click="removeDiscountRow(i)"></v-btn>
-                                </div>
-                                <v-btn variant="text" size="small" prepend-icon="mdi-plus" class="mt-2" @click="addDiscountRow">Add preset</v-btn>
+                                <v-btn variant="tonal" size="small" color="primary" prepend-icon="mdi-open-in-new"
+                                    to="/Admin/Settings/Discounts">Manage discounts</v-btn>
                             </v-card>
 
                             <!-- Comp reasons (always manager-gated; show on the void/comp report) -->
@@ -709,11 +709,17 @@
                                         <div class="text-caption text-medium-emphasis mb-1">
                                             Recipe (ingredients depleted from F&amp;B inventory each time this sells)
                                         </div>
-                                        <div v-for="(r, idx) in recipeRows" :key="idx" class="d-flex align-center ga-2 mb-1">
+                                        <!-- mb-4, not mb-1: at density="compact" the floating label sits
+                                             above the box, so 4px of gap put each row's label against the
+                                             field above it. min-width: 0 lets the flexed select actually
+                                             shrink instead of forcing the row wider than its column. -->
+                                        <div v-for="(r, idx) in recipeRows" :key="idx" class="d-flex align-center ga-2 mb-4">
                                             <v-select v-model="r.inventoryItemId" :items="inventoryItemOptions" label="Ingredient"
-                                                density="compact" hide-details style="flex: 1"></v-select>
+                                                density="compact" hide-details style="flex: 1; min-width: 0"></v-select>
                                             <v-text-field v-model.number="r.quantity" type="number" min="0" step="0.001" label="Qty"
-                                                density="compact" hide-details style="width: 96px"></v-text-field>
+                                                density="compact" hide-details style="width: 78px"></v-text-field>
+                                            <span class="text-caption text-medium-emphasis flex-shrink-0"
+                                                style="min-width: 34px">{{ unitFor(r.inventoryItemId) }}</span>
                                             <v-btn icon="mdi-close" variant="text" size="small" @click="recipeRows.splice(idx, 1)"></v-btn>
                                         </div>
                                         <v-btn v-if="inventoryItems.length" variant="text" size="small" prepend-icon="mdi-plus"
@@ -840,7 +846,7 @@ import {
     ConcessionService,
     type ConcessionProduct, type ConcessionVariant, type ConcessionStation, type ConcessionModifierGroup,
     type ConcessionCategory, type ConcessionMenuSettings, type ConcessionInventoryItem,
-    type ConcessionTaxCategory, type ConcessionDiscountPreset, type ConcessionCompReason,
+    type ConcessionTaxCategory, type ConcessionCompReason,
     type ConcessionOrderingCapacity,
 } from '@/services/ConcessionService'
 import { branding, loadBranding } from '@/stores/branding'
@@ -892,8 +898,15 @@ function toggleDefaultOption(optionId: string, checked: boolean) {
 
 // Recipe editor: rows of inventory item + quantity for the product currently open in the editor.
 const inventoryItems = ref<ConcessionInventoryItem[]>([])
+// Name only. The unit used to be appended here, which ate the width the name needed in the
+// narrowest column of the editor and truncated everything to "Beef...", "Che...", "Ham...".
+// It now sits after the Qty box instead, which is where the number it describes actually is.
 const inventoryItemOptions = computed(() =>
-    inventoryItems.value.filter(i => i.isActive).map(i => ({ title: `${i.name} (${i.unit})`, value: i.id })))
+    inventoryItems.value.filter(i => i.isActive).map(i => ({ title: i.name, value: i.id })))
+/** The unit for a chosen ingredient, rendered after its Qty box. */
+function unitFor(inventoryItemId: string): string {
+    return inventoryItems.value.find(i => i.id === inventoryItemId)?.unit ?? ''
+}
 // Low-stock count badged on the Inventory tab. Seeded from the items loaded on mount so the
 // badge shows before the tab is opened; the live value emitted by ConcessionInventory takes
 // over once that tab mounts (and stays fresh as stock is received/edited/counted there).
@@ -1452,54 +1465,20 @@ const discountKindItems: { title: string; value: 'percent' | 'amount' }[] =
 const compKindItems: { title: string; value: 'full' | 'percent' | 'amount' }[] =
     [{ title: 'Full comp', value: 'full' }, { title: 'Percent', value: 'percent' }, { title: 'Amount', value: 'amount' }]
 
+// Read-only summary of the pass-holder discount, which now lives on the tenant (Script0260) and is
+// edited in Settings > Features. Shown here because this is where a cashier-facing perk is expected
+// to be described, even though it is no longer set here.
+const passDiscountLabel = computed(() =>
+    branding.seasonPassDiscountKind === 'amount'
+        ? `$${(branding.seasonPassDiscountValue / 100).toFixed(2)} off`
+        : `${(branding.seasonPassDiscountValue / 100).toFixed(2).replace(/\.00$/, '')}% off`)
+
 // Member-perk discount value fields. Writable computeds keep menuStyle (in bps/cents) as the source of truth
 // while the inputs show whole percents or dollars.
-const seasonPassValueDisplay = computed({
-    get: () => (menuStyle.value.seasonPassDiscountValue || 0) / 100,
-    set: (v: number) => { menuStyle.value.seasonPassDiscountValue = Math.max(0, Math.round((v || 0) * 100)) },
-})
 const loampassValueDisplay = computed({
     get: () => (menuStyle.value.loampassDiscountValue || 0) / 100,
     set: (v: number) => { menuStyle.value.loampassDiscountValue = Math.max(0, Math.round((v || 0) * 100)) },
 })
-
-// Discount-preset editor rows (displayValue is the whole percent or dollars; converted to bps/cents on save).
-interface DiscountRow { id: string; name: string; kind: 'percent' | 'amount'; displayValue: number; isActive: boolean; sortOrder: number }
-const discountRows = ref<DiscountRow[]>([])
-const removedDiscountIds = ref<string[]>([])
-
-function loadDiscountRows(list: ConcessionDiscountPreset[]) {
-    discountRows.value = list.map(d => ({
-        id: d.id, name: d.name, kind: d.kind, displayValue: +(d.value / 100).toFixed(2),
-        isActive: d.isActive, sortOrder: d.sortOrder,
-    }))
-    removedDiscountIds.value = []
-}
-function addDiscountRow() {
-    discountRows.value.push({ id: '', name: '', kind: 'percent', displayValue: 0, isActive: true, sortOrder: discountRows.value.length })
-}
-function removeDiscountRow(i: number) {
-    const row = discountRows.value[i]
-    if (row.id) removedDiscountIds.value.push(row.id)   // deleted from the server on Save
-    discountRows.value.splice(i, 1)
-}
-// Persists removed/created/updated presets, then refetches so new rows pick up their ids. Errors bubble to saveSettings.
-async function saveDiscountPresets() {
-    for (const id of removedDiscountIds.value) await service.removeDiscountPreset(id)
-    removedDiscountIds.value = []
-    for (const [i, row] of discountRows.value.entries()) {
-        const name = (row.name || '').trim()
-        if (!name) continue
-        const payload = {
-            name, kind: row.kind,
-            value: Math.max(0, Math.round((row.displayValue || 0) * 100)),
-            isActive: row.isActive, sortOrder: i,
-        }
-        if (row.id) await service.updateDiscountPreset(row.id, payload)
-        else await service.createDiscountPreset(payload)
-    }
-    loadDiscountRows((await service.discountPresets() as any).data.data)
-}
 
 // Comp-reason editor rows (displayValue ignored when defaultKind is 'full').
 interface CompRow { id: string; name: string; defaultKind: 'full' | 'percent' | 'amount'; displayValue: number; isActive: boolean; sortOrder: number }
@@ -1658,13 +1637,12 @@ async function openMenuStyle() {
         flash(err.response?.data?.error || 'Could not load online order capacity settings.', 'error')
     }
 
-    // Discount presets + comp reasons for the discounts/comps cards.
+    // Comp reasons for the comps card. Discounts moved to Settings > Discounts.
     try {
-        const [dp, cr] = await Promise.all([service.discountPresets(), service.compReasons()])
-        loadDiscountRows((dp.data as any).data)
+        const cr = await service.compReasons()
         loadCompRows((cr.data as any).data)
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Could not load discounts and comps.', 'error')
+        flash(err.response?.data?.error || 'Could not load comp reasons.', 'error')
     }
     managerPin.value = ''
 }
@@ -1730,7 +1708,6 @@ async function saveSettings() {
     savingMenuStyle.value = true
     try {
         await saveTaxCategories()
-        await saveDiscountPresets()
         await saveCompReasons()
         await saveOrderingCapacity()
         await saveMenuStyle()   // shows its own success flash; also persists member discounts + the manual-discount toggle
