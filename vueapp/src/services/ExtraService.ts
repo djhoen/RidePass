@@ -116,9 +116,68 @@ export interface MyExtra {
     createdAtUtc: string
 }
 
+export interface ExtraCheckInItem {
+    purchaseId: string
+    productName: string
+    productKind: string
+    purchaserName: string
+    purchaserEmail: string
+    quantity: number
+    /** Size/colour/gender where the add-on has variants. */
+    variantLabel: string | null
+    amountCents: number
+    status: string
+    arrived: boolean
+    arrivedAtUtc: string | null
+    arrivedByName: string | null
+    /** Null for an add-on bought at the counter with no event attached. */
+    eventId: string | null
+    eventTitle: string | null
+    eventStartsAtUtc: string | null
+    purchasedAtUtc: string
+}
+
+export interface ExtraCheckInResponse {
+    items: ExtraCheckInItem[]
+    totalCount: number
+    arrivedCount: number
+    /** True when the result hit the row cap, so the page can say so. */
+    truncated: boolean
+}
+
+export interface ExtraCheckInProductOption {
+    id: string
+    name: string
+    kind: string
+    isActive: boolean
+}
+
 export class ExtraService {
     private apiUrl: string
     constructor() { this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? '' }
+
+    // ── Check-in ─────────────────────────────────────────────────────────────
+    checkInFilters() {
+        return axios.get<{ data: { products: ExtraCheckInProductOption[] } }>(
+            `${this.apiUrl}/Extra/CheckIn/Filters`)
+    }
+
+    /** A name/email query deliberately ignores the date window server-side. */
+    checkInList(params: {
+        productId?: string | null
+        eventId?: string | null
+        from?: string | null
+        to?: string | null
+        q?: string | null
+        arrival?: 'arrived' | 'not_arrived' | null
+    }) {
+        return axios.get<{ data: ExtraCheckInResponse }>(`${this.apiUrl}/Extra/CheckIn`, { params })
+    }
+
+    setCheckIn(purchaseId: string, checkedIn: boolean) {
+        return axios.put<{ data: { status: string; arrived: boolean; arrivedAtUtc: string | null } }>(
+            `${this.apiUrl}/Extra/CheckIn/${purchaseId}`, { checkedIn })
+    }
 
     listForAdmin() {
         return axios.get<{ data: ExtraProduct[] }>(`${this.apiUrl}/Extra/Products/Admin`)

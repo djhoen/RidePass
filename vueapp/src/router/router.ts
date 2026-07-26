@@ -195,6 +195,14 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
+        // Ticking off camping / parking / pit vehicles as people arrive. sales.redeem, not
+        // catalog.manage: whoever works the campground shouldn't need rights to edit products.
+        path: '/Admin/AddOnCheckIn',
+        name: 'AdminAddOnCheckIn',
+        component: () => import('../views/Admin/AddOnCheckIn.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.redeem', hideFooter: true }
+    },
+    {
         // Reporting surface, so reports.view. The credit-return action inside is separately
         // gated on sales.cancel by the API, which is the permission that actually matters:
         // a cashier who can spend a credit must not be able to hand it back.

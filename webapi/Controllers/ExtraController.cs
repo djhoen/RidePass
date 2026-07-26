@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
 using Services.Payments;
@@ -45,6 +45,172 @@ namespace webapi.Controllers
             _memberships = memberships;
             _imageStorage = imageStorage;
             _tenantContext = tenantContext;
+        }
+
+        // ── Add-on check-in ───────────────────────────────────────────────────
+        // The gate's scan flow can already check an add-on in, but only by scanning a QR that
+        // belongs to the order. That is no use to whoever is working a campground with a tablet, and
+        // a customer who bought ONLY an add-on has no ticket for the gate search to find them by.
+        // This is the list-and-tick surface for those cases; it writes the same status the scan does.
+
+        /// <summary>Add-on products this tenant sells, for the filter. Includes inactive ones,
+        /// because last season's camping still has arrivals to record.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
+        [HttpGet("CheckIn/Filters")]
+        public async Task<IActionResult> CheckInFilters()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var products = await _extras.ListProducts(_tenantContext.TenantId, activeOnly: false);
+            return new ApiResponses().OkResult(new ExtraCheckInFilters
+            {
+                Products = products
+                    .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
+                    .Select(p => new ExtraCheckInProductOption
+                    {
+                        Id = p.Id, Name = p.Name, Kind = p.Kind, IsActive = p.IsActive,
+                    }).ToList(),
+            });
+        }
+
+        /// <summary>
+        /// Who bought an add-on in a window, and who has arrived. Defaults to a window around today
+        /// rather than all history, so the page opens on the people actually turning up.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
+        [HttpGet("CheckIn")]
+        public async Task<IActionResult> CheckInList(
+            [FromQuery] Guid? productId, [FromQuery] string? kind, [FromQuery] Guid? eventId,
+            [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? q,
+            [FromQuery] string? arrival)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            // A name search is a deliberate "find this person wherever they are", so it ignores the
+            // window. Someone standing at the gate whose camping is filed under next weekend must
+            // still be findable.
+            var searching = !string.IsNullOrWhiteSpace(q);
+            // Dates arrive as plain yyyy-MM-dd and mean the TENANT'S days, not the server's. Parsing
+            // them as local DateTimes would slide both edges by the server's offset, so a track in
+            // Denver asking for "today" would get a window that ends at 6pm.
+            var fromUtc = searching ? null : StartOfTenantDay(from);
+            var toUtc = searching ? null : EndOfTenantDay(to);
+
+            const int cap = 500;
+            var rows = await _extras.SearchForCheckIn(
+                _tenantContext.TenantId, productId, string.IsNullOrWhiteSpace(kind) ? null : kind, eventId,
+                fromUtc, toUtc, q,
+                arrivedOnly: arrival == "arrived", notArrivedOnly: arrival == "not_arrived",
+                limit: cap);
+
+            return new ApiResponses().OkResult(new ExtraCheckInResponse
+            {
+                Items = rows.Select(ToCheckInItem).ToList(),
+                TotalCount = rows.Count,
+                ArrivedCount = rows.Count(r => r.Status == "redeemed"),
+                Truncated = rows.Count >= cap,
+            });
+        }
+
+        /// <summary>
+        /// Check an add-on in, or undo it. One toggle rather than two endpoints, matching the Event
+        /// Riders check-in on the reports screen. SalesRedeem, so anyone working a gate or a
+        /// campground can use it without catalog rights.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
+        [HttpPut("CheckIn/{purchaseId:guid}")]
+        public async Task<IActionResult> SetCheckIn(Guid purchaseId, [FromBody] SetExtraCheckInRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var staffId))
+                return new ApiResponses().BadRequestResult("Invalid token.");
+
+            var tenantId = _tenantContext.TenantId;
+            if (req.CheckedIn)
+            {
+                // The 'paid' guard is in the SQL, so a cancelled or refunded add-on can't be checked
+                // in. Reported rather than swallowed: silently doing nothing is how someone gets
+                // waved through on a refunded camping spot.
+                if (!await _extras.MarkRedeemed(purchaseId, tenantId, staffId, DateTime.UtcNow))
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "This add-on can't be checked in. It may be refunded, cancelled, or already checked in.");
+                }
+            }
+            else if (!await _extras.UndoRedeemed(purchaseId, tenantId))
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This add-on isn't checked in, so there's nothing to undo.");
+            }
+
+            var fresh = await _extras.GetPurchaseWithProduct(purchaseId, tenantId);
+            return fresh is null
+                ? new ApiResponses().OkResult()
+                : new ApiResponses().OkResult(new
+                {
+                    purchaseId,
+                    status = fresh.Status,
+                    arrived = fresh.Status == "redeemed",
+                    arrivedAtUtc = fresh.RedeemedAtUtc.HasValue
+                        ? DateTime.SpecifyKind(fresh.RedeemedAtUtc.Value, DateTimeKind.Utc)
+                        : (DateTime?)null,
+                });
+        }
+
+        private static ExtraCheckInItem ToCheckInItem(ExtraCheckInRow r) => new()
+        {
+            PurchaseId = r.Id,
+            ProductName = r.ProductName,
+            ProductKind = r.ProductKind,
+            PurchaserName = r.PurchaserName ?? "",
+            PurchaserEmail = r.PurchaserEmail ?? "",
+            Quantity = r.Quantity,
+            VariantLabel = BuildVariantLabel(r.SizeAtPurchase, r.ColorAtPurchase, r.GenderAtPurchase),
+            AmountCents = r.AmountCents,
+            Status = r.Status,
+            Arrived = r.Status == "redeemed",
+            ArrivedAtUtc = r.RedeemedAtUtc.HasValue
+                ? DateTime.SpecifyKind(r.RedeemedAtUtc.Value, DateTimeKind.Utc) : null,
+            ArrivedByName = r.RedeemedByName,
+            EventId = r.EventId,
+            EventTitle = r.EventTitle,
+            EventStartsAtUtc = r.EventStartsAtUtc.HasValue
+                ? DateTime.SpecifyKind(r.EventStartsAtUtc.Value, DateTimeKind.Utc) : null,
+            PurchasedAtUtc = DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc),
+        };
+
+        private static string? BuildVariantLabel(string? size, string? color, string? gender)
+        {
+            var parts = new[] { size, color, gender }.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+            return parts.Count == 0 ? null : string.Join(", ", parts);
+        }
+
+        private DateTime? StartOfTenantDay(string? date) => TenantDayBound(date, endOfDay: false);
+        private DateTime? EndOfTenantDay(string? date) => TenantDayBound(date, endOfDay: true);
+
+        /// <summary>
+        /// A yyyy-MM-dd from the admin, read as a day in the TENANT'S timezone and returned as the
+        /// matching UTC instant. Unparseable input yields null (no bound) rather than an error: this
+        /// is a convenience filter, and refusing the whole list over a typo in a date box is a worse
+        /// outcome than showing more rows than were asked for.
+        /// </summary>
+        private DateTime? TenantDayBound(string? date, bool endOfDay)
+        {
+            if (!DateOnly.TryParse(date, out var d)) return null;
+            var local = endOfDay
+                ? d.ToDateTime(new TimeOnly(23, 59, 59))
+                : d.ToDateTime(TimeOnly.MinValue);
+            var tzId = _tenantContext.Tenant?.Timezone;
+            if (string.IsNullOrWhiteSpace(tzId)) return DateTime.SpecifyKind(local, DateTimeKind.Utc);
+            try
+            {
+                return TimeZoneInfo.ConvertTimeToUtc(
+                    DateTime.SpecifyKind(local, DateTimeKind.Unspecified),
+                    TimeZoneInfo.FindSystemTimeZoneById(tzId));
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return DateTime.SpecifyKind(local, DateTimeKind.Utc);
+            }
         }
 
         // ── Products: tenant admin CRUD ───────────────────────────────────────

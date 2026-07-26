@@ -1,4 +1,4 @@
-namespace Services.Repositories.Data.ExtrasData
+﻿namespace Services.Repositories.Data.ExtrasData
 {
     public class EventExtraProduct
     {
@@ -110,5 +110,17 @@ namespace Services.Repositories.Data.ExtrasData
     {
         public string ProductName { get; set; } = null!;
         public string ProductKind { get; set; } = null!;
+    }
+
+    /// <summary>
+    /// One add-on on the check-in list. Carries the event and the staffer who checked it in so the
+    /// screen can answer "who bought camping this weekend, and who has arrived" without a query per
+    /// row.
+    /// </summary>
+    public class ExtraCheckInRow : EventExtraPurchaseWithProduct
+    {
+        public string? EventTitle { get; set; }
+        public DateTime? EventStartsAtUtc { get; set; }
+        public string? RedeemedByName { get; set; }
     }
 }

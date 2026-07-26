@@ -1,4 +1,4 @@
-using Services.Repositories.Data.ExtrasData;
+﻿using Services.Repositories.Data.ExtrasData;
 
 namespace Services.Repositories.Interfaces
 {
@@ -46,7 +46,33 @@ namespace Services.Repositories.Interfaces
         Task SetPaymentIntentId(Guid id, string paymentIntentId);
         Task MarkDirectCharge(Guid id, Guid tenantId, string connectedAccountId);
         Task UpdateStatus(Guid id, string status);
-        Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
+        /// <summary>
+        /// Check in an add-on. The 'paid' guard lives in the SQL, so this returns false when the row
+        /// was cancelled, refunded, or already checked in, rather than silently doing nothing.
+        /// </summary>
+        Task<bool> MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
+
+        /// <summary>
+        /// Reverse a check-in. Guarded on 'redeemed' so it can only ever undo an actual check-in,
+        /// never resurrect a cancelled or refunded add-on into a usable one. Returns false when
+        /// nothing matched, which the caller reports rather than claiming success.
+        /// </summary>
+        Task<bool> UndoRedeemed(Guid id, Guid tenantId);
+
+        /// <summary>
+        /// The add-on check-in list: who bought a given add-on in a window, and who has arrived.
+        /// Exists because the gate's scan flow can only reach an add-on through a QR, which is no
+        /// use to whoever is working a campground with a clipboard, and because a customer who
+        /// bought ONLY an add-on has no ticket for the gate search to find them by.
+        ///
+        /// All filters are optional and AND together. <paramref name="query"/> matches the
+        /// purchaser's name or email. The window is on the EVENT date where there is one and the
+        /// purchase date otherwise, since a no-event add-on has no other date to sort by.
+        /// </summary>
+        Task<List<ExtraCheckInRow>> SearchForCheckIn(
+            Guid tenantId, Guid? productId, string? kind, Guid? eventId,
+            DateTime? fromUtc, DateTime? toUtc, string? query, bool arrivedOnly, bool notArrivedOnly,
+            int limit);
 
         /// <summary>Tenant-scoped cancel of a paid extra purchase (releases held inventory via status).</summary>
         Task Cancel(Guid id, Guid tenantId, Guid cancelledByUserId, string? reason);

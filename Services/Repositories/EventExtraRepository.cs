@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.ExtrasData;
 using Services.Repositories.Interfaces;
 
@@ -299,15 +299,71 @@ namespace Services.Repositories
             await _db.Execute(sql, new { id, status });
         }
 
-        public async Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc)
+        public async Task<bool> MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc)
         {
             // tenant_id predicate prevents a stray purchaseId from another tenant being
-            // flipped to redeemed.
+            // flipped to redeemed. The status guard means a cancelled or refunded add-on can never
+            // be checked in, which also stops UndoRedeemed resurrecting one to 'paid'.
             const string sql = @"
                 UPDATE event_extra_purchase
                 SET status = 'redeemed', redeemed_at_utc = @atUtc, redeemed_by_user_id = @redeemedByUserId
                 WHERE id = @id AND tenant_id = @tenantId AND status = 'paid'";
-            await _db.Execute(sql, new { id, tenantId, redeemedByUserId, atUtc });
+            return await _db.Execute(sql, new { id, tenantId, redeemedByUserId, atUtc }) > 0;
+        }
+
+        public async Task<bool> UndoRedeemed(Guid id, Guid tenantId)
+        {
+            // Guarded on 'redeemed': undoing anything else would turn a cancelled or refunded
+            // add-on back into a usable one.
+            const string sql = @"
+                UPDATE event_extra_purchase
+                SET status = 'paid', redeemed_at_utc = NULL, redeemed_by_user_id = NULL
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'redeemed'";
+            return await _db.Execute(sql, new { id, tenantId }) > 0;
+        }
+
+        public async Task<List<ExtraCheckInRow>> SearchForCheckIn(
+            Guid tenantId, Guid? productId, string? kind, Guid? eventId,
+            DateTime? fromUtc, DateTime? toUtc, string? query, bool arrivedOnly, bool notArrivedOnly,
+            int limit)
+        {
+            // Only 'paid' and 'redeemed' rows: a pending checkout is not a sale, and cancelled or
+            // refunded rows must never appear on a list whose buttons admit people.
+            //
+            // COALESCE(e.starts_at, p.created_at) is the sort and window key. An add-on bought at
+            // the counter has no event, so it has no event date to file under and its purchase time
+            // is the only thing that places it in a window.
+            var sql = $@"
+                SELECT {PrefixedPurchaseColumns},
+                       prod.name AS ProductName,
+                       prod.kind AS ProductKind,
+                       e.title   AS EventTitle,
+                       e.starts_at AS EventStartsAtUtc,
+                       NULLIF(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name)), '') AS RedeemedByName
+                FROM event_extra_purchase p
+                JOIN event_extra_product prod ON prod.id = p.product_id
+                LEFT JOIN event e ON e.id = p.event_id AND e.tenant_id = p.tenant_id
+                LEFT JOIN users ru ON ru.id = p.redeemed_by_user_id
+                WHERE p.tenant_id = @tenantId
+                  AND p.status IN ('paid', 'redeemed')
+                  AND (@productId::uuid IS NULL OR p.product_id = @productId)
+                  AND (@kind::text IS NULL OR prod.kind = @kind)
+                  AND (@eventId::uuid IS NULL OR p.event_id = @eventId)
+                  AND (@fromUtc::timestamptz IS NULL OR COALESCE(e.starts_at, p.created_at) >= @fromUtc)
+                  AND (@toUtc::timestamptz IS NULL OR COALESCE(e.starts_at, p.created_at) <= @toUtc)
+                  AND (@query::text IS NULL
+                       OR p.purchaser_name ILIKE '%' || @query || '%'
+                       OR p.purchaser_email ILIKE '%' || @query || '%')
+                  AND (NOT @arrivedOnly OR p.status = 'redeemed')
+                  AND (NOT @notArrivedOnly OR p.status = 'paid')
+                ORDER BY COALESCE(e.starts_at, p.created_at), p.purchaser_name
+                LIMIT @limit";
+            var q = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+            return (await _db.Query<ExtraCheckInRow>(sql, new
+            {
+                tenantId, productId, kind, eventId, fromUtc, toUtc, query = q,
+                arrivedOnly, notArrivedOnly, limit,
+            })).ToList();
         }
 
         public async Task<List<EventExtraPurchase>> ListMine(Guid userId, Guid tenantId)

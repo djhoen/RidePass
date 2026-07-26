@@ -309,6 +309,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Events', icon: 'mdi-calendar-month', title: 'Manage Events', perm: Perm.CatalogManage },
             { to: '/Admin/Counter', icon: 'mdi-cash-register', title: 'Gate Sale', perm: Perm.SalesCounter },
             { to: '/Admin/RedeemTickets', icon: 'mdi-qrcode-scan', title: 'Scan Tickets', perm: Perm.SalesRedeem },
+            { to: '/Admin/AddOnCheckIn', icon: 'mdi-tent', title: 'Add-on Check-in', perm: Perm.SalesRedeem, feature: 'extrasEnabled' },
             { to: '/Admin/RiderReport', icon: 'mdi-account-group', title: 'Rider Report', perm: Perm.ReportsView },
             { to: '/Admin/SpectatorReport', icon: 'mdi-account-eye', title: 'Spectator Report', perm: Perm.ReportsView, feature: 'sellsSpectatorPasses' },
             { to: '/Admin/BuddyPassUsage', icon: 'mdi-account-multiple-plus', title: 'Buddy Passes', perm: Perm.ReportsView, feature: 'seasonPassesEnabled' },
