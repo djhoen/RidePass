@@ -720,6 +720,11 @@ export class ConcessionService {
     advanceLine(lineId: string, prepStatus: 'queued' | 'in_progress' | 'ready') {
         return axios.post(`${this.apiUrl}/Concession/Kitchen/Line/${lineId}/${prepStatus}`, {})
     }
+    // Bump every outstanding line on one ticket in a single call, so a cook who plated the whole
+    // order does not have to tap each line and cannot leave it half-bumped.
+    markAllReady(saleId: string) {
+        return axios.post(`${this.apiUrl}/Concession/Kitchen/Sale/${saleId}/AllReady`, {})
+    }
     setRush(saleId: string, rush: boolean) {
         return axios.post(`${this.apiUrl}/Concession/Sale/${saleId}/Rush`, { rush })
     }

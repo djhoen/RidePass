@@ -24,7 +24,10 @@
                 <!-- Preparing -->
                 <div class="text-overline text-medium-emphasis mb-2" style="font-size: 1.1rem !important;">Preparing</div>
                 <div v-if="preparing.length" class="prep-row">
-                    <div v-for="(e, i) in preparing" :key="'p' + i" class="prep-chip">{{ e.orderNumber ?? '—' }}</div>
+                    <div v-for="(e, i) in preparing" :key="'p' + i" class="prep-chip">
+                        <div class="prep-num">{{ e.orderNumber ?? '—' }}</div>
+                        <div v-if="e.customerName" class="prep-name text-truncate">{{ e.customerName }}</div>
+                    </div>
                 </div>
                 <div v-else class="text-body-1 text-medium-emphasis">No orders in the kitchen.</div>
             </div>
@@ -87,13 +90,18 @@ async function refresh() {
 }
 .ready-num { font-size: 4rem; font-weight: 800; line-height: 1; }
 .ready-name { font-size: 1.1rem; margin-top: 6px; opacity: 0.85; }
-.prep-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.prep-row { display: flex; flex-wrap: wrap; gap: 16px; }
+/* Carries the customer's name as well as the number, and sized so someone waiting across the room
+   can pick their own order out without walking up to the screen. Still visibly secondary to the
+   ready cards above, which are the ones people act on. */
 .prep-chip {
-    font-size: 2rem;
-    font-weight: 700;
-    opacity: 0.6;
-    padding: 6px 18px;
+    opacity: 0.75;
+    padding: 12px 24px;
+    min-width: 180px;
+    text-align: center;
     border: 1px solid rgba(128, 128, 128, 0.4);
-    border-radius: 12px;
+    border-radius: 14px;
 }
+.prep-num { font-size: 3rem; font-weight: 800; line-height: 1; }
+.prep-name { font-size: 1.35rem; margin-top: 6px; opacity: 0.9; }
 </style>

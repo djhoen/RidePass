@@ -148,6 +148,15 @@
                             <span class="text-h6 font-weight-bold">Total</span>
                             <span class="text-h4 font-weight-bold">{{ money(total) }}</span>
                         </div>
+                        <!-- Rush is decided while the customer is standing there ("I'm about to miss my
+                             moto"), so it belongs next to the money, not on a screen the cashier would
+                             have to go find afterwards. Applied to the ticket the moment the sale exists. -->
+                        <v-btn v-if="cart.length > 0" class="mb-2" block variant="tonal" size="small"
+                            :color="rushOrder ? 'error' : undefined"
+                            :prepend-icon="rushOrder ? 'mdi-fire' : 'mdi-fire-off'"
+                            @click="rushOrder = !rushOrder">
+                            {{ rushOrder ? 'Rush order: on' : 'Mark as rush' }}
+                        </v-btn>
                         <div class="d-flex ga-2">
                             <v-btn class="flex-grow-1" color="success" size="large" height="56" :disabled="cart.length === 0 || paying"
                                 prepend-icon="mdi-cash" @click="startCheckout('cash')">Cash</v-btn>
@@ -545,6 +554,9 @@ const tipMode = ref<'none' | 'pct' | 'custom'>('none')
 const tipPct = ref(18)
 const tipCustomDollars = ref<number | null>(null)
 const paying = ref(false)
+// Cashier flagged this order as a rush. Applied right after the sale is created (the rush endpoint
+// keys off a sale id, which does not exist until then) so it reaches the cook screen immediately.
+const rushOrder = ref(false)
 const snack = ref({ show: false, text: '', color: 'error' })
 const toggling = ref<string | null>(null)
 
@@ -1156,6 +1168,9 @@ function removeLineDiscount(i: number) {
 function clearOrder() {
     cart.value = []
     removeOrderDiscount()
+    // Must reset with the cart: a sticky rush flag would silently mark the NEXT customer's order
+    // urgent, which the cashier would never think to check.
+    rushOrder.value = false
 }
 
 // ── Payment ──────────────────────────────────────────────────────────
@@ -1283,6 +1298,14 @@ async function pollOrderNumber(saleId: string): Promise<number | null> {
 
 function finishOrder(saleId: string, orderNumber: number | null, method: string, serverTotalCents?: number, serverDiscountCents?: number) {
     lastOrderNumber.value = orderNumber
+    // Fire-and-forget: the money is already taken, so a failed rush flag must not read as a failed
+    // sale. It is surfaced rather than swallowed, because a cook who never sees RUSH will not hurry.
+    if (rushOrder.value) {
+        svc.setRush(saleId, true).catch((err: any) => {
+            flash(err.response?.data?.error
+                || `Order #${orderNumber ?? ''} was paid but could not be flagged as a rush. Tell the kitchen directly.`)
+        })
+    }
     // Trust the server's total + discount when present; fall back to the client estimate otherwise.
     const discount = serverDiscountCents ?? discountCents.value
     const finalTotal = serverTotalCents ?? total.value
@@ -1308,6 +1331,7 @@ async function deliverReceipt(saleId: string) {
 function newOrder() {
     cart.value = []
     removeOrderDiscount()
+    rushOrder.value = false
     tipMode.value = 'none'
     tipCustomDollars.value = null
     receiptMethod.value = 'print'

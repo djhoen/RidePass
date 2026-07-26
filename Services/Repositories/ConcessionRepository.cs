@@ -737,6 +737,19 @@ namespace Services.Repositories
             return await _db.Execute(sql, new { lineId, tenantId, prepStatus }) > 0;
         }
 
+        // "All ready": bump every outstanding line on one order in a single statement. A cook who has
+        // plated the whole ticket should not have to tap each line, and doing it per-line from the
+        // client leaves a half-bumped ticket on the board whenever one of those calls fails.
+        public async Task<int> MarkAllLinesReady(Guid saleId, Guid tenantId)
+        {
+            const string sql = @"
+                UPDATE concession_sale_line l SET prep_status = 'ready'
+                FROM concession_sale s
+                WHERE l.sale_id = @saleId AND s.id = l.sale_id AND s.tenant_id = @tenantId
+                  AND l.prep_status <> 'ready'";
+            return await _db.Execute(sql, new { saleId, tenantId });
+        }
+
         // After a line changes, move the order to 'ready' once every line is ready (and not completed).
         public async Task RecomputeSaleFulfillment(Guid saleId, Guid tenantId)
         {

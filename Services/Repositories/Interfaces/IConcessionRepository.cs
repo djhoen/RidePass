@@ -1,4 +1,4 @@
-using Services.Repositories.Data.ConcessionData;
+﻿using Services.Repositories.Data.ConcessionData;
 
 namespace Services.Repositories.Interfaces
 {
@@ -113,6 +113,8 @@ namespace Services.Repositories.Interfaces
         Task<List<ConcessionSale>> GetKitchenSales(Guid tenantId);
         Task<List<ConcessionSaleLine>> GetKitchenLines(Guid tenantId, Guid? stationId);
         Task<bool> AdvanceLinePrep(Guid lineId, Guid tenantId, string prepStatus);
+        /// <summary>Bumps every not-yet-ready line on one order to 'ready'. Returns rows changed.</summary>
+        Task<int> MarkAllLinesReady(Guid saleId, Guid tenantId);
         Task RecomputeSaleFulfillment(Guid saleId, Guid tenantId);
         Task<(int Count, double AvgPrepSeconds)> GetKitchenStats(Guid tenantId, DateTime sinceUtc);
         Task<bool> TryMarkReadyNotified(Guid saleId, Guid tenantId);

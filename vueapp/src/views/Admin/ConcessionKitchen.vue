@@ -22,6 +22,8 @@
                 <v-btn variant="tonal" :prepend-icon="showDefaults ? 'mdi-eye' : 'mdi-eye-off'" @click="toggleDefaults">
                     {{ showDefaults ? 'Hide defaults' : 'Show defaults' }}
                 </v-btn>
+                <v-btn v-if="finished.length" variant="tonal" prepend-icon="mdi-arrow-collapse-right"
+                    @click="scrollToLive">Live orders</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-backup-restore" @click="openRecall">Recall</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-silverware-variant" @click="open86">86 items</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-receipt-text-clock" :to="{ name: 'AdminConcessionOrders' }">History</v-btn>
@@ -33,12 +35,30 @@
                 <v-tab v-for="s in stations" :key="s.id" :value="s.id">{{ s.name }}</v-tab>
             </v-tabs>
 
-            <div class="kds-board flex-grow-1">
-                <div v-if="orders.length === 0" class="kds-empty">
+            <div ref="boardEl" class="kds-board flex-grow-1">
+                <div v-if="orders.length === 0 && finished.length === 0" class="kds-empty">
                     <v-icon size="56" color="grey">mdi-silverware-clean</v-icon>
                     <div class="mt-2 text-medium-emphasis">No orders in the queue.</div>
                 </div>
-                <div v-else class="kds-grid">
+                <div v-else class="kds-rail">
+                    <!-- Finished orders sit to the LEFT of the live ones, off-screen by default. The
+                         board opens scrolled past them, so a cook sees only live work but can drag
+                         right-to-left to check something they just sent out. -->
+                    <div v-for="o in finished" :key="'f' + o.saleId" class="ticket ticket--done">
+                        <div class="ticket__head">
+                            <div class="d-flex flex-column">
+                                <span class="ticket__num">#{{ o.orderNumber ?? '—' }}</span>
+                                <span v-if="o.customerName" class="ticket__cust">{{ o.customerName }}</span>
+                            </div>
+                            <v-icon size="28" color="grey">mdi-check-circle-outline</v-icon>
+                        </div>
+                        <div class="ticket__doneflag">PICKED UP</div>
+                        <button class="ticket__recall" :disabled="recalling === o.saleId" @click="recall(o.saleId)">
+                            {{ recalling === o.saleId ? 'Recalling…' : 'Recall' }}
+                        </button>
+                    </div>
+                    <div ref="liveStartEl" class="rail-anchor"></div>
+
                     <div v-for="o in orders" :key="o.saleId" class="ticket"
                         :class="[`ticket--${urgency(o)}`, { 'ticket--ready': o.fulfillmentStatus === 'ready' }]">
                         <div v-if="o.isRush" class="ticket__rush">RUSH</div>
@@ -71,6 +91,12 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- Plated the whole ticket at once? One tap beats bumping each line. Hidden
+                             once everything is already ready, where it would be a no-op. -->
+                        <button v-if="o.fulfillmentStatus !== 'ready'" class="ticket__allready"
+                            :disabled="allReadying === o.saleId" @click="markAllReady(o)">
+                            {{ allReadying === o.saleId ? 'Marking…' : 'All items ready' }}
+                        </button>
                         <button class="ticket__done" :disabled="o.fulfillmentStatus !== 'ready'" @click="complete(o)">
                             {{ o.fulfillmentStatus === 'ready' ? 'Picked up' : 'Preparing…' }}
                         </button>
@@ -134,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ConcessionService, type KitchenOrder, type KitchenLine, type ConcessionStation, type ConcessionProduct } from '@/services/ConcessionService'
 import { useRoute } from 'vue-router'
 import { branding } from '@/stores/branding'
@@ -157,6 +183,39 @@ const recalling = ref<string | null>(null)
 const stationFilter = ref<string | null>(null)
 const snack = ref({ show: false, text: '', color: 'error' })
 let timer: number | undefined
+
+// Recently picked-up orders, rendered to the LEFT of the live queue. Capped at 10: this is a
+// glance-back for "what did I just send out", not a history screen (History covers that).
+const finished = ref<{ saleId: string; orderNumber: number | null; customerName: string | null }[]>([])
+const boardEl = ref<HTMLElement | null>(null)
+const liveStartEl = ref<HTMLElement | null>(null)
+const allReadying = ref<string | null>(null)
+
+// Park the viewport at the first live ticket, leaving the finished ones off-screen to the left.
+// Called on load and from the "Live orders" button, never on the 4s poll: yanking the board back
+// while a cook is deliberately looking left would make the finished lane unusable.
+async function scrollToLive(smooth = true) {
+    await nextTick()
+    const anchor = liveStartEl.value
+    if (!anchor) return
+    // scrollIntoView rather than offsetLeft arithmetic: the latter is only correct when the anchor
+    // and the board share an offset parent, which nothing here guarantees. block:'nearest' keeps it
+    // from scrolling the whole page vertically as a side effect.
+    anchor.scrollIntoView({ inline: 'start', block: 'nearest', behavior: smooth ? 'smooth' : 'auto' })
+}
+
+async function markAllReady(o: KitchenOrder) {
+    allReadying.value = o.saleId
+    try {
+        await svc.markAllReady(o.saleId)
+        o.lines.forEach(l => { l.prepStatus = 'ready' })
+        o.fulfillmentStatus = 'ready'
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not mark the order ready. Try again.')
+    } finally {
+        allReadying.value = null
+    }
+}
 
 const dialog86 = ref(false)
 const items86 = ref<ConcessionProduct[]>([])
@@ -236,6 +295,7 @@ async function recall(saleId: string) {
     try {
         await svc.recallSale(saleId)
         recallList.value = recallList.value.filter(o => o.saleId !== saleId)
+        finished.value = finished.value.filter(o => o.saleId !== saleId)
         await refresh()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not recall the order.')
@@ -255,6 +315,8 @@ onMounted(async () => {
     } catch { /* stations optional; All view still works */ }
     updateHomeIcon()
     await refresh()
+    // Land on the live queue, not the finished lane, without animating on first paint.
+    await scrollToLive(false)
     timer = window.setInterval(refresh, 4000)
     clockTimer = window.setInterval(() => { now.value = Date.now() }, 1000)
 })
@@ -284,6 +346,12 @@ async function refresh() {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not refresh the kitchen queue.')
     }
+    // The finished lane rides along with the same poll. Best-effort: losing it must not blank the
+    // live queue, which is the part the cook actually needs.
+    try {
+        const done = (await svc.recentlyCompleted() as any).data.data as typeof finished.value
+        finished.value = done.slice(0, 10)
+    } catch { /* keep the last good finished lane */ }
     // Online-ordering status rides along with the kitchen poll (best-effort).
     try {
         const s = (await svc.orderingStatus() as any).data.data
@@ -341,9 +409,17 @@ async function complete(order: KitchenOrder) {
 .kds { min-height: calc(100dvh - 64px); }
 .kds-header { flex: 0 0 auto; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
 .kds-tabs { flex: 0 0 auto; }
-.kds-board { overflow-y: auto; min-height: 0; padding: 14px; }
+.kds-board { overflow: auto; min-height: 0; padding: 14px; }
 .kds-empty { text-align: center; padding: 64px 16px; }
-.kds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 14px; align-items: start; }
+/* One horizontal lane instead of a wrapping grid: finished tickets to the left, live to the right,
+   the viewport parked on the live ones. Tickets keep a fixed width so a long ticket grows downward
+   (scrollable within itself) rather than squeezing its neighbours. */
+.kds-rail { display: flex; align-items: flex-start; gap: 14px; }
+/* Fixed width so a long ticket grows downward instead of squeezing its neighbours. Height is left
+   to the content: capping it here would clip the bottom of a big order, and a cook must always be
+   able to see the last line on the ticket. */
+.kds-rail > .ticket { flex: 0 0 320px; }
+.rail-anchor { flex: 0 0 0; align-self: stretch; }
 
 .ticket {
     display: flex;
@@ -354,10 +430,10 @@ async function complete(order: KitchenOrder) {
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .ticket__head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-.ticket__num { font-size: 1.7rem; font-weight: 800; line-height: 1; color: #fff; }
-.ticket__cust { font-size: 0.95rem; color: #fff; opacity: 0.85; margin-top: 2px; }
-.ticket__rush { background: #c62828; color: #fff; font-weight: 800; text-align: center; padding: 3px 0; font-size: 0.8rem; letter-spacing: 0.1em; }
-.ticket__time { font-size: 0.95rem; font-weight: 700; padding: 3px 12px; border-radius: 999px; }
+.ticket__num { font-size: 2.3rem; font-weight: 800; line-height: 1; color: #fff; }
+.ticket__cust { font-size: 1.25rem; color: #fff; opacity: 0.85; margin-top: 2px; }
+.ticket__rush { background: #c62828; color: #fff; font-weight: 800; text-align: center; padding: 5px 0; font-size: 1.05rem; letter-spacing: 0.1em; }
+.ticket__time { font-size: 1.2rem; font-weight: 700; padding: 3px 12px; border-radius: 999px; }
 .ticket--fresh .ticket__head { background: #233246; }
 .ticket--fresh .ticket__time { background: rgba(67, 160, 71, 0.25); color: #9be7a0; }
 .ticket--warn .ticket__head { background: #4a3a1a; }
@@ -367,37 +443,58 @@ async function complete(order: KitchenOrder) {
 .ticket--ready { outline: 2px solid #43A047; outline-offset: -1px; }
 .ticket--ready .ticket__head { background: #1f3a22; }
 
+/* Finished lane: visibly inert so it can never be mistaken for outstanding work. */
+.ticket--done { opacity: 0.45; background: #171c24; }
+.ticket--done .ticket__head { background: #202832; }
+.ticket__doneflag { text-align: center; font-weight: 800; letter-spacing: 0.1em; font-size: 0.9rem;
+    color: #9be7a0; padding: 6px 0; }
+.ticket__recall { margin: 6px 14px 14px; padding: 10px; border: none; border-radius: 10px;
+    font-weight: 700; font-size: 1rem; cursor: pointer; background: rgba(255, 255, 255, 0.12); color: #fff; }
+.ticket__recall:disabled { opacity: 0.6; cursor: default; }
+
 .ticket__lines { display: flex; flex-direction: column; }
-.kline { display: flex; gap: 10px; padding: 11px 14px; border-top: 1px solid rgba(255, 255, 255, 0.06); cursor: pointer; }
+.kline { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); cursor: pointer; }
 .kline:hover { background: rgba(255, 255, 255, 0.04); }
 .kline__icon { margin-top: 1px; }
 .kline--queued .kline__icon { color: #90a4ae; }
 .kline--in_progress .kline__icon { color: #ffc66e; }
 .kline--ready .kline__icon { color: #9be7a0; }
 /* Combo entree badge + its indented component children. */
-.kline__combo { margin-left: 8px; padding: 1px 7px; border-radius: 10px; font-size: 0.72rem;
+.kline__combo { margin-left: 8px; padding: 2px 9px; border-radius: 10px; font-size: 0.95rem;
     font-weight: 700; background: #5e35b1; color: #fff; vertical-align: middle; }
 .kline--child { padding-left: 30px; }
-.kline__name { font-size: 1.05rem; font-weight: 600; color: #fff; line-height: 1.25; }
+.kline__name { font-size: 1.4rem; font-weight: 600; color: #fff; line-height: 1.25; }
 .kline__name.done { text-decoration: line-through; opacity: 0.45; }
 .kline__variant { font-weight: 400; opacity: 0.8; }
-.kline__removed { font-size: 0.9rem; font-weight: 800; letter-spacing: 0.02em; color: #ff8a80; }
-.kline__added { font-size: 0.9rem; font-weight: 800; letter-spacing: 0.02em; color: #80e0a0; }
-.kline__standard { font-size: 0.9rem; color: #fff; }
-.kline__note { font-size: 0.85rem; font-style: italic; color: #ffe6a3; }
+.kline__removed { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: #ff8a80; }
+.kline__added { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: #80e0a0; }
+.kline__standard { font-size: 1.1rem; color: #fff; }
+.kline__note { font-size: 1.1rem; font-style: italic; color: #ffe6a3; }
 
 .ticket__done {
     margin: 10px 14px 14px;
-    padding: 12px;
+    padding: 15px;
     border: none;
     border-radius: 10px;
     font-weight: 700;
-    font-size: 1rem;
+    font-size: 1.25rem;
     cursor: pointer;
     background: #43A047;
     color: #fff;
 }
 .ticket__done:disabled { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.4); cursor: default; }
+.ticket__allready {
+    margin: 10px 14px 0;
+    padding: 12px;
+    border: 2px solid #43A047;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 1.15rem;
+    cursor: pointer;
+    background: transparent;
+    color: #9be7a0;
+}
+.ticket__allready:disabled { opacity: 0.6; cursor: default; }
 
 @keyframes kds-pulse { 50% { opacity: 0.55; } }
 </style>
