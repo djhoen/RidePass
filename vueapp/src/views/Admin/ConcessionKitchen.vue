@@ -57,8 +57,7 @@
                             {{ recalling === o.saleId ? 'Recalling…' : 'Recall' }}
                         </button>
                     </div>
-                    <div ref="liveStartEl" class="rail-anchor"></div>
-
+                    <div ref="liveStartEl" class="rail-live">
                     <div v-for="o in orders" :key="o.saleId" class="ticket"
                         :class="[`ticket--${urgency(o)}`, { 'ticket--ready': o.fulfillmentStatus === 'ready' }]">
                         <div v-if="o.isRush" class="ticket__rush">RUSH</div>
@@ -100,6 +99,10 @@
                         <button class="ticket__done" :disabled="o.fulfillmentStatus !== 'ready'" @click="complete(o)">
                             {{ o.fulfillmentStatus === 'ready' ? 'Picked up' : 'Preparing…' }}
                         </button>
+                    </div>
+                    <div v-if="orders.length === 0" class="rail-live-empty text-medium-emphasis">
+                        Nothing live. Scroll left for finished orders.
+                    </div>
                     </div>
                 </div>
             </div>
@@ -415,11 +418,16 @@ async function complete(order: KitchenOrder) {
    the viewport parked on the live ones. Tickets keep a fixed width so a long ticket grows downward
    (scrollable within itself) rather than squeezing its neighbours. */
 .kds-rail { display: flex; align-items: flex-start; gap: 14px; }
+/* The live lane is always at least a full board wide, so scrolling to it pushes the finished lane
+   entirely off-screen even when there are only one or two live tickets. Without the min-width the
+   rail is narrower than the board on a quiet day, there is nothing to scroll, and "Live orders"
+   appears to do nothing. */
+.rail-live { display: flex; align-items: flex-start; gap: 14px; min-width: 100%; }
+.rail-live-empty { padding: 48px 8px; }
 /* Fixed width so a long ticket grows downward instead of squeezing its neighbours. Height is left
    to the content: capping it here would clip the bottom of a big order, and a cook must always be
    able to see the last line on the ticket. */
-.kds-rail > .ticket { flex: 0 0 320px; }
-.rail-anchor { flex: 0 0 0; align-self: stretch; }
+.kds-rail .ticket { flex: 0 0 320px; }
 
 .ticket {
     display: flex;
