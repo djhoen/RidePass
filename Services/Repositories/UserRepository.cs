@@ -1,4 +1,4 @@
-using Services.Helpers.Interfaces;
+﻿using Services.Helpers.Interfaces;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
 
@@ -45,6 +45,43 @@ namespace Services.Repositories
 
             var result = await _db.Query<User>(sql, new { tenantId, email });
             return result.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Counter lookup: find a customer by email, first name, last name, full name, or phone.
+        ///
+        /// Scoped to global rider accounts (tenant_id IS NULL) plus THIS tenant's own users, which
+        /// mirrors what the counter's email lookup already does. Deliberately NOT SearchAll, which
+        /// spans every tenant on the platform: a gate operator typing "smith" must not surface
+        /// another track's customers.
+        ///
+        /// Phone is matched on digits only, so a number stored as (555) 123-4567 is still found by
+        /// someone typing 5551234567 or 123-4567 off a customer's lips.
+        /// </summary>
+        public async Task<List<User>> SearchForCounter(string query, Guid tenantId, int take = 12)
+        {
+            var q = (query ?? string.Empty).Trim();
+            if (q.Length < 2) return new List<User>();
+            var like = $"%{q}%";
+            var digits = new string(q.Where(char.IsDigit).ToArray());
+            var sql = $@"
+                SELECT {SelectUserColumns}
+                FROM users
+                WHERE (tenant_id IS NULL OR tenant_id = @tenantId)
+                  AND (
+                        LOWER(email) LIKE LOWER(@like)
+                     OR LOWER(first_name) LIKE LOWER(@like)
+                     OR LOWER(last_name) LIKE LOWER(@like)
+                     OR LOWER(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,''))) LIKE LOWER(@like)
+                     OR (@digits <> '' AND regexp_replace(COALESCE(phone,''), '[^0-9]', '', 'g') LIKE '%' || @digits || '%')
+                      )
+                ORDER BY
+                    -- Exact email first: that is the one the operator is certain about.
+                    (LOWER(email) = LOWER(@q)) DESC,
+                    LOWER(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,''))),
+                    email
+                LIMIT @take";
+            return (await _db.Query<User>(sql, new { tenantId, like, digits, q, take })).ToList();
         }
 
         public async Task<User?> GetGlobalByEmail(string email)

@@ -417,8 +417,22 @@ namespace webapi.Controllers
                 _tenantContext.Tenant.ServiceChargeBps,
                 _tenantContext.Tenant.ShopBuyerPaidServiceChargeBps);
 
-            // total = discounted goods + the buyer's share of the fee + tax on the net. No tip: a
-            // parts sale isn't tipped.
+
+            // Tax on the buyer's share of the fee, at the tenant's default category rate. Only
+            // queried when there is actually a fee to tax, so the default configuration (fee 0)
+            // pays nothing for this. See Services.Payments.ShopFeeTax.
+            var feeTaxCents = 0;
+            if (buyerFee > 0 && _tenantContext.Tenant.ShopTaxServiceChargeTaxable)
+            {
+                var defaultRate = (await _shop.ListTaxCategories(TenantId, activeOnly: true))
+                    .FirstOrDefault(c => c.IsDefault)?.RateBps;
+                feeTaxCents = Services.Payments.ShopFeeTax.Compute(
+                    buyerFee, taxable: true, defaultRate, pricesIncludeTax);
+                taxTotal += feeTaxCents;
+            }
+
+            // total = discounted goods + the buyer's share of the fee + tax on the net (including
+            // the fee's own tax). No tip: a parts sale isn't tipped.
             var total = subtotal - discountTotal + buyerFee + taxTotal;
 
             // ── Gift card tender (after discounts, before store credit). The balance is debited

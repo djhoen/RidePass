@@ -13,11 +13,28 @@
                     <v-card-title>Customer</v-card-title>
                     <v-card-text>
                         <div v-if="!customer" class="d-flex ga-2 align-end">
-                            <v-text-field v-model="customerEmail" type="email" label="Email"
+                            <v-text-field v-model="customerEmail" label="Name, email, or phone"
                                 density="compact" hide-details style="max-width: 360px"
+                                hint="Type at least 2 characters" persistent-hint
                                 @keyup.enter="findCustomer"></v-text-field>
                             <v-btn :loading="findingCustomer" @click="findCustomer">Find</v-btn>
+                            <!-- Walk-ins are this screen's whole purpose, so creating one must not be
+                                 hidden behind a failed search. -->
+                            <v-btn variant="text" @click="startCreate">New customer</v-btn>
                         </div>
+
+                        <!-- More than one match: let the operator pick rather than guess. Phone and
+                             email are both shown because two riders sharing a name is exactly the
+                             case this list exists to resolve. -->
+                        <v-list v-if="!customer && candidates.length > 1" density="compact" class="mt-2"
+                            style="max-width: 560px; border: 1px solid rgba(128,128,128,0.3); border-radius: 6px">
+                            <v-list-item v-for="c in candidates" :key="c.id" @click="pickCandidate(c)">
+                                <v-list-item-title>{{ c.firstName }} {{ c.lastName }}</v-list-item-title>
+                                <v-list-item-subtitle>
+                                    {{ c.email }}<span v-if="c.phone"> · {{ c.phone }}</span>
+                                </v-list-item-subtitle>
+                            </v-list-item>
+                        </v-list>
 
                         <v-alert v-if="lookupError" type="info" variant="tonal" class="mt-3">
                             {{ lookupError }}
@@ -988,21 +1005,62 @@ onMounted(async () => {
     await loadLessons()
 })
 
+// Candidates from a name/phone search. One match resolves straight through; several present a
+// list; none offers to create. Only an email can be looked up directly, so a chosen candidate is
+// resolved via findRider to pull the full record (waiver state, emergency contact).
+const candidates = ref<{ id: string; email: string; firstName: string; lastName: string; phone: string | null }[]>([])
+
+async function resolveByEmail(email: string) {
+    const r = await counter.findRider(email)
+    customer.value = (r.data as any).data
+    candidates.value = []
+    showCreate.value = false
+    lookupError.value = null
+}
+
+async function pickCandidate(c: { email: string }) {
+    findingCustomer.value = true
+    try { await resolveByEmail(c.email) }
+    catch (err: any) { flash(err.response?.data?.error || 'Could not open that customer. Try again.', 'error') }
+    finally { findingCustomer.value = false }
+}
+
+// Prefills the new-customer form from whatever was typed: an email goes in the email box, anything
+// else is treated as a name, so the operator never retypes what they already entered.
+function startCreate() {
+    const typed = customerEmail.value.trim()
+    const looksEmail = typed.includes('@')
+    const parts = looksEmail ? [] : typed.split(/\s+/).filter(Boolean)
+    newCustomer.value = {
+        firstName: parts[0] ?? '', lastName: parts.slice(1).join(' '),
+        email: looksEmail ? typed : '', birthdate: '',
+        emergencyContactName: '', emergencyContactPhone: '',
+    }
+    candidates.value = []
+    showCreate.value = true
+}
+
 async function findCustomer() {
-    if (!customerEmail.value.trim()) return
+    const q = customerEmail.value.trim()
+    if (q.length < 2) return
     findingCustomer.value = true
     lookupError.value = null
+    candidates.value = []
     try {
-        const r = await counter.findRider(customerEmail.value.trim())
-        customer.value = (r.data as any).data
-        showCreate.value = false
-    } catch (err: any) {
-        if (err.response?.status === 404) {
-            lookupError.value = `No customer found for "${customerEmail.value.trim()}".`
-            newCustomer.value = { firstName: '', lastName: '', email: customerEmail.value.trim(), birthdate: '', emergencyContactName: '', emergencyContactPhone: '' }
+        const r = await counter.searchRiders(q)
+        const found = (r.data as any).data as typeof candidates.value
+        if (found.length === 1) {
+            await resolveByEmail(found[0].email)
+        } else if (found.length > 1) {
+            candidates.value = found
         } else {
-            flash(err.response?.data?.error || 'Lookup failed.', 'error')
+            lookupError.value = `No customer found for "${q}".`
+            startCreate()
+            showCreate.value = false   // offer it via the alert's button, don't force the form open
         }
+    } catch (err: any) {
+        // Never render a failed search as "no customer": that is how duplicate accounts get created.
+        flash(err.response?.data?.error || 'Customer search failed. Try again before creating a new one.', 'error')
     } finally {
         findingCustomer.value = false
     }

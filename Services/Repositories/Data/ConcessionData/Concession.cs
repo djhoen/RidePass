@@ -177,6 +177,49 @@
         public string Name { get; set; } = null!;
         public int SortOrder { get; set; }
         public bool IsActive { get; set; } = true;
+        // Board this category appears on; null = every board (and the implicit single board for
+        // tenants that never created named boards).
+        public Guid? MenuBoardId { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    // A named in-venue menu board screen (one per TV). Tenants can create any number; categories
+    // point at a board via MenuBoardId.
+    public class ConcessionMenuBoard
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public string Name { get; set; } = null!;
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+        public DateTime CreatedAt { get; set; }
+    }
+
+    // A paired customer-facing display tablet for the POS. The POS pushes the in-progress order as
+    // an opaque JSON snapshot (StateJson); the display polls it and writes back TipCents.
+    public class ConcessionDisplay
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public string PairCode { get; set; } = null!;
+        public string? StateJson { get; set; }
+        public int? TipCents { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    // Promo callout tile rotated through the menu board carousel ("Make it a combo $5.99").
+    // Null MenuBoardId = every board; null ImageUrl = text tile on the accent color.
+    public class ConcessionMenuPromo
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public Guid? MenuBoardId { get; set; }
+        public string Title { get; set; } = null!;
+        public string? Subtitle { get; set; }
+        public string? ImageUrl { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
         public DateTime CreatedAt { get; set; }
     }
 
@@ -245,6 +288,27 @@
         public int SortOrder { get; set; }
         public bool IsActive { get; set; } = true;
         public DateTime CreatedAt { get; set; }
+    }
+
+    // A kitchen ticket printer. Deliberately separate from ConcessionStation: stations split the
+    // cook SCREENS, and printers do not have to follow that split (the common setup is grill and
+    // fryer screens feeding one printer at the pass).
+    public class ConcessionPrinter
+    {
+        public Guid Id { get; set; }
+        public Guid TenantId { get; set; }
+        public string Name { get; set; } = null!;
+
+        // ePOS-Print endpoint, e.g. https://192.168.1.50. Must be https - the POS is served over
+        // https and browsers block mixed content, so a plain http printer fails silently.
+        public string Url { get; set; } = null!;
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+        public DateTime CreatedAt { get; set; }
+
+        // Stations this printer is scoped to. EMPTY = prints the whole order, which is also what
+        // catches lines whose product has no station assigned.
+        public List<Guid> StationIds { get; set; } = new();
     }
 
     // A structured modifier group (e.g. "Choose a side", "Add-ons"). min/max bound the selection.

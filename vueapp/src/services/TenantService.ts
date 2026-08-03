@@ -70,7 +70,7 @@ export class TenantService {
     // Bike shop -> Settings: who funds the platform service fee on a retail sale.
     // buyerPaidBps 10000 = the customer pays it as a line on their total, 0 = the shop absorbs it.
     // As with rentals the RATE is the tenant service charge and is not set here.
-    async updateShopServiceCharge(req: { buyerPaidBps: number }) {
+    async updateShopServiceCharge(req: { buyerPaidBps: number; taxServiceCharge: boolean }) {
         return axios.put(`${this.apiUrl}/Tenant/ShopServiceCharge`, req)
     }
 

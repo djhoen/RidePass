@@ -348,6 +348,99 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        // ── Admin: kitchen ticket printers ──────────────────────────────────────
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpGet("Printers")]
+        public async Task<IActionResult> ListPrinters()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var printers = await _concessions.ListPrinters(_tenantContext.TenantId, activeOnly: false);
+            return new ApiResponses().OkResult(printers.Select(ToPrinterResponse).ToList());
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("Printers")]
+        public async Task<IActionResult> CreatePrinter([FromBody] ConcessionPrinterRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var urlError = ValidatePrinterUrl(req.Url);
+            if (urlError is not null) return new ApiResponses().BadRequestResult(urlError);
+
+            var p = new ConcessionPrinter
+            {
+                TenantId = _tenantContext.TenantId,
+                Name = req.Name.Trim(),
+                Url = req.Url.Trim().TrimEnd('/'),
+                SortOrder = req.SortOrder,
+                IsActive = req.IsActive,
+                StationIds = req.StationIds ?? new List<Guid>(),
+            };
+            p.Id = await _concessions.CreatePrinter(p);
+            return new ApiResponses().OkResult(ToPrinterResponse(p));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("Printers/{id:guid}")]
+        public async Task<IActionResult> UpdatePrinter(Guid id, [FromBody] ConcessionPrinterRequest req)
+        {
+            // Read through the tenant-scoped list so another tenant's printer id resolves to nothing.
+            var existing = (await _concessions.ListPrinters(_tenantContext.TenantId, activeOnly: false))
+                .FirstOrDefault(p => p.Id == id);
+            if (existing is null) return new ApiResponses().NotFoundResult("Printer not found.");
+
+            var urlError = ValidatePrinterUrl(req.Url);
+            if (urlError is not null) return new ApiResponses().BadRequestResult(urlError);
+
+            existing.Name = req.Name.Trim();
+            existing.Url = req.Url.Trim().TrimEnd('/');
+            existing.SortOrder = req.SortOrder;
+            existing.IsActive = req.IsActive;
+            existing.StationIds = req.StationIds ?? new List<Guid>();
+            await _concessions.UpdatePrinter(existing);
+            return new ApiResponses().OkResult(ToPrinterResponse(existing));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpDelete("Printers/{id:guid}")]
+        public async Task<IActionResult> DeletePrinter(Guid id)
+        {
+            await _concessions.DeletePrinter(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
+        }
+
+        // Active printers for the cashier, which is what actually sends the tickets (the API is in
+        // the cloud and cannot reach a printer on the venue LAN). ConcessionsCounter, not admin.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpGet("Printers/Active")]
+        public async Task<IActionResult> ListActivePrinters()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var printers = await _concessions.ListPrinters(_tenantContext.TenantId, activeOnly: true);
+            return new ApiResponses().OkResult(printers.Select(ToPrinterResponse).ToList());
+        }
+
+        // Rejects an http:// address at save time rather than letting the cashier discover it as a
+        // silently-dead printer: the POS is served over https, so the browser blocks mixed content.
+        private static string? ValidatePrinterUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return "Printer address is required.";
+            if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var parsed))
+                return "Printer address must be a full URL, e.g. https://192.168.1.50";
+            if (parsed.Scheme != Uri.UriSchemeHttps)
+                return "Printer address must start with https:// - the browser blocks plain http printers from the POS page.";
+            return null;
+        }
+
+        private static ConcessionPrinterResponse ToPrinterResponse(ConcessionPrinter p) => new()
+        {
+            Id = p.Id,
+            Name = p.Name,
+            Url = p.Url,
+            SortOrder = p.SortOrder,
+            IsActive = p.IsActive,
+            StationIds = p.StationIds,
+        };
+
         // Load the editable starter catalog on demand (categories, stations, modifier groups, sample
         // products). Idempotent by name, so it fills in only what's missing and never duplicates.
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -394,6 +487,7 @@ namespace webapi.Controllers
                 Name = req.Name.Trim(),
                 SortOrder = req.SortOrder,
                 IsActive = req.IsActive,
+                MenuBoardId = await ValidateMenuBoard(_tenantContext.TenantId, req.MenuBoardId),
             };
             cat.Id = await _concessions.CreateCategory(cat);
             return new ApiResponses().OkResult(ToCategoryResponse(cat));
@@ -409,6 +503,7 @@ namespace webapi.Controllers
             existing.Name = req.Name.Trim();
             existing.SortOrder = req.SortOrder;
             existing.IsActive = req.IsActive;
+            existing.MenuBoardId = await ValidateMenuBoard(_tenantContext.TenantId, req.MenuBoardId);
             await _concessions.UpdateCategory(existing);
             return new ApiResponses().OkResult(ToCategoryResponse(existing));
         }
@@ -418,6 +513,196 @@ namespace webapi.Controllers
         public async Task<IActionResult> DeleteCategory(Guid id)
         {
             await _concessions.DeleteCategory(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
+        }
+
+        // ── Menu boards ─────────────────────────────────────────────────────────
+        // One row per in-venue screen (stacked-TV style). Active boards, readable by any authenticated
+        // tenant user — the board display + board chooser need them. Not sensitive (names shown on TVs).
+        [Authorize]
+        [HttpGet("MenuBoards")]
+        public async Task<IActionResult> ListMenuBoards()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var boards = await _concessions.ListMenuBoards(_tenantContext.TenantId, activeOnly: true);
+            return new ApiResponses().OkResult(boards.Select(ToMenuBoardResponse).ToList());
+        }
+
+        // All boards (incl. inactive) for the admin manager.
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpGet("MenuBoards/Admin")]
+        public async Task<IActionResult> ListMenuBoardsAdmin()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var boards = await _concessions.ListMenuBoards(_tenantContext.TenantId, activeOnly: false);
+            return new ApiResponses().OkResult(boards.Select(ToMenuBoardResponse).ToList());
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("MenuBoards")]
+        public async Task<IActionResult> CreateMenuBoard([FromBody] ConcessionMenuBoardRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var board = new ConcessionMenuBoard
+            {
+                TenantId = _tenantContext.TenantId,
+                Name = req.Name.Trim(),
+                SortOrder = req.SortOrder,
+                IsActive = req.IsActive,
+            };
+            board.Id = await _concessions.CreateMenuBoard(board);
+            return new ApiResponses().OkResult(ToMenuBoardResponse(board));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("MenuBoards/{id:guid}")]
+        public async Task<IActionResult> UpdateMenuBoard(Guid id, [FromBody] ConcessionMenuBoardRequest req)
+        {
+            var existing = (await _concessions.ListMenuBoards(_tenantContext.TenantId, activeOnly: false))
+                .FirstOrDefault(b => b.Id == id);
+            if (existing is null) return new ApiResponses().NotFoundResult("Menu board not found.");
+            existing.Name = req.Name.Trim();
+            existing.SortOrder = req.SortOrder;
+            existing.IsActive = req.IsActive;
+            await _concessions.UpdateMenuBoard(existing);
+            return new ApiResponses().OkResult(ToMenuBoardResponse(existing));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpDelete("MenuBoards/{id:guid}")]
+        public async Task<IActionResult> DeleteMenuBoard(Guid id)
+        {
+            await _concessions.DeleteMenuBoard(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
+        }
+
+        // ── Menu board promo tiles ──────────────────────────────────────────────
+        // Callout tiles rotated through the board carousel ("Make it a combo $5.99"). Active tiles,
+        // readable by any authenticated tenant user (shown on the in-venue TVs anyway).
+        [Authorize]
+        [HttpGet("MenuPromos")]
+        public async Task<IActionResult> ListMenuPromos()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var promos = await _concessions.ListMenuPromos(_tenantContext.TenantId, activeOnly: true);
+            return new ApiResponses().OkResult(promos.Select(ToMenuPromoResponse).ToList());
+        }
+
+        // All promos (incl. inactive) for the admin manager.
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpGet("MenuPromos/Admin")]
+        public async Task<IActionResult> ListMenuPromosAdmin()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var promos = await _concessions.ListMenuPromos(_tenantContext.TenantId, activeOnly: false);
+            return new ApiResponses().OkResult(promos.Select(ToMenuPromoResponse).ToList());
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPost("MenuPromos")]
+        public async Task<IActionResult> CreateMenuPromo([FromBody] ConcessionMenuPromoRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var promo = new ConcessionMenuPromo
+            {
+                TenantId = _tenantContext.TenantId,
+                MenuBoardId = await ValidateMenuBoard(_tenantContext.TenantId, req.MenuBoardId),
+                Title = req.Title.Trim(),
+                Subtitle = Blank(req.Subtitle),
+                ImageUrl = Blank(req.ImageUrl),
+                SortOrder = req.SortOrder,
+                IsActive = req.IsActive,
+            };
+            promo.Id = await _concessions.CreateMenuPromo(promo);
+            return new ApiResponses().OkResult(ToMenuPromoResponse(promo));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("MenuPromos/{id:guid}")]
+        public async Task<IActionResult> UpdateMenuPromo(Guid id, [FromBody] ConcessionMenuPromoRequest req)
+        {
+            var existing = (await _concessions.ListMenuPromos(_tenantContext.TenantId, activeOnly: false))
+                .FirstOrDefault(p => p.Id == id);
+            if (existing is null) return new ApiResponses().NotFoundResult("Promo not found.");
+            existing.MenuBoardId = await ValidateMenuBoard(_tenantContext.TenantId, req.MenuBoardId);
+            existing.Title = req.Title.Trim();
+            existing.Subtitle = Blank(req.Subtitle);
+            existing.ImageUrl = Blank(req.ImageUrl);
+            existing.SortOrder = req.SortOrder;
+            existing.IsActive = req.IsActive;
+            await _concessions.UpdateMenuPromo(existing);
+            return new ApiResponses().OkResult(ToMenuPromoResponse(existing));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpDelete("MenuPromos/{id:guid}")]
+        public async Task<IActionResult> DeleteMenuPromo(Guid id)
+        {
+            await _concessions.DeleteMenuPromo(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
+        }
+
+        // ── Customer-facing POS display ─────────────────────────────────────────
+        // A paired second tablet mirrors the order being rung up (read-only) and captures the
+        // customer's tip. The display tablet creates a session and shows its pair code; the cashier
+        // types the code into the POS once. The POS then pushes state; the display polls and posts
+        // the tip back. Both devices run staff logins, so everything sits behind ConcessionsCounter.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Display")]
+        public async Task<IActionResult> CreateDisplay()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var pairCode = Random.Shared.Next(100000, 1000000).ToString();
+            var id = await _concessions.CreateDisplay(_tenantContext.TenantId, pairCode);
+            return new ApiResponses().OkResult(new ConcessionDisplayResponse { Id = id, PairCode = pairCode });
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpGet("Display/{id:guid}")]
+        public async Task<IActionResult> GetDisplay(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _concessions.GetDisplay(id, _tenantContext.TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            return new ApiResponses().OkResult(ToDisplayResponse(d));
+        }
+
+        // Pairing lookup: the cashier types the code shown on the display tablet into the POS.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpGet("Display/ByCode/{code}")]
+        public async Task<IActionResult> GetDisplayByCode(string code)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _concessions.GetDisplayByCode(code.Trim(), _tenantContext.TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("No display is showing that code. Open the customer display screen on the tablet first.");
+            return new ApiResponses().OkResult(ToDisplayResponse(d));
+        }
+
+        // POS pushes the in-progress order snapshot. Also clears any previous tip selection so a
+        // prior order's tip can never bleed into the next one.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPut("Display/{id:guid}/State")]
+        public async Task<IActionResult> UpdateDisplayState(Guid id, [FromBody] ConcessionDisplayStateRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _concessions.GetDisplay(id, _tenantContext.TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            await _concessions.UpdateDisplayState(id, _tenantContext.TenantId, req.StateJson);
+            return new ApiResponses().OkResult();
+        }
+
+        // The customer's tip selection, posted by the display tablet. The POS polls it and applies it
+        // to the sale (where the server re-validates against the tenant's tip settings).
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Display/{id:guid}/Tip")]
+        public async Task<IActionResult> SetDisplayTip(Guid id, [FromBody] ConcessionDisplayTipRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _concessions.GetDisplay(id, _tenantContext.TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            var settings = await _concessions.GetMenuSettings(_tenantContext.TenantId);
+            if (!(settings?.TipsEnabled ?? false)) return new ApiResponses().BadRequestResult("Tips aren't enabled for this venue.");
+            await _concessions.SetDisplayTip(id, _tenantContext.TenantId, req.TipCents);
             return new ApiResponses().OkResult();
         }
 
@@ -2722,6 +3007,15 @@ namespace webapi.Controllers
 
         // Keeps a product's category honest: returns the id only if it's one of this tenant's categories,
         // otherwise null (uncategorized), so a client can't point a product at another tenant's category.
+        // Keeps a category's board honest: returns the id only if it's one of this tenant's menu
+        // boards, otherwise null (all boards), so a client can't point a category at another tenant's board.
+        private async Task<Guid?> ValidateMenuBoard(Guid tenantId, Guid? menuBoardId)
+        {
+            if (!menuBoardId.HasValue) return null;
+            var boards = await _concessions.ListMenuBoards(tenantId, activeOnly: false);
+            return boards.Any(b => b.Id == menuBoardId.Value) ? menuBoardId : null;
+        }
+
         private async Task<Guid?> ValidateCategory(Guid tenantId, Guid? categoryId)
         {
             if (!categoryId.HasValue) return null;
@@ -2887,6 +3181,34 @@ namespace webapi.Controllers
             Name = c.Name,
             SortOrder = c.SortOrder,
             IsActive = c.IsActive,
+            MenuBoardId = c.MenuBoardId,
+        };
+
+        private static ConcessionMenuBoardResponse ToMenuBoardResponse(ConcessionMenuBoard b) => new()
+        {
+            Id = b.Id,
+            Name = b.Name,
+            SortOrder = b.SortOrder,
+            IsActive = b.IsActive,
+        };
+
+        private static ConcessionDisplayResponse ToDisplayResponse(ConcessionDisplay d) => new()
+        {
+            Id = d.Id,
+            PairCode = d.PairCode,
+            StateJson = d.StateJson,
+            TipCents = d.TipCents,
+        };
+
+        private static ConcessionMenuPromoResponse ToMenuPromoResponse(ConcessionMenuPromo p) => new()
+        {
+            Id = p.Id,
+            Title = p.Title,
+            Subtitle = p.Subtitle,
+            ImageUrl = p.ImageUrl,
+            MenuBoardId = p.MenuBoardId,
+            SortOrder = p.SortOrder,
+            IsActive = p.IsActive,
         };
 
         private static ConcessionStationResponse ToStationResponse(ConcessionStation s) => new()

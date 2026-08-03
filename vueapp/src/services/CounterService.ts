@@ -56,6 +56,19 @@ export class CounterService {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
     }
 
+    /** Counter customer lookup by email, name, or phone. Returns candidates; the caller picks one
+
+     *  and then calls findRider with that email for the full record (waiver state etc). */
+
+    searchRiders(query: string) {
+
+        return axios.post<{ data: { id: string; email: string; firstName: string; lastName: string; phone: string | null }[] }>(
+
+            `${this.apiUrl}/Counter/Riders/Search`, { query })
+
+    }
+
+
     findRider(email: string) {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders/Find`, { email })
     }

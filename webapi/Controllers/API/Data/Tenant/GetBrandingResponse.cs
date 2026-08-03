@@ -28,6 +28,8 @@
         /// <summary>Customer's share of the platform service charge on a bike shop sale (bps).
         /// 0 = the shop absorbs it and no fee line is shown at checkout.</summary>
         public int ShopBuyerPaidServiceChargeBps { get; set; }
+        /// <summary>Is that buyer-paid fee part of the shop sale's taxable base.</summary>
+        public bool ShopTaxServiceChargeTaxable { get; set; }
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }
         // 'platform' (default) or 'direct'. When 'direct', the SPA must initialize Stripe.js with

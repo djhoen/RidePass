@@ -102,6 +102,19 @@ namespace webapi.Controllers
         /// one super_admin exists. Anonymous so the platform can be initialised before there's
         /// anyone to authenticate as.
         /// </summary>
+        /// <summary>
+        /// Whether the platform still needs its first super admin.
+        ///
+        /// Anonymous for the same reason Bootstrap itself is: this has to be answerable before
+        /// anyone can authenticate. It discloses nothing new either, since attempting the bootstrap
+        /// already reveals the same fact through its error. It exists so the Bootstrap page can say
+        /// "already initialised" instead of presenting a form that can only fail.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("Bootstrap/Needed")]
+        public async Task<IActionResult> BootstrapNeeded()
+            => new ApiResponses().OkResult(new { needed = !await _users.AnySuperAdminExists() });
+
         [AllowAnonymous]
         [HttpPost("Bootstrap")]
         public async Task<IActionResult> Bootstrap([FromBody] BootstrapRequest request)

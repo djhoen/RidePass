@@ -14,7 +14,7 @@
         <template v-else-if="!loadError">
             <v-card v-if="orders.length === 0" class="pa-8 text-center text-medium-emphasis">
                 No shop orders yet.
-                <div class="mt-3"><v-btn color="primary" variant="tonal" to="/Shop">Browse the shop</v-btn></div>
+                <div class="mt-3"><v-btn color="primary" variant="flat" size="large" to="/Shop">Browse the shop</v-btn></div>
             </v-card>
 
             <template v-else>

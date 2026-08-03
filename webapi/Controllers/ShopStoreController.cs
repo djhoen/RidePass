@@ -446,6 +446,22 @@ namespace webapi.Controllers
             // so buying online and buying at the till owe the same thing.
             var (shopServiceCharge, buyerFee) = Services.Payments.ServiceChargeSplit.Compute(
                 subtotal - discountTotal, tenant.ServiceChargeBps, tenant.ShopBuyerPaidServiceChargeBps);
+
+            // Tax on the buyer's share of the fee, at the tenant's default category rate. Only
+            // queried when there is actually a fee to tax, so the default configuration (fee 0)
+            // pays nothing for this. See Services.Payments.ShopFeeTax.
+            var feeTaxCents = 0;
+            if (buyerFee > 0 && _tenantContext.Tenant.ShopTaxServiceChargeTaxable)
+            {
+                var defaultRate = (await _shop.ListTaxCategories(TenantId, activeOnly: true))
+                    .FirstOrDefault(c => c.IsDefault)?.RateBps;
+                feeTaxCents = Services.Payments.ShopFeeTax.Compute(
+                    // This path prices tax-EXCLUSIVE (the sale is written with
+                    // PricesIncludeTax false), so the fee's tax is added rather than extracted.
+                    buyerFee, taxable: true, defaultRate, pricesIncludeTax: false);
+                taxTotal += feeTaxCents;
+            }
+
             var total = subtotal - discountTotal + buyerFee + taxTotal;
 
             // Store credit as the last tender, resolved strictly by the signed-in user.

@@ -63,7 +63,7 @@
 
                 <!-- Right: newsletter signup (apex has no event subscriptions, so we show a links column instead) -->
                 <v-col cols="12" md="4">
-                    <NewsletterSignup v-if="!isApex && branding.allowEventSubscriptions"
+                    <NewsletterSignup v-if="!isApex && !inAccountArea && branding.allowEventSubscriptions"
                         title="Stay in the loop"
                         :subtitle="`Event updates and announcements from ${branding.displayName}.`" />
                     <template v-else>
@@ -90,7 +90,7 @@
         <!-- Tenant only: compact operator CTA below the regular footer. Same
              gradient as the apex band, just smaller. Links to the apex
              /ForTracks (cross-host on a tenant subdomain). -->
-        <div v-if="!isApex" class="footer-cta">
+        <div v-if="!isApex && !inAccountArea" class="footer-cta">
             <v-container class="py-3">
                 <div class="d-flex flex-column flex-sm-row align-center justify-center ga-3 text-center">
                     <span class="text-body-2 font-weight-medium">Run a track? See how RidePass can power yours.</span>
@@ -120,12 +120,19 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { branding } from '@/stores/branding'
 import tenantHelper from '@/helpers/TenantHelper'
 import NewsletterSignup from '@/components/NewsletterSignup.vue'
 import RichTextView from '@/components/RichTextView.vue'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
+
+// A rider who has signed in to look at their own passes and orders is not an audience for
+// "run your own track", and asking them to subscribe with an email we already have is noise.
+// On mobile these two blocks were most of an otherwise near-empty account page.
+const route = useRoute()
+const inAccountArea = computed(() => route.path.startsWith('/User/'))
 const refundDialog = ref(false)
 
 // The See-more button always targets the apex root /ForTracks, never the

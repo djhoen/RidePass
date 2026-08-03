@@ -2,12 +2,11 @@ using System.ComponentModel.DataAnnotations;
 
 namespace webapi.Controllers.API.Data.Concession
 {
-    public class ConcessionCategoryRequest
+    public class ConcessionMenuBoardRequest
     {
         [Required, MaxLength(100)]
         public string Name { get; set; } = null!;
         public int SortOrder { get; set; }
         public bool IsActive { get; set; } = true;
-        public Guid? MenuBoardId { get; set; }   // null = show on every menu board
     }
 }

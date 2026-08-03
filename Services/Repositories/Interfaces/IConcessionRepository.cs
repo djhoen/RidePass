@@ -18,6 +18,25 @@ namespace Services.Repositories.Interfaces
         Task UpdateCategory(ConcessionCategory cat);
         Task DeleteCategory(Guid id, Guid tenantId);
 
+        // Menu boards (one per in-venue screen)
+        Task<List<ConcessionMenuBoard>> ListMenuBoards(Guid tenantId, bool activeOnly);
+        Task<Guid> CreateMenuBoard(ConcessionMenuBoard b);
+        Task UpdateMenuBoard(ConcessionMenuBoard b);
+        Task DeleteMenuBoard(Guid id, Guid tenantId);
+
+        // Menu board promo tiles
+        Task<List<ConcessionMenuPromo>> ListMenuPromos(Guid tenantId, bool activeOnly);
+        Task<Guid> CreateMenuPromo(ConcessionMenuPromo p);
+        Task UpdateMenuPromo(ConcessionMenuPromo p);
+        Task DeleteMenuPromo(Guid id, Guid tenantId);
+
+        // Customer-facing POS display sessions
+        Task<Guid> CreateDisplay(Guid tenantId, string pairCode);
+        Task<ConcessionDisplay?> GetDisplay(Guid id, Guid tenantId);
+        Task<ConcessionDisplay?> GetDisplayByCode(string pairCode, Guid tenantId);
+        Task UpdateDisplayState(Guid id, Guid tenantId, string? stateJson);
+        Task SetDisplayTip(Guid id, Guid tenantId, int tipCents);
+
         // Tax categories
         Task<List<ConcessionTaxCategory>> ListTaxCategories(Guid tenantId);
         Task EnsureDefaultTaxCategory(Guid tenantId);
@@ -129,6 +148,12 @@ namespace Services.Repositories.Interfaces
         Task<Guid> CreateStation(ConcessionStation s);
         Task UpdateStation(ConcessionStation s);
         Task DeleteStation(Guid id, Guid tenantId);
+
+        // Kitchen ticket printers. StationIds on each result is the printer's scope; empty = whole order.
+        Task<List<ConcessionPrinter>> ListPrinters(Guid tenantId, bool activeOnly);
+        Task<Guid> CreatePrinter(ConcessionPrinter p);
+        Task UpdatePrinter(ConcessionPrinter p);
+        Task DeletePrinter(Guid id, Guid tenantId);
 
         // Modifier groups + options
         Task<List<ConcessionModifierGroup>> ListModifierGroups(Guid tenantId, bool activeOnly);

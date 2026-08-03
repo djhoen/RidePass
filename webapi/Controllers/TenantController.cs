@@ -368,7 +368,8 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (request.BuyerPaidBps is < 0 or > 10000)
                 return new ApiResponses().BadRequestResult("The customer's share must be between 0% and 100%.");
-            await _tenants.UpdateShopBuyerPaidServiceCharge(_tenantContext.TenantId, request.BuyerPaidBps);
+            await _tenants.UpdateShopServiceChargeSettings(
+                _tenantContext.TenantId, request.BuyerPaidBps, request.TaxServiceCharge);
             InvalidateTenantCache();
             return await GetBranding();
         }
@@ -632,6 +633,7 @@ namespace webapi.Controllers
                 RequireIdAtCheckin = tenant.RequireIdAtCheckin,
                 RequireIdForWristband = tenant.RequireIdForWristband,
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
+                ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,
                 StripeConnectStatus = tenant.StripeConnectStatus,
                 StripeChargeMode = tenant.StripeChargeMode,

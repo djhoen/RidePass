@@ -1,4 +1,4 @@
-﻿-- Punch-card rewards can now be earned on food and drink.
+-- Punch-card rewards can now be earned on food and drink.
 --
 -- reward_program.requirement_kind said what counts toward "buy N, get one". It allowed 'pass'
 -- (dead: day passes were retired), 'event_ticket', and 'any'. There was no way to say "coffees",

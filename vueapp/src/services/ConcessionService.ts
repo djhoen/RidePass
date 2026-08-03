@@ -54,6 +54,17 @@ export interface ConcessionStation {
     isActive: boolean
 }
 
+// A kitchen ticket printer. stationIds is its scope: EMPTY means it prints the whole order, which
+// is the setup for one printer at the pass while the cook screens stay split by station.
+export interface ConcessionPrinter {
+    id: string
+    name: string
+    url: string
+    sortOrder: number
+    isActive: boolean
+    stationIds: string[]
+}
+
 // ── Combos (shared "make it a combo" definition) ──────────────────────
 export interface ConcessionComboTier {
     id: string
@@ -155,12 +166,79 @@ export interface ConcessionCategory {
     name: string
     sortOrder: number
     isActive: boolean
+    menuBoardId: string | null   // null = show on every menu board
 }
 
 export interface UpsertConcessionCategory {
     name: string
     sortOrder: number
     isActive: boolean
+    menuBoardId: string | null
+}
+
+// A named in-venue menu board screen (one per TV).
+export interface ConcessionMenuBoard {
+    id: string
+    name: string
+    sortOrder: number
+    isActive: boolean
+}
+
+export interface UpsertConcessionMenuBoard {
+    name: string
+    sortOrder: number
+    isActive: boolean
+}
+
+// Promo callout tile rotated through the menu board carousel ("Make it a combo $5.99").
+export interface ConcessionMenuPromo {
+    id: string
+    title: string
+    subtitle: string | null
+    imageUrl: string | null    // null = text tile on the accent color
+    menuBoardId: string | null // null = show on every menu board
+    sortOrder: number
+    isActive: boolean
+}
+
+export interface UpsertConcessionMenuPromo {
+    title: string
+    subtitle: string | null
+    imageUrl: string | null
+    menuBoardId: string | null
+    sortOrder: number
+    isActive: boolean
+}
+
+// ── Customer-facing POS display ───────────────────────────────────────
+// The POS serializes this snapshot into stateJson; the display tablet renders it read-only.
+// Server treats it as opaque text and is never trusted for money — the sale re-validates.
+export interface DisplayStateLine {
+    name: string
+    quantity: number
+    variantLabel: string | null
+    modifierLabels: string[]
+    lineTotal: number
+}
+
+export interface DisplayState {
+    status: 'idle' | 'building' | 'tip' | 'processing' | 'done'
+    lines: DisplayStateLine[]
+    subtotal: number          // raw line-total sum in cents (tip % math runs off this, matching the POS)
+    taxCents: number
+    pricesIncludeTax: boolean
+    discountCents: number
+    tipCents: number
+    totalCents: number
+    tipsEnabled: boolean      // display shows the tip picker in 'tip' status only when true
+    orderNumber: number | null
+}
+
+export interface ConcessionDisplaySession {
+    id: string
+    pairCode: string
+    stateJson: string | null
+    tipCents: number | null
 }
 
 export interface OrderingHoursDay {
@@ -295,6 +373,14 @@ export interface UpsertConcessionStation {
     name: string
     sortOrder: number
     isActive: boolean
+}
+
+export interface UpsertConcessionPrinter {
+    name: string
+    url: string
+    sortOrder: number
+    isActive: boolean
+    stationIds: string[]
 }
 
 export interface UpsertConcessionModifierGroup {
@@ -562,6 +648,57 @@ export class ConcessionService {
         return axios.delete(`${this.apiUrl}/Concession/Categories/${id}`)
     }
 
+    // ── Menu boards (one per in-venue screen) ────────────────────────
+    menuBoards() {
+        return axios.get<{ data: ConcessionMenuBoard[] }>(`${this.apiUrl}/Concession/MenuBoards`)
+    }
+    menuBoardsAdmin() {
+        return axios.get<{ data: ConcessionMenuBoard[] }>(`${this.apiUrl}/Concession/MenuBoards/Admin`)
+    }
+    createMenuBoard(req: UpsertConcessionMenuBoard) {
+        return axios.post<{ data: ConcessionMenuBoard }>(`${this.apiUrl}/Concession/MenuBoards`, req)
+    }
+    updateMenuBoard(id: string, req: UpsertConcessionMenuBoard) {
+        return axios.put<{ data: ConcessionMenuBoard }>(`${this.apiUrl}/Concession/MenuBoards/${id}`, req)
+    }
+    removeMenuBoard(id: string) {
+        return axios.delete(`${this.apiUrl}/Concession/MenuBoards/${id}`)
+    }
+
+    // ── Menu board promo tiles ───────────────────────────────────────
+    menuPromos() {
+        return axios.get<{ data: ConcessionMenuPromo[] }>(`${this.apiUrl}/Concession/MenuPromos`)
+    }
+    menuPromosAdmin() {
+        return axios.get<{ data: ConcessionMenuPromo[] }>(`${this.apiUrl}/Concession/MenuPromos/Admin`)
+    }
+    createMenuPromo(req: UpsertConcessionMenuPromo) {
+        return axios.post<{ data: ConcessionMenuPromo }>(`${this.apiUrl}/Concession/MenuPromos`, req)
+    }
+    updateMenuPromo(id: string, req: UpsertConcessionMenuPromo) {
+        return axios.put<{ data: ConcessionMenuPromo }>(`${this.apiUrl}/Concession/MenuPromos/${id}`, req)
+    }
+    removeMenuPromo(id: string) {
+        return axios.delete(`${this.apiUrl}/Concession/MenuPromos/${id}`)
+    }
+
+    // ── Customer-facing POS display ──────────────────────────────────
+    createDisplay() {
+        return axios.post<{ data: ConcessionDisplaySession }>(`${this.apiUrl}/Concession/Display`, {})
+    }
+    display(id: string) {
+        return axios.get<{ data: ConcessionDisplaySession }>(`${this.apiUrl}/Concession/Display/${id}`)
+    }
+    displayByCode(code: string) {
+        return axios.get<{ data: ConcessionDisplaySession }>(`${this.apiUrl}/Concession/Display/ByCode/${encodeURIComponent(code)}`)
+    }
+    updateDisplayState(id: string, state: DisplayState) {
+        return axios.put(`${this.apiUrl}/Concession/Display/${id}/State`, { stateJson: JSON.stringify(state) })
+    }
+    setDisplayTip(id: string, tipCents: number) {
+        return axios.post(`${this.apiUrl}/Concession/Display/${id}/Tip`, { tipCents })
+    }
+
     // ── Menu board settings ──────────────────────────────────────────
     menuSettings() {
         return axios.get<{ data: ConcessionMenuSettings }>(`${this.apiUrl}/Concession/MenuSettings`)
@@ -652,6 +789,21 @@ export class ConcessionService {
     }
     updateStation(id: string, req: UpsertConcessionStation) {
         return axios.put<{ data: ConcessionStation }>(`${this.apiUrl}/Concession/Stations/${id}`, req)
+    }
+    listPrinters() {
+        return axios.get<{ data: ConcessionPrinter[] }>(`${this.apiUrl}/Concession/Printers`)
+    }
+    createPrinter(req: UpsertConcessionPrinter) {
+        return axios.post<{ data: ConcessionPrinter }>(`${this.apiUrl}/Concession/Printers`, req)
+    }
+    updatePrinter(id: string, req: UpsertConcessionPrinter) {
+        return axios.put<{ data: ConcessionPrinter }>(`${this.apiUrl}/Concession/Printers/${id}`, req)
+    }
+    removePrinter(id: string) {
+        return axios.delete(`${this.apiUrl}/Concession/Printers/${id}`)
+    }
+    activePrinters() {
+        return axios.get<{ data: ConcessionPrinter[] }>(`${this.apiUrl}/Concession/Printers/Active`)
     }
     removeStation(id: string) {
         return axios.delete(`${this.apiUrl}/Concession/Stations/${id}`)

@@ -319,9 +319,15 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {
-        path: '/Admin/ConcessionMenu',
+        path: '/Admin/ConcessionMenu/:boardId?',
         name: 'AdminConcessionMenu',
         component: () => import('../views/Admin/ConcessionMenuBoard.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
+    },
+    {
+        path: '/Admin/ConcessionDisplay',
+        name: 'AdminConcessionDisplay',
+        component: () => import('../views/Admin/ConcessionCustomerDisplay.vue'),
         meta: { requiresAuth: true, requiresPermission: 'concessions.counter', hideFooter: true }
     },
     {

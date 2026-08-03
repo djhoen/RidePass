@@ -225,6 +225,11 @@ export class SuperAdminService {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
     }
 
+    /** Whether the platform still needs its first super admin. Anonymous; safe before login. */
+    bootstrapNeeded() {
+        return axios.get<{ data: { needed: boolean } }>(`${this.apiUrl}/SuperAdmin/Bootstrap/Needed`)
+    }
+
     bootstrap(body: { email: string; password: string; firstName: string; lastName: string }) {
         return axios.post(`${this.apiUrl}/SuperAdmin/Bootstrap`, body)
     }

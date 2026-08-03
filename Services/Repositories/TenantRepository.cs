@@ -29,6 +29,7 @@ namespace Services.Repositories
             rental_rider_paid_service_charge_bps AS RentalRiderPaidServiceChargeBps,
             rental_tax_bps AS RentalTaxBps,
             rental_tax_service_charge_taxable AS RentalTaxServiceChargeTaxable,
+            shop_tax_service_charge_taxable AS ShopTaxServiceChargeTaxable,
             shop_buyer_paid_service_charge_bps AS ShopBuyerPaidServiceChargeBps,
             rental_insurance_enabled AS RentalInsuranceEnabled,
             rental_insurance_label AS RentalInsuranceLabel,
@@ -236,10 +237,14 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, require });
         }
 
-        public async Task UpdateShopBuyerPaidServiceCharge(Guid tenantId, int buyerPaidBps)
+        public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)
         {
-            const string sql = "UPDATE tenant SET shop_buyer_paid_service_charge_bps = @buyerPaidBps WHERE id = @tenantId";
-            await _db.Execute(sql, new { tenantId, buyerPaidBps });
+            const string sql = @"
+                UPDATE tenant
+                SET shop_buyer_paid_service_charge_bps = @buyerPaidBps,
+                    shop_tax_service_charge_taxable = @taxServiceCharge
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, buyerPaidBps, taxServiceCharge });
         }
 
         public async Task SetStripeConnectAccount(Guid tenantId, string accountId, string status)

@@ -122,6 +122,34 @@ namespace webapi.Controllers
                 : AdmissionTaxConfig.None;
         }
 
+        /// <summary>
+        /// Customer lookup for the counter by email, name, or phone.
+        ///
+        /// The gate scanner already searches by "rider or buyer name, or email"; the counter served
+        /// the same walk-up queue with an email-only field. Full addresses are slow to type on a
+        /// tablet with a line waiting, frequently mistyped, and often not what the customer offers,
+        /// so the operator's fallback was to create a duplicate account, which quietly corrupts the
+        /// customer list and the spend totals that read from it.
+        /// </summary>
+        [HttpPost("Riders/Search")]
+        public async Task<IActionResult> SearchRiders([FromBody] RiderSearchRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var q = (request.Query ?? string.Empty).Trim();
+            if (q.Length < 2)
+                return new ApiResponses().BadRequestResult("Type at least two characters to search.");
+
+            var matches = await _users.SearchForCounter(q, _tenantContext.TenantId);
+            return new ApiResponses().OkResult(matches.Select(u => new RiderSearchResult
+            {
+                Id = u.Id,
+                Email = u.Email,
+                FirstName = u.FirstName,
+                LastName = u.LastName,
+                Phone = u.Phone,
+            }).ToList());
+        }
+
         [HttpPost("Riders/Find")]
         public async Task<IActionResult> FindRider([FromBody] RiderLookupRequest request)
         {

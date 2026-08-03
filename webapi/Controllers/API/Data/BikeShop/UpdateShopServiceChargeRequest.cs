@@ -1,4 +1,4 @@
-namespace webapi.Controllers.API.Data.BikeShop
+﻿namespace webapi.Controllers.API.Data.BikeShop
 {
     /// <summary>
     /// Who funds the platform service charge on a bike shop sale.
@@ -14,5 +14,12 @@ namespace webapi.Controllers.API.Data.BikeShop
         /// Either way the charge is owed and booked to the ledger.
         /// </summary>
         public int BuyerPaidBps { get; set; }
+
+        /// <summary>
+        /// Whether the customer's share of the fee is taxed, at the tenant's default shop tax
+        /// category rate. Mirrors the rental setting; whether a service fee is taxable is a
+        /// jurisdiction question rather than a product one.
+        /// </summary>
+        public bool TaxServiceCharge { get; set; } = true;
     }
 }

@@ -24,6 +24,7 @@
                     Online ordering is closed today
                 </span>
                 <v-btn variant="text" prepend-icon="mdi-printer-settings" @click="printerDialog = true">Printer</v-btn>
+                <v-btn variant="text" prepend-icon="mdi-tablet" @click="displayDialog = true">Display</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-receipt-text-clock" :to="{ name: 'AdminConcessionOrders' }">Orders</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-stove" :to="{ name: 'AdminConcessionKitchen' }">Cook screen</v-btn>
             </div>
@@ -279,7 +280,21 @@
                             </v-list-item>
                         </v-list>
 
-                        <template v-if="tipsEnabled">
+                        <template v-if="tipsEnabled && pairedDisplayId && !cashierTipEntry">
+                            <div class="text-subtitle-1 font-weight-bold mb-2">Tip</div>
+                            <div class="d-flex align-center ga-3 mb-1">
+                                <v-progress-circular v-if="!customerTipReceived" indeterminate size="20" width="2" />
+                                <v-icon v-else color="success">mdi-check-circle</v-icon>
+                                <span class="text-body-1">
+                                    {{ customerTipReceived
+                                        ? (tipCents ? `Customer added a ${money(tipCents)} tip.` : 'Customer chose no tip.')
+                                        : 'Customer is choosing a tip on their screen…' }}
+                                </span>
+                            </div>
+                            <v-btn variant="text" size="small" @click="cashierTipEntry = true">Enter tip on this screen instead</v-btn>
+                            <v-divider class="my-4" />
+                        </template>
+                        <template v-else-if="tipsEnabled">
                             <div class="text-subtitle-1 font-weight-bold mb-2">Add a tip?</div>
                             <div class="d-flex flex-wrap ga-2">
                                 <v-btn :variant="tipMode === 'none' ? 'flat' : 'outlined'" :color="tipMode === 'none' ? 'primary' : undefined" @click="tipMode = 'none'">No tip</v-btn>
@@ -379,6 +394,8 @@
                     {{ lastOrderNumber != null ? 'Call this number at pickup.' : 'Payment received — the order number will appear on the cook screen shortly.' }}
                 </div>
                 <v-btn block color="primary" class="mb-2" prepend-icon="mdi-printer" @click="printLast">Print receipt</v-btn>
+                <v-btn v-if="kitchenPrinters.length" block variant="tonal" class="mb-2" prepend-icon="mdi-printer-pos"
+                    @click="sendKitchenTickets(true)">Reprint kitchen tickets</v-btn>
                 <v-btn block variant="tonal" @click="newOrder">New order</v-btn>
             </v-card>
         </v-dialog>
@@ -405,6 +422,43 @@
                     <v-spacer />
                     <v-btn variant="text" @click="printerDialog = false">Cancel</v-btn>
                     <v-btn color="primary" variant="flat" @click="savePrinter">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Customer-facing display pairing (per tablet) -->
+        <v-dialog v-model="displayDialog" max-width="440">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Customer display
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="displayDialog = false" />
+                </v-card-title>
+                <v-card-text>
+                    <template v-if="pairedDisplayId">
+                        <p class="text-body-2 mb-2">
+                            <v-icon color="success" size="small">mdi-check-circle</v-icon>
+                            Paired with a customer display. It mirrors the order as you ring items up
+                            and asks the customer for a tip at checkout.
+                        </p>
+                        <p v-if="displayPushFailing" class="text-body-2 text-error mb-0">
+                            The display isn't syncing right now. Check the tablet's connection or re-pair.
+                        </p>
+                    </template>
+                    <template v-else>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            Open <strong>Customer Display</strong> from the menu on the customer-facing tablet,
+                            then enter the pair code it shows here.
+                        </p>
+                        <v-text-field v-model="displayPairCodeInput" label="Pair code" placeholder="123456"
+                            density="compact" hide-details autofocus @keyup.enter="pairDisplay" />
+                    </template>
+                </v-card-text>
+                <v-card-actions>
+                    <v-btn v-if="pairedDisplayId" variant="text" color="error" @click="unpairDisplay">Unpair</v-btn>
+                    <v-spacer />
+                    <v-btn variant="text" @click="displayDialog = false">Close</v-btn>
+                    <v-btn v-if="!pairedDisplayId" color="primary" variant="flat" :loading="pairingDisplay" @click="pairDisplay">Pair</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -516,18 +570,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import {
     ConcessionService,
     type ConcessionProduct, type ConcessionVariant, type ConcessionModifierGroup,
     type ConcessionSaleLineInput, type ConcessionComboConfig, type ConcessionComboSlot,
     type ConcessionComboSlotOption, type ConcessionDiscountInput, type ConcessionDiscountPreset,
     type ConcessionCompReason, type ConcessionMemberLookup, type ConcessionMemberPerk,
+    type ConcessionPrinter, type DisplayState,
 } from '@/services/ConcessionService'
 import { getTerminal, discoverAndConnect, collectAndProcess } from '@/helpers/TerminalHelper'
 import CreditLookupField from '@/components/CreditLookupField.vue'
 import { type CreditLookupResult } from '@/services/CreditService'
 import { printReceipt, type Receipt } from '@/helpers/ReceiptPrinter'
+import { printKitchenTicket, type KitchenTicket, type KitchenTicketLine } from '@/helpers/KitchenTicketPrinter'
 import { branding } from '@/stores/branding'
 import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
 
@@ -679,6 +735,7 @@ onMounted(() => {
     // Make "Add to Home Screen" from here pin a Cashier icon that reopens the POS chromeless.
     setHomeScreenIcon({ title: `${branding.displayName || 'RidePass'} Cashier`, iconUrl: '/icon-cashier.png', startPath: '/Admin/ConcessionPos' })
     load()
+    loadKitchenPrinters()
     refreshOnlineStatus()
     onlineTimer = window.setInterval(refreshOnlineStatus, 10000)   // keep the Open/Busy chip current
 })
@@ -1203,6 +1260,8 @@ function startCheckout(t: 'cash' | 'card') {
     tender.value = t
     tipMode.value = 'none'
     tipCustomDollars.value = null
+    customerTipReceived.value = false
+    cashierTipEntry.value = false
     receiptMethod.value = printerUrl.value ? 'print' : 'none'
     receiptDest.value = ''
     customerName.value = ''
@@ -1313,6 +1372,74 @@ function finishOrder(saleId: string, orderNumber: number | null, method: string,
     confirmDialog.value = false
     doneDialog.value = true
     deliverReceipt(saleId)
+    // Independent of the customer receipt: the kitchen gets its ticket whether or not the customer
+    // wanted one, and whichever of the two fails must not stop the other.
+    sendKitchenTickets()
+}
+
+// ── Kitchen ticket printing ────────────────────────────────────────────────
+// Tenant-configured (Concessions > Stations > Kitchen ticket printers), unlike the customer receipt
+// printer which is per-tablet localStorage. Printed from here because the API is in the cloud and
+// cannot reach a printer on the venue LAN.
+const kitchenPrinters = ref<ConcessionPrinter[]>([])
+
+async function loadKitchenPrinters() {
+    try { kitchenPrinters.value = (await svc.activePrinters()).data.data }
+    catch { kitchenPrinters.value = [] }   // no printers is a valid setup; the cook screen still works
+}
+
+// The lines a given printer is responsible for. A printer with no stations prints the whole order,
+// which is also what catches items whose product has no station assigned.
+function linesForPrinter(p: ConcessionPrinter, lines: CartLine[]): KitchenTicketLine[] {
+    const scoped = p.stationIds.length > 0
+    return lines
+        .filter(l => {
+            const product = products.value.find(pr => pr.id === l.input.productId)
+            // Grab-and-go never reaches the cook screen, so it has no business on a ticket either.
+            if (!product || !product.requiresPrep) return false
+            if (!scoped) return true
+            return product.stationId !== null && p.stationIds.includes(product.stationId)
+        })
+        .map(l => ({
+            quantity: l.quantity, name: l.name, variantLabel: l.variantLabel,
+            modifierLabels: l.modifierLabels, notes: l.notes,
+        }))
+}
+
+// Sends one ticket per configured printer that has anything to make. Never throws: the money is
+// already taken, so a dead printer must not read as a failed sale. Failures name the printer so the
+// cashier knows which one to walk to, and can hit "Reprint tickets" once it's fixed.
+async function sendKitchenTickets(isReprint = false) {
+    const rec = lastReceipt.value
+    if (!rec || kitchenPrinters.value.length === 0) return
+
+    const failed: string[] = []
+    let printed = 0
+
+    for (const p of kitchenPrinters.value) {
+        const lines = linesForPrinter(p, rec.lines)
+        if (lines.length === 0) continue   // nothing for this station on this order
+
+        const ticket: KitchenTicket = {
+            header: branding.displayName || 'Order',
+            orderNumber: rec.orderNumber,
+            customerName: customerName.value.trim() || null,
+            stationLabel: p.name,
+            placedAt: new Date(),
+            lines,
+            isReprint,
+        }
+        try { await printKitchenTicket(p.url, ticket); printed++ }
+        catch (err: any) { failed.push(`${p.name} ${err.message || 'failed'}`) }
+    }
+
+    if (failed.length > 0) {
+        flash(`Kitchen ticket problem - ${failed.join('; ')}. The order is on the cook screen; use Reprint tickets to retry.`, 'error')
+    } else if (isReprint && printed > 0) {
+        flash(`Reprinted ${printed} kitchen ticket${printed === 1 ? '' : 's'}.`, 'success')
+    } else if (isReprint) {
+        flash('Nothing on this order needs making, so there was no ticket to reprint.')
+    }
 }
 
 // Deliver the receipt per the customer's choice on the confirmation screen.
@@ -1347,6 +1474,131 @@ function savePrinter() {
     printerDialog.value = false
     flash('Printer saved.', 'success')
 }
+
+// ── Customer-facing display (paired second tablet: mirrors the order, captures the tip) ──
+const displayDialog = ref(false)
+const pairedDisplayId = ref(localStorage.getItem('concessionPosDisplayId') || '')
+const displayPairCodeInput = ref('')
+const pairingDisplay = ref(false)
+const displayPushFailing = ref(false)
+// Customer answered the tip prompt (including "no tip"); shown on the POS confirm screen.
+const customerTipReceived = ref(false)
+// Cashier fallback: reveal the on-POS tip buttons when the customer walks away from the display.
+const cashierTipEntry = ref(false)
+
+async function pairDisplay() {
+    const code = displayPairCodeInput.value.trim()
+    if (!code) { flash('Enter the pair code shown on the customer display tablet.'); return }
+    pairingDisplay.value = true
+    try {
+        const d = (await svc.displayByCode(code) as any).data.data
+        pairedDisplayId.value = d.id
+        localStorage.setItem('concessionPosDisplayId', d.id)
+        displayPairCodeInput.value = ''
+        lastPushedDisplayState = ''   // force a fresh push so the display leaves its welcome screen promptly
+        pushDisplayState()
+        flash('Customer display paired.', 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Pairing failed. Check the code on the customer display tablet.')
+    } finally { pairingDisplay.value = false }
+}
+
+function unpairDisplay() {
+    // Best-effort: send the display back to its welcome screen before forgetting it.
+    if (pairedDisplayId.value) svc.updateDisplayState(pairedDisplayId.value, idleDisplayState()).catch(() => { /* it will fall idle on its own */ })
+    pairedDisplayId.value = ''
+    localStorage.removeItem('concessionPosDisplayId')
+    flash('Customer display unpaired.', 'success')
+}
+
+function idleDisplayState(): DisplayState {
+    return { status: 'idle', lines: [], subtotal: 0, taxCents: 0, pricesIncludeTax: false, discountCents: 0, tipCents: 0, totalCents: 0, tipsEnabled: false, orderNumber: null }
+}
+
+// Snapshot of what the customer should see right now. Recomputes on any cart/checkout change;
+// the watcher below pushes it (debounced) whenever the serialized form actually changes.
+const displaySnapshot = computed<DisplayState>(() => {
+    let status: DisplayState['status'] = 'idle'
+    if (doneDialog.value) status = 'done'
+    else if (paying.value) status = 'processing'
+    else if (confirmDialog.value) status = tipsEnabled.value ? 'tip' : 'building'
+    else if (cart.value.length > 0) status = 'building'
+    return {
+        status,
+        lines: status === 'idle' || status === 'done' ? [] : cart.value.map(l => ({
+            name: l.name, quantity: l.quantity, variantLabel: l.variantLabel,
+            modifierLabels: l.modifierLabels, lineTotal: l.lineTotal,
+        })),
+        subtotal: subtotal.value,
+        taxCents: taxCents.value,
+        pricesIncludeTax: pricesIncludeTax.value,
+        discountCents: discountCents.value,
+        tipCents: tipCents.value,
+        totalCents: total.value,
+        tipsEnabled: tipsEnabled.value,
+        orderNumber: status === 'done' ? lastOrderNumber.value : null,
+    }
+})
+
+let lastPushedDisplayState = ''
+let displayPushTimer: number | undefined
+let displayPushFailures = 0
+
+watch(displaySnapshot, () => {
+    if (!pairedDisplayId.value) return
+    if (displayPushTimer) window.clearTimeout(displayPushTimer)
+    displayPushTimer = window.setTimeout(pushDisplayState, 250)
+})
+
+async function pushDisplayState() {
+    if (!pairedDisplayId.value) return
+    const snap = displaySnapshot.value
+    const json = JSON.stringify(snap)
+    if (json === lastPushedDisplayState) return
+    try {
+        await svc.updateDisplayState(pairedDisplayId.value, snap)
+        lastPushedDisplayState = json
+        displayPushFailures = 0
+        displayPushFailing.value = false
+    } catch {
+        // Keep ringing items regardless; tell the cashier once if the display stays out of sync.
+        if (++displayPushFailures === 3) {
+            displayPushFailing.value = true
+            flash('The customer display stopped syncing. Check its connection or re-pair from the Display button.')
+        }
+    }
+}
+
+// While the confirm screen is open with a paired display, poll for the customer's tip choice and
+// apply it to the order as a custom tip (server re-validates on the sale).
+let tipPollTimer: number | undefined
+watch(confirmDialog, (open) => {
+    if (open && pairedDisplayId.value && tipsEnabled.value) {
+        tipPollTimer = window.setInterval(pollCustomerTip, 1000)
+    } else if (tipPollTimer) {
+        window.clearInterval(tipPollTimer)
+        tipPollTimer = undefined
+    }
+})
+
+async function pollCustomerTip() {
+    if (!pairedDisplayId.value || cashierTipEntry.value) return
+    try {
+        const d = (await svc.display(pairedDisplayId.value) as any).data.data
+        if (d.tipCents != null) {
+            customerTipReceived.value = true
+            tipMode.value = d.tipCents > 0 ? 'custom' : 'none'
+            tipCustomDollars.value = d.tipCents > 0 ? d.tipCents / 100 : null
+        }
+    } catch { /* transient; next poll retries */ }
+}
+
+onUnmounted(() => {
+    if (displayPushTimer) window.clearTimeout(displayPushTimer)
+    if (tipPollTimer) window.clearInterval(tipPollTimer)
+    // Leaving the POS mid-order: send the display back to welcome rather than a frozen cart.
+    if (pairedDisplayId.value) svc.updateDisplayState(pairedDisplayId.value, idleDisplayState()).catch(() => { /* best-effort */ })
+})
 
 async function sendReceipt() {
     const rec = lastReceipt.value

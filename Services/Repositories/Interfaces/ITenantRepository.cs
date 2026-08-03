@@ -25,9 +25,10 @@ namespace Services.Repositories.Interfaces
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
         /// <summary>Gate wristband issuance on a signed waiver plus a stored ID/age verification.</summary>
         Task UpdateRequireIdForWristband(Guid tenantId, bool require);
-        /// <summary>Who funds the platform service charge on a bike shop sale (bps of the charge).
-        /// 0 = the shop absorbs it; 10000 = the customer pays it.</summary>
-        Task UpdateShopBuyerPaidServiceCharge(Guid tenantId, int buyerPaidBps);
+        /// <summary>Who funds the platform service charge on a bike shop sale (bps of the charge;
+        /// 0 = the shop absorbs it, 10000 = the customer pays it), and whether the customer's share
+        /// is taxed.</summary>
+        Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge);
         Task SetStripeConnectAccount(Guid tenantId, string accountId, string status);
         Task UpdateStripeConnectStatus(string accountId, string status);
         Task SetStripeChargeMode(Guid tenantId, string chargeMode);

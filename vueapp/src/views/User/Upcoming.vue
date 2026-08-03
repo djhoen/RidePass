@@ -68,7 +68,7 @@
             <v-card-text class="text-center text-medium-emphasis py-12">
                 <v-icon icon="mdi-calendar-blank-outline" size="48" class="mb-3"></v-icon>
                 <div class="mb-2">Nothing on your schedule yet.</div>
-                <v-btn variant="tonal" to="/Discover" prepend-icon="mdi-map-search">Find a track</v-btn>
+                <v-btn color="primary" variant="flat" size="large" to="/Discover" prepend-icon="mdi-map-search">Find a track</v-btn>
             </v-card-text>
         </v-card>
 

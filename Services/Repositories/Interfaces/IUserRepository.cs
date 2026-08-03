@@ -1,4 +1,4 @@
-using Services.Repositories.Data.UserData;
+﻿using Services.Repositories.Data.UserData;
 
 namespace Services.Repositories.Interfaces
 {
@@ -20,6 +20,9 @@ namespace Services.Repositories.Interfaces
         Task<Guid> Create(User user);
         Task<bool> AnySuperAdminExists();
         Task<List<User>> SearchAll(string? query, int take = 50);
+        /// <summary>Counter customer lookup by email / name / phone, scoped to global riders plus
+        /// this tenant's users. Not platform-wide: see SearchForCounter's remarks.</summary>
+        Task<List<User>> SearchForCounter(string query, Guid tenantId, int take = 12);
         Task<List<User>> SearchUsers(string? query, string? role, Guid? tenantId, string? status, int take = 200);
         Task<List<User>> ListByTenant(Guid tenantId);
         Task<List<User>> ListSuperAdmins();

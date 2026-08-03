@@ -51,6 +51,8 @@ export interface BrandingState {
     rentalRiderPaidServiceChargeBps: number
     // Buyer's share of the service charge on bike shop sales (bps). 0 = the shop absorbs it.
     shopBuyerPaidServiceChargeBps: number
+    /** Is that buyer-paid shop fee part of the taxable base. Mirrors the rental setting. */
+    shopTaxServiceChargeTaxable: boolean
     // Rental sales tax (bps). null = never configured, which the admin UI warns about.
     rentalTaxBps: number | null
     rentalTaxServiceChargeTaxable: boolean
@@ -183,6 +185,7 @@ const defaults: BrandingState = {
     serviceChargeBps: 300,
     rentalRiderPaidServiceChargeBps: 10000,
     shopBuyerPaidServiceChargeBps: 0,
+    shopTaxServiceChargeTaxable: true,
     rentalTaxBps: null,
     rentalTaxServiceChargeTaxable: true,
     shippingName: null,
@@ -352,6 +355,7 @@ export async function loadBranding(): Promise<void> {
         branding.serviceChargeBps = data.serviceChargeBps ?? 300
         branding.rentalRiderPaidServiceChargeBps = data.rentalRiderPaidServiceChargeBps ?? 10000
         branding.shopBuyerPaidServiceChargeBps = data.shopBuyerPaidServiceChargeBps ?? 0
+        branding.shopTaxServiceChargeTaxable = data.shopTaxServiceChargeTaxable ?? true
         // Preserve null: it is what distinguishes "never set" from "deliberately 0%".
         branding.rentalTaxBps = data.rentalTaxBps ?? null
         branding.rentalTaxServiceChargeTaxable = data.rentalTaxServiceChargeTaxable ?? true

@@ -20,6 +20,10 @@ namespace Services.Repositories
             p.created_at AS CreatedAt, p.updated_at AS UpdatedAt";
 
         private const string CategoryCols = @"
+            id, tenant_id AS TenantId, name, sort_order AS SortOrder, is_active AS IsActive,
+            menu_board_id AS MenuBoardId, created_at AS CreatedAt";
+
+        private const string MenuBoardCols = @"
             id, tenant_id AS TenantId, name, sort_order AS SortOrder, is_active AS IsActive, created_at AS CreatedAt";
 
         private const string TaxCategoryCols = @"
@@ -83,6 +87,10 @@ namespace Services.Repositories
 
         private const string StationCols = @"
             id, tenant_id AS TenantId, name, sort_order AS SortOrder,
+            is_active AS IsActive, created_at AS CreatedAt";
+
+        private const string PrinterCols = @"
+            id, tenant_id AS TenantId, name, url, sort_order AS SortOrder,
             is_active AS IsActive, created_at AS CreatedAt";
 
         private const string ModGroupCols = @"
@@ -173,15 +181,15 @@ namespace Services.Repositories
         public async Task<Guid> CreateCategory(ConcessionCategory cat)
         {
             const string sql = @"
-                INSERT INTO concession_category (tenant_id, name, sort_order, is_active)
-                VALUES (@TenantId, @Name, @SortOrder, @IsActive) RETURNING id";
+                INSERT INTO concession_category (tenant_id, name, sort_order, is_active, menu_board_id)
+                VALUES (@TenantId, @Name, @SortOrder, @IsActive, @MenuBoardId) RETURNING id";
             return (await _db.Query<Guid>(sql, cat)).First();
         }
 
         public async Task UpdateCategory(ConcessionCategory cat)
         {
             const string sql = @"UPDATE concession_category SET
-                    name = @Name, sort_order = @SortOrder, is_active = @IsActive
+                    name = @Name, sort_order = @SortOrder, is_active = @IsActive, menu_board_id = @MenuBoardId
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, cat);
         }
@@ -191,6 +199,118 @@ namespace Services.Repositories
             // Products' category_id is ON DELETE SET NULL, so they fall back to "Uncategorized".
             await _db.Execute("DELETE FROM concession_category WHERE id = @id AND tenant_id = @tenantId",
                 new { id, tenantId });
+        }
+
+        // ── Menu boards ──────────────────────────────────────────────────────────
+        public async Task<List<ConcessionMenuBoard>> ListMenuBoards(Guid tenantId, bool activeOnly)
+        {
+            var filter = activeOnly ? "AND is_active = true" : "";
+            var sql = $@"SELECT {MenuBoardCols} FROM concession_menu_board
+                        WHERE tenant_id = @tenantId {filter} ORDER BY sort_order, LOWER(name)";
+            return (await _db.Query<ConcessionMenuBoard>(sql, new { tenantId })).ToList();
+        }
+
+        public async Task<Guid> CreateMenuBoard(ConcessionMenuBoard b)
+        {
+            const string sql = @"
+                INSERT INTO concession_menu_board (tenant_id, name, sort_order, is_active)
+                VALUES (@TenantId, @Name, @SortOrder, @IsActive) RETURNING id";
+            return (await _db.Query<Guid>(sql, b)).First();
+        }
+
+        public async Task UpdateMenuBoard(ConcessionMenuBoard b)
+        {
+            const string sql = @"UPDATE concession_menu_board SET
+                    name = @Name, sort_order = @SortOrder, is_active = @IsActive
+                WHERE id = @Id AND tenant_id = @TenantId";
+            await _db.Execute(sql, b);
+        }
+
+        public async Task DeleteMenuBoard(Guid id, Guid tenantId)
+        {
+            // Categories' and promos' menu_board_id are ON DELETE SET NULL, so they fall back to "all boards".
+            await _db.Execute("DELETE FROM concession_menu_board WHERE id = @id AND tenant_id = @tenantId",
+                new { id, tenantId });
+        }
+
+        // ── Menu board promo tiles ───────────────────────────────────────────────
+        public async Task<List<ConcessionMenuPromo>> ListMenuPromos(Guid tenantId, bool activeOnly)
+        {
+            var filter = activeOnly ? "AND is_active = true" : "";
+            var sql = $@"SELECT id, tenant_id AS TenantId, menu_board_id AS MenuBoardId, title, subtitle,
+                            image_url AS ImageUrl, sort_order AS SortOrder, is_active AS IsActive, created_at AS CreatedAt
+                        FROM concession_menu_promo
+                        WHERE tenant_id = @tenantId {filter} ORDER BY sort_order, LOWER(title)";
+            return (await _db.Query<ConcessionMenuPromo>(sql, new { tenantId })).ToList();
+        }
+
+        public async Task<Guid> CreateMenuPromo(ConcessionMenuPromo p)
+        {
+            const string sql = @"
+                INSERT INTO concession_menu_promo (tenant_id, menu_board_id, title, subtitle, image_url, sort_order, is_active)
+                VALUES (@TenantId, @MenuBoardId, @Title, @Subtitle, @ImageUrl, @SortOrder, @IsActive) RETURNING id";
+            return (await _db.Query<Guid>(sql, p)).First();
+        }
+
+        public async Task UpdateMenuPromo(ConcessionMenuPromo p)
+        {
+            const string sql = @"UPDATE concession_menu_promo SET
+                    menu_board_id = @MenuBoardId, title = @Title, subtitle = @Subtitle,
+                    image_url = @ImageUrl, sort_order = @SortOrder, is_active = @IsActive
+                WHERE id = @Id AND tenant_id = @TenantId";
+            await _db.Execute(sql, p);
+        }
+
+        public async Task DeleteMenuPromo(Guid id, Guid tenantId)
+        {
+            await _db.Execute("DELETE FROM concession_menu_promo WHERE id = @id AND tenant_id = @tenantId",
+                new { id, tenantId });
+        }
+
+        // ── Customer-facing POS display sessions ─────────────────────────────────
+        private const string DisplayCols = @"
+            id, tenant_id AS TenantId, pair_code AS PairCode, state_json AS StateJson,
+            tip_cents AS TipCents, updated_at AS UpdatedAt, created_at AS CreatedAt";
+
+        public async Task<Guid> CreateDisplay(Guid tenantId, string pairCode)
+        {
+            const string sql = @"
+                INSERT INTO concession_display (tenant_id, pair_code)
+                VALUES (@tenantId, @pairCode) RETURNING id";
+            return (await _db.Query<Guid>(sql, new { tenantId, pairCode })).First();
+        }
+
+        public async Task<ConcessionDisplay?> GetDisplay(Guid id, Guid tenantId)
+        {
+            var sql = $"SELECT {DisplayCols} FROM concession_display WHERE id = @id AND tenant_id = @tenantId";
+            return (await _db.Query<ConcessionDisplay>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<ConcessionDisplay?> GetDisplayByCode(string pairCode, Guid tenantId)
+        {
+            // Newest first: if an old tablet left a stale session with a recycled code, pairing should
+            // find the one currently showing that code on screen.
+            var sql = $@"SELECT {DisplayCols} FROM concession_display
+                        WHERE tenant_id = @tenantId AND pair_code = @pairCode
+                        ORDER BY created_at DESC LIMIT 1";
+            return (await _db.Query<ConcessionDisplay>(sql, new { pairCode, tenantId })).FirstOrDefault();
+        }
+
+        // Every state push clears the customer's tip so a previous order's tip never bleeds forward.
+        public async Task UpdateDisplayState(Guid id, Guid tenantId, string? stateJson)
+        {
+            const string sql = @"UPDATE concession_display SET
+                    state_json = @stateJson, tip_cents = NULL, updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, stateJson });
+        }
+
+        public async Task SetDisplayTip(Guid id, Guid tenantId, int tipCents)
+        {
+            const string sql = @"UPDATE concession_display SET
+                    tip_cents = @tipCents, updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, tipCents });
         }
 
         // ── Tax categories ───────────────────────────────────────────────────────────
@@ -875,6 +995,85 @@ namespace Services.Repositories
         {
             await _db.Execute("DELETE FROM concession_station WHERE id = @id AND tenant_id = @tenantId",
                 new { id, tenantId });
+        }
+
+        // ── Kitchen ticket printers ────────────────────────────────────────────────
+        public async Task<List<ConcessionPrinter>> ListPrinters(Guid tenantId, bool activeOnly)
+        {
+            var filter = activeOnly ? "AND is_active = true" : "";
+            var sql = $@"SELECT {PrinterCols} FROM concession_printer
+                        WHERE tenant_id = @tenantId {filter} ORDER BY sort_order, LOWER(name)";
+            var printers = (await _db.Query<ConcessionPrinter>(sql, new { tenantId })).ToList();
+            if (printers.Count == 0) return printers;
+
+            // Joined through concession_printer so the scope query is tenant-scoped too, rather than
+            // trusting the printer ids we just read.
+            const string linkSql = @"SELECT ps.printer_id AS PrinterId, ps.station_id AS StationId
+                                     FROM concession_printer_station ps
+                                        JOIN concession_printer p ON p.id = ps.printer_id
+                                     WHERE p.tenant_id = @tenantId";
+            var links = await _db.Query<PrinterStationLink>(linkSql, new { tenantId });
+
+            var byPrinter = links.GroupBy(l => l.PrinterId).ToDictionary(g => g.Key, g => g.Select(l => l.StationId).ToList());
+            foreach (var p in printers)
+                if (byPrinter.TryGetValue(p.Id, out var stationIds))
+                    p.StationIds = stationIds;
+
+            return printers;
+        }
+
+        public async Task<Guid> CreatePrinter(ConcessionPrinter p)
+        {
+            const string sql = @"INSERT INTO concession_printer (tenant_id, name, url, sort_order, is_active)
+                                 VALUES (@TenantId, @Name, @Url, @SortOrder, @IsActive) RETURNING id";
+            p.Id = (await _db.Query<Guid>(sql, p)).First();
+            await ReplacePrinterStations(p);
+            return p.Id;
+        }
+
+        public async Task UpdatePrinter(ConcessionPrinter p)
+        {
+            const string sql = @"UPDATE concession_printer
+                                    SET name = @Name, url = @Url, sort_order = @SortOrder, is_active = @IsActive
+                                  WHERE id = @Id AND tenant_id = @TenantId";
+            await _db.Execute(sql, p);
+            await ReplacePrinterStations(p);
+        }
+
+        public async Task DeletePrinter(Guid id, Guid tenantId)
+        {
+            // The join rows go with it via ON DELETE CASCADE.
+            await _db.Execute("DELETE FROM concession_printer WHERE id = @id AND tenant_id = @tenantId",
+                new { id, tenantId });
+        }
+
+        // Rewrites a printer's station scope. The insert filters the incoming ids against the
+        // tenant's own stations, so a request carrying another tenant's station id links nothing
+        // instead of silently creating a cross-tenant row. Both statements are also scoped by
+        // tenant_id so a mismatched printer id is a no-op rather than someone else's edit.
+        private async Task ReplacePrinterStations(ConcessionPrinter p)
+        {
+            const string clearSql = @"DELETE FROM concession_printer_station
+                                      WHERE printer_id IN (SELECT id FROM concession_printer
+                                                           WHERE id = @Id AND tenant_id = @TenantId)";
+            await _db.Execute(clearSql, new { p.Id, p.TenantId });
+
+            if (p.StationIds is null || p.StationIds.Count == 0) return;
+
+            const string linkSql = @"INSERT INTO concession_printer_station (printer_id, station_id)
+                                     SELECT pr.id, st.id
+                                     FROM concession_printer pr
+                                        JOIN concession_station st ON st.tenant_id = pr.tenant_id
+                                     WHERE pr.id = @Id AND pr.tenant_id = @TenantId
+                                       AND st.id = ANY(@StationIds)
+                                     ON CONFLICT DO NOTHING";
+            await _db.Execute(linkSql, new { p.Id, p.TenantId, StationIds = p.StationIds.ToArray() });
+        }
+
+        private sealed class PrinterStationLink
+        {
+            public Guid PrinterId { get; set; }
+            public Guid StationId { get; set; }
         }
 
         // ── Modifier groups + options ───────────────────────────────────────────────

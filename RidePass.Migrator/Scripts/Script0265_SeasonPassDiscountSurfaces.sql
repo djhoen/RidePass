@@ -24,11 +24,17 @@ ALTER TABLE tenant
 -- Guarded on this script's own journal row rather than on the column values, so a re-run cannot
 -- undo a track that has since turned retail or rentals ON on purpose. Same fencing pattern as
 -- Script0229.
+--
+-- The pattern deliberately omits the script NUMBER. This file was renumbered from 0261 to 0265 to
+-- clear a duplicate-number collision, and a number-bearing pattern would have stopped matching the
+-- journal row already written under the old name: the backfill would then re-run on every database
+-- that had already had it, silently switching retail and rentals back off for any track that had
+-- since turned them on. Matching on the description alone survives renumbering in either direction.
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM schemaversions
-        WHERE scriptname LIKE '%Script0261_SeasonPassDiscountSurfaces%'
+        WHERE scriptname LIKE '%SeasonPassDiscountSurfaces%'
     ) THEN
         UPDATE tenant
         SET season_pass_discount_applies_retail = false,

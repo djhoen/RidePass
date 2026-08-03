@@ -75,6 +75,14 @@
         public bool RentalTaxServiceChargeTaxable { get; set; } = true;
 
         /// <summary>
+        /// Is the buyer-paid platform service fee part of a bike shop sale's taxable base. The
+        /// retail sibling of RentalTaxServiceChargeTaxable, and true for the same reason: whether a
+        /// service fee is taxable is a jurisdiction question. Taxed at the tenant's DEFAULT shop tax
+        /// category rate, since a platform fee has no product category of its own.
+        /// </summary>
+        public bool ShopTaxServiceChargeTaxable { get; set; } = true;
+
+        /// <summary>
         /// Share of the service charge the CUSTOMER funds on a bike shop sale (bps). 0 = the track
         /// absorbs it out of their own margin and the customer sees no fee line, which is the
         /// default; 10000 = added to what they pay. Either way the charge is owed and booked. The

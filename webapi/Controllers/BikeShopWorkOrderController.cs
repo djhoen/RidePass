@@ -1007,6 +1007,22 @@ namespace webapi.Controllers
             var netSubtotal = Math.Max(0, subtotal - discountTotal);
             var (shopServiceCharge, buyerFee) = Services.Payments.ServiceChargeSplit.Compute(
                 netSubtotal, billingTenant.ServiceChargeBps, billingTenant.ShopBuyerPaidServiceChargeBps);
+
+            // Tax on the buyer's share of the fee, at the tenant's default category rate. Only
+            // queried when there is actually a fee to tax, so the default configuration (fee 0)
+            // pays nothing for this. See Services.Payments.ShopFeeTax.
+            var feeTaxCents = 0;
+            if (buyerFee > 0 && _tenantContext.Tenant.ShopTaxServiceChargeTaxable)
+            {
+                var defaultRate = (await _shop.ListTaxCategories(TenantId, activeOnly: true))
+                    .FirstOrDefault(c => c.IsDefault)?.RateBps;
+                feeTaxCents = Services.Payments.ShopFeeTax.Compute(
+                    // This path prices tax-EXCLUSIVE (the sale is written with
+                    // PricesIncludeTax false), so the fee's tax is added rather than extracted.
+                    buyerFee, taxable: true, defaultRate, pricesIncludeTax: false);
+                taxTotal += feeTaxCents;
+            }
+
             var total = netSubtotal + buyerFee + taxTotal;
             // A paid deposit prepays part of the job: the payment collects the remainder and the
             // ledger books only that (the deposit has its own entry). What's still available on

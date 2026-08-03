@@ -298,6 +298,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/ConcessionKitchen', icon: 'mdi-stove',                 title: 'Cook Screen',    perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
             { to: '/Admin/ConcessionMenu',    icon: 'mdi-silverware-fork-knife', title: 'Menu Board',     perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
             { to: '/Admin/ConcessionPickupBoard', icon: 'mdi-bell-ring-outline', title: 'Pickup Board',   perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
+            { to: '/Admin/ConcessionDisplay', icon: 'mdi-tablet',                title: 'Customer Display', perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
             { to: '/Admin/ConcessionOrders',  icon: 'mdi-receipt-text-clock',    title: 'Order History',  perm: Perm.ConcessionsCounter, feature: 'concessionsEnabled' },
         ],
     },

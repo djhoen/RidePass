@@ -113,6 +113,16 @@
             </template>
         </v-alert>
 
+        <!-- Whether the fee is taxable is a jurisdiction question, so it is a choice rather than an
+             assumption. Only meaningful once the customer actually pays some of the fee. -->
+        <v-switch v-if="shopFeePct > 0" v-model="shopFeeTaxable" color="primary" density="compact"
+            hide-details class="mb-1" :disabled="savingShopFee"
+            label="Charge sales tax on the customer's share of the fee"></v-switch>
+        <div v-if="shopFeePct > 0" class="text-caption text-medium-emphasis mb-2">
+            Taxed at your default tax category rate. With no default category the fee is untaxed,
+            the same as an uncategorised product.
+        </div>
+
         <div class="text-caption text-medium-emphasis mb-3">{{ shopFeePreview }}</div>
 
         <div class="d-flex align-center ga-3 flex-wrap">
@@ -262,10 +272,14 @@ async function saveFee() {
 // default: turning the charge on must never silently put a fee line in front of a walk-in.
 const shopFeePct = ref(0)
 const shopFeeOriginal = ref(0)
+const shopFeeTaxable = ref(true)
+const shopFeeTaxableOriginal = ref(true)
 const savingShopFee = ref(false)
 const shopFeeError = ref('')
 
-const shopFeeDirty = computed(() => shopFeePct.value !== shopFeeOriginal.value)
+const shopFeeDirty = computed(() =>
+    shopFeePct.value !== shopFeeOriginal.value
+    || shopFeeTaxable.value !== shopFeeTaxableOriginal.value)
 
 // Worked example on a round number, using the same floor-then-floor math as the server
 // (Services/Payments/ServiceChargeSplit.cs), so the preview can't disagree with the receipt.
@@ -279,15 +293,22 @@ const shopFeePreview = computed(() => {
           + `$${(customer / 100).toFixed(2)}, so they are charged $${((base + customer) / 100).toFixed(2)} before tax.`
 })
 
-function resetShopFee() { shopFeePct.value = shopFeeOriginal.value }
+function resetShopFee() {
+    shopFeePct.value = shopFeeOriginal.value
+    shopFeeTaxable.value = shopFeeTaxableOriginal.value
+}
 
 async function saveShopFee() {
     if (!shopFeeDirty.value) return
     savingShopFee.value = true
     shopFeeError.value = ''
     try {
-        await tenantService.updateShopServiceCharge({ buyerPaidBps: shopFeePct.value * 100 })
+        await tenantService.updateShopServiceCharge({
+            buyerPaidBps: shopFeePct.value * 100,
+            taxServiceCharge: shopFeeTaxable.value,
+        })
         shopFeeOriginal.value = shopFeePct.value
+        shopFeeTaxableOriginal.value = shopFeeTaxable.value
         await loadBranding()
         snackbar.value = true
     } catch (e: any) {
@@ -301,6 +322,8 @@ async function saveShopFee() {
 onMounted(() => {
     shopFeePct.value = Math.round((branding.shopBuyerPaidServiceChargeBps ?? 0) / 100)
     shopFeeOriginal.value = shopFeePct.value
+    shopFeeTaxable.value = branding.shopTaxServiceChargeTaxable ?? true
+    shopFeeTaxableOriginal.value = shopFeeTaxable.value
     laborRate.value = branding.shopLaborRateCents == null ? null : branding.shopLaborRateCents / 100
     laborOriginal.value = laborRate.value
     feePercent.value = (branding.shopSupplyFeeBps ?? 0) / 100

@@ -113,6 +113,48 @@
 
             <!-- Categories -->
             <v-window-item value="categories">
+                <!-- Menu boards: one per in-venue screen, stacked-TV style -->
+                <v-card class="mb-4">
+                    <v-card-text>
+                        <div class="text-h6 mb-2 d-flex align-center ga-2">
+                            <v-icon size="small" color="primary">mdi-television-guide</v-icon> Menu boards
+                        </div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Create one board per screen (e.g. a wall of TVs: Burgers &amp; Sandwiches on one, Baskets &amp; Salads on the next).
+                            Assign each category to a board below; categories set to "All boards" appear on every screen.
+                            With no boards, the single menu board shows everything. Drag the handle to set the order.
+                        </p>
+                        <v-table density="compact">
+                            <thead>
+                                <tr><th style="width: 36px"></th><th>Name</th><th style="width: 70px">Active</th><th style="width: 90px"></th></tr>
+                            </thead>
+                            <draggable tag="tbody" :list="boardRows" :item-key="boardKey" handle=".drag-handle"
+                                :animation="180" ghost-class="drag-ghost">
+                                <template #item="{ element: b, index: i }">
+                                    <tr>
+                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td><v-text-field v-model="b.name" density="compact" hide-details placeholder="Burgers &amp; Sandwiches"></v-text-field></td>
+                                        <td><v-switch v-model="b.isActive" color="primary" density="compact" hide-details></v-switch></td>
+                                        <td class="text-right text-no-wrap">
+                                            <v-btn v-if="b.id" icon variant="text" size="small"
+                                                :to="`/Admin/ConcessionMenu/${b.id}`" target="_blank">
+                                                <v-icon>mdi-open-in-new</v-icon>
+                                                <v-tooltip activator="parent" location="top">Open this board</v-tooltip>
+                                            </v-btn>
+                                            <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="removeBoardRow(i)"></v-btn>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </draggable>
+                        </v-table>
+                        <div v-if="boardRows.length === 0" class="text-center text-medium-emphasis py-3">No boards. The menu board shows every category on one screen.</div>
+                        <v-btn variant="tonal" size="small" prepend-icon="mdi-plus" class="mt-2" @click="addBoardRow">Add board</v-btn>
+                    </v-card-text>
+                    <v-card-actions class="px-4 pb-4">
+                        <v-btn color="primary" variant="flat" :loading="savingBoards" @click="saveBoards">Save</v-btn>
+                    </v-card-actions>
+                </v-card>
+
                 <v-card>
                     <v-card-text>
                         <div class="text-h6 mb-2">Menu categories</div>
@@ -122,7 +164,11 @@
                         </p>
                         <v-table density="compact">
                             <thead>
-                                <tr><th style="width: 36px"></th><th>Name</th><th style="width: 70px">Active</th><th style="width: 40px"></th></tr>
+                                <tr>
+                                    <th style="width: 36px"></th><th>Name</th>
+                                    <th v-if="menuBoards.length" style="width: 220px">Board</th>
+                                    <th style="width: 70px">Active</th><th style="width: 40px"></th>
+                                </tr>
                             </thead>
                             <draggable tag="tbody" :list="categoryRows" :item-key="catKey" handle=".drag-handle"
                                 :animation="180" ghost-class="drag-ghost">
@@ -130,6 +176,9 @@
                                     <tr>
                                         <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
                                         <td><v-text-field v-model="c.name" density="compact" hide-details placeholder="Sandwiches"></v-text-field></td>
+                                        <td v-if="menuBoards.length">
+                                            <v-select v-model="c.menuBoardId" :items="boardSelectItems" density="compact" hide-details></v-select>
+                                        </td>
                                         <td><v-switch v-model="c.isActive" color="primary" density="compact" hide-details></v-switch></td>
                                         <td><v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="removeCategoryRow(i)"></v-btn></td>
                                     </tr>
@@ -140,6 +189,65 @@
                     </v-card-text>
                     <v-card-actions class="px-4 pb-4">
                         <v-btn color="primary" variant="flat" :loading="savingCategories" @click="saveCategories">Save</v-btn>
+                    </v-card-actions>
+                </v-card>
+
+                <!-- Promo tiles: callouts rotated through the menu board carousel -->
+                <v-card class="mt-4">
+                    <v-card-text>
+                        <div class="text-h6 mb-2 d-flex align-center ga-2">
+                            <v-icon size="small" color="primary">mdi-bullhorn</v-icon> Promo tiles
+                        </div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Callouts that rotate through the menu board's photo carousel, like "Make it a combo $5.99".
+                            Text-only tiles show on your accent color; add an image for a photo background.
+                            Assign a tile to one board or leave it on "All boards". Drag the handle to set the order.
+                        </p>
+                        <v-table density="compact">
+                            <thead>
+                                <tr>
+                                    <th style="width: 36px"></th><th>Title</th><th>Subtitle</th>
+                                    <th v-if="menuBoards.length" style="width: 200px">Board</th>
+                                    <th style="width: 110px">Image</th>
+                                    <th style="width: 70px">Active</th><th style="width: 40px"></th>
+                                </tr>
+                            </thead>
+                            <draggable tag="tbody" :list="promoRows" :item-key="promoKey" handle=".drag-handle"
+                                :animation="180" ghost-class="drag-ghost">
+                                <template #item="{ element: p, index: i }">
+                                    <tr>
+                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td><v-text-field v-model="p.title" density="compact" hide-details placeholder="Make it a combo"></v-text-field></td>
+                                        <td><v-text-field v-model="p.subtitle" density="compact" hide-details placeholder="Add a side &amp; a drink for only $5.99 more"></v-text-field></td>
+                                        <td v-if="menuBoards.length">
+                                            <v-select v-model="p.menuBoardId" :items="boardSelectItems" density="compact" hide-details></v-select>
+                                        </td>
+                                        <td class="text-no-wrap">
+                                            <v-avatar v-if="p.imageUrl" size="32" rounded="lg" class="mr-1"><v-img :src="absoluteUrl(p.imageUrl)"></v-img></v-avatar>
+                                            <v-btn icon variant="text" size="small" :loading="uploadingPromoImage && promoUploadRow === p" @click="pickPromoImage(p)">
+                                                <v-icon>mdi-image-plus</v-icon>
+                                                <v-tooltip activator="parent" location="top">{{ p.imageUrl ? 'Replace image' : 'Add image' }}</v-tooltip>
+                                            </v-btn>
+                                            <v-btn v-if="p.imageUrl" icon variant="text" size="small" @click="p.imageUrl = null">
+                                                <v-icon>mdi-image-remove</v-icon>
+                                                <v-tooltip activator="parent" location="top">Remove image</v-tooltip>
+                                            </v-btn>
+                                        </td>
+                                        <td><v-switch v-model="p.isActive" color="primary" density="compact" hide-details></v-switch></td>
+                                        <td><v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="removePromoRow(i)"></v-btn></td>
+                                    </tr>
+                                </template>
+                            </draggable>
+                        </v-table>
+                        <div v-if="promoRows.length === 0" class="text-center text-medium-emphasis py-3">No promo tiles. The carousel shows product photos only.</div>
+                        <div class="d-flex ga-2 mt-2">
+                            <v-btn variant="tonal" size="small" prepend-icon="mdi-plus" @click="addPromoRow">Add promo</v-btn>
+                            <v-btn variant="tonal" size="small" prepend-icon="mdi-food" @click="addComboPromoRow">Add combo promo</v-btn>
+                        </div>
+                        <input ref="promoFileInput" type="file" accept="image/*" class="d-none" @change="onPromoFileChosen" />
+                    </v-card-text>
+                    <v-card-actions class="px-4 pb-4">
+                        <v-btn color="primary" variant="flat" :loading="savingPromos" @click="savePromos">Save</v-btn>
                     </v-card-actions>
                 </v-card>
             </v-window-item>
@@ -169,6 +277,52 @@
                     </v-card-text>
                     <v-card-actions class="px-4 pb-4">
                         <v-btn color="primary" variant="flat" :loading="savingStations" @click="saveStations">Save</v-btn>
+                    </v-card-actions>
+                </v-card>
+
+                <!-- Kitchen ticket printers -->
+                <v-card class="mt-4">
+                    <v-card-text>
+                        <div class="text-h6 mb-1 d-flex align-center ga-2">
+                            <v-icon size="small" color="primary">mdi-printer-pos</v-icon> Kitchen ticket printers
+                        </div>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            When a sale is paid, each printer below prints a ticket for the stations you pick.
+                            <strong>Leave stations empty and it prints the whole order</strong> - that's the setup for a
+                            single printer at the pass while the cook screens stay split by station.
+                            Addresses must start with <code>https://</code>.
+                        </p>
+                        <v-table density="compact">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th style="width: 230px">Address</th>
+                                    <th>Stations (empty = whole order)</th>
+                                    <th style="width: 70px">Active</th>
+                                    <th style="width: 60px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(p, i) in printerRows" :key="p.id ?? `new-${p.uid}`">
+                                    <td><v-text-field v-model="p.name" density="compact" hide-details placeholder="Pass"></v-text-field></td>
+                                    <td><v-text-field v-model="p.url" density="compact" hide-details placeholder="https://192.168.1.50"></v-text-field></td>
+                                    <td>
+                                        <v-select v-model="p.stationIds" :items="printerStationItems" item-title="title"
+                                            item-value="value" multiple chips closable-chips density="compact" hide-details
+                                            placeholder="Whole order"></v-select>
+                                    </td>
+                                    <td><v-switch v-model="p.isActive" color="primary" density="compact" hide-details></v-switch></td>
+                                    <td class="text-right"><v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="removePrinterRow(p, i)"></v-btn></td>
+                                </tr>
+                            </tbody>
+                        </v-table>
+                        <div v-if="printerRows.length === 0" class="text-center text-medium-emphasis py-3">
+                            No printers. Orders still appear on the cook screen; nothing prints.
+                        </div>
+                        <v-btn variant="tonal" size="small" prepend-icon="mdi-plus" class="mt-2" @click="addPrinterRow">Add printer</v-btn>
+                    </v-card-text>
+                    <v-card-actions class="px-4 pb-4">
+                        <v-btn color="primary" variant="flat" :loading="savingPrinters" @click="savePrinters">Save</v-btn>
                     </v-card-actions>
                 </v-card>
 
@@ -829,8 +983,8 @@
                 <v-divider></v-divider>
                 <v-card-text class="pa-0">
                     <MenuBoardDisplay :products="rows.filter(p => p.isActive)" :settings="previewSettings"
-                        :title="branding.displayName || 'RidePass'" :fallback-logo="branding.logoUrl"
-                        :fallback-accent="branding.primaryColor" />
+                        :promos="previewPromos" :title="`${branding.displayName || 'RidePass'} Menu`"
+                        :fallback-logo="branding.logoUrl" :fallback-accent="branding.primaryColor" />
                 </v-card-text>
             </v-card>
         </v-dialog>
@@ -844,8 +998,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
 import {
     ConcessionService,
-    type ConcessionProduct, type ConcessionVariant, type ConcessionStation, type ConcessionModifierGroup,
-    type ConcessionCategory, type ConcessionMenuSettings, type ConcessionInventoryItem,
+    type ConcessionProduct, type ConcessionVariant, type ConcessionStation, type ConcessionPrinter, type ConcessionModifierGroup,
+    type ConcessionCategory, type ConcessionMenuBoard, type ConcessionMenuPromo, type ConcessionMenuSettings, type ConcessionInventoryItem,
     type ConcessionTaxCategory, type ConcessionCompReason,
     type ConcessionOrderingCapacity,
 } from '@/services/ConcessionService'
@@ -1055,8 +1209,8 @@ onMounted(async () => {
 // Tabbed sections. Each management tab lazy-loads its editor data when first shown.
 const tab = ref('items')
 watch(tab, (t) => {
-    if (t === 'categories') openCategories()
-    else if (t === 'stations') { openStations(); loadMenuStyle() }   // menuStyle backs the cook-screen targets here
+    if (t === 'categories') { openCategories(); loadBoards(); loadPromos() }
+    else if (t === 'stations') { openStations(); loadPrinters(); loadMenuStyle() }   // menuStyle backs the cook-screen targets here
     else if (t === 'modifiers') openGroups()
     else if (t === 'combos') openComboConfig()
     else if (t === 'settings') openMenuStyle()
@@ -1329,6 +1483,72 @@ async function saveStations() {
     finally { savingStations.value = false }
 }
 
+// ── Kitchen ticket printers manager ─────────────────────────────────────────
+interface PrinterRow { id: string | null; name: string; url: string; stationIds: string[]; isActive: boolean; uid: number }
+const savingPrinters = ref(false)
+const printerRows = ref<PrinterRow[]>([])
+const printers = ref<ConcessionPrinter[]>([])
+let prnUidSeq = 0
+
+// Only active stations are offerable: scoping a printer to a disabled station would print nothing.
+const printerStationItems = computed(() =>
+    stations.value.filter(s => s.isActive).map(s => ({ title: s.name, value: s.id })))
+
+async function loadPrinters() {
+    try {
+        printers.value = (await service.listPrinters()).data.data
+        printerRows.value = printers.value.map(p => ({
+            id: p.id, name: p.name, url: p.url, stationIds: [...p.stationIds], isActive: p.isActive, uid: ++prnUidSeq,
+        }))
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load kitchen ticket printers. Refresh to try again.', 'error')
+    }
+}
+
+function addPrinterRow() {
+    printerRows.value.push({ id: null, name: '', url: '', stationIds: [], isActive: true, uid: ++prnUidSeq })
+}
+
+async function removePrinterRow(p: PrinterRow, i: number) {
+    if (!p.id) { printerRows.value.splice(i, 1); return }
+    if (!await confirm({ title: 'Delete printer?', message: `Delete "${p.name}"? Its tickets stop printing; orders still show on the cook screen.`, confirmText: 'Delete', confirmColor: 'error' })) return
+    try {
+        await service.removePrinter(p.id)
+        printerRows.value.splice(i, 1)
+        await loadPrinters()
+        flash('Printer deleted.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Could not delete the printer. Please try again.', 'error') }
+}
+
+async function savePrinters() {
+    // Catch the two mistakes the server would reject one row at a time, so the cashier never ends up
+    // with a half-saved list.
+    const filled = printerRows.value.filter(p => p.name.trim() || p.url.trim())
+    const missing = filled.find(p => !p.name.trim() || !p.url.trim())
+    if (missing) { flash('Every printer needs both a name and an address.', 'error'); return }
+    const badUrl = filled.find(p => !/^https:\/\//i.test(p.url.trim()))
+    if (badUrl) { flash(`"${badUrl.name.trim()}" must start with https:// - the browser blocks plain http printers from the POS.`, 'error'); return }
+
+    savingPrinters.value = true
+    try {
+        for (let i = 0; i < filled.length; i++) {
+            const p = filled[i]
+            const payload = {
+                name: p.name.trim(),
+                url: p.url.trim().replace(/\/+$/, ''),
+                sortOrder: i * 10,
+                isActive: p.isActive,
+                stationIds: p.stationIds,
+            }
+            if (p.id) await service.updatePrinter(p.id, payload)
+            else await service.createPrinter(payload)
+        }
+        await loadPrinters()
+        flash('Kitchen ticket printers saved.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Could not save the printers. Please try again.', 'error') }
+    finally { savingPrinters.value = false }
+}
+
 // ── Modifier groups manager ───────────────────────────────────────────────────
 interface OptionRow { id: string | null; name: string; priceDollars: number; isActive: boolean; sortOrder: number }
 interface GroupRow { id: string | null; name: string; minSelect: number; maxSelect: number | null; isRequired: boolean; isActive: boolean; sortOrder: number; options: OptionRow[] }
@@ -1387,8 +1607,151 @@ async function removeOptionRow(g: GroupRow, o: OptionRow, oi: number) {
     g.options.splice(oi, 1)
 }
 
+// ── Menu boards manager ───────────────────────────────────────────────────────
+interface BoardRow { id: string | null; name: string; sortOrder: number; isActive: boolean; uid: number }
+const savingBoards = ref(false)
+const boardRows = ref<BoardRow[]>([])
+const menuBoards = ref<ConcessionMenuBoard[]>([])
+let boardUidSeq = 0
+const boardKey = (b: BoardRow) => b.id ?? `new-${b.uid}`
+const boardSelectItems = computed(() => [
+    { title: 'All boards', value: null as string | null },
+    ...menuBoards.value.map(b => ({ title: b.name, value: b.id as string | null })),
+])
+
+async function loadBoards() {
+    try {
+        menuBoards.value = ((await service.menuBoardsAdmin()) as any).data.data
+        boardRows.value = menuBoards.value.map(b => ({ id: b.id, name: b.name, sortOrder: b.sortOrder, isActive: b.isActive, uid: ++boardUidSeq }))
+    } catch (err: any) { flash(err.response?.data?.error || 'Failed to load menu boards.', 'error') }
+}
+
+function addBoardRow() {
+    boardRows.value.push({ id: null, name: '', sortOrder: boardRows.value.length * 10, isActive: true, uid: ++boardUidSeq })
+}
+
+async function removeBoardRow(i: number) {
+    const b = boardRows.value[i]
+    if (!b.id) { boardRows.value.splice(i, 1); return }
+    if (!await confirm({ title: 'Delete menu board?', message: `Delete "${b.name}"? Its categories will show on all boards again.`, confirmText: 'Delete', confirmColor: 'error' })) return
+    try {
+        await service.removeMenuBoard(b.id)
+        await Promise.all([loadBoards(), load()])
+        openCategories()   // deleted board's categories fell back to "All boards"; re-seed the rows
+        flash('Menu board deleted.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Delete failed.', 'error') }
+}
+
+async function saveBoards() {
+    savingBoards.value = true
+    try {
+        // sortOrder is driven by drag position, so persist it from each row's index.
+        for (let i = 0; i < boardRows.value.length; i++) {
+            const b = boardRows.value[i]
+            const name = b.name.trim()
+            if (!name) continue
+            const payload = { name, sortOrder: i * 10, isActive: b.isActive }
+            if (b.id) await service.updateMenuBoard(b.id, payload)
+            else await service.createMenuBoard(payload)
+        }
+        await loadBoards()
+        flash('Menu boards saved.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Save failed.', 'error') }
+    finally { savingBoards.value = false }
+}
+
+// ── Promo tiles manager ───────────────────────────────────────────────────────
+interface PromoRow { id: string | null; title: string; subtitle: string; imageUrl: string | null; menuBoardId: string | null; isActive: boolean; uid: number }
+const savingPromos = ref(false)
+const promoRows = ref<PromoRow[]>([])
+let promoUidSeq = 0
+const promoKey = (p: PromoRow) => p.id ?? `new-${p.uid}`
+const promoFileInput = ref<HTMLInputElement | null>(null)
+// Track the row object (not its index) so a drag-reorder mid-upload can't misfile the image.
+const promoUploadRow = ref<PromoRow | null>(null)
+const uploadingPromoImage = ref(false)
+
+async function loadPromos() {
+    try {
+        const list = ((await service.menuPromosAdmin()) as any).data.data as ConcessionMenuPromo[]
+        promoRows.value = list.map(p => ({ id: p.id, title: p.title, subtitle: p.subtitle ?? '', imageUrl: p.imageUrl, menuBoardId: p.menuBoardId, isActive: p.isActive, uid: ++promoUidSeq }))
+    } catch (err: any) { flash(err.response?.data?.error || 'Failed to load promo tiles.', 'error') }
+}
+
+function addPromoRow() {
+    promoRows.value.push({ id: null, title: '', subtitle: '', imageUrl: null, menuBoardId: null, isActive: true, uid: ++promoUidSeq })
+}
+
+// Pre-fill a "Make it a combo" tile from the tenant's shared combo definition.
+async function addComboPromoRow() {
+    try {
+        const cfg = ((await service.getComboConfig()) as any).data.data
+        const tiers: { priceCents: number }[] = cfg?.tiers ?? []
+        if (!tiers.length) { flash('Set up "Make it a combo" on the Combos tab first.', 'error'); return }
+        const minUpcharge = Math.min(...tiers.map(t => t.priceCents))
+        const slotNames: string[] = (cfg?.slots ?? []).map((s: { name: string }) => s.name.toLowerCase())
+        const what = slotNames.length ? slotNames.join(' & ') : 'a side & a drink'
+        promoRows.value.push({
+            id: null, title: 'Make it a combo',
+            subtitle: `Add ${what} for only $${(minUpcharge / 100).toFixed(2)} more`,
+            imageUrl: null, menuBoardId: null, isActive: true, uid: ++promoUidSeq,
+        })
+    } catch (err: any) { flash(err.response?.data?.error || 'Could not read the combo setup.', 'error') }
+}
+
+function pickPromoImage(row: PromoRow) {
+    promoUploadRow.value = row
+    promoFileInput.value?.click()
+}
+
+async function onPromoFileChosen(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0] ?? null
+    input.value = ''   // allow re-picking the same file later
+    const row = promoUploadRow.value
+    if (!file || !row) { promoUploadRow.value = null; return }
+    uploadingPromoImage.value = true
+    try {
+        const { data } = await service.uploadImage(file)
+        row.imageUrl = (data as any).data.imageUrl
+    } catch (err: any) { flash(err.response?.data?.error || 'Image upload failed.', 'error') }
+    finally { uploadingPromoImage.value = false; promoUploadRow.value = null }
+}
+
+async function removePromoRow(i: number) {
+    const p = promoRows.value[i]
+    if (!p.id) { promoRows.value.splice(i, 1); return }
+    if (!await confirm({ title: 'Delete promo tile?', message: `Delete "${p.title}"?`, confirmText: 'Delete', confirmColor: 'error' })) return
+    try {
+        await service.removeMenuPromo(p.id)
+        promoRows.value.splice(i, 1)
+        flash('Promo tile deleted.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Delete failed.', 'error') }
+}
+
+async function savePromos() {
+    savingPromos.value = true
+    try {
+        // sortOrder is driven by drag position, so persist it from each row's index.
+        for (let i = 0; i < promoRows.value.length; i++) {
+            const p = promoRows.value[i]
+            const title = p.title.trim()
+            if (!title) continue
+            const payload = {
+                title, subtitle: p.subtitle.trim() || null, imageUrl: p.imageUrl,
+                menuBoardId: p.menuBoardId, sortOrder: i * 10, isActive: p.isActive,
+            }
+            if (p.id) await service.updateMenuPromo(p.id, payload)
+            else await service.createMenuPromo(payload)
+        }
+        await loadPromos()
+        flash('Promo tiles saved.', 'success')
+    } catch (err: any) { flash(err.response?.data?.error || 'Save failed.', 'error') }
+    finally { savingPromos.value = false }
+}
+
 // ── Categories manager ────────────────────────────────────────────────────────
-interface CategoryRow { id: string | null; name: string; sortOrder: number; isActive: boolean; uid: number }
+interface CategoryRow { id: string | null; name: string; sortOrder: number; isActive: boolean; menuBoardId: string | null; uid: number }
 const savingCategories = ref(false)
 const categoryRows = ref<CategoryRow[]>([])
 let catUidSeq = 0
@@ -1396,11 +1759,11 @@ let catUidSeq = 0
 const catKey = (c: CategoryRow) => c.id ?? `new-${c.uid}`
 
 function openCategories() {
-    categoryRows.value = categories.value.map(c => ({ id: c.id, name: c.name, sortOrder: c.sortOrder, isActive: c.isActive, uid: ++catUidSeq }))
+    categoryRows.value = categories.value.map(c => ({ id: c.id, name: c.name, sortOrder: c.sortOrder, isActive: c.isActive, menuBoardId: c.menuBoardId, uid: ++catUidSeq }))
 }
 
 function addCategoryRow() {
-    categoryRows.value.push({ id: null, name: '', sortOrder: categoryRows.value.length * 10, isActive: true, uid: ++catUidSeq })
+    categoryRows.value.push({ id: null, name: '', sortOrder: categoryRows.value.length * 10, isActive: true, menuBoardId: null, uid: ++catUidSeq })
 }
 
 async function removeCategoryRow(i: number) {
@@ -1423,7 +1786,7 @@ async function saveCategories() {
             const c = categoryRows.value[i]
             const name = c.name.trim()
             if (!name) continue
-            const payload = { name, sortOrder: i * 10, isActive: c.isActive }
+            const payload = { name, sortOrder: i * 10, isActive: c.isActive, menuBoardId: c.menuBoardId }
             if (c.id) await service.updateCategory(c.id, payload)
             else await service.createCategory(payload)
         }
@@ -1649,8 +2012,12 @@ async function openMenuStyle() {
 
 // Opened from inside the settings modal, so menuStyle is already loaded; preview the live (possibly
 // unsaved) edits rather than reloading from the server.
-function openPreview() {
+const previewPromos = ref<ConcessionMenuPromo[]>([])
+async function openPreview() {
     previewDialog.value = true
+    try {
+        previewPromos.value = ((await service.menuPromos()) as any).data.data
+    } catch (err: any) { flash(err.response?.data?.error || 'Could not load promo tiles for the preview.', 'error') }
 }
 
 async function onLogoSelected(v: File | File[] | null) {
