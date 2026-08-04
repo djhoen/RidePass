@@ -260,6 +260,7 @@ export interface ConcessionMenuSettings {
     showCarousel: boolean
     carouselSeconds: number
     tipsEnabled: boolean
+    customerDisplayEnabled: boolean   // POS flags a register whose customer display isn't paired/syncing
     prepWarnMinutes: number
     prepLateMinutes: number
     orderingHours: OrderingHoursDay[] | null   // null = always open; else 7 entries Sun..Sat

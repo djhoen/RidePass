@@ -24,7 +24,13 @@
                     Online ordering is closed today
                 </span>
                 <v-btn variant="text" prepend-icon="mdi-printer-settings" @click="printerDialog = true">Printer</v-btn>
-                <v-btn variant="text" prepend-icon="mdi-tablet" @click="displayDialog = true">Display</v-btn>
+                <v-btn variant="text" prepend-icon="mdi-tablet"
+                    :color="displayAttention ? 'error' : undefined" @click="displayDialog = true">
+                    Display
+                    <v-tooltip v-if="displayAttention" activator="parent" location="bottom">
+                        {{ displayPushFailing ? 'Customer display stopped syncing' : 'No customer display paired' }}
+                    </v-tooltip>
+                </v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-receipt-text-clock" :to="{ name: 'AdminConcessionOrders' }">Orders</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-stove" :to="{ name: 'AdminConcessionKitchen' }">Cook screen</v-btn>
             </div>
@@ -772,6 +778,7 @@ async function load() {
     try {
         const ms = (await svc.menuSettings() as any).data.data
         tipsEnabled.value = ms.tipsEnabled
+        customerDisplayEnabled.value = ms.customerDisplayEnabled
         pricesIncludeTax.value = ms.pricesIncludeTax
     } catch { /* tips/tax optional */ }
     try {
@@ -1477,7 +1484,12 @@ function savePrinter() {
 
 // ── Customer-facing display (paired second tablet: mirrors the order, captures the tip) ──
 const displayDialog = ref(false)
+const customerDisplayEnabled = ref(false)   // tenant setting: this venue uses customer-facing displays
 const pairedDisplayId = ref(localStorage.getItem('concessionPosDisplayId') || '')
+// Red-flag the toolbar button when this venue expects a customer display but this register has none
+// paired, or the paired one has stopped syncing.
+const displayAttention = computed(() =>
+    (customerDisplayEnabled.value && !pairedDisplayId.value) || displayPushFailing.value)
 const displayPairCodeInput = ref('')
 const pairingDisplay = ref(false)
 const displayPushFailing = ref(false)

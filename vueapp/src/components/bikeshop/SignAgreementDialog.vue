@@ -3,9 +3,20 @@
         <!-- Trigger doubles as the status: green once signed against the current terms. -->
         <v-btn size="small" :variant="signed ? 'tonal' : 'flat'" :color="signed ? 'success' : 'primary'"
             :prepend-icon="signed ? 'mdi-check-circle' : 'mdi-draw-pen'" :loading="loading"
-            @click="openDialog">
+            :disabled="customerWait" @click="openDialog">
             {{ signed ? 'Signed' : signLabel }}
         </v-btn>
+        <!-- Hand the reading + signing to the paired customer-facing display instead. -->
+        <v-btn v-if="!signed && shopDisplayPaired && !customerWait" size="small" variant="tonal"
+            color="primary" prepend-icon="mdi-tablet" class="ml-2" @click="signOnCustomerScreen">
+            Customer screen
+        </v-btn>
+        <template v-if="customerWait">
+            <v-progress-circular indeterminate size="16" width="2" class="ml-2" />
+            <span class="text-caption ml-1">Waiting for the customer to sign…</span>
+            <v-btn size="small" variant="text" @click="cancelCustomerSign">Cancel</v-btn>
+        </template>
+        <span v-if="cfdError" class="text-caption text-error ml-2">{{ cfdError }}</span>
         <span v-if="signed && latest" class="text-caption text-medium-emphasis ml-2">
             {{ latest.signerName }} · {{ formatWhen(latest.signedAt) }}
         </span>
@@ -66,10 +77,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import SignaturePad from '@/components/SignaturePad.vue'
 import { BikeShopService, type ShopAgreement, type ShopAgreementSignature } from '@/services/BikeShopService'
+import {
+    shopDisplayPaired, requestSignatureOnDisplay, pushShopDisplayState, idleShopDisplayState,
+    type SignatureRequestHandle,
+} from '@/helpers/ShopDisplay'
 
 // Signed IN PERSON on the shop's device, with the customer present. Exactly one owner.
 const props = defineProps<{
@@ -153,6 +168,56 @@ async function submit() {
         saving.value = false
     }
 }
+
+// ── Sign on the paired customer-facing display ────────────────────────────
+const customerWait = ref(false)
+const cfdError = ref('')
+let cfdHandle: SignatureRequestHandle | null = null
+
+async function signOnCustomerScreen() {
+    cfdError.value = ''
+    if (!agreement.value) await load()
+    if (!agreement.value) {
+        cfdError.value = 'No agreement has been published yet. Add one in Bike Shop settings.'
+        return
+    }
+    customerWait.value = true
+    try {
+        cfdHandle = requestSignatureOnDisplay({
+            docKind: props.kind,
+            title: agreement.value.title,
+            body: agreement.value.body,
+            signerName: props.defaultSignerName ?? null,
+            signerEmail: props.defaultSignerEmail ?? null,
+        })
+        const resp = await cfdHandle.promise
+        if (!resp) return   // cancelled by the cashier
+        const name = (resp.signerName ?? '').trim()
+        if (!name || !resp.signatureDataUrl) {
+            cfdError.value = 'The signature came back incomplete. Try again or sign on this screen.'
+            return
+        }
+        await service.signAgreement(props.kind, {
+            workOrderId: props.workOrderId ?? null,
+            rentalId: props.rentalId ?? null,
+            signerName: name,
+            signerEmail: (resp.signerEmail ?? '').trim() || null,
+            signatureDataUrl: resp.signatureDataUrl,
+        })
+        await load()
+        emit('signed')
+    } catch (e: any) {
+        cfdError.value = e.response?.data?.error || 'Could not complete the customer-screen signature. Try again.'
+    } finally {
+        customerWait.value = false
+        cfdHandle = null
+        // Whatever happened, don't leave the document stuck on the customer's screen.
+        pushShopDisplayState(idleShopDisplayState()).catch(() => { /* best-effort */ })
+    }
+}
+
+function cancelCustomerSign() { cfdHandle?.cancel() }
+onUnmounted(() => cfdHandle?.cancel())
 
 function formatWhen(iso: string): string { return formatTenantDateTime(iso, 'MMM D, YYYY h:mm A') }
 

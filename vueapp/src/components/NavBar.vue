@@ -333,6 +333,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/BikeShop/Rentals',  icon: 'mdi-bike-fast',       title: 'Rentals',     perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/WorkOrders', icon: 'mdi-wrench',        title: 'Work Orders', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Sales',    icon: 'mdi-receipt-text-clock', title: 'Shop Sales', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
+            { to: '/Admin/BikeShop/CustomerDisplay', icon: 'mdi-tablet',    title: 'Customer Display', perm: Perm.ShopCounter, feature: 'bikeShopEnabled' },
             { to: '/Admin/BikeShop/Settings', icon: 'mdi-cog',             title: 'Shop Settings', perm: Perm.CatalogManage, feature: 'bikeShopEnabled' },
         ],
     },

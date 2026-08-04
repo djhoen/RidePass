@@ -1096,5 +1096,76 @@ namespace webapi.Controllers
                 return baseCents - (int)Math.Round(baseCents * 10000.0 / (10000.0 + rateBps), MidpointRounding.AwayFromZero);
             return (int)Math.Round(baseCents * rateBps / 10000.0, MidpointRounding.AwayFromZero);
         }
+
+        // ── Customer-facing counter display ──────────────────────────────────────
+        // A paired second tablet mirrors the charges being rung up and lets the customer read and
+        // sign the rental agreement / waiver. Same relay pattern as the concession display: the
+        // display tablet creates a session and shows its pair code; the cashier types it in once.
+        // The staff device pushes state; the display polls and posts the signature back as an
+        // opaque response, which the STAFF device validates and submits through the existing
+        // gated signature endpoints. Both devices run staff logins behind ShopCounter.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpPost("Display")]
+        public async Task<IActionResult> CreateDisplay()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var pairCode = Random.Shared.Next(100000, 1000000).ToString();
+            var id = await _shop.CreateDisplay(TenantId, pairCode);
+            return new ApiResponses().OkResult(new ShopDisplaySessionResponse { Id = id, PairCode = pairCode });
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Display/{id:guid}")]
+        public async Task<IActionResult> GetDisplay(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _shop.GetDisplay(id, TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            return new ApiResponses().OkResult(ToDisplayResponse(d));
+        }
+
+        // Pairing lookup: the cashier types the code shown on the display tablet.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpGet("Display/ByCode/{code}")]
+        public async Task<IActionResult> GetDisplayByCode(string code)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _shop.GetDisplayByCode(code.Trim(), TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("No display is showing that code. Open the customer display screen on the tablet first.");
+            return new ApiResponses().OkResult(ToDisplayResponse(d));
+        }
+
+        // Staff device pushes the current view. Clears any pending customer response so a stale
+        // signature can never attach to a newer request.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpPut("Display/{id:guid}/State")]
+        public async Task<IActionResult> UpdateDisplayState(Guid id, [FromBody] ShopDisplayStateRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _shop.GetDisplay(id, TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            await _shop.UpdateDisplayState(id, TenantId, req.StateJson);
+            return new ApiResponses().OkResult();
+        }
+
+        // The customer's captured signature + details, posted by the display tablet.
+        [Authorize(Policy = TenantPermissions.Policy.ShopCounter)]
+        [HttpPost("Display/{id:guid}/Respond")]
+        public async Task<IActionResult> SetDisplayResponse(Guid id, [FromBody] ShopDisplayRespondRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var d = await _shop.GetDisplay(id, TenantId);
+            if (d is null) return new ApiResponses().NotFoundResult("Display not found.");
+            await _shop.SetDisplayResponse(id, TenantId, req.ResponseJson);
+            return new ApiResponses().OkResult();
+        }
+
+        private static ShopDisplaySessionResponse ToDisplayResponse(ShopDisplay d) => new()
+        {
+            Id = d.Id,
+            PairCode = d.PairCode,
+            StateJson = d.StateJson,
+            ResponseJson = d.ResponseJson,
+        };
     }
 }

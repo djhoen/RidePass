@@ -52,6 +52,7 @@ namespace Services.Repositories
             loampass_discount_kind AS LoampassDiscountKind,
             loampass_discount_value AS LoampassDiscountValue,
             require_manager_for_manual_discount AS RequireManagerForManualDiscount,
+            customer_display_enabled AS CustomerDisplayEnabled,
             seeded_at AS SeededAt, updated_at AS UpdatedAt";
 
         private const string VariantCols = @"
@@ -442,11 +443,11 @@ namespace Services.Repositories
                     (tenant_id, logo_url, background_color, text_color, accent_color, show_carousel, carousel_seconds, tips_enabled, prep_warn_minutes, prep_late_minutes, ordering_hours, ordering_seasons, require_event_day, prices_include_tax,
                      season_pass_discount_enabled, season_pass_discount_kind, season_pass_discount_value,
                      loampass_discount_enabled, loampass_discount_kind, loampass_discount_value,
-                     require_manager_for_manual_discount, updated_at)
+                     require_manager_for_manual_discount, customer_display_enabled, updated_at)
                 VALUES (@TenantId, @LogoUrl, @BackgroundColor, @TextColor, @AccentColor, @ShowCarousel, @CarouselSeconds, @TipsEnabled, @PrepWarnMinutes, @PrepLateMinutes, @OrderingHoursJson::jsonb, @OrderingSeasonsJson::jsonb, @RequireEventDay, @PricesIncludeTax,
                      @SeasonPassDiscountEnabled, @SeasonPassDiscountKind, @SeasonPassDiscountValue,
                      @LoampassDiscountEnabled, @LoampassDiscountKind, @LoampassDiscountValue,
-                     @RequireManagerForManualDiscount, now())
+                     @RequireManagerForManualDiscount, @CustomerDisplayEnabled, now())
                 ON CONFLICT (tenant_id) DO UPDATE SET
                     logo_url = @LogoUrl, background_color = @BackgroundColor, text_color = @TextColor,
                     accent_color = @AccentColor, show_carousel = @ShowCarousel, carousel_seconds = @CarouselSeconds,
@@ -457,7 +458,8 @@ namespace Services.Repositories
                     season_pass_discount_value = @SeasonPassDiscountValue,
                     loampass_discount_enabled = @LoampassDiscountEnabled, loampass_discount_kind = @LoampassDiscountKind,
                     loampass_discount_value = @LoampassDiscountValue,
-                    require_manager_for_manual_discount = @RequireManagerForManualDiscount, updated_at = now()";
+                    require_manager_for_manual_discount = @RequireManagerForManualDiscount,
+                    customer_display_enabled = @CustomerDisplayEnabled, updated_at = now()";
             await _db.Execute(sql, s);
         }
 

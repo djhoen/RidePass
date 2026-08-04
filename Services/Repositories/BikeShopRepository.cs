@@ -2039,6 +2039,53 @@ namespace Services.Repositories
             return (await _db.ExecuteScalar(sql, new { rentalId, tenantId, kind })) > 0;
         }
 
+        // ── Customer-facing counter display sessions ──────────────────────────────────────
+
+        private const string ShopDisplayCols = @"
+            id, tenant_id AS TenantId, pair_code AS PairCode, state_json AS StateJson,
+            response_json AS ResponseJson, updated_at AS UpdatedAt, created_at AS CreatedAt";
+
+        public async Task<Guid> CreateDisplay(Guid tenantId, string pairCode)
+        {
+            const string sql = @"
+                INSERT INTO shop_display (tenant_id, pair_code)
+                VALUES (@tenantId, @pairCode) RETURNING id";
+            return (await _db.Query<Guid>(sql, new { tenantId, pairCode })).First();
+        }
+
+        public async Task<ShopDisplay?> GetDisplay(Guid id, Guid tenantId)
+        {
+            var sql = $"SELECT {ShopDisplayCols} FROM shop_display WHERE id = @id AND tenant_id = @tenantId";
+            return (await _db.Query<ShopDisplay>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<ShopDisplay?> GetDisplayByCode(string pairCode, Guid tenantId)
+        {
+            // Newest first: if an old tablet left a stale session with a recycled code, pairing
+            // should find the one currently showing that code on screen.
+            var sql = $@"SELECT {ShopDisplayCols} FROM shop_display
+                        WHERE tenant_id = @tenantId AND pair_code = @pairCode
+                        ORDER BY created_at DESC LIMIT 1";
+            return (await _db.Query<ShopDisplay>(sql, new { pairCode, tenantId })).FirstOrDefault();
+        }
+
+        // Every push clears the pending response so a stale signature never attaches to a newer request.
+        public async Task UpdateDisplayState(Guid id, Guid tenantId, string? stateJson)
+        {
+            const string sql = @"UPDATE shop_display SET
+                    state_json = @stateJson, response_json = NULL, updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, stateJson });
+        }
+
+        public async Task SetDisplayResponse(Guid id, Guid tenantId, string responseJson)
+        {
+            const string sql = @"UPDATE shop_display SET
+                    response_json = @responseJson, updated_at = now()
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, responseJson });
+        }
+
         // ── Condition photos (work orders + rentals) ──────────────────────────────────────
 
         private const string ConditionPhotoCols = @"

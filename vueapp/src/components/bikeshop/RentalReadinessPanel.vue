@@ -33,12 +33,24 @@
                     rider{{ readiness.ridersRequired === 1 ? '' : 's' }} signed
                 </span>
                 <v-spacer></v-spacer>
-                <v-btn v-if="readiness.waiverRequired && !readiness.waiverSigned"
+                <v-btn v-if="readiness.waiverRequired && !readiness.waiverSigned && !customerWaiverWait"
                     size="small" color="primary" prepend-icon="mdi-draw-pen"
                     @click="waiverOpen = true">
                     {{ readiness.ridersSigned > 0 ? 'Sign next rider' : 'Sign waiver' }}
                 </v-btn>
+                <!-- Hand the waiver to the paired customer-facing display instead. -->
+                <v-btn v-if="readiness.waiverRequired && !readiness.waiverSigned && shopDisplayPaired && !customerWaiverWait"
+                    size="small" variant="tonal" color="primary" prepend-icon="mdi-tablet" class="ml-2"
+                    @click="waiverOnCustomerScreen">
+                    Customer screen
+                </v-btn>
+                <template v-if="customerWaiverWait">
+                    <v-progress-circular indeterminate size="16" width="2" class="ml-2" />
+                    <span class="text-caption ml-1">Waiting for the customer to sign…</span>
+                    <v-btn size="small" variant="text" @click="cancelCustomerWaiver">Cancel</v-btn>
+                </template>
             </div>
+            <div v-if="cfdError" class="text-caption text-error ml-6 mt-1">{{ cfdError }}</div>
 
             <!-- Who's already signed, so staff know who they still need. -->
             <div v-if="readiness.signers.length > 0" class="ml-6 mt-1">
@@ -136,12 +148,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import SignaturePad from '@/components/SignaturePad.vue'
 import SignAgreementDialog from '@/components/bikeshop/SignAgreementDialog.vue'
 import { BikeShopService, type RentalCheckoutReadiness } from '@/services/BikeShopService'
 import { WaiverService } from '@/services/WaiverService'
+import {
+    shopDisplayPaired, requestSignatureOnDisplay, pushShopDisplayState, idleShopDisplayState,
+    type SignatureRequestHandle,
+} from '@/helpers/ShopDisplay'
 
 const props = defineProps<{
     rentalId: string
@@ -244,6 +260,60 @@ async function submitWaiver() {
         saving.value = false
     }
 }
+
+// ── Waiver on the paired customer-facing display ─────────────────────────
+const customerWaiverWait = ref(false)
+const cfdError = ref('')
+let cfdHandle: SignatureRequestHandle | null = null
+
+async function waiverOnCustomerScreen() {
+    cfdError.value = ''
+    if (!waiver.value) await loadWaiver()
+    if (!waiver.value) {
+        cfdError.value = 'No waiver is published for this track yet.'
+        return
+    }
+    customerWaiverWait.value = true
+    try {
+        cfdHandle = requestSignatureOnDisplay({
+            docKind: 'waiver',
+            title: waiver.value.title,
+            body: waiver.value.body,
+            // Prefill from the renter; for the SECOND rider onward they retype, same as the dialog.
+            signerName: readiness.value?.ridersSigned ? null : props.renterName ?? null,
+            signerEmail: readiness.value?.ridersSigned ? null : props.renterEmail ?? null,
+        })
+        const resp = await cfdHandle.promise
+        if (!resp) return   // cancelled by the cashier
+        const first = (resp.firstName ?? '').trim()
+        const last = (resp.lastName ?? '').trim()
+        if (!first || !last || !resp.signatureDataUrl) {
+            cfdError.value = 'The signature came back incomplete. Try again or sign on this screen.'
+            return
+        }
+        await service.signRentalWaiver(props.rentalId, {
+            firstName: first,
+            lastName: last,
+            email: (resp.email ?? '').trim() || null,
+            birthdate: resp.birthdate || null,
+            signatureDataUrl: resp.signatureDataUrl,
+            signedByParent: resp.signedByParent ?? false,
+            parentName: (resp.parentName ?? '').trim() || null,
+            parentPhone: (resp.parentPhone ?? '').trim() || null,
+        })
+        await load()
+    } catch (e: any) {
+        cfdError.value = e.response?.data?.error || 'Could not complete the customer-screen waiver. Try again.'
+    } finally {
+        customerWaiverWait.value = false
+        cfdHandle = null
+        // Whatever happened, don't leave the waiver stuck on the customer's screen.
+        pushShopDisplayState(idleShopDisplayState()).catch(() => { /* best-effort */ })
+    }
+}
+
+function cancelCustomerWaiver() { cfdHandle?.cancel() }
+onUnmounted(() => cfdHandle?.cancel())
 
 // Seed the rider name from the renter so staff usually only sign, not retype.
 watch(waiverOpen, open => {

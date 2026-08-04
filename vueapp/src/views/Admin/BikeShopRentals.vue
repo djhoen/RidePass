@@ -3,6 +3,7 @@
         <div class="d-flex align-center mb-4 ga-3 flex-wrap">
             <h1 class="text-h4">Rentals</h1>
             <v-spacer></v-spacer>
+            <ShopDisplayButton />
             <v-btn color="primary" prepend-icon="mdi-plus" :loading="openingBook" @click="openBook">New rental</v-btn>
         </div>
 
@@ -492,6 +493,7 @@ import { BikeShopService, type ShopProduct, type ShopRental, type ShopTaxCategor
 import ConditionPhotos from '@/components/bikeshop/ConditionPhotos.vue'
 import PhotoQrPanel from '@/components/bikeshop/PhotoQrPanel.vue'
 import RentalReadinessPanel from '@/components/bikeshop/RentalReadinessPanel.vue'
+import ShopDisplayButton from '@/components/bikeshop/ShopDisplayButton.vue'
 import BookRentalDialog, { type BookRentalPreset } from '@/components/bikeshop/BookRentalDialog.vue'
 import ReturnRentalDialog from '@/components/bikeshop/ReturnRentalDialog.vue'
 import RentalBoardPanel from '@/components/bikeshop/RentalBoardPanel.vue'

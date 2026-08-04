@@ -34,7 +34,7 @@ const categories = ref<ConcessionCategory[]>([])
 const boards = ref<ConcessionMenuBoard[]>([])
 const promos = ref<ConcessionMenuPromo[]>([])
 const settings = ref<ConcessionMenuSettings>({
-    logoUrl: null, backgroundColor: null, textColor: null, accentColor: null, showCarousel: true, carouselSeconds: 5, tipsEnabled: false,
+    logoUrl: null, backgroundColor: null, textColor: null, accentColor: null, showCarousel: true, carouselSeconds: 5, tipsEnabled: false, customerDisplayEnabled: false,
     prepWarnMinutes: 5, prepLateMinutes: 10, orderingHours: null, orderingSeasons: null, requireEventDay: true, pricesIncludeTax: false,
     seasonPassDiscountEnabled: false, seasonPassDiscountKind: 'percent', seasonPassDiscountValue: 0,
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0, requireManagerForManualDiscount: true,

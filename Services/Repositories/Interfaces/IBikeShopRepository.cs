@@ -228,6 +228,15 @@ namespace Services.Repositories.Interfaces
         /// <summary>Whether this rental is signed against the CURRENTLY active agreement.</summary>
         Task<bool> HasCurrentAgreementSignature(Guid rentalId, Guid tenantId, string kind);
 
+        // ── Customer-facing counter display sessions ─────────────────────────────
+        Task<Guid> CreateDisplay(Guid tenantId, string pairCode);
+        Task<ShopDisplay?> GetDisplay(Guid id, Guid tenantId);
+        Task<ShopDisplay?> GetDisplayByCode(string pairCode, Guid tenantId);
+        /// <summary>Pushes a new snapshot; always clears any pending customer response.</summary>
+        Task UpdateDisplayState(Guid id, Guid tenantId, string? stateJson);
+        /// <summary>The customer's answer (signature + details), read back by the staff device.</summary>
+        Task SetDisplayResponse(Guid id, Guid tenantId, string responseJson);
+
         // ── Condition photos (work orders + rentals) ─────────────────────────────
         /// <summary>Adds a photo; returns null when the owner isn't this tenant's.</summary>
         Task<Guid?> AddConditionPhoto(ShopConditionPhoto photo);

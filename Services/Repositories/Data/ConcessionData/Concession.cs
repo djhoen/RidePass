@@ -234,6 +234,7 @@
         public bool ShowCarousel { get; set; } = true;
         public int CarouselSeconds { get; set; } = 5;
         public bool TipsEnabled { get; set; }   // default off; tenant opts into tipping
+        public bool CustomerDisplayEnabled { get; set; }   // POS flags an unpaired register when on
         public int PrepWarnMinutes { get; set; } = 5;    // cook screen ticket turns amber after this
         public int PrepLateMinutes { get; set; } = 10;   // ...and red after this
         // Weekly online-ordering hours as JSON (7 entries, Sun..Sat). NULL = always open. Evaluated in

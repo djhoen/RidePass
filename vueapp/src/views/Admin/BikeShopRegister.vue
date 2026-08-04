@@ -10,6 +10,7 @@
             <v-btn v-if="readerState !== 'connected'" size="small" variant="text"
                 :loading="readerConnecting" @click="connectReader">Connect reader</v-btn>
             <v-btn size="small" variant="text" prepend-icon="mdi-printer-settings" @click="printerDialog = true">Printer</v-btn>
+            <ShopDisplayButton />
         </div>
 
         <v-row>
@@ -232,8 +233,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
-import { BikeShopService, type ShopProduct, type ShopVariant, type ShopItem, type ShopScanResolution } from '@/services/BikeShopService'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { BikeShopService, type ShopProduct, type ShopVariant, type ShopItem, type ShopScanResolution, type ShopDisplayState } from '@/services/BikeShopService'
+import ShopDisplayButton from '@/components/bikeshop/ShopDisplayButton.vue'
+import { shopDisplayPaired, pushShopDisplayState, idleShopDisplayState } from '@/helpers/ShopDisplay'
 import { useRouter } from 'vue-router'
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
@@ -440,6 +443,38 @@ const filteredVariants = computed(() => {
 })
 
 const subtotal = computed(() => cart.value.reduce((s, l) => s + l.salePriceCents * l.qty, 0))
+
+// ── Customer-facing display: mirror the cart as it's rung up ──────────────────
+const displaySnapshot = computed<ShopDisplayState>(() => ({
+    // doneOpen is declared below in the checkout section; the computed only reads it lazily.
+    status: doneOpen.value ? 'done' : cart.value.length > 0 ? 'charges' : 'idle',
+    lines: cart.value.map(l => ({
+        name: l.productName,
+        detail: [l.label, l.itemLabel].filter(Boolean).join(' · ') || null,
+        qty: l.qty,
+        lineTotal: l.salePriceCents * l.qty,
+    })),
+    subtotalCents: subtotal.value,
+    note: cart.value.length > 0 ? 'Tax is added at checkout.' : null,
+    sign: null,
+}))
+let displayPushTimer: number | undefined
+// Pairing while a cart is already rung up: push right away instead of waiting for the next edit.
+watch(shopDisplayPaired, p => {
+    if (p) pushShopDisplayState(displaySnapshot.value).catch(() => { /* next change retries */ })
+})
+watch(displaySnapshot, () => {
+    if (!shopDisplayPaired.value) return
+    if (displayPushTimer) window.clearTimeout(displayPushTimer)
+    // Mirror sync is best-effort: a failed push must never interrupt ringing up the sale.
+    displayPushTimer = window.setTimeout(() =>
+        pushShopDisplayState(displaySnapshot.value).catch(() => { /* next change retries */ }), 250)
+})
+onUnmounted(() => {
+    if (displayPushTimer) window.clearTimeout(displayPushTimer)
+    // Leaving the register mid-cart: welcome screen beats a frozen cart.
+    if (shopDisplayPaired.value) pushShopDisplayState(idleShopDisplayState()).catch(() => { /* best-effort */ })
+})
 
 function addVariant(v: Tile) {
     if (v.availableCount <= 0 || v.salePriceCents == null) return

@@ -198,7 +198,8 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { tenantWallClockToIso, tenantWallClockToMs, tenantWallClockNow } from '@/helpers/TenantTime'
-import { BikeShopService } from '@/services/BikeShopService'
+import { BikeShopService, type ShopDisplayState } from '@/services/BikeShopService'
+import { shopDisplayPaired, pushShopDisplayState } from '@/helpers/ShopDisplay'
 import { DiscountService, type DiscountPreset } from '@/services/DiscountService'
 import { branding } from '@/stores/branding'
 import { getStripe } from '@/helpers/StripeHelper'
@@ -393,6 +394,45 @@ const estimateTaxCents = computed(() => {
 })
 const estimateTotalCents = computed(() =>
     estimateSubtotalCents.value + estimateFeeCents.value + estimateTaxCents.value)
+
+// ── Customer-facing display: mirror the rental quote while this dialog is open ──
+const cfdSnapshot = computed<ShopDisplayState>(() => {
+    const showing = props.modelValue && form.value.lines.length > 0
+    return {
+        status: showing ? 'charges' : 'idle',
+        lines: !showing ? [] : [
+            ...form.value.lines.map(l => ({
+                name: l.name,
+                detail: [l.unitLabel, `${money(l.dailyRateCents)}/day × ${days.value} day${days.value === 1 ? '' : 's'}`]
+                    .filter(Boolean).join(' · ') || null,
+                qty: l.quantity,
+                lineTotal: l.dailyRateCents * days.value * l.quantity,
+            })),
+            ...(estimateInsuranceCents.value > 0 ? [{ name: insuranceLabel.value, detail: null, qty: 1, lineTotal: estimateInsuranceCents.value }] : []),
+            ...(estimateDiscountCents.value > 0 ? [{ name: 'Discount', detail: null, qty: 1, lineTotal: -estimateDiscountCents.value }] : []),
+            ...(estimateFeeCents.value > 0 ? [{ name: 'Service fee', detail: null, qty: 1, lineTotal: estimateFeeCents.value }] : []),
+            ...(estimateTaxCents.value > 0 ? [{ name: 'Tax', detail: null, qty: 1, lineTotal: estimateTaxCents.value }] : []),
+        ],
+        subtotalCents: showing ? estimateTotalCents.value : 0,
+        totalLabel: 'Total',
+        note: showing && estimateDepositCents.value > 0
+            ? `Plus a refundable ${money(estimateDepositCents.value)} deposit held on your card (not charged).`
+            : null,
+        sign: null,
+    }
+})
+let cfdTimer: number | undefined
+// Pairing while the quote is already open: push right away instead of waiting for the next edit.
+watch(shopDisplayPaired, p => {
+    if (p && props.modelValue) pushShopDisplayState(cfdSnapshot.value).catch(() => { /* next change retries */ })
+})
+watch(cfdSnapshot, () => {
+    if (!shopDisplayPaired.value) return
+    if (cfdTimer) window.clearTimeout(cfdTimer)
+    // Mirror sync is best-effort: a failed push must never interrupt booking the rental.
+    cfdTimer = window.setTimeout(() =>
+        pushShopDisplayState(cfdSnapshot.value).catch(() => { /* next change retries */ }), 250)
+})
 const taxRateUnset = computed(() => branding.rentalTaxBps == null)
 // A fee is configured but the track is eating all of it, so the renter sees no line.
 const feeAbsorbed = computed(() =>

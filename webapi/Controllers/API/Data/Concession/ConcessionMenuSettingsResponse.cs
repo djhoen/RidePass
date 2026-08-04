@@ -9,6 +9,7 @@ namespace webapi.Controllers.API.Data.Concession
         public bool ShowCarousel { get; set; }
         public int CarouselSeconds { get; set; }
         public bool TipsEnabled { get; set; }
+        public bool CustomerDisplayEnabled { get; set; }
         public int PrepWarnMinutes { get; set; } = 5;
         public int PrepLateMinutes { get; set; } = 10;
         // Null = always open. Otherwise 7 entries (Sun..Sat). OrderingOpenNow is computed in the tenant tz.

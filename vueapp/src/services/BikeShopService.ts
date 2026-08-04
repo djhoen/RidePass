@@ -358,6 +358,61 @@ export interface ShopAgreementSignature {
     signedAt: string
 }
 
+// ── Customer-facing counter display ───────────────────────────────────
+// The staff device serializes this snapshot into stateJson; the display renders it. The server
+// treats it as opaque text; signatures always come back through the staff device, which submits
+// them via the existing gated endpoints.
+export interface ShopDisplayChargeLine {
+    name: string
+    detail: string | null   // variant label, unit label, or rate line ("$25.00/day × 2 days")
+    qty: number
+    lineTotal: number       // cents
+}
+
+export interface ShopDisplaySignRequest {
+    requestId: string
+    // 'waiver' renders the rider/guardian form; the agreement kinds render name + email + signature.
+    docKind: 'rental_agreement' | 'work_order_terms' | 'waiver'
+    title: string
+    body: string
+    // Prefills so the customer usually only signs, not types.
+    signerName: string | null
+    signerEmail: string | null
+}
+
+export interface ShopDisplayState {
+    status: 'idle' | 'charges' | 'sign' | 'done'
+    lines: ShopDisplayChargeLine[]
+    subtotalCents: number
+    totalLabel?: string | null       // footer label; defaults to "Subtotal" (register cart) vs "Total" (rental quote)
+    note: string | null              // e.g. "Tax is added at checkout" / "Refundable deposit: $200"
+    sign: ShopDisplaySignRequest | null
+}
+
+// The customer's answer, posted by the display and read back by the staff device.
+export interface ShopDisplaySignResponse {
+    requestId: string
+    signatureDataUrl: string
+    // Agreement signer:
+    signerName?: string
+    signerEmail?: string | null
+    // Waiver form:
+    firstName?: string
+    lastName?: string
+    email?: string | null
+    birthdate?: string | null
+    signedByParent?: boolean
+    parentName?: string | null
+    parentPhone?: string | null
+}
+
+export interface ShopDisplaySession {
+    id: string
+    pairCode: string
+    stateJson: string | null
+    responseJson: string | null
+}
+
 // What a rental still needs before the gear can leave the counter.
 export interface RentalSigner {
     signatureId: string
@@ -622,6 +677,23 @@ export class BikeShopService {
     rentalReadiness(rentalId: string) {
         return axios.get<{ data: RentalCheckoutReadiness }>(
             `${this.apiUrl}/BikeShopRental/Rentals/${rentalId}/Readiness`)
+    }
+
+    // ── Customer-facing counter display ───────────────────────────────────────
+    createShopDisplay() {
+        return axios.post<{ data: ShopDisplaySession }>(`${this.apiUrl}/BikeShopRegister/Display`, {})
+    }
+    shopDisplay(id: string) {
+        return axios.get<{ data: ShopDisplaySession }>(`${this.apiUrl}/BikeShopRegister/Display/${id}`)
+    }
+    shopDisplayByCode(code: string) {
+        return axios.get<{ data: ShopDisplaySession }>(`${this.apiUrl}/BikeShopRegister/Display/ByCode/${encodeURIComponent(code)}`)
+    }
+    updateShopDisplayState(id: string, state: ShopDisplayState) {
+        return axios.put(`${this.apiUrl}/BikeShopRegister/Display/${id}/State`, { stateJson: JSON.stringify(state) })
+    }
+    respondShopDisplay(id: string, response: ShopDisplaySignResponse) {
+        return axios.post(`${this.apiUrl}/BikeShopRegister/Display/${id}/Respond`, { responseJson: JSON.stringify(response) })
     }
     // Admin side (CatalogManage): write the terms.
     getAgreement(kind: string) {

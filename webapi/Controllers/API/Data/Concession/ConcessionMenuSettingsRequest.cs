@@ -13,6 +13,8 @@ namespace webapi.Controllers.API.Data.Concession
         [Range(2, 60)]
         public int CarouselSeconds { get; set; } = 5;
         public bool TipsEnabled { get; set; }
+        // When true, the POS flags a register whose customer-facing display isn't paired/syncing.
+        public bool CustomerDisplayEnabled { get; set; }
         // Cook-screen color-escalation targets (minutes). Amber after warn, red after late.
         [Range(1, 240)] public int PrepWarnMinutes { get; set; } = 5;
         [Range(1, 240)] public int PrepLateMinutes { get; set; } = 10;

@@ -590,6 +590,16 @@
                                     messages="When on, customers can add a tip on the confirmation screen and online. When off, no tip is shown or charged."></v-switch>
                             </v-card>
 
+                            <!-- Customer-facing display -->
+                            <v-card variant="outlined" class="pa-4 mb-4">
+                                <div class="text-subtitle-1 font-weight-bold mb-3 d-flex align-center ga-2">
+                                    <v-icon size="small" color="primary">mdi-tablet</v-icon> Customer-facing display
+                                </div>
+                                <v-switch v-model="menuStyle.customerDisplayEnabled" label="Use customer-facing displays" color="primary"
+                                    density="compact" hide-details
+                                    messages="A second tablet at each register mirrors the order and asks for the tip. When on, a register with no paired display highlights its Display button in red so the cashier notices. Pair from the cashier screen's Display button."></v-switch>
+                            </v-card>
+
                             <!-- Member discounts (season pass / loampass perks) -->
                             <v-card variant="outlined" class="pa-4 mb-4">
                                 <div class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center ga-2">
@@ -1800,7 +1810,7 @@ async function saveCategories() {
 const savingMenuStyle = ref(false)
 const uploadingLogo = ref(false)
 const menuStyle = ref<ConcessionMenuSettings>({
-    logoUrl: null, backgroundColor: null, textColor: null, accentColor: null, showCarousel: true, carouselSeconds: 5, tipsEnabled: false,
+    logoUrl: null, backgroundColor: null, textColor: null, accentColor: null, showCarousel: true, carouselSeconds: 5, tipsEnabled: false, customerDisplayEnabled: false,
     prepWarnMinutes: 5, prepLateMinutes: 10, orderingHours: null, orderingSeasons: null, requireEventDay: true, pricesIncludeTax: false,
     seasonPassDiscountEnabled: false, seasonPassDiscountKind: 'percent', seasonPassDiscountValue: 0,
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0,
@@ -2046,6 +2056,7 @@ async function saveMenuStyle() {
             showCarousel: s.showCarousel,
             carouselSeconds: Math.min(60, Math.max(2, Math.trunc(s.carouselSeconds || 5))),
             tipsEnabled: s.tipsEnabled,
+            customerDisplayEnabled: s.customerDisplayEnabled,
             prepWarnMinutes: Math.min(240, Math.max(1, Math.trunc(s.prepWarnMinutes || 5))),
             prepLateMinutes: Math.min(240, Math.max(1, Math.trunc(s.prepLateMinutes || 10))),
             orderingHours: useOrderingHours.value

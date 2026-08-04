@@ -435,6 +435,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
     },
     {
+        path: '/Admin/BikeShop/CustomerDisplay',
+        name: 'AdminBikeShopCustomerDisplay',
+        component: () => import('../views/Admin/BikeShopCustomerDisplay.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'shop.counter', hideFooter: true }
+    },
+    {
         // Phone photo capture, reached by scanning the QR on the counter screen. Ordinary
         // authenticated admin route: the router sends an unauthenticated phone to Login with
         // ?next= and returns it here after one sign-in.
