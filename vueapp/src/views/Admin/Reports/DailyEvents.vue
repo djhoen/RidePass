@@ -12,6 +12,8 @@
                 <v-icon>mdi-chevron-right</v-icon>
             </v-btn>
             <v-btn color="primary" :loading="loading" @click="loadReport">Refresh</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
         </div>
 
         <p class="text-caption text-medium-emphasis mb-3">
@@ -78,6 +80,8 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ReportsService, type DailyEventReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
+import { downloadCsv, csvMoney } from '@/helpers/csv'
+import { formatTenantDateTime } from '@/helpers/TenantTime'
 
 const emit = defineEmits<{ (e: 'selectEvent', eventId: string, date: string): void }>()
 
@@ -135,4 +139,19 @@ function flash(text: string) {
 }
 
 onMounted(loadReport)
+
+function exportCsv() {
+    const r = report.value
+    if (!r) return
+    downloadCsv(
+        `daily-events-${localDate.value}.csv`,
+        ['Event', 'Type', 'Starts', 'Ends', 'Status', 'Capacity', 'Registered', 'Checked in', 'Revenue'],
+        r.rows.map(x => [
+            x.title, x.eventTypeName,
+            x.allDay ? 'All day' : formatTenantDateTime(x.startsAtUtc),
+            x.allDay ? '' : formatTenantDateTime(x.endsAtUtc),
+            x.status, x.capacity, x.registered, x.checkedIn, csvMoney(x.revenueCents),
+        ]),
+    )
+}
 </script>

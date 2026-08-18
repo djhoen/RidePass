@@ -10,6 +10,8 @@
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
                 style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
             <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
         </div>
 
         <template v-if="report">
@@ -69,6 +71,7 @@ import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ConcessionService, type ConcessionCompReport } from '@/services/ConcessionService'
 import { branding } from '@/stores/branding'
+import { downloadCsv, csvMoney } from '@/helpers/csv'
 
 const service = new ConcessionService()
 
@@ -146,5 +149,18 @@ async function load() {
 
 function formatDate(utc: string): string {
     return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
+}
+
+function exportCsv() {
+    const r = report.value
+    if (!r) return
+    downloadCsv(
+        `void-comp-${rangeFrom.value}-to-${rangeTo.value}.csv`,
+        ['Date / time', 'Order #', 'Reason', 'Amount comped', 'Total paid', 'Cashier', 'Approved by'],
+        r.rows.map(x => [
+            formatDate(x.createdAt), x.orderNumber, x.compReasonLabel,
+            csvMoney(x.discountCents), csvMoney(x.totalCents), x.cashierName, x.authorizedByName,
+        ]),
+    )
 }
 </script>

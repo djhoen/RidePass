@@ -236,9 +236,16 @@ BEGIN
 
     -- ── Wipe prior seed rows (child tables first; event/product deletes cascade
     --    their tiers and benefit/perk rows automatically - see FK check above) ──
+    -- Season passes are wiped tenant-wide, not by the @highland.test email
+    -- marker. The season_pass_product delete below is already unconditional for
+    -- this tenant, so a pass bought under any other address (a real QA click
+    -- with a personal email, say) survived the marker-scoped delete and then
+    -- blocked the product delete on season_pass_purchase_product_id_fkey,
+    -- breaking the whole rerun. Highland is a demo tenant: every pass on it is
+    -- disposable, same premise the event delete below already states.
     DELETE FROM season_pass_reservation
      WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id)
-        OR season_pass_purchase_id IN (SELECT id FROM season_pass_purchase WHERE tenant_id = v_tenant_id AND purchaser_email LIKE '%@highland.test');
+        OR season_pass_purchase_id IN (SELECT id FROM season_pass_purchase WHERE tenant_id = v_tenant_id);
 
     DELETE FROM event_ticket_purchase
      WHERE tenant_id = v_tenant_id
@@ -247,7 +254,7 @@ BEGIN
                             WHERE event_id IN (SELECT id FROM event WHERE tenant_id = v_tenant_id)));
 
     DELETE FROM season_pass_purchase
-     WHERE tenant_id = v_tenant_id AND purchaser_email LIKE '%@highland.test';
+     WHERE tenant_id = v_tenant_id;
 
     DELETE FROM event
      WHERE tenant_id = v_tenant_id; -- all events on this tenant are seed-owned; cascades event_ticket_tier
@@ -882,16 +889,31 @@ BEGIN
     END IF;
 
     -- ── Cleanup (children first) ───────────────────────────────────────────
+    -- Work orders and rentals are wiped tenant-wide rather than by the
+    -- @highland.test email marker, for the same reason the retail-sale wipe
+    -- below already is: shop_work_order_line and shop_rental_line both hold
+    -- RESTRICT FKs onto shop_variant, so a single row left behind by a manual
+    -- QA click under some other address (djhoen@gmail.com, asdf@sadf.com)
+    -- blocks the shop_product delete further down and breaks the whole rerun.
+    -- Highland is a demo tenant; every shop row on it is disposable.
     DELETE FROM shop_work_order_note WHERE work_order_id IN (
-        SELECT id FROM shop_work_order WHERE tenant_id = v_tenant_id AND customer_email LIKE '%@highland.test');
+        SELECT id FROM shop_work_order WHERE tenant_id = v_tenant_id);
     DELETE FROM shop_work_order_line WHERE work_order_id IN (
-        SELECT id FROM shop_work_order WHERE tenant_id = v_tenant_id AND customer_email LIKE '%@highland.test');
-    DELETE FROM shop_work_order WHERE tenant_id = v_tenant_id AND customer_email LIKE '%@highland.test';
-    DELETE FROM shop_customer_bike WHERE tenant_id = v_tenant_id AND customer_phone = '603-555-0199';
+        SELECT id FROM shop_work_order WHERE tenant_id = v_tenant_id);
+    DELETE FROM shop_work_order WHERE tenant_id = v_tenant_id;
+    DELETE FROM shop_customer_bike WHERE tenant_id = v_tenant_id;
 
     DELETE FROM shop_rental_line WHERE rental_id IN (
-        SELECT id FROM shop_rental WHERE tenant_id = v_tenant_id AND renter_email LIKE '%@highland.test');
-    DELETE FROM shop_rental WHERE tenant_id = v_tenant_id AND renter_email LIKE '%@highland.test';
+        SELECT id FROM shop_rental WHERE tenant_id = v_tenant_id);
+    DELETE FROM shop_rental WHERE tenant_id = v_tenant_id;
+
+    -- The Find Your Ride package (built by the $hl_fyr$ fragment further down)
+    -- pins shop_variant rows through package_item's RESTRICT FK, so its items
+    -- have to clear before the variant wipe below. Its purchases go too: they
+    -- pin package_product through a RESTRICT of their own, which would then
+    -- block $hl_fyr$'s own wipe-by-slug. $hl_fyr$ rebuilds both from scratch.
+    DELETE FROM package_purchase WHERE tenant_id = v_tenant_id;
+    DELETE FROM package_item     WHERE tenant_id = v_tenant_id;
 
     -- Retail sale history (year-of-sales fragment) holds RESTRICT FKs onto
     -- shop_variant; clear it before the product/variant wipe below.
@@ -2801,5 +2823,677 @@ BEGIN
     RAISE NOTICE 'Highland insurance/fleet seed: damage protection enabled (15%%, "Damage Protection"); % serialized units added to reach % available per variant',
         v_added, v_target;
 END $hl_insurance$;
+
+-- ============================================================================
+-- Highland Bike Park -- ACCOUNTING LEDGER (tenant_ledger_entry)
+--
+-- The seed fragments above create the sales; this one creates the MONEY VIEW of
+-- those sales. `v_accounting_entries` (and therefore the QuickBooks sync, the
+-- tax report and every payout screen) reads `tenant_ledger_entry` and nothing
+-- else, so without this fragment Highland's books are empty no matter how much
+-- history the other fragments wrote.
+--
+-- Every row here is shaped exactly like the row the live code would have
+-- written for the same sale. The reference implementations, all verified
+-- against the deployed schema:
+--
+--   sale, card        webapi/Payments/StripePurchaseFinalizer.cs
+--                       event_ticket :1152   season_pass :628   concession :771
+--                       shop_sale    :880    shop_rental :956
+--   sale, cash        webapi/Controllers/CounterController.cs:1266  (tickets/passes)
+--                     webapi/Controllers/ConcessionController.cs:3534
+--                     webapi/Controllers/BikeShopRegisterController.cs:1064
+--                     webapi/Controllers/BikeShopRentalController.cs:760
+--   sale, gift card   webapi/Controllers/PurchaseController.cs:2186
+--   refund            webapi/Controllers/PurchaseController.cs:1998 +
+--                       Services/Payments/RefundLedgerMath.cs      (tickets/passes)
+--                     webapi/Controllers/ConcessionController.cs:3563     (mirror)
+--                     webapi/Controllers/BikeShopRegisterController.cs:863 (mirror)
+--   money math        Services/Payments/FeeCalculator.cs:34-66
+--                     Services/Payments/ServiceChargeSplit.cs:34-36
+--
+-- The formulas, for a `stripe_charge_mode = 'platform'` tenant (Highland is):
+--
+--   ridepass_cut_cents  = the service charge SNAPSHOTTED on the purchase row.
+--                         FeeCalculator does not compute a charge, it only caps
+--                         the one it is handed (FeeCalculator.cs:46), and
+--                         Highland has no monthly cap, so cut == the snapshot.
+--                         The snapshot itself is a truncating
+--                         floor(base * tenant.service_charge_bps / 10000)
+--                         (ServiceChargeSplit.cs:34). Highland is at 300 bps.
+--                         Concessions and work-order deposits are the exception:
+--                         those call sites pass a literal 0, so their cut is 0.
+--   stripe_fee_cents    = the REAL Stripe balance-transaction fee in production
+--                         (StripePaymentProvider.cs:326). Seeded history has no
+--                         Stripe objects to read, so we model it the same way
+--                         webapi/Seeding/TenantSeeder.cs:507 does:
+--                         (int)(charged * 0.029 + 30), and only on card tenders.
+--   net_to_tenant_cents = gross - stripe_fee - cut on a card sale;
+--                         -cut on a CASH sale (the tenant already holds the
+--                         cash and simply owes us the charge -- the convention
+--                         every WriteCashLedger implements). Seeding cash rows
+--                         as +gross would inflate the next drafted payout.
+--   occurred_at_utc     = the purchase's own paid-at, so business_date buckets
+--                         in America/New_York, not in UTC.
+--
+-- NO LEDGER ROW IS WRITTEN FOR A GIFT CARD SALE, deliberately. Selling a gift
+-- card collects cash but delivers no goods: it is a liability, not revenue, and
+-- the revenue is recognised later when the card is redeemed (which DOES book a
+-- ledger row, on the ticket). Booking the sale here as well would pay the tenant
+-- twice for the same dollar and would double-count it in QBO. The gift-card
+-- SALE side is synthesised straight from `gift_card` by the accounting view.
+--
+-- Tuning constants live in the DECLARE block below. Rerunnable: the fragment
+-- deletes every ledger row, payout and gift card for the tenant before it
+-- writes, and derives everything else from the rows the fragments above
+-- created, so a second run of the whole file yields identical row counts.
+-- ============================================================================
+DO $hl_ledger$
+DECLARE
+    v_tenant_id   uuid;
+    v_bps         int;
+    v_cashier_a   uuid;
+    v_cashier_b   uuid;
+    v_now         timestamptz := now();
+
+    -- ── Tuning constants ────────────────────────────────────────────────────
+    -- Stripe's published card-not-present price. Only used because seeded
+    -- history has no real balance transactions to read back.
+    c_fee_pct       constant numeric := 0.029;
+    c_fee_flat      constant int     := 30;
+    -- New Hampshire Meals & Rentals tax. Real, and the reason the F&B side is
+    -- the only thing taxed here: NH levies no general sales tax and no
+    -- admissions tax, so lift tickets and passes carry tax_cents = 0 on
+    -- purpose. Do not "fix" that into an invented admission tax; Highland's own
+    -- accountant would spot it.
+    c_meals_tax_bps constant int     := 850;
+    -- Share of card F&B tickets that leave a tip, and the tip ladder.
+    c_tip_share     constant numeric := 0.45;
+    -- Gift cards sold in the last 60 days, and how many get partially redeemed
+    -- against a seeded lift ticket in the last 45.
+    c_gc_count      constant int     := 15;
+    c_gc_redeem     constant int     := 10;
+    -- Refunds, so "refunds net into the day they happen" is a real line and not
+    -- a talking point. Kept small: a park that refunds 1% of its gate looks
+    -- broken, and a park that refunds nothing looks fake.
+    c_ref_tickets   constant int     := 8;
+    c_ref_passes    constant int     := 2;
+    c_ref_fnb       constant int     := 4;
+    c_ref_shop      constant int     := 2;
+
+    v_gc_sold     int;
+    v_gc_redeemed int;
+    v_sales       int;
+    v_refunds     int;
+    v_cash        int;
+    v_days        int;
+BEGIN
+    SELECT id, COALESCE(service_charge_bps, 0) INTO v_tenant_id, v_bps
+      FROM tenant WHERE lower(subdomain) = 'highland';
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'tenant "highland" not found - run the tenant creation block first';
+    END IF;
+
+    -- The two staff accounts the demo logs in as. Cash rows carry a cashier so
+    -- Staff Activity and the (unbuilt) cash-drawer reconciliation have someone
+    -- to attribute the drawer to; alternating between them gives those screens
+    -- two workers to compare instead of one.
+    SELECT id INTO v_cashier_a FROM users WHERE tenant_id = v_tenant_id AND email = 'demo.staff@highland.test';
+    SELECT id INTO v_cashier_b FROM users WHERE tenant_id = v_tenant_id AND email = 'demo.admin@highland.test';
+    IF v_cashier_a IS NULL OR v_cashier_b IS NULL THEN
+        RAISE EXCEPTION 'Highland staff users missing - run the users fragment first';
+    END IF;
+
+    PERFORM setseed(0.17);
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- WIPE. Highland is a demo tenant and every ledger row it has is
+    -- seed-owned, including the handful left behind by manual QA clicks, so
+    -- this is an unconditional per-tenant delete rather than a marker scope.
+    -- Payouts go too: a payout's totals are a rollup of the ledger rows it
+    -- claimed (TenantPayoutRepository.RefreshTotals), so leaving one behind
+    -- after deleting its rows would leave a payout screen quoting money that
+    -- no longer has any entries under it. tenant_ledger_entry.payout_id is
+    -- ON DELETE SET NULL, so the ledger has to go first either way.
+    -- ══════════════════════════════════════════════════════════════════════
+    DELETE FROM tenant_ledger_entry WHERE tenant_id = v_tenant_id;
+    DELETE FROM tenant_payout       WHERE tenant_id = v_tenant_id;
+    DELETE FROM gift_card_redemption WHERE tenant_id = v_tenant_id;
+    DELETE FROM gift_card            WHERE tenant_id = v_tenant_id;
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- SOURCE-ROW TOP-UP
+    --
+    -- The ledger has no tax, tip or gift-card columns of its own: the
+    -- accounting view breaks those out of gross by joining the ledger row back
+    -- to its source table and prorating
+    -- (Script0183_AccountingEntriesDepositHold.sql, the `ledger` CTE). Only
+    -- event_ticket_purchase.tax_cents, concession_sale.tax_cents and
+    -- concession_sale.tip_cents feed it. The fragments above leave all three at
+    -- zero, so the tax and tip breakout has to be put on the SOURCE rows here
+    -- or the QBO journal shows no Sales Tax Payable and no Tips Payable line.
+    -- ══════════════════════════════════════════════════════════════════════
+
+    -- ── F&B: NH Meals & Rentals tax, priced on top (exclusive) ──────────────
+    -- Configured on the tenant too, not just backfilled onto history, so an
+    -- order rung up live during the demo computes the same tax the seeded
+    -- history shows.
+    UPDATE concession_tax_category
+       SET rate_bps = c_meals_tax_bps, is_active = true
+     WHERE tenant_id = v_tenant_id;
+
+    UPDATE concession_product
+       SET tax_category_id = (SELECT id FROM concession_tax_category
+                               WHERE tenant_id = v_tenant_id
+                               ORDER BY is_default DESC, sort_order, name LIMIT 1)
+     WHERE tenant_id = v_tenant_id AND tax_category_id IS NULL;
+
+    UPDATE concession_menu_settings
+       SET tips_enabled = true, prices_include_tax = false
+     WHERE tenant_id = v_tenant_id;
+
+    -- Per line, exactly as ConcessionController.ComputeLineTax does it
+    -- (:3366-3372): round-half-away-from-zero on the line total, exclusive.
+    UPDATE concession_sale_line l
+       SET tax_cents    = round(l.line_total_cents * c_meals_tax_bps / 10000.0)::int,
+           tax_rate_bps = c_meals_tax_bps
+      FROM concession_sale s
+     WHERE s.id = l.sale_id AND s.tenant_id = v_tenant_id;
+
+    -- Then roll the lines up to the sale and re-total it the way the register
+    -- does (:2081-2082): subtotal stays gross of tax, tax and tip are added on.
+    DROP TABLE IF EXISTS _hl_led_fnb;
+    CREATE TEMP TABLE _hl_led_fnb ON COMMIT DROP AS
+    SELECT s.id,
+           COALESCE(x.tax, 0) AS tax,
+           CASE WHEN s.payment_method <> 'cash' AND random() < c_tip_share
+                THEN round(s.subtotal_cents *
+                     (CASE WHEN random() < 0.25 THEN 0.10
+                           WHEN random() < 0.45 THEN 0.15
+                           WHEN random() < 0.75 THEN 0.18
+                           ELSE 0.20 END))::int
+                ELSE 0 END AS tip
+      FROM concession_sale s
+      LEFT JOIN (SELECT sale_id, SUM(tax_cents) AS tax
+                   FROM concession_sale_line GROUP BY sale_id) x ON x.sale_id = s.id
+     WHERE s.tenant_id = v_tenant_id;
+
+    UPDATE concession_sale s
+       SET tax_cents   = f.tax,
+           tip_cents   = f.tip,
+           total_cents = s.subtotal_cents + f.tax + f.tip
+      FROM _hl_led_fnb f
+     WHERE f.id = s.id;
+
+    -- Counter orders were rung up by somebody; online orders were not. The
+    -- ledger copies sold_by from the sale (StripePurchaseFinalizer.cs:778,
+    -- ConcessionController.cs:3547), so it has to be right here first.
+    UPDATE concession_sale
+       SET sold_by_user_id = CASE WHEN left(md5(id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+     WHERE tenant_id = v_tenant_id AND order_channel = 'counter';
+
+    -- ── Service charge snapshots ────────────────────────────────────────────
+    -- What RidePass is owed on each sale, frozen onto the purchase row at
+    -- checkout. The ledger's cut and the refund math both read this column, so
+    -- it is the single source of truth and is written here rather than being
+    -- recomputed twice below.
+    --
+    -- The seeded purchases are modelled as Highland ABSORBING the platform
+    -- charge: amount_cents stays at the park's real published price ($82 day
+    -- ticket, $669 season pass) and the 3% is booked against their proceeds.
+    -- That is the same posture their bike shop already has on file
+    -- (shop_buyer_paid_service_charge_bps = 0) and it keeps every price in the
+    -- seed matching highlandmountain.com. The alternative (rider-paid) would
+    -- mean rewriting every amount_cents to price x 1.03 and no published price
+    -- would match anything.
+    UPDATE event_ticket_purchase
+       SET service_charge_cents = (amount_cents::bigint * v_bps / 10000)::int
+     WHERE tenant_id = v_tenant_id;
+
+    UPDATE season_pass_purchase
+       SET service_charge_cents = (amount_cents::bigint * v_bps / 10000)::int
+     WHERE tenant_id = v_tenant_id;
+
+    UPDATE shop_sale
+       SET service_charge_cents = ((subtotal_cents - discount_cents)::bigint * v_bps / 10000)::int
+     WHERE tenant_id = v_tenant_id;
+
+    UPDATE shop_rental
+       SET service_charge_cents = (amount_cents::bigint * v_bps / 10000)::int
+     WHERE tenant_id = v_tenant_id;
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- GIFT CARDS
+    --
+    -- Sold across the last 60 days with a real (fake) PaymentIntent id, so the
+    -- accounting view can synthesise the liability CREDIT from the gift_card
+    -- row itself. Balances stay strictly above zero so every card remains
+    -- status 'active' and none of them drop out of that synthesis.
+    -- ══════════════════════════════════════════════════════════════════════
+    DROP TABLE IF EXISTS _hl_led_gc;
+    CREATE TEMP TABLE _hl_led_gc ON COMMIT DROP AS
+    SELECT n,
+           gen_random_uuid() AS id,
+           (ARRAY['Avery','Blake','Casey','Devon','Emerson','Finley','Gray','Harper','Indie','Jules',
+                  'Kai','Logan','Marlow','Nico','Oakley'])[n] AS fn,
+           (ARRAY['Abbott','Barnes','Cortez','Dalton','Ellison','Fleming','Garner','Hayes','Ibarra',
+                  'Jennings','Keller','Lawson','Merritt','Nolan','Osborne'])[n] AS ln,
+           (ARRAY['Rowan','Sutton','Tatum','Quinn','Reese','Wren','Zane','Micah','Lena','Theo',
+                  'Sasha','Colby','Dana','Parker','Sawyer'])[n] AS rfn,
+           -- A ladder rather than a uniform draw: the $200 and $100 cards are
+           -- the ones big enough to cover a whole lift ticket, which is what
+           -- makes a 'voucher' ledger row (and a full liability draw-down)
+           -- appear at all.
+           (ARRAY[20000,10000,5000,2500,10000,5000,2500,20000,5000,2500,
+                  10000,5000,2500,20000,10000])[n] AS amount,
+           (v_now - ((3 + (n * 4)) || ' days')::interval - ((n * 37) || ' minutes')::interval) AS bought_at
+      FROM generate_series(1, c_gc_count) n;
+
+    INSERT INTO gift_card
+        (id, tenant_id, code, initial_amount_cents, balance_cents,
+         buyer_name, buyer_email, recipient_name, recipient_email, personal_note,
+         delivery_status, delivered_at_utc, status, stripe_payment_intent_id,
+         created_at, updated_at)
+    SELECT g.id, v_tenant_id,
+           'GIFT-HL' || lpad(g.n::text, 2, '0') || upper(substr(md5(g.id::text), 1, 6)),
+           g.amount, g.amount,
+           g.fn || ' ' || g.ln,
+           lower(g.fn || '.' || g.ln || '.gc' || g.n || '.hl@highland.test'),
+           g.rfn || ' ' || g.ln,
+           lower(g.rfn || '.' || g.ln || '.gcr' || g.n || '.hl@highland.test'),
+           'Go ride Highland on me. See you at the lift.',
+           'delivered', g.bought_at + INTERVAL '2 minutes', 'active',
+           'pi_hlseed_gc_' || replace(g.id::text, '-', ''),
+           g.bought_at, g.bought_at
+      FROM _hl_led_gc g;
+
+    -- ── Redemptions against real lift tickets in the last 45 days ───────────
+    -- source_kind/source_id have to point at an actual event_ticket_purchase:
+    -- the accounting view joins gift_card_redemption on (source_kind,
+    -- source_id, tenant_id) to derive gift_card_applied_cents, so a synthetic
+    -- id would silently produce a zero.
+    --
+    -- Every redemption is capped at the card balance minus $5 so no card ever
+    -- empties (a depleted card leaves 'active' and drops out of the liability
+    -- synthesis). The pairing is deliberate, not random: the four biggest cards
+    -- are matched to CHEAP tickets so the card covers the ticket outright,
+    -- which is what flips the ledger row to payment_method 'voucher' and makes
+    -- a full liability draw-down visible; the rest are matched to expensive
+    -- clinic/camp tickets so they land as partials with a card charge for the
+    -- remainder. Out of season this yields fewer pairs rather than failing.
+    DROP TABLE IF EXISTS _hl_led_gcr;
+    CREATE TEMP TABLE _hl_led_gcr ON COMMIT DROP AS
+    WITH cards AS (
+        SELECT g.id, g.amount, row_number() OVER (ORDER BY g.amount DESC, g.n) AS rn
+          FROM _hl_led_gc g
+    ), cheap AS (
+        SELECT p.id, p.amount_cents, p.created_at,
+               row_number() OVER (ORDER BY p.created_at DESC, p.id) AS rn
+          FROM event_ticket_purchase p
+         WHERE p.tenant_id = v_tenant_id AND p.status IN ('paid', 'redeemed')
+           AND p.payment_method = 'stripe'
+           AND p.amount_cents BETWEEN 2000 AND 6800
+           AND p.created_at >= v_now - INTERVAL '45 days'
+    ), dear AS (
+        SELECT p.id, p.amount_cents, p.created_at,
+               row_number() OVER (ORDER BY p.created_at DESC, p.id) AS rn
+          FROM event_ticket_purchase p
+         WHERE p.tenant_id = v_tenant_id AND p.status IN ('paid', 'redeemed')
+           AND p.payment_method = 'stripe'
+           AND p.amount_cents >= 14900
+           AND p.created_at >= v_now - INTERVAL '45 days'
+    )
+    SELECT c.id AS card_id, t.id AS ticket_id, t.amount_cents, t.created_at,
+           LEAST(t.amount_cents, c.amount - 500) AS redeem
+      FROM cards c JOIN cheap t ON t.rn = c.rn
+     WHERE c.rn <= 4
+    UNION ALL
+    SELECT c.id, t.id, t.amount_cents, t.created_at,
+           LEAST(t.amount_cents, c.amount - 500)
+      FROM cards c JOIN dear t ON t.rn = c.rn - 4
+     WHERE c.rn BETWEEN 5 AND c_gc_redeem;
+
+    INSERT INTO gift_card_redemption (gift_card_id, tenant_id, source_kind, source_id, amount_cents, redeemed_at)
+    SELECT r.card_id, v_tenant_id, 'event_ticket', r.ticket_id, r.redeem, r.created_at
+      FROM _hl_led_gcr r
+     WHERE r.redeem > 0;
+
+    UPDATE gift_card c
+       SET balance_cents = c.initial_amount_cents - COALESCE(x.used, 0)
+      FROM (SELECT gift_card_id, SUM(amount_cents) AS used
+              FROM gift_card_redemption WHERE tenant_id = v_tenant_id GROUP BY gift_card_id) x
+     WHERE x.gift_card_id = c.id AND c.tenant_id = v_tenant_id;
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- REFUNDS: flip a small, deterministic slice of already-paid rows to
+    -- 'refunded' so the refund ledger rows below have something real to point
+    -- at. Excludes the 'nowaiver.*' compliance-demo tickets and anything a
+    -- gift card paid for (a gift-card refund has its own restore path that
+    -- this fragment does not model).
+    -- ══════════════════════════════════════════════════════════════════════
+    DROP TABLE IF EXISTS _hl_led_ref;
+    CREATE TEMP TABLE _hl_led_ref (kind text, id uuid, refunded_at timestamptz) ON COMMIT DROP;
+
+    -- Spread over 1-5 days after the sale so the refunds land on several
+    -- different business dates instead of stacking on one, and clamped to the
+    -- past so no refund is dated in the future.
+    INSERT INTO _hl_led_ref (kind, id, refunded_at)
+    SELECT 'event_ticket', x.id,
+           LEAST(x.created_at + ((1 + x.rn % 5) || ' days')::interval, v_now - INTERVAL '2 hours')
+      FROM (
+        SELECT p.id, p.created_at, row_number() OVER (ORDER BY p.created_at DESC, p.id) AS rn
+          FROM event_ticket_purchase p
+         WHERE p.tenant_id = v_tenant_id
+           AND p.status = 'paid'
+           AND p.created_at BETWEEN v_now - INTERVAL '60 days' AND v_now - INTERVAL '3 hours'
+           AND p.purchaser_email NOT LIKE 'nowaiver%'
+           AND NOT EXISTS (SELECT 1 FROM gift_card_redemption r
+                            WHERE r.source_kind = 'event_ticket' AND r.source_id = p.id)
+      ) x
+     WHERE x.rn <= c_ref_tickets;
+
+    INSERT INTO _hl_led_ref (kind, id, refunded_at)
+    SELECT 'season_pass', x.id, LEAST(x.created_at + INTERVAL '9 days', v_now - INTERVAL '2 hours')
+      FROM (
+        SELECT s.id, s.created_at, row_number() OVER (ORDER BY s.created_at DESC, s.id) AS rn
+          FROM season_pass_purchase s
+         WHERE s.tenant_id = v_tenant_id
+           AND s.status = 'paid'
+           AND s.created_at BETWEEN v_now - INTERVAL '60 days' AND v_now - INTERVAL '12 days'
+      ) x
+     WHERE x.rn <= c_ref_passes;
+
+    INSERT INTO _hl_led_ref (kind, id, refunded_at)
+    SELECT 'concession', x.id, x.created_at + INTERVAL '25 minutes'
+      FROM (
+        SELECT c.id, c.created_at, row_number() OVER (ORDER BY c.created_at DESC, c.id) AS rn
+          FROM concession_sale c
+         WHERE c.tenant_id = v_tenant_id
+           AND c.status = 'paid'
+           AND c.created_at BETWEEN v_now - INTERVAL '45 days' AND v_now - INTERVAL '3 hours'
+      ) x
+     WHERE x.rn <= c_ref_fnb;
+
+    INSERT INTO _hl_led_ref (kind, id, refunded_at)
+    SELECT 'shop_sale', x.id, x.created_at + INTERVAL '2 days'
+      FROM (
+        SELECT s.id, s.created_at, row_number() OVER (ORDER BY s.created_at DESC, s.id) AS rn
+          FROM shop_sale s
+         WHERE s.tenant_id = v_tenant_id
+           AND s.status = 'paid'
+           AND s.created_at BETWEEN v_now - INTERVAL '45 days' AND v_now - INTERVAL '3 days'
+      ) x
+     WHERE x.rn <= c_ref_shop;
+
+    UPDATE event_ticket_purchase p
+       SET status = 'refunded', cancelled_at = r.refunded_at,
+           cancellation_reason = 'Rider could not make the date',
+           refund_note = 'Refunded in full per the 24-hour policy.'
+      FROM _hl_led_ref r WHERE r.kind = 'event_ticket' AND r.id = p.id;
+
+    UPDATE season_pass_purchase s
+       SET status = 'refunded', cancelled_at = r.refunded_at,
+           cancellation_reason = 'Within the 30-day pass window',
+           refund_note = 'Refunded per the season-pass policy.'
+      FROM _hl_led_ref r WHERE r.kind = 'season_pass' AND r.id = s.id;
+
+    UPDATE concession_sale c
+       SET status = 'refunded'
+      FROM _hl_led_ref r WHERE r.kind = 'concession' AND r.id = c.id;
+
+    UPDATE shop_sale s
+       SET status = 'refunded', refunded_at = r.refunded_at,
+           refund_note = 'Returned unused, refunded to the original tender.'
+      FROM _hl_led_ref r WHERE r.kind = 'shop_sale' AND r.id = s.id;
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- SALE ROWS
+    -- ══════════════════════════════════════════════════════════════════════
+
+    -- ── event_ticket ───────────────────────────────────────────────────────
+    -- Day tickets, Wednesduro, race entries, clinics and camps: all of them are
+    -- event_ticket_purchase rows, so all of them book the same way
+    -- (StripePurchaseFinalizer.cs:1152 for card, CounterController.cs:1266 for
+    -- cash, PurchaseController.cs:2186 when a gift card covered the lot).
+    -- gross is the full ticket price even when a gift card paid part of it; the
+    -- PaymentIntent only charged the remainder, so only the remainder carries a
+    -- Stripe fee.
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'sale', 'event_ticket', c.id, c.created_at,
+           c.gross, c.fee, c.cut,
+           CASE WHEN c.pm = 'cash' THEN -c.cut ELSE c.gross - c.fee - c.cut END,
+           CASE WHEN c.pm = 'stripe' THEN 'pi_hlseed_' || replace(c.id::text, '-', '') END,
+           CASE c.pm WHEN 'cash'    THEN 'Cash sale, tenant owes service charge'
+                     WHEN 'voucher' THEN 'Gift card covered purchase' END,
+           c.pm,
+           CASE WHEN c.pm = 'cash'
+                THEN CASE WHEN left(md5(c.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END END
+      FROM (
+        SELECT b.*,
+               CASE WHEN b.pm = 'stripe' AND (b.gross - b.gift) > 0
+                    THEN floor((b.gross - b.gift) * c_fee_pct + c_fee_flat)::int ELSE 0 END AS fee
+          FROM (
+            SELECT p.id, p.created_at, p.amount_cents AS gross, p.service_charge_cents AS cut,
+                   COALESCE(r.amount_cents, 0) AS gift,
+                   CASE WHEN COALESCE(r.amount_cents, 0) >= p.amount_cents THEN 'voucher'
+                        ELSE p.payment_method END AS pm
+              FROM event_ticket_purchase p
+              LEFT JOIN gift_card_redemption r
+                     ON r.source_kind = 'event_ticket' AND r.source_id = p.id AND r.tenant_id = p.tenant_id
+             WHERE p.tenant_id = v_tenant_id
+               AND p.status IN ('paid', 'redeemed', 'refunded')
+          ) b
+      ) c;
+
+    -- ── season_pass ────────────────────────────────────────────────────────
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'sale', 'season_pass', c.id, c.created_at,
+           c.gross, c.fee, c.cut,
+           CASE WHEN c.pm = 'cash' THEN -c.cut ELSE c.gross - c.fee - c.cut END,
+           CASE WHEN c.pm = 'stripe' THEN 'pi_hlseed_' || replace(c.id::text, '-', '') END,
+           CASE WHEN c.pm = 'cash' THEN 'Cash sale, tenant owes service charge' END,
+           c.pm,
+           CASE WHEN c.pm = 'cash'
+                THEN CASE WHEN left(md5(c.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END END
+      FROM (
+        SELECT s.id, s.created_at, s.amount_cents AS gross, s.service_charge_cents AS cut,
+               s.payment_method AS pm,
+               CASE WHEN s.payment_method = 'stripe'
+                    THEN floor(s.amount_cents * c_fee_pct + c_fee_flat)::int ELSE 0 END AS fee
+          FROM season_pass_purchase s
+         WHERE s.tenant_id = v_tenant_id AND s.status IN ('paid', 'refunded')
+      ) c;
+
+    -- ── concession ─────────────────────────────────────────────────────────
+    -- Both concession call sites hand FeeCalculator a literal 0 service charge
+    -- (StripePurchaseFinalizer.cs:765, ConcessionController.cs:3533), so F&B
+    -- carries no RidePass cut and a cash F&B sale nets exactly zero. Mirrored
+    -- rather than "corrected": the demo has to match what the app does.
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'sale', 'concession', c.id, c.paid_at,
+           c.gross, c.fee, 0,
+           CASE WHEN c.pm = 'cash' THEN 0 ELSE c.gross - c.fee END,
+           CASE WHEN c.pm = 'stripe' THEN 'pi_hlseed_' || replace(c.id::text, '-', '') END,
+           CASE WHEN c.pm = 'cash' THEN 'Cash sale, tenant owes service charge' END,
+           c.pm, c.sold_by
+      FROM (
+        SELECT s.id, COALESCE(s.paid_at, s.created_at) AS paid_at,
+               s.total_cents - s.credit_applied_cents AS gross,
+               s.payment_method AS pm, s.sold_by_user_id AS sold_by,
+               CASE WHEN s.payment_method = 'stripe'
+                    THEN floor((s.total_cents - s.credit_applied_cents) * c_fee_pct + c_fee_flat)::int
+                    ELSE 0 END AS fee
+          FROM concession_sale s
+         WHERE s.tenant_id = v_tenant_id AND s.status IN ('paid', 'refunded')
+      ) c
+     WHERE c.gross > 0;
+
+    -- ── shop_sale (bike shop retail + any billed-out work order) ────────────
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'sale', 'shop_sale', c.id, c.created_at,
+           c.gross, c.fee, c.cut,
+           CASE WHEN c.pm = 'cash' THEN -c.cut ELSE c.gross - c.fee - c.cut END,
+           CASE WHEN c.pm = 'stripe' THEN 'pi_hlseed_' || replace(c.id::text, '-', '') END,
+           CASE WHEN c.pm = 'cash' THEN 'Bike shop cash sale, tenant owes service charge' END,
+           c.pm,
+           CASE WHEN left(md5(c.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+      FROM (
+        SELECT s.id, s.created_at,
+               s.total_cents - s.deposit_applied_cents - s.credit_applied_cents AS gross,
+               s.service_charge_cents AS cut, s.payment_method AS pm,
+               CASE WHEN s.payment_method = 'stripe'
+                    THEN floor((s.total_cents - s.deposit_applied_cents - s.credit_applied_cents)
+                               * c_fee_pct + c_fee_flat)::int ELSE 0 END AS fee
+          FROM shop_sale s
+         WHERE s.tenant_id = v_tenant_id AND s.status IN ('paid', 'refunded')
+      ) c
+     WHERE c.gross > 0;
+
+    -- ── shop_rental ────────────────────────────────────────────────────────
+    -- Highland has rentals_enabled = false: the retired general rental
+    -- subsystem (rental_purchase / source_kind 'rental') is not in play, so
+    -- there is deliberately no 'rental' or 'rental_deposit' row here. Bike
+    -- rentals ride the shop and book as 'shop_rental'. Gross is the rental FEE
+    -- only; the security deposit is the rider's money and never becomes a
+    -- ledger entry unless damage is captured (StripePurchaseFinalizer.cs:943).
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'sale', 'shop_rental', c.id, c.created_at,
+           c.gross, c.fee, c.cut,
+           CASE WHEN c.pm = 'cash' THEN -c.cut ELSE c.gross - c.fee - c.cut END,
+           CASE WHEN c.pm = 'stripe' THEN 'pi_hlseed_' || replace(c.id::text, '-', '') END,
+           CASE WHEN c.pm = 'cash' THEN 'Bike shop rental, cash' END,
+           c.pm,
+           CASE WHEN left(md5(c.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+      FROM (
+        SELECT r.id, r.created_at, r.total_cents AS gross,
+               r.service_charge_cents AS cut, r.payment_method AS pm,
+               CASE WHEN r.payment_method = 'stripe'
+                    THEN floor(r.total_cents * c_fee_pct + c_fee_flat)::int ELSE 0 END AS fee
+          FROM shop_rental r
+         WHERE r.tenant_id = v_tenant_id AND r.status IN ('paid', 'out', 'returned')
+      ) c
+     WHERE c.gross > 0;
+
+    -- ── Kinds deliberately absent ──────────────────────────────────────────
+    --   'extras'             no event_extra_purchase rows are seeded at all.
+    --   'membership'         membership is enabled and priced ($49/yr) but no
+    --                        membership_purchase row is ever seeded, so there
+    --                        is nothing to book. Seed those first if the demo
+    --                        needs a Membership Revenue line.
+    --   'rental', 'rental_deposit'
+    --                        the retired general rental subsystem; Highland has
+    --                        rentals_enabled = false.
+    --   'shop_wo_deposit'    the one seeded work order is 'in_progress' with no
+    --                        deposit taken.
+    --   'shop_rental_deposit' only written when damage is captured on return;
+    --                        every seeded rental came back clean.
+    --   'credit_tender'      no store-credit accounts are seeded.
+    -- applied_tier_id and cumulative_monthly_volume_at_sale_cents are left NULL
+    -- throughout: the fee-tier table was dropped in Script0027 so live code
+    -- always writes NULL for the first, and only the card-ticket path bothers
+    -- to snapshot the second. Neither is read by v_accounting_entries.
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- REFUND ROWS
+    -- ══════════════════════════════════════════════════════════════════════
+
+    -- ── Tickets and passes: RefundLedgerMath.Compute (RefundLedgerMath.cs:25) ─
+    -- Full refunds, so refundCents == amount_cents and CutOnRefund() collapses
+    -- to the whole snapshotted charge. stripe_fee_cents is ALWAYS 0 on this
+    -- path (PurchaseController.cs:2007) -- Stripe's fee is not returned on a
+    -- refund, and the sale row already carries it.
+    --   card: cut 0, net -refund   (the platform moved the money and claws the
+    --                               whole refund back out of the payout)
+    --   cash: cut -charge, net +charge (the tenant always held the cash; only
+    --                               our cut reverses, which nets the pair to 0)
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'refund', 'event_ticket', p.id, r.refunded_at,
+           -p.amount_cents, 0,
+           CASE WHEN p.payment_method = 'cash' THEN -p.service_charge_cents ELSE 0 END,
+           CASE WHEN p.payment_method = 'cash' THEN  p.service_charge_cents ELSE -p.amount_cents END,
+           CASE WHEN p.payment_method = 'cash' THEN 'Tenant refund'
+                ELSE 'Tenant refund re_hlseed' || substr(md5(p.id::text), 1, 16) END,
+           p.payment_method,
+           CASE WHEN left(md5(p.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+      FROM _hl_led_ref r
+      JOIN event_ticket_purchase p ON p.id = r.id AND p.tenant_id = v_tenant_id
+     WHERE r.kind = 'event_ticket';
+
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'refund', 'season_pass', s.id, r.refunded_at,
+           -s.amount_cents, 0,
+           CASE WHEN s.payment_method = 'cash' THEN -s.service_charge_cents ELSE 0 END,
+           CASE WHEN s.payment_method = 'cash' THEN  s.service_charge_cents ELSE -s.amount_cents END,
+           CASE WHEN s.payment_method = 'cash' THEN 'Tenant refund'
+                ELSE 'Tenant refund re_hlseed' || substr(md5(s.id::text), 1, 16) END,
+           s.payment_method,
+           CASE WHEN left(md5(s.id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+      FROM _hl_led_ref r
+      JOIN season_pass_purchase s ON s.id = r.id AND s.tenant_id = v_tenant_id
+     WHERE r.kind = 'season_pass';
+
+    -- ── F&B and bike shop: exact negative mirror of the sale row, read back
+    -- out of the ledger the same way the controllers do via
+    -- GetSaleEntryForSource (ConcessionController.cs:3563,
+    -- BikeShopRegisterController.cs:863). All four amounts flip sign, the
+    -- PaymentIntent id is carried across.
+    INSERT INTO tenant_ledger_entry
+        (tenant_id, entry_kind, source_kind, source_id, occurred_at_utc,
+         gross_cents, stripe_fee_cents, ridepass_cut_cents, net_to_tenant_cents,
+         stripe_payment_intent_id, memo, payment_method, sold_by_user_id)
+    SELECT v_tenant_id, 'refund', l.source_kind, l.source_id, r.refunded_at,
+           -l.gross_cents, -l.stripe_fee_cents, -l.ridepass_cut_cents, -l.net_to_tenant_cents,
+           l.stripe_payment_intent_id,
+           CASE l.source_kind WHEN 'concession' THEN 'Food & Beverage refund'
+                              ELSE 'Bike shop refund' END,
+           l.payment_method,
+           CASE WHEN left(md5(l.source_id::text), 1) < '8' THEN v_cashier_a ELSE v_cashier_b END
+      FROM _hl_led_ref r
+      JOIN tenant_ledger_entry l
+        ON l.tenant_id = v_tenant_id AND l.entry_kind = 'sale'
+       AND l.source_kind = r.kind AND l.source_id = r.id
+     WHERE r.kind IN ('concession', 'shop_sale');
+
+    -- ══════════════════════════════════════════════════════════════════════
+    -- Summary
+    -- ══════════════════════════════════════════════════════════════════════
+    SELECT count(*) FILTER (WHERE entry_kind = 'sale'),
+           count(*) FILTER (WHERE entry_kind = 'refund'),
+           count(*) FILTER (WHERE payment_method = 'cash'),
+           count(DISTINCT (occurred_at_utc AT TIME ZONE 'America/New_York')::date)
+      INTO v_sales, v_refunds, v_cash, v_days
+      FROM tenant_ledger_entry WHERE tenant_id = v_tenant_id;
+    SELECT count(*) INTO v_gc_sold     FROM gift_card            WHERE tenant_id = v_tenant_id;
+    SELECT count(*) INTO v_gc_redeemed FROM gift_card_redemption WHERE tenant_id = v_tenant_id;
+
+    RAISE NOTICE 'Highland accounting ledger seeded:';
+    RAISE NOTICE '  sale rows:        % (% cash)', v_sales, v_cash;
+    RAISE NOTICE '  refund rows:      %', v_refunds;
+    RAISE NOTICE '  business dates:   %', v_days;
+    RAISE NOTICE '  gift cards:       % sold, % redemptions (NO ledger rows: liability, not revenue)',
+        v_gc_sold, v_gc_redeemed;
+END $hl_ledger$;
+
 
 COMMIT;

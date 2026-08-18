@@ -10,6 +10,8 @@
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
                 style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
             <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
         </div>
 
         <v-card v-if="report">
@@ -72,6 +74,7 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ReportsService, type ConcessionEmployeeReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
+import { downloadCsv, csvMoney } from '@/helpers/csv'
 
 const service = new ReportsService()
 
@@ -149,5 +152,21 @@ async function load() {
     } finally {
         loading.value = false
     }
+}
+
+// Every row is already on the client, so the export is a pure client-side render of what the
+// table shows. Nothing here can fail after the report itself loaded.
+function exportCsv() {
+    const r = report.value
+    if (!r) return
+    downloadCsv(
+        `fnb-staff-${rangeFrom.value}-to-${rangeTo.value}.csv`,
+        ['Employee', 'Orders', 'Gross', 'Net', 'Tax', 'Tips', 'Cash', 'Card', 'Avg order', 'Refunds', 'Refunded'],
+        r.rows.map(x => [
+            x.name, x.ordersCount, csvMoney(x.grossSalesCents), csvMoney(x.netSalesCents),
+            csvMoney(x.taxCents), csvMoney(x.tipCents), csvMoney(x.cashCents), csvMoney(x.cardCents),
+            csvMoney(x.avgOrderValueCents), x.refundedCount, csvMoney(x.refundedCents),
+        ]),
+    )
 }
 </script>

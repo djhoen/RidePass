@@ -18,6 +18,15 @@ namespace Services.Accounting
         public const string RevenueMembership  = "revenue_membership";
         public const string RevenueRental      = "revenue_rental";
         public const string RevenueConcession  = "revenue_concession";
+        /// <summary>
+        /// Bike shop counter sales AND billed-out work orders. Deliberately one slot: a work order
+        /// is billed as an ordinary shop_sale (BikeShopWorkOrderController.Bill), so the ledger has
+        /// no way to tell labor from parts at the row level. Splitting them would need a flag the
+        /// ledger does not carry.
+        /// </summary>
+        public const string RevenueBikeShop = "revenue_bike_shop";
+        /// <summary>Bike shop rental fees. Separate from RevenueRental, which is the older, non-shop rental subsystem.</summary>
+        public const string RevenueBikeShopRental = "revenue_bike_shop_rental";
         /// <summary>Rental deposit kept for damage on return, the liability becomes income.</summary>
         public const string RevenueDepositForfeited = "revenue_deposit_forfeited";
         /// <summary>Fallback for a sale kind added after this list. Keeps a day's post from failing.</summary>
@@ -64,7 +73,8 @@ namespace Services.Accounting
         public static readonly string[] All =
         {
             RevenueEventTicket, RevenueEventExtra, RevenueSeasonPass, RevenueMembership,
-            RevenueRental, RevenueConcession, RevenueDepositForfeited, RevenueOther,
+            RevenueRental, RevenueConcession, RevenueBikeShop, RevenueBikeShopRental,
+            RevenueDepositForfeited, RevenueOther,
             LiabilitySalesTax, LiabilityTips, LiabilityGiftCard, LiabilityRentalDeposit,
             AssetRidepassReceivable, AssetStripeClearing, AssetUndepositedCash,
             ExpenseStripeFees, ExpenseRidepassFees,
@@ -86,6 +96,20 @@ namespace Services.Accounting
             // Damage kept out of a security deposit on return. A separate slot from RevenueRental so
             // a track can see damage income apart from what they actually earned renting the gear out.
             "rental_deposit" => RevenueDepositForfeited,
+            "shop_sale"     => RevenueBikeShop,
+            "shop_rental"   => RevenueBikeShopRental,
+            // A work-order deposit is the same revenue stream as the job it belongs to, just
+            // recognized when it is taken rather than at bill-out. There is no double count to
+            // worry about: OnShopSalePaid books the bill-out as
+            // total - deposit_applied - credit_applied (StripePurchaseFinalizer.cs:874), so the
+            // deposit row and the remainder row sum to the job. Any deposit the job never used is
+            // handed back as its own negative 'shop_wo_deposit' refund row.
+            "shop_wo_deposit" => RevenueBikeShop,
+            // Damage kept out of a bike-shop rental deposit on return. BikeShopRentalController
+            // writes this row only for the amount actually CAPTURED from the hold ("Damage captured
+            // from rental deposit"), so it is earned income, the same thing 'rental_deposit' is for
+            // the older rental subsystem, and it shares that slot.
+            "shop_rental_deposit" => RevenueDepositForfeited,
             _               => RevenueOther,
         };
 
@@ -98,6 +122,8 @@ namespace Services.Accounting
             RevenueMembership       => "Membership revenue",
             RevenueRental           => "Rental revenue",
             RevenueConcession       => "Concession / food & beverage revenue",
+            RevenueBikeShop         => "Bike shop sales",
+            RevenueBikeShopRental   => "Bike shop rentals",
             RevenueDepositForfeited => "Forfeited deposits (damage income)",
             RevenueOther            => "Other revenue",
             LiabilitySalesTax       => "Sales tax payable",

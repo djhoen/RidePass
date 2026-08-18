@@ -40,6 +40,9 @@ namespace Services.GiftCards
         public async Task<bool> SendDeliveryEmail(GiftCard card)
         {
             if (!_emailer.IsConfigured) return false;
+            // Imported cards have no recipient to email (created delivery_status='delivered', so
+            // this shouldn't be reached for them; belt-and-braces for the nullable columns).
+            if (string.IsNullOrWhiteSpace(card.RecipientEmail)) return false;
             try
             {
                 var tenant = await _tenants.GetById(card.TenantId);

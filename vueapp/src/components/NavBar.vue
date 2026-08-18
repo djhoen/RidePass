@@ -261,7 +261,7 @@ const superAdminLinks: SuperAdminLink[] = [
 // Platform features the super-admin gates per tenant. A link carrying one of these
 // is hidden unless the tenant has that feature enabled (so disabled features don't
 // show in the admin nav at all).
-type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled' | 'sellsSpectatorPasses'
+type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled' | 'bikeShopEnabled' | 'sellsSpectatorPasses' | 'giftCardsEnabled'
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
 // staffOnly: visible to anyone holding at least one tenant permission, i.e. any staff role, but
 // not to riders. For links every staffer needs and no single permission describes.
@@ -354,6 +354,7 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-cart-check',
         links: [
             { to: '/Admin/Purchases',     icon: 'mdi-cart-check',     title: 'Purchases',      perm: Perm.SalesView },
+            { to: '/Admin/GiftCards',     icon: 'mdi-gift',           title: 'Gift Cards',     perm: Perm.SalesView, feature: 'giftCardsEnabled' },
             { to: '/Admin/StoreCredit',   icon: 'mdi-wallet-giftcard', title: 'Store Credit',  perm: Perm.CustomersView },
             { to: '/Admin/Payouts',       icon: 'mdi-bank-transfer',  title: 'Payouts',        perm: Perm.ReportsView },
         ],

@@ -18,6 +18,8 @@ namespace Services.Repositories
             status,
             stripe_payment_intent_id AS StripePaymentIntentId,
             stripe_connected_account_id AS StripeConnectedAccountId,
+            imported_from AS ImportedFrom, imported_at AS ImportedAt,
+            imported_by_user_id AS ImportedByUserId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -46,6 +48,62 @@ namespace Services.Repositories
         {
             var sql = $"SELECT {Columns} FROM gift_card WHERE id = @id AND tenant_id = @tenantId LIMIT 1";
             return (await _db.Query<GiftCard>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        // ── Admin: list / import / void ──────────────────────────────────────────
+
+        // Search matches an exact code (case-insensitive, so a scanned/typed card finds its row)
+        // or a partial name/email of either party.
+        public async Task<(List<GiftCard> Items, int Total)> ListForAdmin(
+            Guid tenantId, string? search, string? status, int page, int pageSize)
+        {
+            var filters = "tenant_id = @tenantId";
+            if (!string.IsNullOrWhiteSpace(status)) filters += " AND status = @status";
+            if (!string.IsNullOrWhiteSpace(search))
+                filters += @" AND (lower(code) = lower(@search)
+                    OR buyer_name ILIKE @like OR buyer_email ILIKE @like
+                    OR recipient_name ILIKE @like OR recipient_email ILIKE @like)";
+            var p = new
+            {
+                tenantId, status, search,
+                like = $"%{search}%",
+                offset = (page - 1) * pageSize,
+                pageSize,
+            };
+            var items = (await _db.Query<GiftCard>(
+                $@"SELECT {Columns} FROM gift_card WHERE {filters}
+                   ORDER BY created_at DESC LIMIT @pageSize OFFSET @offset", p)).ToList();
+            var total = await _db.ExecuteScalar($"SELECT COUNT(*) FROM gift_card WHERE {filters}", p);
+            return (items, total);
+        }
+
+        // Import insert: the partial unique index on (tenant_id, lower(code)) makes ON CONFLICT
+        // DO NOTHING the duplicate check; null return = code already exists for this tenant.
+        public async Task<Guid?> ImportCard(GiftCard c)
+        {
+            const string sql = @"
+                INSERT INTO gift_card
+                    (tenant_id, code, initial_amount_cents, balance_cents,
+                     recipient_name, recipient_email,
+                     delivery_status, delivered_at_utc, status,
+                     imported_from, imported_at, imported_by_user_id)
+                VALUES
+                    (@TenantId, @Code, @InitialAmountCents, @BalanceCents,
+                     @RecipientName, @RecipientEmail,
+                     'delivered', now(), 'active',
+                     @ImportedFrom, now(), @ImportedByUserId)
+                ON CONFLICT DO NOTHING
+                RETURNING id";
+            return (await _db.Query<Guid?>(sql, c)).FirstOrDefault();
+        }
+
+        // Admin void of a live card (lost/fraud/migration mistake). Distinct from Void(), which
+        // only cleans up never-paid 'pending' cards on payment failure.
+        public async Task<bool> VoidActive(Guid id, Guid tenantId)
+        {
+            const string sql = @"UPDATE gift_card SET status = 'void'
+                WHERE id = @id AND tenant_id = @tenantId AND status = 'active'";
+            return await _db.Execute(sql, new { id, tenantId }) > 0;
         }
 
         public async Task<GiftCard?> GetByCode(Guid tenantId, string code)

@@ -13,6 +13,16 @@ namespace Services.Repositories.Interfaces
         /// (entry_kind='sale'). Sum across the rows for the all-kinds total.</summary>
         Task<List<RevenueByKindRow>> GetRevenueByKind(Guid tenantId, DateTime fromUtc, DateTime toUtc);
 
+        /// <summary>
+        /// How many season passes were actually bought in the period. status = 'paid' only: a
+        /// pending row is an abandoned checkout, and a refunded / cancelled / upgraded row is not a
+        /// pass anybody holds. This is the number behind the Sales Summary "Season passes" tile.
+        /// </summary>
+        Task<int> GetSeasonPassesSold(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>Best-selling season pass products in the period, by revenue. Paid rows only.</summary>
+        Task<List<TopPassProductRow>> GetTopSeasonPassProducts(Guid tenantId, DateTime fromUtc, DateTime toUtc, int limit = 5);
+
         Task<int> GetUniqueRiders(Guid tenantId, DateTime fromUtc, DateTime toUtc);
         Task<int> GetDisputeCount(Guid tenantId, DateTime fromUtc, DateTime toUtc);
         Task<List<DailyRevenuePoint>> GetDailyRevenue(Guid tenantId, DateTime fromUtc, DateTime toUtc, string timezone);

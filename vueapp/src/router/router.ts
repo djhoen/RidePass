@@ -391,6 +391,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
+        path: '/Admin/GiftCards',
+        name: 'AdminGiftCards',
+        component: () => import('../views/Admin/GiftCards.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.view', hideFooter: true }
+    },
+    {
         path: '/Admin/StoreCredit',
         name: 'AdminStoreCredit',
         component: () => import('../views/Admin/StoreCredit.vue'),
@@ -552,6 +558,22 @@ const routes = [
         path: '/Admin/Reports',
         name: 'AdminReports',
         component: () => import('../views/Admin/Reports.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
+        // End of Day (Z) report. Also a pane in the Reporting hub
+        // (/Admin/Reports?report=end-of-day); this is the direct-link route, which is what a
+        // "close the day" bookmark or a printed link wants.
+        path: '/Admin/Reports/EndOfDay',
+        name: 'AdminReportsEndOfDay',
+        component: () => import('../views/Admin/Reports/EndOfDay.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
+        // Tax report. Also a pane in the Reporting hub (/Admin/Reports?report=tax).
+        path: '/Admin/Reports/Tax',
+        name: 'AdminReportsTax',
+        component: () => import('../views/Admin/Reports/TaxReport.vue'),
         meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
     },
     {

@@ -47,10 +47,30 @@ namespace Services.Accounting
     ///     debits  = gift_card + stripe_fee + ridepass_cut + (net - gift_card)  = gross
     ///
     /// The gift-card term cancels, which is what lets one formula cover no-gift-card, partial, and
-    /// fully-covered sales. Cash adds a debit of gross to Cash on Hand and its receivable term is
-    /// already -ridepass_cut (the tenant holds the cash and owes us our cut), so it cancels too.
+    /// fully-covered sales. Cash adds a debit of (gross - gift_card) to Cash on Hand, the cents that
+    /// actually hit the drawer, and its receivable term is already -ridepass_cut (the tenant holds
+    /// the cash and owes us our cut), so it cancels too.
     /// dispute_fee falls out for free: gross = 0, so the fee debit and the receivable credit are the
     /// only lines. Build() asserts the invariant anyway and refuses to return an unbalanced draft: /// posting a wrong entry to a customer's books is worse than posting nothing.
+    ///
+    /// ── The other half of the gift card ──────────────────────────────────────────────────
+    /// A sale draws the gift-card liability DOWN. The row that put it there is the gift_card_sold
+    /// entry, synthesized by Part 3 of v_accounting_entries (Script0273) rather than written to
+    /// tenant_ledger_entry, because that table is what tenant payouts are computed from and a row
+    /// at sale time would pay the track its float twice. Its whole job here:
+    ///
+    ///     debits  = face value (to whichever tender took the money)
+    ///     credits = face value (to liability_gift_card)
+    ///
+    /// Worked end to end, a $100 card sold to a platform-charge tenant and then spent in full on a
+    /// $100 ticket carrying a $4 RidePass cut:
+    ///
+    ///     sale        DR receivable          100.00   CR liability_gift_card  100.00
+    ///     redemption  DR liability_gift_card 100.00   CR revenue              100.00
+    ///                 DR ridepass fees         4.00   CR receivable           100.00
+    ///
+    ///   liability_gift_card goes +100 then -100 and lands at zero. The receivable is
+    ///   +100 then (96 - 100) = -4, netting +96, which is exactly what the track gets paid.
     /// </summary>
     public static class JournalEntryBuilder
     {
@@ -64,6 +84,13 @@ namespace Services.Accounting
 
         private static bool IsDeposit(string entryKind) =>
             entryKind is "deposit_collected" or "deposit_released";
+
+        /// <summary>
+        /// A gift card being BOUGHT. Not a sale in the revenue sense: the track has taken money and
+        /// now owes the bearer goods, so it is pure liability until the card is spent.
+        /// </summary>
+        private static bool IsGiftCardSale(string entryKind) =>
+            entryKind is "gift_card_sold";
 
         /// <summary>
         /// Note there is deliberately no "is this tenant direct-charge?" parameter. The platform-vs-direct
@@ -87,6 +114,7 @@ namespace Services.Accounting
             foreach (var e in entries)
             {
                 if (IsDeposit(e.EntryKind)) { AccrueDeposit(Add, e); continue; }
+                if (IsGiftCardSale(e.EntryKind)) { AccrueGiftCardSale(Add, e); continue; }
                 AccrueSale(Add, e);
             }
 
@@ -137,7 +165,22 @@ namespace Services.Accounting
 
             if (e.PaymentMethod == "cash")
             {
-                add(QboAccountKeys.AssetUndepositedCash, e.GrossCents);
+                // Only the cents that reached the drawer. A counter sale can be split cash + gift
+                // card (BikeShopRegisterController.WriteCashLedger books gross = cash + gift), and
+                // the gift-funded part never touched the till: it was collected when the card was
+                // bought and is discharged by the liability debit above. Debiting the whole gross
+                // here would overstate the drawer by the gift amount AND leave the day unbalanced,
+                // because that same writer folds the gift float into net_to_tenant, which the
+                // receivable term below then unwinds.
+                //
+                // Known gap: WriteCashLedger folds the float into net only in PLATFORM mode
+                // (net = gift - cut); in direct mode it writes net = -cut, because the float is
+                // already sitting in the tenant's own Stripe balance. A direct-charge tenant taking
+                // a cash bike-shop sale part-funded by a gift card therefore has no term left to
+                // credit, and Build() will refuse the day rather than post it misstated. No tenant
+                // is on direct charge yet; the fix belongs in WriteCashLedger, which should record
+                // the float the same way in both modes.
+                add(QboAccountKeys.AssetUndepositedCash, e.GrossCents - e.GiftCardAppliedCents);
             }
 
             if (e.PaymentMethod == "stripe_direct")
@@ -159,6 +202,28 @@ namespace Services.Accounting
                 // sale where the float was collected back when the card was bought.
                 add(QboAccountKeys.AssetRidepassReceivable, e.NetToTenantCents - e.GiftCardAppliedCents);
             }
+        }
+
+        /// <summary>
+        /// A gift card being bought. The mirror image of the gift-card term in AccrueSale: money
+        /// comes in and an obligation to honor the card goes on the balance sheet. No revenue, no
+        /// tax (selling stored value is not a taxable sale), and no Stripe fee or RidePass cut,
+        /// because the buyer's service charge is RidePass's income and never the track's, so
+        /// v_accounting_entries carries only the face value. See the Part 3 note in Script0273.
+        /// </summary>
+        private static void AccrueGiftCardSale(Action<string, long> add, AccountingEntry e)
+        {
+            // Same tender choice as a deposit, and for the same reason: the row's own snapshotted
+            // payment_method decides where the money landed, never the tenant's current mode.
+            var tenderAccount = e.PaymentMethod switch
+            {
+                "cash"          => QboAccountKeys.AssetUndepositedCash,
+                "stripe_direct" => QboAccountKeys.AssetStripeClearing,
+                _               => QboAccountKeys.AssetRidepassReceivable,
+            };
+
+            add(tenderAccount, e.GrossCents);
+            add(QboAccountKeys.LiabilityGiftCard, -e.GrossCents);
         }
 
         /// <summary>

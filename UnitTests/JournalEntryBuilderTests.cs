@@ -1,4 +1,4 @@
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using Services.Accounting;
 using Services.Repositories.Data.QuickBooksData;
 
@@ -399,6 +399,187 @@ namespace UnitTests
 
             AssertBalanced(d);
             Assert.That(Signed(d, QboAccountKeys.RevenueOther), Is.EqualTo(-1000));
+        }
+
+        // ── Gift card SALES (Script0273 Part 3) ────────────────────────────────────────
+        // The credit that was missing for as long as the sync has existed. Selling a card takes
+        // money and creates an obligation; it earns nothing. The revenue arrives later, when the
+        // card is spent, and the redemption draws this same liability back down.
+
+        private static AccountingEntry GiftCardSale(int gross, string paymentMethod = "stripe") =>
+            Sale(sourceKind: "gift_card", gross: gross, net: gross,
+                 paymentMethod: paymentMethod, entryKind: "gift_card_sold");
+
+        [Test]
+        public void GiftCardSale_Platform_CreditsLiabilityAndDebitsReceivable_NeverRevenue()
+        {
+            // A $100 card bought online from a platform-charge track. RidePass holds the float.
+            var d = JournalEntryBuilder.Build(new[] { GiftCardSale(10000) }, Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(-10000),
+                "selling a card creates the obligation it is later redeemed against");
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(10000));
+            Assert.That(d.Lines.Any(l => l.AccountKey.StartsWith("revenue_")), Is.False,
+                "a gift card sale earns nothing until it is spent");
+            Assert.That(Signed(d, QboAccountKeys.LiabilitySalesTax), Is.EqualTo(0),
+                "selling stored value is not a taxable sale");
+        }
+
+        [Test]
+        public void GiftCardSale_DirectCharge_DebitsStripeClearing()
+        {
+            // Direct charge: the card was sold on the track's own connected account, so the float
+            // is in THEIR Stripe balance, not in a RidePass receivable.
+            var d = JournalEntryBuilder.Build(
+                new[] { GiftCardSale(5000, paymentMethod: "stripe_direct") }, Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.AssetStripeClearing), Is.EqualTo(5000));
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(0));
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(-5000));
+        }
+
+        [Test]
+        public void GiftCardSale_Cash_DebitsUndepositedCash()
+        {
+            var d = JournalEntryBuilder.Build(
+                new[] { GiftCardSale(2500, paymentMethod: "cash") }, Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(2500));
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(-2500));
+        }
+
+        [Test]
+        public void GiftCardSoldAndFullyRedeemedSameDay_NetsLiabilityToZero_ReceivableToNetOfCut()
+        {
+            // The worked example from the JournalEntryBuilder header. A $100 card is bought and
+            // then spent in full on a $100 ticket carrying a $4 RidePass cut. The two halves of
+            // the liability cancel and the track is left owed exactly its payout.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    GiftCardSale(10000),
+                    Sale(gross: 10000, fee: 0, cut: 400, net: 9600, giftCard: 10000, paymentMethod: "voucher"),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(0),
+                "sold then fully spent: the obligation is discharged");
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(9600),
+                "100 owed at sale, less the 4 cut at redemption");
+            Assert.That(Signed(d, QboAccountKeys.RevenueEventTicket), Is.EqualTo(-10000),
+                "the revenue lands once, at redemption");
+            Assert.That(Signed(d, QboAccountKeys.ExpenseRidepassFees), Is.EqualTo(400));
+        }
+
+        [Test]
+        public void GiftCardSoldAndPartlyRedeemed_LeavesTheRemainderOutstanding()
+        {
+            // $100 card, $30 of it spent on a concession sale that was otherwise paid by card.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    GiftCardSale(10000),
+                    Sale(sourceKind: "concession", gross: 5000, fee: 90, cut: 150, net: 4760,
+                         tax: 400, giftCard: 3000),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(-7000),
+                "the unspent 70 stays on the balance sheet as an obligation");
+            Assert.That(Signed(d, QboAccountKeys.RevenueConcession), Is.EqualTo(-4600),
+                "tax is still carved out of the gross even when a card funded part of it");
+        }
+
+        // ── Bike shop (Script0273 Part 1 CASE) ──────────────────────────────────────────
+
+        [Test]
+        public void ShopSale_BooksBikeShopRevenue_WithTaxCarvedOut()
+        {
+            // $120 counter sale, $7.20 tax. Before Script0273 this fell through to revenue_other
+            // with the tax silently booked as income.
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "shop_sale", gross: 12000, fee: 378, cut: 360, net: 11262, tax: 720) },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueBikeShop), Is.EqualTo(-11280));
+            Assert.That(Signed(d, QboAccountKeys.LiabilitySalesTax), Is.EqualTo(-720));
+            Assert.That(Signed(d, QboAccountKeys.RevenueOther), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ShopRental_BooksItsOwnRevenueSlot_SeparateFromTheOlderRentalSubsystem()
+        {
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "shop_rental", gross: 8000, fee: 262, cut: 240, net: 7498, tax: 480) },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueBikeShopRental), Is.EqualTo(-7520));
+            Assert.That(Signed(d, QboAccountKeys.RevenueRental), Is.EqualTo(0),
+                "the bike shop rental subsystem is not the older rental_purchase one");
+            Assert.That(Signed(d, QboAccountKeys.LiabilitySalesTax), Is.EqualTo(-480));
+        }
+
+        [Test]
+        public void ShopRentalDeposit_IsDamageIncome_NotRentalRevenue()
+        {
+            // BikeShopRentalController writes this row only for the amount actually captured out of
+            // a damage hold, so it is earned income and shares the forfeited-deposit slot.
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "shop_rental_deposit", gross: 6000, fee: 204, cut: 0, net: 5796) },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueDepositForfeited), Is.EqualTo(-6000));
+            Assert.That(Signed(d, QboAccountKeys.RevenueBikeShopRental), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void WorkOrderDepositAndItsBillOut_TogetherCreditTheWholeJob()
+        {
+            // A $500 job with a $150 deposit taken up front. The deposit books its own row, and the
+            // bill-out books only the remainder (OnShopSalePaid: total - deposit_applied -
+            // credit_applied), so the two sum to the job and neither double counts the other. Both
+            // are bike shop revenue; the deposit is simply recognized earlier.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "shop_wo_deposit", gross: 15000, fee: 465, cut: 450, net: 14085),
+                    Sale(sourceKind: "shop_sale", gross: 35000, fee: 1045, cut: 1050, net: 32905),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueBikeShop), Is.EqualTo(-50000),
+                "deposit plus remainder is the whole job, booked once");
+            Assert.That(Signed(d, QboAccountKeys.RevenueOther), Is.EqualTo(0),
+                "the deposit no longer falls through to the catch-all slot");
+        }
+
+        [Test]
+        public void CashSalePartFundedByAGiftCard_DebitsOnlyWhatReachedTheDrawer()
+        {
+            // The bike shop register books gross = cash + gift on a cash sale and folds the gift
+            // float into net (net = gift - cut). Debiting the whole gross to the drawer would
+            // overstate the till by the gift amount and leave the day unbalanced outright.
+            // $80 sale: $50 cash, $30 off a gift card, $2.40 cut.
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "shop_sale", gross: 8000, fee: 0, cut: 240, net: 3000 - 240,
+                             giftCard: 3000, paymentMethod: "cash") },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(5000),
+                "only the 50 in notes reached the till");
+            Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(3000));
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(-240),
+                "the track holds the cash, so it owes us our cut and nothing else");
         }
     }
 }

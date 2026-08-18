@@ -8,17 +8,24 @@
         public int InitialAmountCents { get; set; }
         public int BalanceCents { get; set; }
         public Guid? BuyerUserId { get; set; }
-        public string BuyerName { get; set; } = null!;
-        public string BuyerEmail { get; set; } = null!;
-        public string RecipientName { get; set; } = null!;
-        public string RecipientEmail { get; set; } = null!;
+        // Null on imported cards (legacy balances usually arrive as code + amount only); the buy
+        // flow always sets all four.
+        public string? BuyerName { get; set; }
+        public string? BuyerEmail { get; set; }
+        public string? RecipientName { get; set; }
+        public string? RecipientEmail { get; set; }
         public string? PersonalNote { get; set; }
         public string DeliveryStatus { get; set; } = "pending";   // pending | delivered | failed
         public DateTime? ScheduledDeliveryAtUtc { get; set; }
         public DateTime? DeliveredAtUtc { get; set; }
-        public string Status { get; set; } = "active";            // active | depleted | refunded
+        public string Status { get; set; } = "active";            // pending | active | depleted | refunded | void
         public string? StripePaymentIntentId { get; set; }
         public string? StripeConnectedAccountId { get; set; }     // direct-charge account; NULL = platform
+        // Set only on cards brought in from a previous system (no Stripe PI, no delivery email,
+        // excluded from the Purchases feed).
+        public string? ImportedFrom { get; set; }
+        public DateTime? ImportedAt { get; set; }
+        public Guid? ImportedByUserId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

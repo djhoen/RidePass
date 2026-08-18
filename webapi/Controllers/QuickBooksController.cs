@@ -390,6 +390,17 @@ namespace webapi.Controllers
                 keys.Add(QboAccountKeys.RevenueDepositForfeited);
                 keys.Add(QboAccountKeys.LiabilityRentalDeposit);
             }
+            if (t.BikeShopEnabled)
+            {
+                keys.Add(QboAccountKeys.RevenueBikeShop);
+                keys.Add(QboAccountKeys.RevenueBikeShopRental);
+                // Damage captured out of a bike-shop rental deposit books as forfeited-deposit
+                // income (source_kind 'shop_rental_deposit'), which a shop tenant can hit whether
+                // or not the older rentals subsystem is switched on.
+                keys.Add(QboAccountKeys.RevenueDepositForfeited);
+            }
+            // Sold cards now credit the liability too (Script0273 Part 3), so this slot is no longer
+            // redemption-only: it is required for the SALE side as well.
             if (t.GiftCardsEnabled) keys.Add(QboAccountKeys.LiabilityGiftCard);
 
             // Tax and tips can appear on any tenant: admission tax is configured independently of

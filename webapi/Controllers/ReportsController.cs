@@ -1,10 +1,12 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Services.Accounting;
 using Services.Helpers;
 using Services.Repositories.Data.ReportData;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Reports;
+using webapi.Helpers;
 using webapi.Multitenancy;
 
 namespace webapi.Controllers
@@ -27,6 +29,8 @@ namespace webapi.Controllers
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantTaxRepository _tax;
+        private readonly IEndOfDayReportRepository _endOfDay;
+        private readonly IQuickBooksRepository _quickBooks;
 
         public ReportsController(
             IReportsRepository reports,
@@ -42,6 +46,8 @@ namespace webapi.Controllers
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext,
             ITenantTaxRepository tax,
+            IEndOfDayReportRepository endOfDay,
+            IQuickBooksRepository quickBooks,
             Services.Audit.IAuditLogger audit)
         {
             _audit = audit;
@@ -58,6 +64,8 @@ namespace webapi.Controllers
             _waiverGate = waiverGate;
             _tenantContext = tenantContext;
             _tax = tax;
+            _endOfDay = endOfDay;
+            _quickBooks = quickBooks;
         }
 
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
@@ -79,6 +87,11 @@ namespace webapi.Controllers
             var disputes = await _reports.GetDisputeCount(tenantId, fromUtc, toUtc);
             var daily = await _reports.GetDailyRevenue(tenantId, fromUtc, toUtc, tz);
             var topEvents = await _reports.GetTopEvents(tenantId, fromUtc, toUtc);
+            // "Passes" here means SEASON passes. The old day-pass subsystem was removed in
+            // Script0118, and these two were left hardcoded to 0 / empty when it went, which is
+            // why the tile read zero for a track that had sold passes all season.
+            var passesSold = await _reports.GetSeasonPassesSold(tenantId, fromUtc, toUtc);
+            var topPassProducts = await _reports.GetTopSeasonPassProducts(tenantId, fromUtc, toUtc);
 
             var summary = new TenantReportSummary
             {
@@ -87,7 +100,7 @@ namespace webapi.Controllers
                 // All-kinds gross revenue from the ledger (tickets + passes + memberships + extras +
                 // rentals + concessions), broken out by type. TicketsSold stays the event-ticket count.
                 TotalRevenueCents = revenueByKind.Sum(r => r.RevenueCents),
-                PassesSold = 0,
+                PassesSold = passesSold,
                 TicketsSold = ticket.SoldCount,
                 UniqueRiders = riders,
                 RefundedCount = ticket.RefundedCount,
@@ -101,7 +114,13 @@ namespace webapi.Controllers
                     SaleCount = r.SaleCount,
                 }).ToList(),
                 DailyRevenue = daily.Select(MapDaily).ToList(),
-                TopPassProducts = new List<TopProductDto>(),
+                TopPassProducts = topPassProducts.Select(p => new TopProductDto
+                {
+                    ProductId = p.ProductId,
+                    ProductName = p.ProductName,
+                    SoldCount = p.SoldCount,
+                    RevenueCents = p.RevenueCents,
+                }).ToList(),
                 TopEvents = topEvents.Select(e => new TopEventDto
                 {
                     EventId = e.EventId,
@@ -138,6 +157,351 @@ namespace webapi.Controllers
                 TaxedTicketCount = totals.TaxedTicketCount,
                 CurrentRateBps = cfg?.RateBps ?? 0,
                 JurisdictionLabel = cfg?.JurisdictionLabel,
+            });
+        }
+
+        // ── End of Day (Z report) ───────────────────────────────────────────────
+        // The single-day close for one tenant-local business date.
+        //
+        // Sourced entirely from v_accounting_entries, the read model QuickBooksSyncService posts
+        // that day's journal entry from, and bucketed with the same QboAccountKeys function
+        // JournalEntryBuilder uses. That is the point of the report: what the admin closes the day
+        // on and what their accountant opens in QuickBooks are the same numbers, and they cannot
+        // drift, because there is only one source and one bucketing rule.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/EndOfDay")]
+        public async Task<IActionResult> GetEndOfDay([FromQuery] string? date = null)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryResolveBusinessDate(date, out var businessDate))
+                return new ApiResponses().BadRequestResult("Date must be a calendar date in yyyy-MM-dd form.");
+
+            return new ApiResponses().OkResult(await BuildEndOfDay(businessDate));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/EndOfDay/Csv")]
+        public async Task<IActionResult> GetEndOfDayCsv([FromQuery] string? date = null)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!TryResolveBusinessDate(date, out var businessDate))
+                return new ApiResponses().BadRequestResult("Date must be a calendar date in yyyy-MM-dd form.");
+
+            var report = await BuildEndOfDay(businessDate);
+            var bytes = EndOfDayCsvBuilder.Build(report, _tenantContext.Tenant.DisplayName);
+            // No audit row here, unlike the Trackside export: this file carries money totals and
+            // staff names, not a list of riders' emails and phone numbers.
+            return File(bytes, "text/csv", EndOfDayCsvBuilder.FilenameFor(report.BusinessDate));
+        }
+
+        // Empty/absent date means "today at the track", never today in UTC or on the admin's laptop.
+        private bool TryResolveBusinessDate(string? date, out DateOnly businessDate)
+        {
+            if (string.IsNullOrWhiteSpace(date))
+            {
+                businessDate = DateOnly.FromDateTime(TenantLocalNow());
+                return true;
+            }
+            return DateOnly.TryParseExact(date.Trim(), "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out businessDate);
+        }
+
+        private DateTime TenantLocalNow()
+        {
+            var iana = _tenantContext.Tenant.Timezone;
+            if (string.IsNullOrWhiteSpace(iana)) return DateTime.UtcNow;
+            try { return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(iana)); }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException) { return DateTime.UtcNow; }
+        }
+
+        private async Task<EndOfDayReportResponse> BuildEndOfDay(DateOnly businessDate)
+        {
+            var tenantId = _tenantContext.TenantId;
+            var tz = string.IsNullOrWhiteSpace(_tenantContext.Tenant.Timezone) ? "UTC" : _tenantContext.Tenant.Timezone;
+
+            var buckets = await _endOfDay.GetDayBuckets(tenantId, businessDate);
+            var staffRows = await _endOfDay.GetDayStaff(tenantId, businessDate);
+            var sessions = await _endOfDay.GetDayCashSessions(tenantId, businessDate, tz);
+            var turnIns = await _endOfDay.GetDayCashTurnIns(tenantId, businessDate, tz);
+
+            // Revenue is sale + refund. Every other entry kind is money that moved without being
+            // earned (gift-card sales, deposits, chargebacks, RidePass's own charges) and is
+            // reported under totals instead. 'adjustment' is allowed by the ledger's CHECK
+            // constraint but has no writer anywhere in the codebase today; if one is ever added it
+            // needs a home here, or it will close the day invisibly.
+            var saleAndRefund = buckets.Where(b => b.EntryKind is "sale" or "refund").ToList();
+
+            // ── Revenue, bucketed exactly the way the journal entry is ──────────────────
+            var byKey = new Dictionary<string, EndOfDayRevenueLine>(StringComparer.Ordinal);
+            foreach (var b in saleAndRefund)
+            {
+                var key = QboAccountKeys.RevenueForSourceKind(b.SourceKind);
+                if (!byKey.TryGetValue(key, out var line))
+                {
+                    line = new EndOfDayRevenueLine { Key = key, Label = QboAccountKeys.Label(key) };
+                    byKey[key] = line;
+                }
+                if (b.EntryKind == "sale")
+                {
+                    line.SaleCount += b.EntryCount;
+                    line.GrossCents += b.GrossCents;
+                }
+                else
+                {
+                    line.RefundCount += b.EntryCount;
+                    line.RefundCents += b.GrossCents;   // already negative in the ledger
+                }
+                line.TaxCents += b.TaxCents;
+                line.TipCents += b.TipCents;
+            }
+            foreach (var line in byKey.Values)
+            {
+                line.NetGrossCents = line.GrossCents + line.RefundCents;
+                line.NetRevenueCents = line.NetGrossCents - line.TaxCents - line.TipCents;
+            }
+            var revenue = byKey.Values
+                .OrderBy(l => { var i = Array.IndexOf(QboAccountKeys.All, l.Key); return i < 0 ? int.MaxValue : i; })
+                .ThenBy(l => l.Key, StringComparer.Ordinal)
+                .ToList();
+
+            long Sum(Func<AccountingBucketRow, bool> where, Func<AccountingBucketRow, long> pick) =>
+                buckets.Where(where).Sum(pick);
+
+            var grossSales = Sum(b => b.EntryKind == "sale", b => b.GrossCents);
+            var refunds = Sum(b => b.EntryKind == "refund", b => b.GrossCents);
+            var tax = saleAndRefund.Sum(b => b.TaxCents);
+            var tips = saleAndRefund.Sum(b => b.TipCents);
+
+            var totals = new EndOfDayTotals
+            {
+                GrossSalesCents = grossSales,
+                RefundsCents = refunds,
+                NetSalesCents = grossSales + refunds,
+                TaxCents = tax,
+                TipsCents = tips,
+                NetRevenueCents = grossSales + refunds - tax - tips,
+
+                GiftCardsSoldCents = Sum(b => b.EntryKind == "gift_card_sold", b => b.GrossCents),
+                // Redemptions on SALES. A refund row carries a negative gift-card proration, which
+                // nets inside the gift-card tender line below but is deliberately left out of this
+                // headline figure, which answers "how much stored value was spent here today".
+                GiftCardsRedeemedCents = Sum(b => b.EntryKind == "sale", b => b.GiftCardAppliedCents),
+                DepositsCollectedCents = Sum(b => b.EntryKind == "deposit_collected", b => b.GrossCents),
+                DepositsReleasedCents = Sum(b => b.EntryKind == "deposit_released", b => b.GrossCents),
+                // A chargeback reverses the original sale, so its gross is negative.
+                DisputeLossCents = Sum(b => b.EntryKind == "dispute_loss", b => b.GrossCents),
+                // The chargeback fee rides stripe_fee_cents; a dispute_fee row's gross is 0.
+                DisputeFeeCents = Sum(b => b.EntryKind == "dispute_fee", b => b.StripeFeeCents),
+                // SMS/email charges are written with a NEGATIVE gross (money out). Flipped to a
+                // positive here so the screen can label it plainly as a cost.
+                PlatformChargesCents = -Sum(b => b.EntryKind is "sms_charge" or "email_charge", b => b.GrossCents),
+
+                // Fees on the trading rows only. The chargeback fee is reported on its own line
+                // above rather than folded in here, so nothing is counted twice.
+                StripeFeesCents = saleAndRefund.Sum(b => b.StripeFeeCents),
+                RidepassFeesCents = saleAndRefund.Sum(b => b.RidepassCutCents),
+                NetToTenantCents = saleAndRefund.Sum(b => b.NetToTenantCents),
+
+                TransactionCount = buckets.Where(b => b.EntryKind == "sale").Sum(b => b.EntryCount),
+                RefundCount = buckets.Where(b => b.EntryKind == "refund").Sum(b => b.EntryCount),
+            };
+
+            // ── Tenders: the same money cut by how it was PAID ──────────────────────────
+            // A sale settled partly on a gift card contributes to two buckets, so the card and cash
+            // lines take gross MINUS the gift-funded part and the gift-card line takes that part.
+            // Gift-card PURCHASES are not here: they are not a sale, and they show under the other
+            // movements section instead, which keeps the tenders summing to net sales.
+            var cardMethods = new[] { "stripe", "stripe_direct", "stripe_connect" };
+            var tenders = new List<EndOfDayTenderLine>
+            {
+                new()
+                {
+                    Method = "card", Label = "Card",
+                    AmountCents = saleAndRefund.Where(b => cardMethods.Contains(b.PaymentMethod))
+                                               .Sum(b => b.GrossCents - b.GiftCardAppliedCents),
+                    Count = saleAndRefund.Where(b => cardMethods.Contains(b.PaymentMethod)).Sum(b => b.EntryCount),
+                },
+                new()
+                {
+                    Method = "cash", Label = "Cash",
+                    AmountCents = saleAndRefund.Where(b => b.PaymentMethod == "cash")
+                                               .Sum(b => b.GrossCents - b.GiftCardAppliedCents),
+                    Count = saleAndRefund.Where(b => b.PaymentMethod == "cash").Sum(b => b.EntryCount),
+                },
+                new()
+                {
+                    Method = "gift_card", Label = "Gift card",
+                    // Every payment method can carry a gift-card portion: 'voucher' when the card
+                    // covered the whole sale, an ordinary card/cash method when it covered part.
+                    AmountCents = saleAndRefund.Sum(b => b.GiftCardAppliedCents),
+                    Count = saleAndRefund.Where(b => b.GiftCardAppliedCents != 0).Sum(b => b.EntryCount),
+                },
+                new()
+                {
+                    Method = "credit", Label = "Store credit",
+                    AmountCents = saleAndRefund.Where(b => b.PaymentMethod == "credit").Sum(b => b.GrossCents),
+                    Count = saleAndRefund.Where(b => b.PaymentMethod == "credit").Sum(b => b.EntryCount),
+                },
+            };
+
+            var cash = new EndOfDayCashSection
+            {
+                Sessions = sessions.Select(s => new EndOfDayCashSessionDto
+                {
+                    Id = s.Id,
+                    UserId = s.UserId,
+                    UserName = string.IsNullOrWhiteSpace(s.UserName) ? "Unknown" : s.UserName,
+                    EventTitle = s.EventTitle,
+                    DeviceId = s.DeviceId,
+                    OpeningFloatCents = s.OpeningFloatCents,
+                    Status = s.Status,
+                    OpenedAtUtc = DateTime.SpecifyKind(s.OpenedAt.ToUniversalTime(), DateTimeKind.Utc),
+                    ClosedAtUtc = s.ClosedAt.HasValue
+                        ? DateTime.SpecifyKind(s.ClosedAt.Value.ToUniversalTime(), DateTimeKind.Utc) : null,
+                }).ToList(),
+                TurnIns = turnIns.Select(t => new EndOfDayCashTurnInDto
+                {
+                    Id = t.Id,
+                    WorkerName = string.IsNullOrWhiteSpace(t.WorkerName) ? "Unknown" : t.WorkerName,
+                    ManagerName = t.ManagerName,
+                    ExpectedCents = t.ExpectedCents,
+                    WorkerCountedCents = t.WorkerCountedCents,
+                    ManagerCountedCents = t.ManagerCountedCents,
+                    VarianceCents = t.VarianceCents,
+                    Status = t.Status,
+                    Note = t.Note,
+                    SubmittedAtUtc = DateTime.SpecifyKind(t.SubmittedAt.ToUniversalTime(), DateTimeKind.Utc),
+                    ConfirmedAtUtc = t.ConfirmedAt.HasValue
+                        ? DateTime.SpecifyKind(t.ConfirmedAt.Value.ToUniversalTime(), DateTimeKind.Utc) : null,
+                }).ToList(),
+                OpeningFloatCents = sessions.Sum(s => s.OpeningFloatCents),
+                WorkerCountedCents = turnIns.Sum(t => t.WorkerCountedCents),
+                ManagerCountedCents = turnIns.Sum(t => t.ManagerCountedCents ?? 0),
+                CashSalesCents = saleAndRefund.Where(b => b.PaymentMethod == "cash")
+                                              .Sum(b => b.GrossCents - b.GiftCardAppliedCents),
+            };
+
+            return new EndOfDayReportResponse
+            {
+                BusinessDate = businessDate.ToString("yyyy-MM-dd"),
+                Timezone = tz,
+                GeneratedAtUtc = DateTime.UtcNow,
+                Revenue = revenue,
+                Totals = totals,
+                Tenders = tenders,
+                Staff = staffRows.Select(s => new EndOfDayStaffLine
+                {
+                    UserId = s.UserId,
+                    Name = !string.IsNullOrWhiteSpace(s.Name) ? s.Name!
+                         : !string.IsNullOrWhiteSpace(s.Email) ? s.Email! : "Unknown",
+                    SaleCount = s.SaleCount,
+                    RefundCount = s.RefundCount,
+                    GrossCents = s.GrossCents,
+                    CashCents = s.CashCents,
+                }).ToList(),
+                Cash = cash,
+                QuickBooks = await BuildQuickBooksStatus(tenantId, businessDate),
+            };
+        }
+
+        // Read-only view of the sync log. Nothing here posts, retries, or claims a business date;
+        // the sweep and the QuickBooks settings screen own every write path.
+        private async Task<EndOfDayQuickBooksStatus> BuildQuickBooksStatus(Guid tenantId, DateOnly businessDate)
+        {
+            var connection = await _quickBooks.GetConnection(tenantId);
+            if (connection is null) return new EndOfDayQuickBooksStatus { Connected = false, Status = "not_connected" };
+
+            var log = await _quickBooks.GetSyncLog(tenantId, businessDate);
+            if (log is not null)
+            {
+                return new EndOfDayQuickBooksStatus
+                {
+                    Connected = true,
+                    Status = log.Status,
+                    DocNumber = log.QboDocNumber,
+                    JournalEntryId = log.QboJournalEntryId,
+                    SyncedAtUtc = log.SyncedAtUtc.HasValue
+                        ? DateTime.SpecifyKind(log.SyncedAtUtc.Value, DateTimeKind.Utc) : null,
+                    LastError = log.LastError,
+                };
+            }
+
+            // No log row yet. Either the sweep has not reached this day, or it never will: sync is
+            // switched off, or the date predates the connection's start cursor, which the sweep
+            // never walks back past.
+            var willNeverPost = !connection.SyncEnabled || businessDate < connection.SyncStartDate;
+            return new EndOfDayQuickBooksStatus
+            {
+                Connected = true,
+                Status = willNeverPost ? "disabled" : "pending",
+                LastError = connection.LastSyncError,
+            };
+        }
+
+        // ── Sales tax collected, every revenue stream ───────────────────────────
+        // The companion to AdmissionTax above, which reads event_ticket_purchase directly and so
+        // only ever answers the admissions question. This one reads v_accounting_entries, so food
+        // and beverage, bike shop, rentals and everything else are in it, split by the same
+        // QuickBooks account slots the journal entry uses.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/SalesTax")]
+        public async Task<IActionResult> GetSalesTax([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");
+
+            var tenantId = _tenantContext.TenantId;
+            var tz = string.IsNullOrWhiteSpace(_tenantContext.Tenant.Timezone) ? "UTC" : _tenantContext.Tenant.Timezone;
+            var rows = await _endOfDay.GetSalesTaxBuckets(tenantId, fromUtc, toUtc);
+
+            // Only rows that actually carried tax count toward taxable sales and the taxed-sale
+            // count. A zero-tax row is a sale in a jurisdiction (or of a kind) that is not taxed,
+            // and including its gross would inflate the base the rate is checked against.
+            var taxed = rows.Where(r => r.TaxCents != 0).ToList();
+
+            var byCategory = taxed
+                .GroupBy(r => QboAccountKeys.RevenueForSourceKind(r.SourceKind), StringComparer.Ordinal)
+                .Select(g => new SalesTaxCategoryRow
+                {
+                    Key = g.Key,
+                    Label = QboAccountKeys.Label(g.Key),
+                    TaxCents = g.Sum(r => r.TaxCents),
+                    CollectedTaxCents = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
+                    RefundedTaxCents = g.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
+                    TaxableSalesCents = g.Sum(r => r.GrossCents),
+                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                })
+                .OrderBy(c => { var i = Array.IndexOf(QboAccountKeys.All, c.Key); return i < 0 ? int.MaxValue : i; })
+                .ThenBy(c => c.Key, StringComparer.Ordinal)
+                .ToList();
+
+            var byDay = taxed
+                .GroupBy(r => r.BusinessDate)
+                .Select(g => new SalesTaxDayRow
+                {
+                    BusinessDate = g.Key.ToString("yyyy-MM-dd"),
+                    TaxCents = g.Sum(r => r.TaxCents),
+                    CollectedTaxCents = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
+                    RefundedTaxCents = g.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
+                    TaxableSalesCents = g.Sum(r => r.GrossCents),
+                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                })
+                .OrderBy(d => d.BusinessDate, StringComparer.Ordinal)
+                .ToList();
+
+            return new ApiResponses().OkResult(new SalesTaxReport
+            {
+                FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
+                ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
+                Timezone = tz,
+                NetTaxCents = taxed.Sum(r => r.TaxCents),
+                CollectedTaxCents = taxed.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
+                RefundedTaxCents = taxed.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
+                TaxableSalesCents = taxed.Sum(r => r.GrossCents),
+                TaxedSaleCount = taxed.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                ByCategory = byCategory,
+                ByDay = byDay,
             });
         }
 

@@ -58,6 +58,38 @@ namespace Services.Repositories
             return (await _db.Query<RevenueByKindRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
         }
 
+        // season_pass_purchase has no paid_at column; created_at is the row's birth and the pass is
+        // minted at checkout, so it is the same timestamp every other purchase report in here ranges on.
+        public async Task<int> GetSeasonPassesSold(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            const string sql = @"
+                SELECT COUNT(*)::int
+                FROM season_pass_purchase
+                WHERE tenant_id = @tenantId AND status = 'paid'
+                  AND created_at >= @fromUtc AND created_at < @toUtc";
+            var r = await _db.Query<int>(sql, new { tenantId, fromUtc, toUtc });
+            return r.FirstOrDefault();
+        }
+
+        public async Task<List<TopPassProductRow>> GetTopSeasonPassProducts(Guid tenantId, DateTime fromUtc, DateTime toUtc, int limit = 5)
+        {
+            // amount_cents is what the rider actually paid (already net of any discount), so the
+            // ranking matches the money that came in rather than list price.
+            const string sql = @"
+                SELECT p.id AS ProductId,
+                       p.name AS ProductName,
+                       COUNT(*)::int AS SoldCount,
+                       COALESCE(SUM(sp.amount_cents), 0)::bigint AS RevenueCents
+                FROM season_pass_purchase sp
+                JOIN season_pass_product p ON p.id = sp.product_id AND p.tenant_id = sp.tenant_id
+                WHERE sp.tenant_id = @tenantId AND sp.status = 'paid'
+                  AND sp.created_at >= @fromUtc AND sp.created_at < @toUtc
+                GROUP BY p.id, p.name
+                ORDER BY RevenueCents DESC
+                LIMIT @limit";
+            return (await _db.Query<TopPassProductRow>(sql, new { tenantId, fromUtc, toUtc, limit })).ToList();
+        }
+
         public async Task<int> GetUniqueRiders(Guid tenantId, DateTime fromUtc, DateTime toUtc)
         {
             // Union distinct purchaser emails across passes and tickets within the range.

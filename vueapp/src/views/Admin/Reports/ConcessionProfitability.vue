@@ -10,6 +10,8 @@
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
                 style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
             <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
         </div>
 
         <template v-if="report">
@@ -185,6 +187,7 @@ import { Bar } from 'vue-chartjs'
 import { registerChartJs } from '@/helpers/ChartSetup'
 import { ReportsService, type ConcessionProfitabilityReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
+import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
 
 registerChartJs()
 
@@ -294,5 +297,54 @@ const hourChartOptions = {
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: { y: { beginAtZero: true, title: { display: true, text: 'Net sales ($)' } } },
+}
+
+function exportCsv() {
+    const r = report.value
+    if (!r) return
+    const sections: CsvSection[] = [
+        {
+            title: 'F&B profitability',
+            headers: ['Field', 'Value'],
+            rows: [
+                ['From', rangeFrom.value],
+                ['To', rangeTo.value],
+                ['Net sales', csvMoney(r.netSalesCents)],
+                ['Gross sales', csvMoney(r.grossSalesCents)],
+                ['Tax', csvMoney(r.taxCents)],
+                ['Tips', csvMoney(r.tipsCents)],
+                ['Cost of goods', csvMoney(r.cogsCents)],
+                ['Gross profit', csvMoney(r.grossProfitCents)],
+                ['Margin %', r.marginPct.toFixed(1)],
+                ['Orders', r.orderCount],
+                ['Avg order value', csvMoney(r.avgOrderValueCents)],
+                ['Refunds', r.refundedCount],
+                ['Refunded amount', csvMoney(r.refundedAmountCents)],
+            ],
+        },
+        {
+            title: 'By item',
+            headers: ['Item', 'Qty sold', 'Revenue', 'COGS', 'Profit', 'Margin %'],
+            rows: r.items.map(i => [i.name, i.qtySold, csvMoney(i.revenueCents), csvMoney(i.cogsCents),
+                csvMoney(i.profitCents), i.marginPct.toFixed(1)]),
+        },
+        {
+            title: 'By category',
+            headers: ['Category', 'Revenue', 'COGS', 'Profit', 'Margin %'],
+            rows: r.categories.map(c => [c.category, csvMoney(c.revenueCents), csvMoney(c.cogsCents),
+                csvMoney(c.profitCents), c.marginPct.toFixed(1)]),
+        },
+        {
+            title: 'By payment method',
+            headers: ['Method', 'Count', 'Amount'],
+            rows: r.payments.map(p => [paymentLabel(p.method), p.count, csvMoney(p.amountCents)]),
+        },
+        {
+            title: 'By hour',
+            headers: ['Hour', 'Orders', 'Net sales'],
+            rows: r.hours.map(h => [hourLabel(h.hour), h.orderCount, csvMoney(h.revenueCents)]),
+        },
+    ]
+    downloadCsvSections(`fnb-profit-${rangeFrom.value}-to-${rangeTo.value}.csv`, sections)
 }
 </script>

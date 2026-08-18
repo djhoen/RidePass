@@ -49,5 +49,18 @@ namespace Services.Repositories.Interfaces
 
         Task<Guid> RecordRedemption(GiftCardRedemption r);
         Task<List<GiftCardRedemption>> ListRedemptionsByCard(Guid giftCardId);
+
+        // ── Admin: list / import / void ──────────────────────────────────────────
+        /// <summary>Paged admin browse. Search matches an exact code (case-insensitive) or a
+        /// partial buyer/recipient name/email.</summary>
+        Task<(List<GiftCard> Items, int Total)> ListForAdmin(Guid tenantId, string? search, string? status, int page, int pageSize);
+
+        /// <summary>Insert a legacy card brought over from another system: active, delivered (no
+        /// email owed), no Stripe PI. Returns null when the code already exists for this tenant.</summary>
+        Task<Guid?> ImportCard(GiftCard card);
+
+        /// <summary>Admin void of an ACTIVE card (lost/fraud/import mistake). Returns false when
+        /// the card wasn't active. Distinct from Void(), the payment-failure cleanup for 'pending'.</summary>
+        Task<bool> VoidActive(Guid id, Guid tenantId);
     }
 }

@@ -10,6 +10,8 @@
             <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
                 style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
             <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                :disabled="loading || !summary" @click="exportCsv">Export CSV</v-btn>
         </div>
 
         <v-row v-if="summary" class="mb-4">
@@ -21,8 +23,9 @@
             </v-col>
             <v-col cols="12" sm="6" md="3">
                 <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Tickets Sold</div>
-                    <div class="text-h4">{{ summary.ticketsSold }}</div>
+                    <div class="text-caption text-medium-emphasis">Tickets / Season passes</div>
+                    <div class="text-h4">{{ summary.ticketsSold }} / {{ summary.passesSold }}</div>
+                    <div class="text-caption text-medium-emphasis">sold in range</div>
                 </v-card-text></v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
@@ -81,6 +84,26 @@
             </v-table>
         </v-card>
 
+        <v-card class="mb-4" v-if="summary && summary.topPassProducts.length">
+            <v-card-title>Top Season Passes</v-card-title>
+            <v-table density="compact">
+                <thead>
+                    <tr>
+                        <th>Pass</th>
+                        <th style="width: 120px">Sold</th>
+                        <th style="width: 140px">Revenue</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="p in summary.topPassProducts" :key="p.productId">
+                        <td>{{ p.productName }}</td>
+                        <td>{{ p.soldCount }}</td>
+                        <td>${{ (p.revenueCents / 100).toFixed(2) }}</td>
+                    </tr>
+                </tbody>
+            </v-table>
+        </v-card>
+
         <v-row v-if="summary">
             <v-col cols="12">
                 <v-card>
@@ -129,6 +152,7 @@ import { Line, Bar } from 'vue-chartjs'
 import { registerChartJs } from '@/helpers/ChartSetup'
 import { ReportsService, type TenantReportSummary } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
+import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
 
 registerChartJs()
 
@@ -210,6 +234,54 @@ async function load() {
 
 function formatDate(utc: string): string {
     return dayjs.utc(utc).tz(tz()).format('YYYY-MM-DD HH:mm')
+}
+
+// Everything the page already holds, stacked into one file: revenue by type, the daily series,
+// top season passes and top events. No server round trip, so there is nothing here that can fail
+// after the report itself loaded.
+function exportCsv() {
+    const s = summary.value
+    if (!s) return
+    const sections: CsvSection[] = [
+        {
+            title: 'Sales summary',
+            headers: ['Field', 'Value'],
+            rows: [
+                ['Venue', branding.displayName],
+                ['From', rangeFrom.value],
+                ['To', rangeTo.value],
+                ['Timezone', tz()],
+                ['Total revenue', csvMoney(s.totalRevenueCents)],
+                ['Tickets sold', s.ticketsSold],
+                ['Season passes sold', s.passesSold],
+                ['Unique riders', s.uniqueRiders],
+                ['Refunds', s.refundedCount],
+                ['Refunded amount', csvMoney(s.refundedAmountCents)],
+                ['Disputes', s.disputedCount],
+            ],
+        },
+        {
+            title: 'Revenue by type',
+            headers: ['Type', 'Sales', 'Revenue'],
+            rows: s.revenueByType.map(r => [kindLabel(r.kind), r.saleCount, csvMoney(r.revenueCents)]),
+        },
+        {
+            title: 'Daily revenue',
+            headers: ['Date', 'Revenue', 'Tickets'],
+            rows: s.dailyRevenue.map(p => [p.date, csvMoney(p.revenueCents), p.ticketsSold]),
+        },
+        {
+            title: 'Top season passes',
+            headers: ['Pass', 'Sold', 'Revenue'],
+            rows: s.topPassProducts.map(p => [p.productName, p.soldCount, csvMoney(p.revenueCents)]),
+        },
+        {
+            title: 'Top events',
+            headers: ['Event', 'When', 'Sold', 'Revenue'],
+            rows: s.topEvents.map(e => [e.eventTitle, formatDate(e.eventStartUtc), e.soldCount, csvMoney(e.revenueCents)]),
+        },
+    ]
+    downloadCsvSections(`sales-summary-${rangeFrom.value}-to-${rangeTo.value}.csv`, sections)
 }
 
 const KIND_LABELS: Record<string, string> = {

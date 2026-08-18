@@ -45,6 +45,153 @@ export interface TenantReportSummary {
     topEvents: TopEvent[]
 }
 
+// ── End of Day (Z report) ─────────────────────────────────────────────
+// One tenant-local business date, sourced from the same accounting read model the QuickBooks
+// sync posts from, so every line here matches that day's journal entry.
+export interface EndOfDayRevenueLine {
+    key: string
+    label: string
+    saleCount: number
+    refundCount: number
+    grossCents: number
+    refundCents: number
+    netGrossCents: number
+    taxCents: number
+    tipCents: number
+    netRevenueCents: number
+}
+export interface EndOfDayTotals {
+    grossSalesCents: number
+    refundsCents: number
+    netSalesCents: number
+    taxCents: number
+    tipsCents: number
+    netRevenueCents: number
+    giftCardsSoldCents: number
+    giftCardsRedeemedCents: number
+    depositsCollectedCents: number
+    depositsReleasedCents: number
+    disputeLossCents: number
+    disputeFeeCents: number
+    platformChargesCents: number
+    stripeFeesCents: number
+    ridepassFeesCents: number
+    netToTenantCents: number
+    transactionCount: number
+    refundCount: number
+}
+export interface EndOfDayTenderLine {
+    method: string
+    label: string
+    amountCents: number
+    count: number
+}
+export interface EndOfDayStaffLine {
+    userId: string
+    name: string
+    saleCount: number
+    refundCount: number
+    grossCents: number
+    cashCents: number
+}
+export interface EndOfDayCashSession {
+    id: string
+    userId: string
+    userName: string
+    eventTitle: string | null
+    deviceId: string | null
+    openingFloatCents: number
+    status: string
+    openedAtUtc: string
+    closedAtUtc: string | null
+}
+export interface EndOfDayCashTurnIn {
+    id: string
+    workerName: string
+    managerName: string | null
+    expectedCents: number | null
+    workerCountedCents: number
+    managerCountedCents: number | null
+    varianceCents: number | null
+    status: string
+    note: string | null
+    submittedAtUtc: string
+    confirmedAtUtc: string | null
+}
+export interface EndOfDayCashSection {
+    sessions: EndOfDayCashSession[]
+    turnIns: EndOfDayCashTurnIn[]
+    openingFloatCents: number
+    workerCountedCents: number
+    managerCountedCents: number
+    cashSalesCents: number
+}
+export interface EndOfDayQuickBooksStatus {
+    connected: boolean
+    // not_connected | disabled | pending | success | failed | no_activity
+    status: string
+    docNumber: string | null
+    journalEntryId: string | null
+    syncedAtUtc: string | null
+    lastError: string | null
+}
+export interface EndOfDayReport {
+    // Tenant-local calendar date, yyyy-MM-dd. A DATE, not an instant: never run it through the
+    // UTC-to-tenant-timezone formatters or western timezones will shift it back a day.
+    businessDate: string
+    timezone: string
+    generatedAtUtc: string
+    revenue: EndOfDayRevenueLine[]
+    totals: EndOfDayTotals
+    tenders: EndOfDayTenderLine[]
+    staff: EndOfDayStaffLine[]
+    cash: EndOfDayCashSection
+    quickBooks: EndOfDayQuickBooksStatus
+}
+
+// ── Tax ───────────────────────────────────────────────────────────────
+export interface AdmissionTaxReport {
+    fromUtc: string
+    toUtc: string
+    taxCollectedCents: number
+    refundedTaxCents: number
+    netTaxCents: number
+    taxableSalesCents: number
+    taxedTicketCount: number
+    currentRateBps: number
+    jurisdictionLabel: string | null
+}
+export interface SalesTaxCategoryRow {
+    key: string
+    label: string
+    taxCents: number
+    collectedTaxCents: number
+    refundedTaxCents: number
+    taxableSalesCents: number
+    saleCount: number
+}
+export interface SalesTaxDayRow {
+    // Tenant-local calendar date, yyyy-MM-dd. Date-only, see EndOfDayReport.businessDate.
+    businessDate: string
+    taxCents: number
+    collectedTaxCents: number
+    refundedTaxCents: number
+    taxableSalesCents: number
+    saleCount: number
+}
+export interface SalesTaxReport {
+    fromUtc: string
+    toUtc: string
+    timezone: string
+    netTaxCents: number
+    collectedTaxCents: number
+    refundedTaxCents: number
+    taxableSalesCents: number
+    taxedSaleCount: number
+    byCategory: SalesTaxCategoryRow[]
+    byDay: SalesTaxDayRow[]
+}
+
 // ── F&B profitability ────────────────────────────────────────────────
 export interface ConcessionProfitItem {
     name: string
@@ -257,6 +404,35 @@ export class ReportsService {
 
     getTenantSummary(fromUtc: string, toUtc: string) {
         return axios.get<{ data: TenantReportSummary }>(`${this.apiUrl}/Reports/Admin/Summary`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    // date is a tenant-local calendar date (yyyy-MM-dd). Omit it for "today at the track".
+    getEndOfDay(date?: string) {
+        return axios.get<{ data: EndOfDayReport }>(`${this.apiUrl}/Reports/Admin/EndOfDay`, {
+            params: { date: date || undefined },
+        })
+    }
+
+    // Fetched through axios so the Bearer token rides along; a plain <a href> GET carries no auth
+    // and would silently 401.
+    async downloadEndOfDayCsv(date: string): Promise<{ blob: Blob; filename: string }> {
+        const r = await axios.get(`${this.apiUrl}/Reports/Admin/EndOfDay/Csv`,
+            { params: { date: date || undefined }, responseType: 'blob' })
+        const cd = (r.headers['content-disposition'] as string | undefined) ?? ''
+        const filename = cd.match(/filename="?([^";]+)"?/)?.[1] ?? `end-of-day-${date}.csv`
+        return { blob: r.data as Blob, filename }
+    }
+
+    getAdmissionTax(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: AdmissionTaxReport }>(`${this.apiUrl}/Reports/Admin/AdmissionTax`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    getSalesTax(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: SalesTaxReport }>(`${this.apiUrl}/Reports/Admin/SalesTax`, {
             params: { fromUtc, toUtc },
         })
     }
