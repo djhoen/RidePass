@@ -71,6 +71,17 @@ namespace Services.Accounting
     ///
     ///   liability_gift_card goes +100 then -100 and lands at zero. The receivable is
     ///   +100 then (96 - 100) = -4, netting +96, which is exactly what the track gets paid.
+    ///
+    /// ── Which revenue slot a sale lands in ───────────────────────────────────────────────
+    /// Normally the ledger's source_kind picks it. A track can override it per EVENT TYPE, though,
+    /// which is the only way a department like a Training Center can be seen at all: a lesson, a
+    /// camp and a lift ticket are all just an `event` with tickets, so source_kind reads them as
+    /// one stream. v_accounting_entries carries the event type's choice out as revenue_key_override
+    /// (Script0274) and QboAccountKeys.EffectiveRevenueKey applies it, falling back to the
+    /// source-kind slot when there is no override or it names a key this build does not know.
+    /// Nothing else moves: tax, tips, gift cards and every tender term are untouched, so a day with
+    /// an override balances exactly as it did without one, just against two revenue lines instead
+    /// of one.
     /// </summary>
     public static class JournalEntryBuilder
     {
@@ -152,7 +163,10 @@ namespace Services.Accounting
                 // tax-inclusive, so subtracting tax backs it out whether it was added on top or
                 // baked into the advertised price. See the Script0175 header.
                 var revenue = e.GrossCents - e.TaxCents - e.TipCents;
-                add(QboAccountKeys.RevenueForSourceKind(e.SourceKind), -revenue);
+                // The slot is chosen by source kind UNLESS the row's event type names one, which is
+                // how a track's Training Center (lessons, camps, clinics) is split out of gate
+                // revenue: those are all ordinary events, so source_kind alone cannot see them.
+                add(QboAccountKeys.EffectiveRevenueKey(e.SourceKind, e.RevenueKeyOverride), -revenue);
                 add(QboAccountKeys.LiabilitySalesTax, -e.TaxCents);
                 add(QboAccountKeys.LiabilityTips, -e.TipCents);
             }

@@ -192,6 +192,52 @@ export interface SalesTaxReport {
     byDay: SalesTaxDayRow[]
 }
 
+// ── Revenue by department ────────────────────────────────────────────
+// The same QuickBooks revenue slots the End of Day report and the posted journal entry use,
+// rolled up into business units. `key` is stable (from QboDepartments / QboAccountKeys), so it
+// is safe to key UI state on; `label` is display copy and may be reworded.
+export interface RevenueCategoryRow {
+    key: string
+    label: string
+    /** Gross minus tax minus tips, net of refunds. */
+    netRevenueCents: number
+    grossCents: number
+    taxCents: number
+    tipCents: number
+    /** Negative, and already inside grossCents. */
+    refundCents: number
+    saleCount: number
+    refundCount: number
+}
+export interface RevenueDepartmentRow {
+    key: string
+    label: string
+    netRevenueCents: number
+    grossCents: number
+    taxCents: number
+    tipCents: number
+    refundCents: number
+    saleCount: number
+    refundCount: number
+    /** Share of the period's net revenue, 0-100 with one decimal. Rounded server side. */
+    pctOfTotal: number
+    categories: RevenueCategoryRow[]
+}
+export interface RevenueByDepartmentReport {
+    fromUtc: string
+    toUtc: string
+    timezone: string
+    netRevenueCents: number
+    grossCents: number
+    taxCents: number
+    tipCents: number
+    refundCents: number
+    saleCount: number
+    refundCount: number
+    /** Only departments with activity in the period, in report order. */
+    departments: RevenueDepartmentRow[]
+}
+
 // ── F&B profitability ────────────────────────────────────────────────
 export interface ConcessionProfitItem {
     name: string
@@ -433,6 +479,12 @@ export class ReportsService {
 
     getSalesTax(fromUtc: string, toUtc: string) {
         return axios.get<{ data: SalesTaxReport }>(`${this.apiUrl}/Reports/Admin/SalesTax`, {
+            params: { fromUtc, toUtc },
+        })
+    }
+
+    getRevenueByDepartment(fromUtc: string, toUtc: string) {
+        return axios.get<{ data: RevenueByDepartmentReport }>(`${this.apiUrl}/Reports/Admin/RevenueByDepartment`, {
             params: { fromUtc, toUtc },
         })
     }

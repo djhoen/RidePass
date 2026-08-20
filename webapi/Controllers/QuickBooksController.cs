@@ -25,6 +25,7 @@ namespace webapi.Controllers
         private readonly IQuickBooksApiClient _api;
         private readonly IQuickBooksSyncService _sync;
         private readonly ITenantRepository _tenants;
+        private readonly ITenantEventTypeRepository _eventTypes;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
         private readonly ILogger<QuickBooksController> _logger;
@@ -35,6 +36,7 @@ namespace webapi.Controllers
             IQuickBooksApiClient api,
             IQuickBooksSyncService sync,
             ITenantRepository tenants,
+            ITenantEventTypeRepository eventTypes,
             ITenantContext tenantContext,
             IConfiguration config,
             ILogger<QuickBooksController> logger)
@@ -44,6 +46,7 @@ namespace webapi.Controllers
             _api = api;
             _sync = sync;
             _tenants = tenants;
+            _eventTypes = eventTypes;
             _tenantContext = tenantContext;
             _config = config;
             _logger = logger;
@@ -74,7 +77,7 @@ namespace webapi.Controllers
 
             if (conn is not null)
             {
-                var required = RequiredKeys();
+                var required = await RequiredKeys();
                 var mapped = (await _repo.ListMappings(_tenantContext.TenantId))
                     .Select(m => m.MappingKey).ToHashSet(StringComparer.Ordinal);
                 resp.UnmappedKeys = required.Where(k => !mapped.Contains(k)).ToList();
@@ -256,7 +259,7 @@ namespace webapi.Controllers
 
             // Return every slot this tenant actually needs, mapped or not, so the UI renders the
             // full form from one call and can show what's still missing.
-            var rows = RequiredKeys().Select(key => new QboMappingResponse
+            var rows = (await RequiredKeys()).Select(key => new QboMappingResponse
             {
                 MappingKey = key,
                 Label = QboAccountKeys.Label(key),
@@ -374,11 +377,25 @@ namespace webapi.Controllers
         /// charge mode so the mapping form doesn't demand an account for a subsystem they've never
         /// turned on, an unmapped slot blocks a day's post, so asking for slots they can't use
         /// would be a permanent, self-inflicted blocker.
+        ///
+        /// Mostly a pure read of the tenant's flags, with one database hit: revenue_training is
+        /// required only once the track has actually pointed an event type at it, because that slot
+        /// is opt-in per event type rather than gated by a feature toggle. It is an EXISTS, and the
+        /// two callers are both settings-screen loads.
         /// </summary>
-        private List<string> RequiredKeys()
+        private async Task<List<string>> RequiredKeys()
         {
             var t = _tenantContext.Tenant;
             var keys = new List<string> { QboAccountKeys.RevenueEventTicket, QboAccountKeys.RevenueOther };
+
+            // Lessons, camps and clinics are ordinary events, so nothing in the tenant's flags can
+            // tell whether this track splits them out; only their own event-type mapping can
+            // (tenant_event_type.revenue_key, Script0274). Required the moment one exists, since an
+            // unmapped slot blocks that day's journal entry from posting at all.
+            if (await _eventTypes.AnyWithRevenueKey(_tenantContext.TenantId, QboAccountKeys.RevenueTraining))
+            {
+                keys.Add(QboAccountKeys.RevenueTraining);
+            }
 
             if (t.ExtrasEnabled)       keys.Add(QboAccountKeys.RevenueEventExtra);
             if (t.SeasonPassesEnabled) keys.Add(QboAccountKeys.RevenueSeasonPass);

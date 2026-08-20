@@ -32,5 +32,16 @@ namespace Services.Repositories.Data.QuickBooksData
         public int TipCents { get; set; }
         /// <summary>How much of GrossCents was funded by drawing down a gift card rather than a card charge.</summary>
         public int GiftCardAppliedCents { get; set; }
+        /// <summary>
+        /// The QuickBooks revenue slot this row's EVENT TYPE asks for, overriding the one the
+        /// source kind implies (tenant_event_type.revenue_key, Script0274). It is how a track's
+        /// Training Center revenue is split out of the gate: a lesson, camp or clinic is an
+        /// ordinary event, so nothing in source_kind can tell it apart from a lift ticket.
+        ///
+        /// Null on every row with no event behind it, which is most of them, and null on an event
+        /// whose type names no key. Resolve it with QboAccountKeys.EffectiveRevenueKey rather than
+        /// reading it directly, so an unknown key falls back instead of blocking the day's post.
+        /// </summary>
+        public string? RevenueKeyOverride { get; set; }
     }
 }

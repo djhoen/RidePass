@@ -236,7 +236,11 @@ namespace webapi.Controllers
             var byKey = new Dictionary<string, EndOfDayRevenueLine>(StringComparer.Ordinal);
             foreach (var b in saleAndRefund)
             {
-                var key = QboAccountKeys.RevenueForSourceKind(b.SourceKind);
+                // EffectiveRevenueKey, not RevenueForSourceKind: an event type can name its own
+                // slot, which is how a Training Center's lessons and camps get their own line here
+                // instead of disappearing into the gate. Same call the journal entry makes, so this
+                // table and the posted JE stay line-for-line identical.
+                var key = QboAccountKeys.EffectiveRevenueKey(b.SourceKind, b.RevenueKeyOverride);
                 if (!byKey.TryGetValue(key, out var line))
                 {
                     line = new EndOfDayRevenueLine { Key = key, Label = QboAccountKeys.Label(key) };
@@ -335,7 +339,11 @@ namespace webapi.Controllers
                     // Every payment method can carry a gift-card portion: 'voucher' when the card
                     // covered the whole sale, an ordinary card/cash method when it covered part.
                     AmountCents = saleAndRefund.Sum(b => b.GiftCardAppliedCents),
-                    Count = saleAndRefund.Where(b => b.GiftCardAppliedCents != 0).Sum(b => b.EntryCount),
+                    // GiftCardEntryCount, not EntryCount on buckets whose gift-card SUM is
+                    // nonzero: the other tenders filter on payment_method, which is a grouping
+                    // key, so their whole bucket qualifies. Gift-card use is not a grouping key,
+                    // so it has to be counted inside the aggregate.
+                    Count = saleAndRefund.Sum(b => b.GiftCardEntryCount),
                 },
                 new()
                 {
@@ -458,10 +466,15 @@ namespace webapi.Controllers
             // Only rows that actually carried tax count toward taxable sales and the taxed-sale
             // count. A zero-tax row is a sale in a jurisdiction (or of a kind) that is not taxed,
             // and including its gross would inflate the base the rate is checked against.
-            var taxed = rows.Where(r => r.TaxCents != 0).ToList();
+            //
+            // The taxed counts and taxed gross come from the aggregate's own FILTERed columns, not
+            // from testing the bucket's summed TaxCents: a bucket mixes taxed and untaxed rows, so
+            // testing the sum and then taking EntryCount / GrossCents would credit every untaxed
+            // row in it as a taxed sale. Same bug the gift-card tender count had.
+            var taxed = rows.Where(r => r.TaxedEntryCount > 0).ToList();
 
             var byCategory = taxed
-                .GroupBy(r => QboAccountKeys.RevenueForSourceKind(r.SourceKind), StringComparer.Ordinal)
+                .GroupBy(r => QboAccountKeys.EffectiveRevenueKey(r.SourceKind, r.RevenueKeyOverride), StringComparer.Ordinal)
                 .Select(g => new SalesTaxCategoryRow
                 {
                     Key = g.Key,
@@ -469,8 +482,8 @@ namespace webapi.Controllers
                     TaxCents = g.Sum(r => r.TaxCents),
                     CollectedTaxCents = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
                     RefundedTaxCents = g.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
-                    TaxableSalesCents = g.Sum(r => r.GrossCents),
-                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                    TaxableSalesCents = g.Sum(r => r.TaxedGrossCents),
+                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxedEntryCount),
                 })
                 .OrderBy(c => { var i = Array.IndexOf(QboAccountKeys.All, c.Key); return i < 0 ? int.MaxValue : i; })
                 .ThenBy(c => c.Key, StringComparer.Ordinal)
@@ -484,8 +497,8 @@ namespace webapi.Controllers
                     TaxCents = g.Sum(r => r.TaxCents),
                     CollectedTaxCents = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
                     RefundedTaxCents = g.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
-                    TaxableSalesCents = g.Sum(r => r.GrossCents),
-                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                    TaxableSalesCents = g.Sum(r => r.TaxedGrossCents),
+                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.TaxedEntryCount),
                 })
                 .OrderBy(d => d.BusinessDate, StringComparer.Ordinal)
                 .ToList();
@@ -498,10 +511,99 @@ namespace webapi.Controllers
                 NetTaxCents = taxed.Sum(r => r.TaxCents),
                 CollectedTaxCents = taxed.Where(r => r.EntryKind == "sale").Sum(r => r.TaxCents),
                 RefundedTaxCents = taxed.Where(r => r.EntryKind == "refund").Sum(r => r.TaxCents),
-                TaxableSalesCents = taxed.Sum(r => r.GrossCents),
-                TaxedSaleCount = taxed.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                TaxableSalesCents = taxed.Sum(r => r.TaxedGrossCents),
+                TaxedSaleCount = taxed.Where(r => r.EntryKind == "sale").Sum(r => r.TaxedEntryCount),
                 ByCategory = byCategory,
                 ByDay = byDay,
+            });
+        }
+
+        // ── Revenue by department ───────────────────────────────────────────────
+        // The P&L view of the same money the End of Day report closes a single day on: the QBO
+        // revenue slots, rolled up into the business units an owner actually thinks in.
+        //
+        // Everything here bucket by bucket agrees with the posted journal entry, because it uses
+        // the same two functions the sync does: EffectiveRevenueKey picks the slot (so a track's
+        // lessons and camps land in Training Center rather than at the gate) and QboDepartments
+        // groups the slots. Nothing about the split is computed twice.
+        [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
+        [HttpGet("Admin/RevenueByDepartment")]
+        public async Task<IActionResult> GetRevenueByDepartment([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (toUtc <= fromUtc) return new ApiResponses().BadRequestResult("toUtc must be after fromUtc.");
+
+            var tenantId = _tenantContext.TenantId;
+            var tz = string.IsNullOrWhiteSpace(_tenantContext.Tenant.Timezone) ? "UTC" : _tenantContext.Tenant.Timezone;
+            var rows = await _endOfDay.GetRevenueBuckets(tenantId, fromUtc, toUtc);
+
+            // Net revenue is gross minus tax minus tips, the same identity JournalEntryBuilder
+            // credits revenue with. Tax is the jurisdiction's and tips are staff's; neither was
+            // ever earned by a department, so neither may reach a department's revenue line.
+            static long Net(IEnumerable<RevenueBucketRow> g) =>
+                g.Sum(r => r.GrossCents - r.TaxCents - r.TipCents);
+
+            var categories = rows
+                .GroupBy(r => QboAccountKeys.EffectiveRevenueKey(r.SourceKind, r.RevenueKeyOverride), StringComparer.Ordinal)
+                .Select(g => new RevenueCategoryRow
+                {
+                    Key = g.Key,
+                    Label = QboAccountKeys.Label(g.Key),
+                    NetRevenueCents = Net(g),
+                    GrossCents = g.Sum(r => r.GrossCents),
+                    TaxCents = g.Sum(r => r.TaxCents),
+                    TipCents = g.Sum(r => r.TipCents),
+                    RefundCents = g.Where(r => r.EntryKind == "refund").Sum(r => r.GrossCents),
+                    SaleCount = g.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                    RefundCount = g.Where(r => r.EntryKind == "refund").Sum(r => r.EntryCount),
+                })
+                .ToList();
+
+            var totalNet = categories.Sum(c => c.NetRevenueCents);
+
+            var departments = categories
+                .GroupBy(c => QboDepartments.ForRevenueKey(c.Key), StringComparer.Ordinal)
+                .Select(g => new RevenueDepartmentRow
+                {
+                    Key = g.Key,
+                    Label = QboDepartments.Label(g.Key),
+                    NetRevenueCents = g.Sum(c => c.NetRevenueCents),
+                    GrossCents = g.Sum(c => c.GrossCents),
+                    TaxCents = g.Sum(c => c.TaxCents),
+                    TipCents = g.Sum(c => c.TipCents),
+                    RefundCents = g.Sum(c => c.RefundCents),
+                    SaleCount = g.Sum(c => c.SaleCount),
+                    RefundCount = g.Sum(c => c.RefundCount),
+                    // Signed denominator, so a department that refunded more than it sold reads
+                    // negative rather than being quietly clamped. Guarded against a period whose
+                    // net is exactly zero, which is division by zero and not a meaningful share.
+                    PctOfTotal = totalNet == 0
+                        ? 0m
+                        : Math.Round(g.Sum(c => c.NetRevenueCents) * 100m / totalNet, 1),
+                    Categories = g
+                        .OrderByDescending(c => c.NetRevenueCents)
+                        .ThenBy(c => c.Key, StringComparer.Ordinal)
+                        .ToList(),
+                })
+                // A track with no bike shop simply never sees a bike shop heading. A department
+                // that only refunded in the period is NOT empty and stays visible.
+                .Where(d => d.SaleCount != 0 || d.RefundCount != 0 || d.GrossCents != 0)
+                .OrderBy(d => { var i = Array.IndexOf(QboDepartments.All, d.Key); return i < 0 ? int.MaxValue : i; })
+                .ToList();
+
+            return new ApiResponses().OkResult(new RevenueByDepartmentReport
+            {
+                FromUtc = DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc),
+                ToUtc = DateTime.SpecifyKind(toUtc, DateTimeKind.Utc),
+                Timezone = tz,
+                NetRevenueCents = totalNet,
+                GrossCents = rows.Sum(r => r.GrossCents),
+                TaxCents = rows.Sum(r => r.TaxCents),
+                TipCents = rows.Sum(r => r.TipCents),
+                RefundCents = rows.Where(r => r.EntryKind == "refund").Sum(r => r.GrossCents),
+                SaleCount = rows.Where(r => r.EntryKind == "sale").Sum(r => r.EntryCount),
+                RefundCount = rows.Where(r => r.EntryKind == "refund").Sum(r => r.EntryCount),
+                Departments = departments,
             });
         }
 

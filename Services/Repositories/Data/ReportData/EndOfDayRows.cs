@@ -2,10 +2,11 @@ namespace Services.Repositories.Data.ReportData
 {
     /// <summary>
     /// One aggregate cell of v_accounting_entries for a single tenant-local business date:
-    /// every row that shares an (entry_kind, source_kind, payment_method) triple, summed.
+    /// every row that shares an (entry_kind, source_kind, revenue_key_override, payment_method)
+    /// quadruple, summed.
     ///
     /// Deliberately NOT bucketed into QuickBooks account slots here. The bucketing rule lives in
-    /// Services.Accounting.QboAccountKeys.RevenueForSourceKind, which is the same function the
+    /// Services.Accounting.QboAccountKeys.EffectiveRevenueKey, which is the same function the
     /// journal entry the sync posts is built from, so the End of Day report and the journal entry
     /// cannot drift apart. SQL groups; C# labels.
     /// </summary>
@@ -15,6 +16,13 @@ namespace Services.Repositories.Data.ReportData
         public string EntryKind { get; set; } = null!;
         /// <summary>Null on platform-charge rows (sms/email) that have no sale behind them.</summary>
         public string? SourceKind { get; set; }
+        /// <summary>
+        /// The event type's own QuickBooks revenue slot, when it names one (Script0274). Part of
+        /// the GROUP BY, not just carried along: it is what keeps a track's Training Center
+        /// (lessons, camps, clinics) as its own line instead of folded into the gate. Null for
+        /// every row with no event behind it.
+        /// </summary>
+        public string? RevenueKeyOverride { get; set; }
         public string PaymentMethod { get; set; } = "stripe";
         public int EntryCount { get; set; }
         /// <summary>Negative on refunds. Tax- and tip-inclusive.</summary>
@@ -25,6 +33,13 @@ namespace Services.Repositories.Data.ReportData
         public long TaxCents { get; set; }
         public long TipCents { get; set; }
         public long GiftCardAppliedCents { get; set; }
+        /// <summary>
+        /// How many of this bucket's rows actually drew on a gift card. NOT derivable from
+        /// GiftCardAppliedCents != 0: that is the bucket's SUM, so testing it and then taking
+        /// EntryCount credits the gift-card tender with every row in the bucket. A day of 178 card
+        /// event-ticket sales where one rider paid $90 on a gift card reported "178" that way.
+        /// </summary>
+        public int GiftCardEntryCount { get; set; }
     }
 
     /// <summary>Who rang it up. Only ledger rows that carry a sold_by_user_id appear.</summary>
@@ -75,6 +90,28 @@ namespace Services.Repositories.Data.ReportData
     }
 
     /// <summary>
+    /// Earned revenue in a range, grouped only as finely as it has to be to resolve a QuickBooks
+    /// revenue slot: the source kind, the event type's override, and whether it was a sale or a
+    /// refund. The caller turns each group into a slot and then a business unit.
+    ///
+    /// Gross is tax- and tip-inclusive and negative on refunds, exactly as the ledger stores it, so
+    /// summing a department's rows nets refunds off without a special case, and net revenue is
+    /// gross minus tax minus tip, the same identity JournalEntryBuilder.AccrueSale uses.
+    /// </summary>
+    public class RevenueBucketRow
+    {
+        public string? SourceKind { get; set; }
+        /// <summary>tenant_event_type.revenue_key for the event behind the row, when it names one.</summary>
+        public string? RevenueKeyOverride { get; set; }
+        /// <summary>sale | refund.</summary>
+        public string EntryKind { get; set; } = null!;
+        public long GrossCents { get; set; }
+        public long TaxCents { get; set; }
+        public long TipCents { get; set; }
+        public int EntryCount { get; set; }
+    }
+
+    /// <summary>
     /// Sales tax collected in a range, grouped finely enough to be rolled up two ways in C#:
     /// by tenant-local day and by QuickBooks revenue category. One query, two tables.
     /// </summary>
@@ -82,10 +119,24 @@ namespace Services.Repositories.Data.ReportData
     {
         public DateOnly BusinessDate { get; set; }
         public string? SourceKind { get; set; }
+        /// <summary>
+        /// The event type's own QuickBooks revenue slot, when it names one (Script0274). Grouped on
+        /// so the by-category table splits a training department out of gate revenue exactly the
+        /// way the End of Day report and the posted journal entry do.
+        /// </summary>
+        public string? RevenueKeyOverride { get; set; }
         /// <summary>sale | refund. Refund rows carry negative tax, so a plain SUM nets correctly.</summary>
         public string EntryKind { get; set; } = null!;
         public long TaxCents { get; set; }
         public long GrossCents { get; set; }
         public int EntryCount { get; set; }
+        /// <summary>
+        /// Rows in this bucket that actually carried tax, and their gross. Same trap as
+        /// AccountingBucketRow.GiftCardEntryCount: TaxCents is the bucket's SUM, so a bucket
+        /// holding one taxed sale and forty untaxed ones would otherwise report forty-one taxed
+        /// sales and count every untaxed dollar as taxable.
+        /// </summary>
+        public int TaxedEntryCount { get; set; }
+        public long TaxedGrossCents { get; set; }
     }
 }

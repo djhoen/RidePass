@@ -10,7 +10,8 @@
 
 | Item | State |
 | --- | --- |
-| 3.1 Intuit app + stage config | DONE 2026-08-17. Rob created workspace "Ridepass LLC" + app "Ridepass"; stage redirect URI registered; sandbox keys in `/etc/ridepass/staging.env` (backup `.bak-20260817-qbo`), webapi + taskrunner restarted with `--update-env`, `isConfigured: true`. Highland tenant CONNECTED to sandbox realm 9341457734615072 (renamed "Highland Mountain Bike Park (RidePass demo)"), 16 park accounts created, 15 slots mapped, `mappingComplete: true`. **Sync PAUSED on purpose** until the 0272/0273 deploy; then map `revenue_bike_shop` -> Bike Shop Sales and `revenue_bike_shop_rental` -> Bike Shop Rentals, set `sync_start_date` to today-45 in the stage DB, enable sync, POST Sync. Caveat: the sandbox carries Intuit's Craig's Landscaping sample data (~$8.3k income in the last 60 days); for a clean P&L slide, save a customized P&L filtered to the 16 RidePass accounts during rehearsal (Highland posts ~$25k/day so it will not dominate either way). |
+| 3.1 Intuit app + stage config | DONE. Rob's workspace "Ridepass LLC" + app "Ridepass"; stage redirect URI registered; sandbox keys in `/etc/ridepass/staging.env`; Highland tenant CONNECTED to sandbox realm 9341457734615072 ("Highland Mountain Bike Park (RidePass demo)", 16 park accounts), all 17 required slots mapped (`mappingComplete: true`). **2026-08-18: stage deploy done (0272 + 0273 applied), sync ENABLED, `sync_start_date` set to 2026-07-04 in the DB, Sync now posted 45/45 days success (RP-20260704 .. RP-20260817, QBO JE ids 145 to 189, $1.04M debits, zero errors); the hourly sweep now posts each new day.** End of Day report verified on stage against posted data (8/14: $25.4k, "Posted to QuickBooks RP-20260814"). |
+| Deploy | Committed and deployed to stage 2026-08-18 12:05Z (GitHub run 32134797713). Remaining uncommitted: the small gift-card tender count fix in EndOfDay (in progress). |
 | 3.2 Gift card liability | DONE in working tree. `Script0273` synthesizes `gift_card_sold` rows in `v_accounting_entries` (depends on Script0272 `imported_from`); `JournalEntryBuilder.AccrueGiftCardSale`; 31/31 builder tests. |
 | 3.3 Bike shop + other kinds | DONE. `revenue_bike_shop` (shop_sale + shop_wo_deposit), `revenue_bike_shop_rental`, `shop_rental_deposit` -> forfeited; tax breakout for shop rows; `credit_tender` left as is (see 3.13). |
 | 3.4 End of Day report | DONE. `GET api/Reports/Admin/EndOfDay(/Csv)?date=`, `views/Admin/Reports/EndOfDay.vue`, tile + route, print stylesheet, QuickBooks status card. Verified locally by execution; gift-card / deposit / dispute branches verified by reading only (no local data). |
@@ -229,7 +230,14 @@ Build a new idempotent fragment `$hl_ledger$` at the end of `seed-highland.sql`:
 - Verify: `select business_date, count(*), sum(gross_cents) from v_accounting_entries where tenant_id = highland group by 1 order by 1 desc limit 45` shows daily activity through yesterday, and every day's `JournalEntryBuilder` result balances (run the sync against the sandbox and check `qbo_sync_log` has zero `failed`).
 - Rerun-safe: run twice, row counts identical.
 
-Then the rehearsal:
+Then the rehearsal (PROTOCOL, because the year fragment is anchored to now() and every rerun regenerates history, while qbo_sync_log marks posted days success and never re-posts them):
+
+1. T-2 days before the demo: change `v_end := v_today_ny - 3` to `- 1` in `$hl_sales_year$` (check the base fragments' fresh demo orders and `$hl_upcoming$` events do not collide with year-fragment events on the same day), re-run the seed on stage so "yesterday" is a full day (today the last 3 days post ~35 entries vs 250 to 590).
+2. Add a FRESH sandbox company (developer.intuit.com/sandbox-companies > Add), rename it, recreate the 16 accounts (the Opus browser agent did this in ~20 min), disconnect and reconnect Highland to the new realm (`DELETE api/QuickBooks/Connect`, then Connect), `delete from qbo_sync_log where tenant_id = highland`, re-map (new account ids), set `sync_start_date` = today-45 in the DB, enable sync, POST Sync, confirm all success. Do NOT re-post into the old sandbox: the old JEs would disagree with the regenerated ledger.
+3. In the sandbox save a customized P&L filtered to the 16 RidePass accounts ("Highland P&L (RidePass)") so Craig's Landscaping sample data stays out of the slide; screenshot JEs + P&L into HighlandDemoSite/demo-screenshots.
+4. Pause sync during the call (or accept that the sweep may post yesterday mid-demo, which is actually a nice moment).
+
+Original rehearsal steps:
 
 - Set `sync_start_date` 30 to 45 days back, run "Sync now", confirm every day is green. There is no max-days cap: `SyncTenantAsync` walks every business date with activity from the cursor to the last complete local day and posts each one (`QuickBooksSyncService.cs:109-121`), so a single "Sync now" catches up the whole window.
 - Open the resulting journal entries in the sandbox, run the sandbox P&L, screenshot everything into `HighlandDemoSite/demo-screenshots`.
@@ -267,6 +275,14 @@ Found 2026-08-17 while implementing 3.2/3.3 (Script0273). None of these affect t
 - `BikeShopRegisterController.WriteCashLedger` (`:1053`) folds the gift-card float into `net` only in platform mode; a direct-charge tenant's cash + gift-card bike-shop sale now fails the balance check (correctly, rather than posting a wrong till). No tenant is direct-charge today. Record the float identically in both modes.
 - Admin void of a paid, live gift card (`GiftCardRepository.VoidActive`) drops the card out of the `gift_card_sold` synthesis instead of booking breakage. Conservative; add a breakage entry later.
 
+#### 3.14 Department revenue split + Revenue by Department report (BUILT 2026-08-20, uncommitted)
+
+Driven by Dave/Highland's 4-business-unit request. Script0274 adds `tenant_event_type.revenue_key` (lesson/camp/clinic backfilled to `revenue_training` for all tenants) and re-creates `v_accounting_entries` with `revenue_key_override` (tickets via tier -> event -> type; extras via their event; NULL elsewhere). New `revenue_training` slot ("Training Center revenue"); `JournalEntryBuilder` and the EOD/Sales-Tax bucketing route by `QboAccountKeys.EffectiveRevenueKey`. `RequiredKeys()` requires the slot only when a tenant maps an event type to it. New report: Reports > Revenue by Department (`GET Reports/Admin/RevenueByDepartment`), tiles + category drill-down + CSV, generic labels via `QboDepartments` (Tickets & Passes / Training Center / Food & Beverage / Bike Shop / Other). 224/224 tests.
+
+DEPLOY NOTE: immediately after 0274 reaches stage, map "Training Center revenue" on the QuickBooks settings screen (Highland goes 17 -> 18 required slots); until mapped, the next sync day fails loudly with "No QuickBooks account is mapped for Training Center revenue". Already-posted days unaffected. Rehearsal re-post will show Training Center split retroactively.
+
+Follow-ups (P1): default `revenue_key` in seed_default_event_types for NEW tenants; event-type admin UI to set the key on custom types; ask Dave whether Find Your Ride's bike-rental add-on belongs to Bike Shop or Training Center.
+
 ### P2, roadmap (mention in the demo, do not build now)
 
 - PDF and print packs, plus scheduled email of the End of Day report.
@@ -284,6 +300,43 @@ Found 2026-08-17 while implementing 3.2/3.3 (Script0273). None of these affect t
 | P0 | 3.1 - 3.7 (3.7 = ledger seed, 3 half-days) | 15 |
 | P1 | 3.8 - 3.13 | 15 |
 | **P0 + P1** | | **30** |
+
+---
+
+## 3.9 Live-sync demo setup (added 2026-08-20, DONE and verified on stage)
+
+The user wants to show a sync happening live. That needs PENDING days: ledger activity with no
+success row in `qbo_sync_log`. The seed's history ended 2026-08-17 (all 45 days posted as JEs
+145-189), and the hourly sweep advances the cursor past empty days, so out of the box there was
+nothing left to sync. Setup now in place:
+
+- **`seed-highland-topup.sql`** (repo root, uncommitted, alongside the main seed): fills every
+  un-posted business day INCLUDING today-so-far by cloning a same-weekday donor day (7/14/21/28
+  days back, first with >= 50 sale rows) - source purchase rows + their `sale` ledger rows, fresh
+  ids/tokens/PaymentIntent ids, ~10% of tickets and F&B orders randomly dropped so totals differ
+  week over week, plus one gift card sold per day (its sale row is synthesized by the view's Part
+  3). Donor refunds and refunded sources are excluded. Each day fills incrementally by local
+  time-of-day (up to now for today, the full day for past days), so the End of Day report always
+  shows a live in-progress "today" and a same-day rerun just extends it; days with a SUCCESS row
+  in `qbo_sync_log` are never touched. It also rewinds `last_synced_date` to the last success day
+  so the filled days are visible to the next sync. Run command is in the file header.
+- Ran 2026-08-20: filled 8/18 (202 entries, $9,457.37 gross), 8/19 (306 entries, $12,573.58), and
+  today 8/20 through 14:41 local (261 entries, $12,286 gross; End of Day API verified showing it).
+- **`sync_enabled` set to FALSE** on the Highland connection so the hourly sweep cannot post the
+  pending days before the call. The connection stays `active`; the admin page toggle re-enables it.
+- Smoke-tested end to end: posted 8/18 live via `POST api/QuickBooks/Resync` -> success, JE 190,
+  `RP-20260818`, 202 entries, $9,457.37 total debits, balanced, including the gift-card liability
+  line. So the cloned data provably builds and posts a valid journal entry.
+
+**Demo flow for the live sync moment** (slots into storyline step 3): 8/19 (and any newer topped-up
+days) sit un-posted. On the Settings > QuickBooks page, flip Sync ON, click Sync now: each pending
+day posts in ~0.7s (measured: the 45-day backfill took ~30s, one QBO API call per day), the sync
+log rows turn green, then switch to the QBO tab and open the new `RP-yyyyMMdd` entry.
+
+**Morning of the demo**: re-run `seed-highland-topup.sql` (fills through the new yesterday, giving
+1+ fresh pending days), confirm sync is still OFF, rehearse the flip-on + Sync now once in a
+throwaway sense only if a spare pending day exists - a posted day cannot be un-posted without
+deleting the JE in QBO and the log row. **After the call**: flip sync back ON so the sweep resumes.
 
 ---
 

@@ -21,7 +21,8 @@ namespace UnitTests
             string sourceKind = "event_ticket",
             int gross = 0, int fee = 0, int cut = 0, int net = 0,
             int tax = 0, int tip = 0, int giftCard = 0,
-            string paymentMethod = "stripe", string entryKind = "sale") =>
+            string paymentMethod = "stripe", string entryKind = "sale",
+            string? revenueKeyOverride = null) =>
             new()
             {
                 TenantId = Guid.NewGuid(),
@@ -38,6 +39,7 @@ namespace UnitTests
                 TaxCents = tax,
                 TipCents = tip,
                 GiftCardAppliedCents = giftCard,
+                RevenueKeyOverride = revenueKeyOverride,
             };
 
         private static int Signed(JournalDraft d, string key)
@@ -580,6 +582,80 @@ namespace UnitTests
             Assert.That(Signed(d, QboAccountKeys.LiabilityGiftCard), Is.EqualTo(3000));
             Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(-240),
                 "the track holds the cash, so it owes us our cut and nothing else");
+        }
+
+        // ── Department split by event type ───────────────────────────────────────────────
+        // A lesson, a camp and a lift ticket are all the same source_kind ('event_ticket'), because
+        // all three are just an `event` with tickets on it. The only thing that can tell them apart
+        // is the event TYPE, which the tenant maps to a revenue slot (tenant_event_type.revenue_key,
+        // Script0274), carried here as RevenueKeyOverride.
+
+        [Test]
+        public void EventTicketWithATrainingOverride_CreditsTrainingRevenue_NotTheGate()
+        {
+            // A $150 clinic seat sold at Highland, whose "Clinic" event type points at the Training
+            // Center slot. It must not land next to the lift tickets.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "event_ticket", gross: 15000, fee: 465, cut: 450, net: 14085,
+                         revenueKeyOverride: QboAccountKeys.RevenueTraining),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueTraining), Is.EqualTo(-15000));
+            Assert.That(Signed(d, QboAccountKeys.RevenueEventTicket), Is.EqualTo(0),
+                "gate revenue must be untouched, or the department split is invisible on the P&L");
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(14085),
+                "only the revenue SLOT moves; every tender and fee term is unchanged");
+        }
+
+        [Test]
+        public void AnUnknownOverrideKey_FallsBackToTheSourceKindSlot()
+        {
+            // A key from a newer schema can reach an older deployment mid-rollout, and an account
+            // slot no tenant has mapped blocks the whole day's post. Falling back books the day the
+            // way it was booked yesterday, which is strictly better than not booking it at all.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "event_ticket", gross: 4400, fee: 157, cut: 400, net: 3843,
+                         revenueKeyOverride: "revenue_bicycle_polo"),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueEventTicket), Is.EqualTo(-4400));
+            Assert.That(d.Lines.Any(l => l.AccountKey == "revenue_bicycle_polo"), Is.False,
+                "an unmapped slot must never reach QuickBooks");
+        }
+
+        [Test]
+        public void AMixedDayOfGateAndTraining_SplitsIntoTwoLinesThatSumToTheOldOne()
+        {
+            // The migration's whole promise: the same money, reported as two departments. A $44 lift
+            // ticket and a $150 clinic seat on one day.
+            var gate = Sale(sourceKind: "event_ticket", gross: 4400, fee: 157, cut: 400, net: 3843);
+            var lesson = Sale(sourceKind: "event_ticket", gross: 15000, fee: 465, cut: 450, net: 14085,
+                              revenueKeyOverride: QboAccountKeys.RevenueTraining);
+
+            var d = JournalEntryBuilder.Build(new[] { gate, lesson }, Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.RevenueEventTicket), Is.EqualTo(-4400));
+            Assert.That(Signed(d, QboAccountKeys.RevenueTraining), Is.EqualTo(-15000));
+
+            // What the same day booked before the split existed: one line for the lot.
+            var before = JournalEntryBuilder.Build(
+                new[] { gate, Sale(sourceKind: "event_ticket", gross: 15000, fee: 465, cut: 450, net: 14085) },
+                Day);
+
+            Assert.That(Signed(d, QboAccountKeys.RevenueEventTicket) + Signed(d, QboAccountKeys.RevenueTraining),
+                Is.EqualTo(Signed(before, QboAccountKeys.RevenueEventTicket)),
+                "splitting a department out must move revenue between lines, never create or destroy it");
+            Assert.That(d.TotalDebitCents, Is.EqualTo(before.TotalDebitCents),
+                "and the day's totals are identical either way");
         }
     }
 }

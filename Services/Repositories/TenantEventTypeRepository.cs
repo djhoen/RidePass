@@ -85,6 +85,19 @@ namespace Services.Repositories
             return count > 0;
         }
 
+        public async Task<bool> AnyWithRevenueKey(Guid tenantId, string revenueKey)
+        {
+            // EXISTS rather than COUNT: the planner stops at the first hit on
+            // idx_tenant_event_type_tenant, and a tenant has a handful of rows anyway.
+            const string sql = @"
+                SELECT EXISTS (
+                    SELECT 1 FROM tenant_event_type
+                    WHERE tenant_id = @tenantId AND revenue_key = @revenueKey
+                )";
+            var result = await _db.Query<bool>(sql, new { tenantId, revenueKey });
+            return result.FirstOrDefault();
+        }
+
         public async Task UpdateSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders)
         {
             if (ids.Count == 0) return;

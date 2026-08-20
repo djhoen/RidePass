@@ -19,6 +19,11 @@ namespace Services.Repositories
             const string sql = @"
                 SELECT entry_kind                                    AS EntryKind,
                        source_kind                                   AS SourceKind,
+                       -- In the GROUP BY so a lesson's tickets split off from the gate's here the
+                       -- same way they do in the journal entry. Without it the report would roll
+                       -- both into one 'event_ticket' bucket and silently disagree with what the
+                       -- sync actually posted.
+                       revenue_key_override                          AS RevenueKeyOverride,
                        payment_method                                AS PaymentMethod,
                        COUNT(*)::int                                 AS EntryCount,
                        COALESCE(SUM(gross_cents), 0)::bigint         AS GrossCents,
@@ -27,11 +32,15 @@ namespace Services.Repositories
                        COALESCE(SUM(net_to_tenant_cents), 0)::bigint AS NetToTenantCents,
                        COALESCE(SUM(tax_cents), 0)::bigint           AS TaxCents,
                        COALESCE(SUM(tip_cents), 0)::bigint           AS TipCents,
-                       COALESCE(SUM(gift_card_applied_cents), 0)::bigint AS GiftCardAppliedCents
+                       COALESCE(SUM(gift_card_applied_cents), 0)::bigint AS GiftCardAppliedCents,
+                       -- Counted here rather than inferred in C#: gift_card_applied_cents is
+                       -- summed across the bucket, so a bucket carrying gift-card cents says
+                       -- nothing about how many of its rows actually used one.
+                       COUNT(*) FILTER (WHERE gift_card_applied_cents <> 0)::int AS GiftCardEntryCount
                 FROM v_accounting_entries
                 WHERE tenant_id = @tenantId
                   AND business_date = @businessDate
-                GROUP BY entry_kind, source_kind, payment_method";
+                GROUP BY entry_kind, source_kind, revenue_key_override, payment_method";
             return (await _db.Query<AccountingBucketRow>(sql, new { tenantId, businessDate })).ToList();
         }
 
@@ -126,17 +135,52 @@ namespace Services.Repositories
             const string sql = @"
                 SELECT business_date                          AS BusinessDate,
                        source_kind                            AS SourceKind,
+                       -- Same reason as GetDayBuckets: the tax report categorises by the SAME
+                       -- QuickBooks slot the journal entry uses, so the override has to survive
+                       -- the aggregate or a training department's tax would show under the gate.
+                       revenue_key_override                   AS RevenueKeyOverride,
                        entry_kind                             AS EntryKind,
                        COALESCE(SUM(tax_cents), 0)::bigint    AS TaxCents,
                        COALESCE(SUM(gross_cents), 0)::bigint  AS GrossCents,
+                       COUNT(*)::int                          AS EntryCount,
+                       -- Only the rows that were actually taxed, for the same reason
+                       -- GiftCardEntryCount exists above: a bucket mixing taxed and untaxed rows
+                       -- would otherwise report all of them as taxed sales.
+                       COUNT(*) FILTER (WHERE tax_cents <> 0)::int AS TaxedEntryCount,
+                       COALESCE(SUM(gross_cents) FILTER (WHERE tax_cents <> 0), 0)::bigint AS TaxedGrossCents
+                FROM v_accounting_entries
+                WHERE tenant_id = @tenantId
+                  AND entry_kind IN ('sale', 'refund')
+                  AND occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
+                GROUP BY business_date, source_kind, revenue_key_override, entry_kind
+                ORDER BY business_date";
+            return (await _db.Query<SalesTaxBucketRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
+        }
+
+        // Same shape and same range semantics as GetSalesTaxBuckets, minus the per-day axis: the
+        // department report rolls a whole period up, so grouping by business_date would multiply
+        // the row count by the length of the range for nothing.
+        //
+        // entry_kind is restricted to sale and refund for the same reason BuildEndOfDay restricts
+        // it: everything else (gift-card sales, deposit lifecycle, chargebacks, RidePass's own
+        // charges) is money that moved without being earned, and none of it belongs on a report
+        // that asks which side of the business made money.
+        public async Task<List<RevenueBucketRow>> GetRevenueBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            const string sql = @"
+                SELECT source_kind                            AS SourceKind,
+                       revenue_key_override                   AS RevenueKeyOverride,
+                       entry_kind                             AS EntryKind,
+                       COALESCE(SUM(gross_cents), 0)::bigint  AS GrossCents,
+                       COALESCE(SUM(tax_cents), 0)::bigint    AS TaxCents,
+                       COALESCE(SUM(tip_cents), 0)::bigint    AS TipCents,
                        COUNT(*)::int                          AS EntryCount
                 FROM v_accounting_entries
                 WHERE tenant_id = @tenantId
                   AND entry_kind IN ('sale', 'refund')
                   AND occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
-                GROUP BY business_date, source_kind, entry_kind
-                ORDER BY business_date";
-            return (await _db.Query<SalesTaxBucketRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
+                GROUP BY source_kind, revenue_key_override, entry_kind";
+            return (await _db.Query<RevenueBucketRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
         }
     }
 }

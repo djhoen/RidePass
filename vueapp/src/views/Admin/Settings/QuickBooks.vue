@@ -12,153 +12,173 @@
             QuickBooks isn't set up on this RidePass deployment yet. Contact support to enable it.
         </v-alert>
 
-        <!-- ── Connection ─────────────────────────────────────────────────────────── -->
-        <v-card class="pa-4 mb-6">
-            <v-card-title class="px-0 pt-0">Connection</v-card-title>
-            <v-card-text class="px-0">
-                <div v-if="loading" class="d-flex align-center ga-3 py-4">
-                    <v-progress-circular indeterminate size="20" />
-                    <span class="text-body-2">Loading QuickBooks status…</span>
-                </div>
+        <v-tabs v-model="tab" color="primary" class="mb-4">
+            <v-tab value="connection">Connection</v-tab>
+            <v-tab value="accounts" :disabled="!status.isConnected">
+                Chart of accounts
+                <v-chip v-if="status.isConnected && !status.mappingComplete" size="x-small" color="warning"
+                    variant="flat" class="ml-2">{{ status.unmappedKeys.length }}</v-chip>
+            </v-tab>
+            <v-tab value="history" :disabled="!status.isConnected">Sync history</v-tab>
+        </v-tabs>
 
-                <div v-else-if="!status.isConnected" class="d-flex flex-column ga-3">
-                    <div class="d-flex align-center ga-2">
-                        <v-icon color="grey">mdi-link-off</v-icon>
-                        <span>No QuickBooks company connected.</span>
-                    </div>
-                    <div>
-                        <v-btn color="primary" :disabled="!status.isConfigured" :loading="connectLoading"
-                            @click="connect">
-                            Connect QuickBooks
-                        </v-btn>
-                    </div>
-                </div>
+        <v-window v-model="tab">
+            <!-- ── Connection ─────────────────────────────────────────────────────── -->
+            <v-window-item value="connection">
+                <v-card class="pa-4">
+                    <v-card-text class="px-0 pt-0">
+                        <div v-if="loading" class="d-flex align-center ga-3 py-4">
+                            <v-progress-circular indeterminate size="20" />
+                            <span class="text-body-2">Loading QuickBooks status…</span>
+                        </div>
 
-                <div v-else class="d-flex flex-column ga-3">
-                    <div class="d-flex align-center ga-2 flex-wrap">
-                        <v-icon :color="statusColor">{{ statusIcon }}</v-icon>
-                        <span>
-                            <strong>{{ status.companyName || 'Connected' }}</strong>
-                            <code v-if="status.realmId" class="ml-2 text-caption">Realm {{ status.realmId }}</code>
-                        </span>
-                        <v-chip :color="statusColor" size="small">{{ statusLabel }}</v-chip>
-                    </div>
+                        <div v-else-if="!status.isConnected" class="d-flex flex-column ga-3">
+                            <div class="d-flex align-center ga-2">
+                                <v-icon color="grey">mdi-link-off</v-icon>
+                                <span>No QuickBooks company connected.</span>
+                            </div>
+                            <div>
+                                <v-btn color="primary" :disabled="!status.isConfigured" :loading="connectLoading"
+                                    @click="connect">
+                                    Connect QuickBooks
+                                </v-btn>
+                            </div>
+                        </div>
 
-                    <v-alert v-if="status.lastSyncError" type="error" variant="tonal" density="compact">
-                        {{ status.lastSyncError }}
-                    </v-alert>
+                        <div v-else class="d-flex flex-column ga-3">
+                            <div class="d-flex align-center ga-2 flex-wrap">
+                                <v-icon :color="statusColor">{{ statusIcon }}</v-icon>
+                                <span>
+                                    <strong>{{ status.companyName || 'Connected' }}</strong>
+                                    <code v-if="status.realmId" class="ml-2 text-caption">Realm {{ status.realmId }}</code>
+                                </span>
+                                <v-chip :color="statusColor" size="small">{{ statusLabel }}</v-chip>
+                            </div>
 
-                    <div class="text-caption text-medium-emphasis">
-                        Syncing sales from {{ formatDate(status.syncStartDate) }}.
-                        <template v-if="status.lastSyncedDate">
-                            Posted through {{ formatDate(status.lastSyncedDate) }}.
-                        </template>
-                        <template v-else>Nothing posted yet.</template>
-                    </div>
+                            <v-alert v-if="status.lastSyncError" type="error" variant="tonal" density="compact">
+                                {{ status.lastSyncError }}
+                            </v-alert>
 
-                    <v-switch v-model="syncEnabled" color="primary" density="compact" hide-details
-                        :label="syncEnabled ? 'Nightly sync is on' : 'Nightly sync is paused'"
-                        :loading="toggleLoading" @update:model-value="onToggleSync" />
+                            <v-alert v-if="!status.mappingComplete" type="info" variant="tonal" density="compact">
+                                Account mapping isn't finished, so nothing can post yet. Complete it in the
+                                Chart of accounts tab.
+                            </v-alert>
 
-                    <div class="d-flex ga-2 flex-wrap">
-                        <v-btn color="primary" variant="tonal" :loading="syncLoading"
-                            :disabled="!status.mappingComplete" @click="syncNow">
-                            Sync now
-                        </v-btn>
-                        <v-btn variant="text" :loading="connectLoading" @click="connect">Reconnect</v-btn>
-                        <v-btn variant="text" color="error" :loading="disconnectLoading" @click="disconnect">
-                            Disconnect
-                        </v-btn>
-                    </div>
-                </div>
-            </v-card-text>
-        </v-card>
+                            <div class="text-caption text-medium-emphasis">
+                                Syncing sales from {{ formatDate(status.syncStartDate) }}.
+                                <template v-if="status.lastSyncedDate">
+                                    Posted through {{ formatDate(status.lastSyncedDate) }}.
+                                </template>
+                                <template v-else>Nothing posted yet.</template>
+                            </div>
 
-        <!-- ── Account mapping ────────────────────────────────────────────────────── -->
-        <v-card v-if="status.isConnected" class="pa-4 mb-6">
-            <v-card-title class="px-0 pt-0">Chart of accounts</v-card-title>
-            <v-card-text class="px-0">
-                <p class="text-body-2 text-medium-emphasis mb-2">
-                    Tell us which of your accounts each kind of money belongs in. Every row needs an
-                    account before we can post, a day whose accounts aren't all mapped is held back
-                    rather than booked to the wrong place.
-                </p>
+                            <v-switch v-model="syncEnabled" color="primary" density="compact" hide-details
+                                :label="syncEnabled ? 'Nightly sync is on' : 'Nightly sync is paused'"
+                                :loading="toggleLoading" @update:model-value="onToggleSync" />
 
-                <v-alert v-if="!status.mappingComplete" type="info" variant="tonal" density="compact" class="mb-4">
-                    {{ status.unmappedKeys.length }}
-                    {{ status.unmappedKeys.length === 1 ? 'account still needs' : 'accounts still need' }}
-                    to be mapped before syncing can start.
-                </v-alert>
+                            <div class="d-flex ga-2 flex-wrap">
+                                <v-btn color="primary" variant="tonal" :loading="syncLoading"
+                                    :disabled="!status.mappingComplete" @click="syncNow">
+                                    Sync now
+                                </v-btn>
+                                <v-btn variant="text" :loading="connectLoading" @click="connect">Reconnect</v-btn>
+                                <v-btn variant="text" color="error" :loading="disconnectLoading" @click="disconnect">
+                                    Disconnect
+                                </v-btn>
+                            </div>
+                        </div>
+                    </v-card-text>
+                </v-card>
+            </v-window-item>
 
-                <div v-if="accountsError" class="mb-4">
-                    <v-alert type="error" variant="tonal" density="compact">
-                        {{ accountsError }}
-                        <template #append>
-                            <v-btn size="small" variant="text" @click="loadAccounts">Retry</v-btn>
-                        </template>
-                    </v-alert>
-                </div>
+            <!-- ── Account mapping ────────────────────────────────────────────────── -->
+            <v-window-item value="accounts">
+                <v-card class="pa-4">
+                    <v-card-text class="px-0 pt-0">
+                        <p class="text-body-2 text-medium-emphasis mb-2">
+                            Tell us which of your accounts each kind of money belongs in. Every row needs an
+                            account before we can post, a day whose accounts aren't all mapped is held back
+                            rather than booked to the wrong place.
+                        </p>
 
-                <div v-for="(m, i) in mappings" :key="m.mappingKey">
-                    <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
-                        item-title="name" item-value="id" density="compact" variant="outlined"
-                        :label="m.label" :loading="accountsLoading" clearable
-                        :class="i === 0 ? '' : 'mt-4'"
-                        :hint="`${m.expectedClassification} account`" persistent-hint />
-                </div>
+                        <v-alert v-if="!status.mappingComplete" type="info" variant="tonal" density="compact" class="mb-4">
+                            {{ status.unmappedKeys.length }}
+                            {{ status.unmappedKeys.length === 1 ? 'account still needs' : 'accounts still need' }}
+                            to be mapped before syncing can start.
+                        </v-alert>
 
-                <div class="d-flex ga-2 mt-6">
-                    <v-btn color="primary" :loading="saveLoading" @click="saveMappings">Save mapping</v-btn>
-                </div>
-            </v-card-text>
-        </v-card>
+                        <div v-if="accountsError" class="mb-4">
+                            <v-alert type="error" variant="tonal" density="compact">
+                                {{ accountsError }}
+                                <template #append>
+                                    <v-btn size="small" variant="text" @click="loadAccounts">Retry</v-btn>
+                                </template>
+                            </v-alert>
+                        </div>
 
-        <!-- ── History ────────────────────────────────────────────────────────────── -->
-        <v-card v-if="status.isConnected" class="pa-4">
-            <v-card-title class="px-0 pt-0">Sync history</v-card-title>
-            <v-card-text class="px-0">
-                <div class="table-scroll">
-                    <v-table density="compact">
-                        <thead>
-                            <tr>
-                                <th class="text-left">Business date</th>
-                                <th class="text-left">Status</th>
-                                <th class="text-right">Transactions</th>
-                                <th class="text-right">Total</th>
-                                <th class="text-left">Journal entry</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="row in syncLog" :key="row.businessDate">
-                                <td>{{ formatDate(row.businessDate) }}</td>
-                                <td>
-                                    <v-chip :color="rowColor(row.status)" size="x-small">{{ rowLabel(row.status) }}</v-chip>
-                                    <div v-if="row.lastError" class="text-caption text-error mt-1">{{ row.lastError }}</div>
-                                </td>
-                                <td class="text-right">{{ row.entryCount }}</td>
-                                <td class="text-right">{{ formatMoney(row.totalDebitsCents) }}</td>
-                                <td>
-                                    <code v-if="row.qboDocNumber" class="text-caption">{{ row.qboDocNumber }}</code>
-                                    <span v-else class="text-medium-emphasis text-caption">, </span>
-                                </td>
-                                <td class="text-right">
-                                    <v-btn v-if="row.status === 'failed'" size="x-small" variant="text"
-                                        :loading="resyncing === row.businessDate" @click="resync(row.businessDate)">
-                                        Retry
-                                    </v-btn>
-                                </td>
-                            </tr>
-                            <tr v-if="!syncLog.length && !loading">
-                                <td colspan="6" class="text-center text-medium-emphasis py-4">
-                                    Nothing posted yet. The first sync runs tonight, or use "Sync now".
-                                </td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </div>
-            </v-card-text>
-        </v-card>
+                        <div v-for="(m, i) in mappings" :key="m.mappingKey">
+                            <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
+                                item-title="name" item-value="id" density="compact" variant="outlined"
+                                :label="m.label" :loading="accountsLoading" clearable
+                                :class="i === 0 ? '' : 'mt-4'"
+                                :hint="`${m.expectedClassification} account`" persistent-hint />
+                        </div>
+
+                        <div class="d-flex ga-2 mt-6">
+                            <v-btn color="primary" :loading="saveLoading" @click="saveMappings">Save mapping</v-btn>
+                        </div>
+                    </v-card-text>
+                </v-card>
+            </v-window-item>
+
+            <!-- ── History ────────────────────────────────────────────────────────── -->
+            <v-window-item value="history">
+                <v-card class="pa-4">
+                    <v-card-text class="px-0 pt-0">
+                        <div class="table-scroll">
+                            <v-table density="compact">
+                                <thead>
+                                    <tr>
+                                        <th class="text-left">Business date</th>
+                                        <th class="text-left">Status</th>
+                                        <th class="text-right">Transactions</th>
+                                        <th class="text-right">Total</th>
+                                        <th class="text-left">Journal entry</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="row in syncLog" :key="row.businessDate">
+                                        <td>{{ formatDate(row.businessDate) }}</td>
+                                        <td>
+                                            <v-chip :color="rowColor(row.status)" size="x-small">{{ rowLabel(row.status) }}</v-chip>
+                                            <div v-if="row.lastError" class="text-caption text-error mt-1">{{ row.lastError }}</div>
+                                        </td>
+                                        <td class="text-right">{{ row.entryCount }}</td>
+                                        <td class="text-right">{{ formatMoney(row.totalDebitsCents) }}</td>
+                                        <td>
+                                            <code v-if="row.qboDocNumber" class="text-caption">{{ row.qboDocNumber }}</code>
+                                            <span v-else class="text-medium-emphasis text-caption">, </span>
+                                        </td>
+                                        <td class="text-right">
+                                            <v-btn v-if="row.status === 'failed'" size="x-small" variant="text"
+                                                :loading="resyncing === row.businessDate" @click="resync(row.businessDate)">
+                                                Retry
+                                            </v-btn>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!syncLog.length && !loading">
+                                        <td colspan="6" class="text-center text-medium-emphasis py-4">
+                                            Nothing posted yet. The first sync runs tonight, or use "Sync now".
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </v-table>
+                        </div>
+                    </v-card-text>
+                </v-card>
+            </v-window-item>
+        </v-window>
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="5000" location="top">
             {{ snackbarText }}
@@ -167,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow } from '../../../services/QuickBooksService'
 import { useConfirm } from '../../../composables/useConfirm'
@@ -177,6 +197,7 @@ const confirm = useConfirm()
 const route = useRoute()
 const router = useRouter()
 
+const tab = ref('connection')
 const loading = ref(true)
 const connectLoading = ref(false)
 const disconnectLoading = ref(false)
@@ -201,6 +222,12 @@ const syncLog = ref<QboSyncLogRow[]>([])
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
+
+// The accounts/history tabs only exist for a connected company; if the user disconnects while
+// sitting on one, land them back on Connection instead of a disabled tab's stale panel.
+watch(() => status.value.isConnected, connected => {
+    if (!connected && tab.value !== 'connection') tab.value = 'connection'
+})
 
 function toast(text: string, color: 'success' | 'error' = 'success') {
     snackbarText.value = text
@@ -424,10 +451,12 @@ onMounted(async () => {
     const oauthError = route.query.qboError
     if (connected || oauthError) {
         await router.replace({ query: {} })
-        if (connected) toast('QuickBooks connected. Map your accounts below to start syncing.')
+        if (connected) toast('QuickBooks connected. Map your accounts in the Chart of accounts tab to start syncing.')
         if (oauthError) toast(String(oauthError), 'error')
     }
     await load()
+    // Fresh from the OAuth callback, the next step is mapping accounts; put the user on that tab.
+    if (connected && status.value.isConnected && !status.value.mappingComplete) tab.value = 'accounts'
 })
 </script>
 

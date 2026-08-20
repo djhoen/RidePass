@@ -11,6 +11,14 @@ namespace Services.Repositories.Interfaces
         Task Delete(Guid id, Guid tenantId);
         Task<bool> IsInUseByEvents(Guid id, Guid tenantId);
 
+        /// <summary>
+        /// Does this tenant point ANY event type at the given QuickBooks revenue slot
+        /// (tenant_event_type.revenue_key, Script0274)? Existence only: the QuickBooks settings
+        /// screen asks this on every status/mapping load just to decide whether to require the
+        /// slot, so it must stay a single indexed-scan EXISTS, never a list load.
+        /// </summary>
+        Task<bool> AnyWithRevenueKey(Guid tenantId, string revenueKey);
+
         /// <summary>Set whether Loam Pass credits are accepted for entry to this event type.</summary>
         Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow);
 

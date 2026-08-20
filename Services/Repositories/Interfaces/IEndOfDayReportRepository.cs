@@ -34,5 +34,13 @@ namespace Services.Repositories.Interfaces
         /// and entry kind. Refunds carry negative tax so a plain SUM is the net remittable figure.
         /// </summary>
         Task<List<SalesTaxBucketRow>> GetSalesTaxBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>
+        /// Earned revenue on sale and refund rows in a UTC range, grouped by source kind, the event
+        /// type's revenue override and entry kind. The caller resolves each group to a QuickBooks
+        /// slot and rolls those up into business units. Refunds carry negative gross, so a plain SUM
+        /// is net.
+        /// </summary>
+        Task<List<RevenueBucketRow>> GetRevenueBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc);
     }
 }

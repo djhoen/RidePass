@@ -14,7 +14,8 @@ namespace Services.Repositories
             gross_cents AS GrossCents, stripe_fee_cents AS StripeFeeCents,
             ridepass_cut_cents AS RidepassCutCents, net_to_tenant_cents AS NetToTenantCents,
             tax_cents AS TaxCents, tip_cents AS TipCents,
-            gift_card_applied_cents AS GiftCardAppliedCents";
+            gift_card_applied_cents AS GiftCardAppliedCents,
+            revenue_key_override AS RevenueKeyOverride";
 
         private readonly IDbHelper _db;
 

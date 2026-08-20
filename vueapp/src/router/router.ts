@@ -570,6 +570,15 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
     },
     {
+        // Revenue by department. Also a pane in the Reporting hub
+        // (/Admin/Reports?report=revenue-by-department); this is the direct-link route, for an
+        // owner or bookkeeper who lives on this one page.
+        path: '/Admin/Reports/RevenueByDepartment',
+        name: 'AdminReportsRevenueByDepartment',
+        component: () => import('../views/Admin/Reports/RevenueByDepartment.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
+    },
+    {
         // Tax report. Also a pane in the Reporting hub (/Admin/Reports?report=tax).
         path: '/Admin/Reports/Tax',
         name: 'AdminReportsTax',

@@ -13,6 +13,14 @@ namespace Services.Accounting
     {
         // ── Revenue ──────────────────────────────────────────────────────────────────────
         public const string RevenueEventTicket = "revenue_event_ticket";
+        /// <summary>
+        /// A track's training department: lessons, camps and clinics. Not a source kind of its own,
+        /// because every one of those is an ordinary `event` with tickets on it. It is selected per
+        /// event type, by tenant_event_type.revenue_key (Script0274), which the read model carries
+        /// out as revenue_key_override and <see cref="EffectiveRevenueKey"/> applies. Opt-in: an
+        /// event type that names no key keeps posting to <see cref="RevenueEventTicket"/>.
+        /// </summary>
+        public const string RevenueTraining     = "revenue_training";
         public const string RevenueEventExtra  = "revenue_event_extra";
         public const string RevenueSeasonPass  = "revenue_season_pass";
         public const string RevenueMembership  = "revenue_membership";
@@ -72,7 +80,7 @@ namespace Services.Accounting
         /// <summary>Every key, in the order the settings screen should render them.</summary>
         public static readonly string[] All =
         {
-            RevenueEventTicket, RevenueEventExtra, RevenueSeasonPass, RevenueMembership,
+            RevenueEventTicket, RevenueTraining, RevenueEventExtra, RevenueSeasonPass, RevenueMembership,
             RevenueRental, RevenueConcession, RevenueBikeShop, RevenueBikeShopRental,
             RevenueDepositForfeited, RevenueOther,
             LiabilitySalesTax, LiabilityTips, LiabilityGiftCard, LiabilityRentalDeposit,
@@ -113,10 +121,30 @@ namespace Services.Accounting
             _               => RevenueOther,
         };
 
+        /// <summary>
+        /// The revenue slot a sale actually posts to, once the tenant's own department mapping is
+        /// taken into account. <paramref name="overrideKey"/> is v_accounting_entries'
+        /// revenue_key_override, i.e. tenant_event_type.revenue_key for the event the row hangs
+        /// off (Script0274); it is null for every row that has no event behind it.
+        ///
+        /// An override is honored only when it names a key this build knows about. That is not
+        /// defensive noise: the column is written by a migration and, later, by an admin screen, so
+        /// a key from a NEWER schema can reach an OLDER deployment mid-rollout. Falling back is
+        /// then strictly better than passing it through, because an account slot no tenant has
+        /// mapped blocks the whole day's journal entry from posting (QuickBooksController
+        /// .RequiredKeys / MappingComplete), whereas the fallback books the day the way it was
+        /// booked yesterday.
+        /// </summary>
+        public static string EffectiveRevenueKey(string? sourceKind, string? overrideKey) =>
+            !string.IsNullOrEmpty(overrideKey) && All.Contains(overrideKey, StringComparer.Ordinal)
+                ? overrideKey
+                : RevenueForSourceKind(sourceKind);
+
         /// <summary>Human label for the settings screen. Mirrored in the Vue copy.</summary>
         public static string Label(string key) => key switch
         {
             RevenueEventTicket      => "Event ticket & gate revenue",
+            RevenueTraining         => "Training Center revenue (lessons, camps, clinics)",
             RevenueEventExtra       => "Extras revenue (camping, parking, merch)",
             RevenueSeasonPass       => "Season pass revenue",
             RevenueMembership       => "Membership revenue",

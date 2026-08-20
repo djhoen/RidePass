@@ -32,6 +32,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SalesSummary from './Reports/SalesSummary.vue'
 import EndOfDay from './Reports/EndOfDay.vue'
+import RevenueByDepartment from './Reports/RevenueByDepartment.vue'
 import TaxReport from './Reports/TaxReport.vue'
 import WaiverSignatures from './Reports/WaiverSignatures.vue'
 import DailyEvents from './Reports/DailyEvents.vue'
@@ -41,10 +42,11 @@ import ConcessionStaff from './Reports/ConcessionStaff.vue'
 import BikeShopReports from '@/components/bikeshop/ReportsTab.vue'
 import { branding } from '@/stores/branding'
 
-type ReportKey = 'sales-summary' | 'end-of-day' | 'tax' | 'waiver-signatures' | 'daily-events' | 'fnb-profit' | 'comps' | 'fnb-staff' | 'bike-shop'
+type ReportKey = 'sales-summary' | 'revenue-by-department' | 'end-of-day' | 'tax' | 'waiver-signatures' | 'daily-events' | 'fnb-profit' | 'comps' | 'fnb-staff' | 'bike-shop'
 
 const allReports: { key: ReportKey; title: string; subtitle: string; icon: string }[] = [
     { key: 'sales-summary', title: 'Sales Summary', subtitle: 'Revenue, top products, top events', icon: 'mdi-chart-line' },
+    { key: 'revenue-by-department', title: 'Revenue by Department', subtitle: 'Which side of the business earned it', icon: 'mdi-office-building-outline' },
     { key: 'end-of-day',    title: 'End of Day',     subtitle: 'Daily close: revenue by category, tenders, staff, cash, QuickBooks', icon: 'mdi-cash-register' },
     { key: 'tax',           title: 'Tax',            subtitle: 'Admission tax and sales tax to remit', icon: 'mdi-receipt-text-outline' },
     { key: 'waiver-signatures', title: 'Waivers', subtitle: 'Who has signed for an event',         icon: 'mdi-file-sign' },
@@ -73,6 +75,7 @@ const activeEventId = ref<string | null>(parseEventId(route.query.eventId as str
 
 function parseReport(v: string | undefined): ReportKey {
     if (v === 'waiver-signatures' || v === 'daily-events' || v === 'sales-summary' || v === 'end-of-day'
+        || v === 'revenue-by-department'
         || v === 'tax' || v === 'fnb-profit' || v === 'comps' || v === 'fnb-staff' || v === 'bike-shop') return v
     return 'sales-summary'
 }
@@ -83,6 +86,7 @@ function parseEventId(v: string | undefined): string | null {
 const activeComponent = computed(() => {
     switch (selected.value) {
         case 'end-of-day': return EndOfDay
+        case 'revenue-by-department': return RevenueByDepartment
         case 'tax': return TaxReport
         case 'waiver-signatures': return WaiverSignatures
         case 'daily-events': return DailyEvents
