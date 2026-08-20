@@ -116,13 +116,18 @@
                             </v-alert>
                         </div>
 
-                        <div v-for="(m, i) in mappings" :key="m.mappingKey">
-                            <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
-                                item-title="name" item-value="id" density="compact" variant="outlined"
-                                :label="m.label" :loading="accountsLoading" clearable
-                                :class="i === 0 ? '' : 'mt-4'"
-                                :hint="`${m.expectedClassification} account`" persistent-hint />
-                        </div>
+                        <template v-for="(group, gi) in mappingGroups" :key="group.title">
+                            <div class="text-subtitle-2 mb-3" :class="gi === 0 ? '' : 'mt-6'">
+                                {{ group.title }}
+                                <span class="text-caption text-medium-emphasis ml-1">{{ group.caption }}</span>
+                            </div>
+                            <div v-for="(m, i) in group.rows" :key="m.mappingKey">
+                                <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
+                                    item-title="name" item-value="id" density="compact" variant="outlined"
+                                    :label="m.label" :loading="accountsLoading" clearable
+                                    :class="i === 0 ? '' : 'mt-4'" hide-details />
+                            </div>
+                        </template>
 
                         <div class="d-flex ga-2 mt-6">
                             <v-btn color="primary" :loading="saveLoading" @click="saveMappings">Save mapping</v-btn>
@@ -289,6 +294,27 @@ function formatDate(d: string | null) {
 function formatMoney(cents: number) {
     return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' })
 }
+
+// The rows grouped by classification, in a fixed money-flow order, so the section heading says
+// "these are income accounts" ONCE instead of a per-row hint under every dropdown repeating it.
+const GROUP_ORDER: { classification: string; title: string; caption: string }[] = [
+    { classification: 'Revenue',   title: 'Revenue',           caption: 'where each kind of sale is booked as income' },
+    { classification: 'Liability', title: 'Liabilities',       caption: 'money you hold that isn\'t yours yet: tax, tips, gift card balances' },
+    { classification: 'Asset',     title: 'Assets',            caption: 'where money sits before it reaches your bank' },
+    { classification: 'Expense',   title: 'Fees & expenses',   caption: 'processing and platform fees' },
+]
+
+const mappingGroups = computed(() =>
+    GROUP_ORDER
+        .map(g => ({ ...g, rows: mappings.value.filter(m => m.expectedClassification === g.classification) }))
+        // A classification QBO never asked us for (or a future one this build doesn't know) still
+        // renders: anything unmatched lands in a trailing group rather than silently disappearing.
+        .concat([{
+            classification: '', title: 'Other', caption: '',
+            rows: mappings.value.filter(m => !GROUP_ORDER.some(g => g.classification === m.expectedClassification)),
+        }])
+        .filter(g => g.rows.length > 0)
+)
 
 function accountsFor(classification: string) {
     const matching = accounts.value.filter(a => a.classification === classification)
