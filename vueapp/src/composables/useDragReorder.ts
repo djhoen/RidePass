@@ -38,7 +38,16 @@ export function useDragReorder<T extends DragReorderItem>(opts: UseDragReorderOp
             ? opts.rows.value.filter(opts.filter)
             : [...opts.rows.value]
     }
-    watch([opts.rows, ...(opts.filterDeps ?? [])], sync, { immediate: true })
+    // deep: true is load-bearing, not defensive. `rows` is a Ref<T[]>, and a shallow watch on one
+    // fires only when `.value` is REPLACED, never when the array is mutated in place. A consumer
+    // that does `rows.value.push(newRow)` would leave visibleRows stale forever: the row is in the
+    // canonical list but renders nowhere and is invisible to anything reading visibleRows.
+    //
+    // That is not hypothetical. It is exactly how TicketTiersList's buffer mode adds a tier to a
+    // not-yet-created event, and it made a new event unsaveable: the pass was added, the table
+    // stayed empty, and EventDialog's "add at least one purchasable item" guard (which counts
+    // getBuffered(), i.e. visibleRows) refused the save.
+    watch([opts.rows, ...(opts.filterDeps ?? [])], sync, { immediate: true, deep: true })
 
     async function onReorderEnd(evt: { oldIndex?: number; newIndex?: number }) {
         // SortableJS fires @end even when nothing moved (a click without a drag).
