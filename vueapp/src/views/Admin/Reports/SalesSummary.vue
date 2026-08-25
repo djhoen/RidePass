@@ -47,11 +47,51 @@
 
         <v-card class="mb-4" v-if="summary">
             <v-card-title>Daily Revenue ({{ branding.timezone }})</v-card-title>
+            <v-card-subtitle class="pb-2">
+                Total revenue in blue, with each profit center below it. The center lines add up to
+                the total.
+            </v-card-subtitle>
             <v-card-text>
-                <div style="position: relative; height: 320px;">
+                <div style="position: relative; height: 340px;">
                     <Line v-if="revenueChartData" :data="revenueChartData" :options="revenueChartOptions" />
                 </div>
             </v-card-text>
+        </v-card>
+
+        <!-- The table view of the same series. Three palette colors sit below 3:1 against a white
+             surface, so the chart's identity must not rest on color alone; this table is that
+             relief, and it doubles as the numbers behind the lines. -->
+        <v-card class="mb-4" v-if="summary && summary.revenueByProfitCenter.length">
+            <v-card-title>Revenue by Profit Center</v-card-title>
+            <v-table density="compact">
+                <thead>
+                    <tr>
+                        <th>Profit center</th>
+                        <th style="width: 140px">Revenue</th>
+                        <th style="width: 110px">% of total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="c in summary.revenueByProfitCenter" :key="c.key">
+                        <td>
+                            <span class="swatch mr-2" :style="{ background: seriesColor(c.color, isDark) }"></span>
+                            {{ c.label }}
+                        </td>
+                        <td>${{ (c.totalCents / 100).toFixed(2) }}</td>
+                        <td>{{ pctOfTotal(c.totalCents) }}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr class="font-weight-bold">
+                        <td>
+                            <span class="swatch mr-2" :style="{ background: totalColor }"></span>
+                            Total revenue
+                        </td>
+                        <td>${{ (summary.totalRevenueCents / 100).toFixed(2) }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </v-table>
         </v-card>
 
         <v-card class="mb-4" v-if="summary && summary.revenueByType.length">
@@ -150,11 +190,22 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { Line, Bar } from 'vue-chartjs'
 import { registerChartJs } from '@/helpers/ChartSetup'
+import { useTheme } from 'vuetify'
 import { ReportsService, type TenantReportSummary } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
 import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
+import {
+    seriesColor, withAlpha, TOTAL_SERIES_COLOR, TOTAL_SERIES_COLOR_DARK,
+} from '@/helpers/profitCenterColor'
 
 registerChartJs()
+
+// Dark mode is a real state here (a tenant can set themeMode dark), and the palette's dark steps
+// are selected values, not a computed lightening: the light hexes are genuinely unreadable on the
+// dark surface (violet lands at 1.88:1).
+const theme = useTheme()
+const isDark = computed(() => theme.current.value.dark)
+const totalColor = computed(() => isDark.value ? TOTAL_SERIES_COLOR_DARK : TOTAL_SERIES_COLOR)
 
 const service = new ReportsService()
 
@@ -266,9 +317,21 @@ function exportCsv() {
             rows: s.revenueByType.map(r => [kindLabel(r.kind), r.saleCount, csvMoney(r.revenueCents)]),
         },
         {
+            title: 'Revenue by profit center',
+            headers: ['Profit center', 'Revenue'],
+            rows: s.revenueByProfitCenter.map(c => [c.label, csvMoney(c.totalCents)]),
+        },
+        {
+            // One column per center beside the total, so the exported sheet carries the same
+            // breakdown the chart draws rather than just its total line.
             title: 'Daily revenue',
-            headers: ['Date', 'Revenue', 'Tickets'],
-            rows: s.dailyRevenue.map(p => [p.date, csvMoney(p.revenueCents), p.ticketsSold]),
+            headers: ['Date', 'Total revenue', ...s.revenueByProfitCenter.map(c => c.label), 'Tickets'],
+            rows: s.dailyRevenue.map((p, i) => [
+                p.date,
+                csvMoney(p.revenueCents),
+                ...s.revenueByProfitCenter.map(c => csvMoney(c.points[i]?.revenueCents ?? 0)),
+                p.ticketsSold,
+            ]),
         },
         {
             title: 'Top season passes',
@@ -309,51 +372,77 @@ function pctOfTotal(cents: number): string {
     return Math.round((cents / total) * 100) + '%'
 }
 
+// Total revenue plus one line per profit center, all in dollars on ONE axis.
+//
+// The tickets-sold line that used to share this chart is gone, and with it the second y-axis: two
+// different units on two scales make the crossings meaningless (a revenue line "overtaking" a
+// count line means nothing), and adding the center lines to that would have been unreadable.
+// Tickets sold is still on the stat tile above and in the CSV, where a count belongs.
 const revenueChartData = computed(() => {
     if (!summary.value) return null
     const points = summary.value.dailyRevenue
+    const centers = summary.value.revenueByProfitCenter
+
     return {
         labels: points.map(p => p.date),
         datasets: [
             {
-                label: 'Revenue ($)',
+                label: 'Total revenue',
                 data: points.map(p => p.revenueCents / 100),
-                borderColor: '#1976D2',
-                backgroundColor: 'rgba(25, 118, 210, 0.15)',
+                borderColor: totalColor.value,
+                backgroundColor: withAlpha(totalColor.value, 0.10),
+                borderWidth: 2,
                 fill: true,
                 tension: 0.3,
-                yAxisID: 'y',
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                // Drawn first so the thinner center lines sit on top of its fill rather than under it.
+                order: 2,
             },
-            {
-                label: 'Tickets',
-                data: points.map(p => p.ticketsSold),
-                borderColor: '#FB8C00',
-                backgroundColor: 'transparent',
+            // Each center keeps ITS OWN color whatever the range or the sort: identity follows the
+            // center, never its rank, so narrowing the dates never repaints the survivors.
+            ...centers.map(c => ({
+                label: c.label,
+                data: c.points.map(p => p.revenueCents / 100),
+                borderColor: seriesColor(c.color, isDark.value),
+                backgroundColor: seriesColor(c.color, isDark.value),
+                borderWidth: 2,
+                fill: false,
                 tension: 0.3,
-                yAxisID: 'y1',
-            },
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                order: 1,
+            })),
         ],
     }
 })
 
-const revenueChartOptions = {
+const revenueChartOptions = computed(() => ({
     responsive: true,
     maintainAspectRatio: false,
+    // Crosshair-style hover: one tooltip listing every series for the hovered day, so two centers
+    // can be compared on a date without hitting each line exactly.
     interaction: { mode: 'index' as const, intersect: false },
+    plugins: {
+        legend: {
+            display: true,
+            position: 'bottom' as const,
+            labels: { usePointStyle: true, boxWidth: 8, padding: 16 },
+        },
+        tooltip: {
+            callbacks: {
+                label: (ctx: any) => `${ctx.dataset.label}: $${Number(ctx.parsed.y).toFixed(2)}`,
+            },
+        },
+    },
     scales: {
         y: {
             beginAtZero: true,
             title: { display: true, text: 'Revenue ($)' },
             position: 'left' as const,
         },
-        y1: {
-            beginAtZero: true,
-            title: { display: true, text: 'Count' },
-            position: 'right' as const,
-            grid: { drawOnChartArea: false },
-        },
     },
-}
+}))
 
 const eventsChartData = computed(() => {
     if (!summary.value) return { labels: [], datasets: [] }
@@ -378,3 +467,15 @@ const horizontalBarOptions = {
     },
 }
 </script>
+
+<style scoped>
+/* The color chip beside a label. Text keeps its own ink; the swatch carries the identity. */
+.swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    vertical-align: middle;
+    box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.2);
+}
+</style>

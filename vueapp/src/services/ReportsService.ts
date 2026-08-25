@@ -41,8 +41,24 @@ export interface TenantReportSummary {
     refundedAmountCents: number
     revenueByType: RevenueByKind[]
     dailyRevenue: DailyRevenuePoint[]
+    /** Same daily money as dailyRevenue, split by profit center; series sum to it day by day. */
+    revenueByProfitCenter: ProfitCenterSeries[]
     topPassProducts: TopProduct[]
     topEvents: TopEvent[]
+}
+
+export interface ProfitCenterSeriesPoint {
+    date: string
+    revenueCents: number
+}
+export interface ProfitCenterSeries {
+    /** Stable per-entity key; the color follows this, never the series' position in the list. */
+    key: string
+    label: string
+    color: string
+    totalCents: number
+    /** Gapless: one point per date in dailyRevenue, in the same order. */
+    points: ProfitCenterSeriesPoint[]
 }
 
 // ── End of Day (Z report) ─────────────────────────────────────────────
@@ -59,6 +75,11 @@ export interface EndOfDayRevenueLine {
     taxCents: number
     tipCents: number
     netRevenueCents: number
+    // Set only for tenants with configured profit centers; the table groups by these when present.
+    profitCenterKey: string | null
+    profitCenterLabel: string | null
+    profitCenterColor: string | null
+    profitCenterSort: number
 }
 export interface EndOfDayTotals {
     grossSalesCents: number
@@ -212,6 +233,8 @@ export interface RevenueCategoryRow {
 export interface RevenueDepartmentRow {
     key: string
     label: string
+    /** #RRGGBB, the same color this bucket wears on the other reports. */
+    color: string
     netRevenueCents: number
     grossCents: number
     taxCents: number

@@ -139,4 +139,24 @@ namespace Services.Repositories.Data.ReportData
         public int TaxedEntryCount { get; set; }
         public long TaxedGrossCents { get; set; }
     }
+
+    /// <summary>
+    /// Gross sale revenue for one tenant-local business date and one revenue slot, for the Sales
+    /// Summary chart's per-profit-center series.
+    ///
+    /// Deliberately the SAME population the chart's total line is drawn from
+    /// (ReportsRepository.GetDailyRevenue: entry_kind = 'sale', SUM(gross_cents), bucketed on the
+    /// tenant's local day), so the center series add up to the total line exactly rather than
+    /// approximately. Net-of-tax figures would be more "correct" accounting and would NOT sum to
+    /// the blue line, which is worse: a chart whose parts visibly miss its whole is a bug report
+    /// waiting to happen.
+    /// </summary>
+    public class DailyRevenueBucketRow
+    {
+        /// <summary>The tenant-local business date, yyyy-MM-dd.</summary>
+        public string Date { get; set; } = null!;
+        public string? SourceKind { get; set; }
+        public string? RevenueKeyOverride { get; set; }
+        public long GrossCents { get; set; }
+    }
 }

@@ -22,5 +22,16 @@ namespace webapi.Controllers.API.Data.Reports
         public long TipCents { get; set; }
         /// <summary>What the track actually earned on this line: NetGross minus the tax and tips it only holds.</summary>
         public long NetRevenueCents { get; set; }
+
+        /// <summary>
+        /// The tenant's profit center this line reports under. Null for tenants who haven't
+        /// configured centers, so the report keeps its classic flat category list for them.
+        /// </summary>
+        public string? ProfitCenterKey { get; set; }
+        public string? ProfitCenterLabel { get; set; }
+        /// <summary>#RRGGBB, matching the color this center wears on every other screen.</summary>
+        public string? ProfitCenterColor { get; set; }
+        /// <summary>Sorts center groups on the screen; meaningless when the key is null.</summary>
+        public int ProfitCenterSort { get; set; }
     }
 }

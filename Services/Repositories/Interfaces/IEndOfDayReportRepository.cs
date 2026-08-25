@@ -42,5 +42,12 @@ namespace Services.Repositories.Interfaces
         /// is net.
         /// </summary>
         Task<List<RevenueBucketRow>> GetRevenueBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc);
+
+        /// <summary>
+        /// Gross sale revenue per tenant-local business date and revenue slot, for the Sales
+        /// Summary chart's per-profit-center series. Same population as
+        /// IReportsRepository.GetDailyRevenue, so the series sum to that chart's total line.
+        /// </summary>
+        Task<List<DailyRevenueBucketRow>> GetDailyRevenueBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc);
     }
 }

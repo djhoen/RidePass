@@ -6,6 +6,8 @@ namespace webapi.Controllers.API.Data.Reports
         /// <summary>Stable identifier from QboDepartments, e.g. training. Safe to key UI state on.</summary>
         public string Key { get; set; } = null!;
         public string Label { get; set; } = null!;
+        /// <summary>#RRGGBB this bucket is drawn in everywhere, so it matches the other reports.</summary>
+        public string Color { get; set; } = null!;
 
         /// <summary>Gross minus tax minus tips, net of refunds. The number the report ranks by.</summary>
         public long NetRevenueCents { get; set; }

@@ -93,6 +93,7 @@ builder.Services.AddScoped<IEventTicketPurchaseRepository, EventTicketPurchaseRe
 builder.Services.AddScoped<IDisputeRepository, DisputeRepository>();
 builder.Services.AddScoped<IReportsRepository, ReportsRepository>();
 builder.Services.AddScoped<IEndOfDayReportRepository, EndOfDayReportRepository>();
+builder.Services.AddScoped<IProfitCenterRepository, ProfitCenterRepository>();
 builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
 builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();

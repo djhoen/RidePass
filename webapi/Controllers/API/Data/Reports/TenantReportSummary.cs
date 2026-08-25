@@ -16,6 +16,12 @@
         // concession, ...). Sums to TotalRevenueCents. Lets the UI break the headline out by kind.
         public List<RevenueByKindDto> RevenueByType { get; set; } = new();
         public List<DailyRevenuePointDto> DailyRevenue { get; set; } = new();
+        /// <summary>
+        /// The same daily money as DailyRevenue, split by profit center: the chart draws the total
+        /// in the reserved blue and each center in its own color. Series sum to DailyRevenue day by
+        /// day. Empty only when the range has no revenue at all.
+        /// </summary>
+        public List<ProfitCenterSeriesDto> RevenueByProfitCenter { get; set; } = new();
         public List<TopProductDto> TopPassProducts { get; set; } = new();
         public List<TopEventDto> TopEvents { get; set; } = new();
     }

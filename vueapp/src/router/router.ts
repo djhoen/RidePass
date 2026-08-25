@@ -265,6 +265,12 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'accounting.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Settings/ProfitCenters',
+        name: 'AdminSettingsProfitCenters',
+        component: () => import('../views/Admin/Settings/ProfitCenters.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'accounting.manage', hideFooter: true }
+    },
+    {
         path: '/Admin/Settings/HomePage',
         name: 'AdminSettingsHomePage',
         component: () => import('../views/Admin/Settings/HomePage.vue'),

@@ -157,6 +157,30 @@ namespace Services.Repositories
             return (await _db.Query<SalesTaxBucketRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
         }
 
+        // Per-day gross sale revenue by revenue slot, for the Sales Summary chart's profit-center
+        // series. Ranged on occurred_at_utc (the caller's UTC window) but GROUPED on business_date,
+        // which is the tenant's local day, exactly like the total line this sits under.
+        //
+        // entry_kind = 'sale' is what makes the two agree to the cent: the view's synthesized rows
+        // (rental deposits in Part 2, gift-card sales in Part 3) carry their own entry kinds and
+        // drop out here, leaving precisely the ledger sale rows ReportsRepository.GetDailyRevenue
+        // sums. Refunds are excluded there too, so both are gross.
+        public async Task<List<DailyRevenueBucketRow>> GetDailyRevenueBuckets(Guid tenantId, DateTime fromUtc, DateTime toUtc)
+        {
+            const string sql = @"
+                SELECT to_char(business_date, 'YYYY-MM-DD')          AS Date,
+                       source_kind                                   AS SourceKind,
+                       revenue_key_override                          AS RevenueKeyOverride,
+                       COALESCE(SUM(gross_cents), 0)::bigint         AS GrossCents
+                FROM v_accounting_entries
+                WHERE tenant_id = @tenantId
+                  AND entry_kind = 'sale'
+                  AND occurred_at_utc >= @fromUtc AND occurred_at_utc < @toUtc
+                GROUP BY business_date, source_kind, revenue_key_override
+                ORDER BY business_date";
+            return (await _db.Query<DailyRevenueBucketRow>(sql, new { tenantId, fromUtc, toUtc })).ToList();
+        }
+
         // Same shape and same range semantics as GetSalesTaxBuckets, minus the per-day axis: the
         // department report rolls a whole period up, so grouping by business_date would multiply
         // the row count by the length of the range for nothing.

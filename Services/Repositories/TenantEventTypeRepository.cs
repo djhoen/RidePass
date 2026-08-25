@@ -10,6 +10,7 @@ namespace Services.Repositories
             id, tenant_id AS TenantId, code, name, color, image_url AS ImageUrl,
             sort_order AS SortOrder, is_system AS IsSystem,
             allow_loampass_redemption AS AllowLoampassRedemption,
+            revenue_key AS RevenueKey,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -73,6 +74,17 @@ namespace Services.Repositories
                 SET allow_loampass_redemption = @allow
                 WHERE id = @id AND tenant_id = @tenantId";
             await _db.Execute(sql, new { id, tenantId, allow });
+        }
+
+        // The chk_tenant_event_type_revenue_key CHECK (Script0274) is the last line of defense on
+        // the value; callers validate first so the tenant gets a readable error instead of a 500.
+        public async Task SetRevenueKey(Guid id, Guid tenantId, string? revenueKey)
+        {
+            const string sql = @"
+                UPDATE tenant_event_type
+                SET revenue_key = @revenueKey
+                WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, revenueKey });
         }
 
         public async Task<bool> IsInUseByEvents(Guid id, Guid tenantId)

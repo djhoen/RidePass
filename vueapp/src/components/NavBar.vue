@@ -136,6 +136,7 @@
                                 <v-list-item v-bind="props" :prepend-icon="group.icon" :title="group.title"></v-list-item>
                             </template>
                             <v-list-item v-for="link in group.links" :key="link.to" :to="link.to"
+                                :active="link.exactQuery ? isExactLink(link.to) : undefined"
                                 :prepend-icon="link.icon" :title="link.title"></v-list-item>
                         </v-list-group>
                         <v-divider></v-divider>
@@ -265,7 +266,16 @@ type FeatureFlag = 'seasonPassesEnabled' | 'extrasEnabled' | 'concessionsEnabled
     | 'concessionsEnabled' | 'blogEnabled' | 'membershipEnabled'
 // staffOnly: visible to anyone holding at least one tenant permission, i.e. any staff role, but
 // not to riders. For links every staffer needs and no single permission describes.
-interface AdminLink { to: string; icon: string; title: string; perm: Permission | null; feature?: FeatureFlag; staffOnly?: boolean }
+interface AdminLink {
+    to: string; icon: string; title: string; perm: Permission | null
+    feature?: FeatureFlag; staffOnly?: boolean
+    /**
+     * Match the query string too when deciding whether this link is the active one. Needed for
+     * the Reporting hub's `?report=` deep links: router-link's own active matching compares
+     * paths only, so without this every report link would highlight at once.
+     */
+    exactQuery?: boolean
+}
 interface AdminGroup { value: string; title: string; icon: string; links: AdminLink[] }
 
 // Direct links: pinned at top of admin menu, no group header.
@@ -304,7 +314,7 @@ const allGroups: AdminGroup[] = [
     },
     {
         value: 'admission',
-        title: 'Admission',
+        title: 'Tickets and Passes',
         icon: 'mdi-ticket-confirmation',
         links: [
             { to: '/Admin/Events', icon: 'mdi-calendar-month', title: 'Manage Events', perm: Perm.CatalogManage },
@@ -356,7 +366,27 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Purchases',     icon: 'mdi-cart-check',     title: 'Purchases',      perm: Perm.SalesView },
             { to: '/Admin/GiftCards',     icon: 'mdi-gift',           title: 'Gift Cards',     perm: Perm.SalesView, feature: 'giftCardsEnabled' },
             { to: '/Admin/StoreCredit',   icon: 'mdi-wallet-giftcard', title: 'Store Credit',  perm: Perm.CustomersView },
+        ],
+    },
+    {
+        // Everything the person who closes the books touches, in the order they touch it: close
+        // the day, see where the money came from, work out what to remit, check what was paid
+        // out, then the setup that decides how all of it lands in QuickBooks.
+        //
+        // The first four are panes of the Reporting hub rather than pages of their own, so they
+        // are deep links (`?report=`) and need `exactQuery` to keep the active highlight on the
+        // one actually open, since router-link matching ignores the query string.
+        value: 'accounting',
+        title: 'Accounting',
+        icon: 'mdi-calculator-variant-outline',
+        links: [
+            { to: '/Admin/Reports?report=end-of-day', icon: 'mdi-cash-register', title: 'End of Day', perm: Perm.ReportsView, exactQuery: true },
+            { to: '/Admin/Reports?report=revenue-by-department', icon: 'mdi-office-building-outline', title: 'Revenue by Department', perm: Perm.ReportsView, exactQuery: true },
+            { to: '/Admin/Reports?report=tax', icon: 'mdi-receipt-text-outline', title: 'Tax', perm: Perm.ReportsView, exactQuery: true },
+            { to: '/Admin/Reports?report=sales-summary', icon: 'mdi-chart-line', title: 'Sales Summary', perm: Perm.ReportsView, exactQuery: true },
             { to: '/Admin/Payouts',       icon: 'mdi-bank-transfer',  title: 'Payouts',        perm: Perm.ReportsView },
+            { to: '/Admin/Settings/ProfitCenters', icon: 'mdi-chart-pie', title: 'Profit Centers', perm: Perm.AccountingManage },
+            { to: '/Admin/Settings/QuickBooks', icon: 'mdi-book-open-variant', title: 'QuickBooks', perm: Perm.AccountingManage },
         ],
     },
     {
@@ -387,11 +417,32 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Pages',             icon: 'mdi-file-document-outline', title: 'Pages', perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Branding', icon: 'mdi-palette',       title: 'Branding',  perm: Perm.SettingsManage },
             { to: '/Admin/Settings/Payments', icon: 'mdi-credit-card',   title: 'Payments',  perm: Perm.SettingsManage },
-            { to: '/Admin/Settings/QuickBooks', icon: 'mdi-book-open-variant', title: 'QuickBooks', perm: Perm.AccountingManage },
+            // QuickBooks and Profit Centers live under Accounting now, with the reports they feed.
             { to: '/Admin/Settings/Membership', icon: 'mdi-card-account-details', title: 'Membership', perm: Perm.SettingsManage, feature: 'membershipEnabled' },
         ],
     },
 ]
+
+/**
+ * Is this query-carrying link the one currently open? router-link's active matching compares
+ * paths only, so without this every `/Admin/Reports?report=…` link in the Accounting group would
+ * highlight at once whenever any report was open.
+ */
+function isExactLink(to: string): boolean {
+    const [path, queryString] = to.split('?')
+    if (route.path !== path) return false
+    const params = new URLSearchParams(queryString ?? '')
+    for (const [key, value] of params) {
+        let current = route.query[key]
+        // The Reporting hub falls back to Sales Summary when the URL carries no report, so treat
+        // a bare /Admin/Reports as that pane rather than leaving nothing highlighted.
+        if (current === undefined && key === 'report' && path === '/Admin/Reports') {
+            current = 'sales-summary'
+        }
+        if (current !== value) return false
+    }
+    return true
+}
 
 function allowed(link: AdminLink): boolean {
     if (link.perm !== null && !authHelper.hasPermission(link.perm)) return false
@@ -427,7 +478,10 @@ const openedGroups = ref<string[]>([])
 function computeInitialOpen(): string[] {
     const open: string[] = []
     for (const group of visibleGroups.value) {
-        if (group.links.some(l => route.path.startsWith(l.to))) {
+        // Compare against the PATH half only: the Accounting group's report links carry a
+        // `?report=` query, and a raw startsWith against that would never match route.path, so
+        // the group would stay collapsed on the very page it points at.
+        if (group.links.some(l => route.path.startsWith(l.to.split('?')[0]))) {
             open.push(group.value)
         }
     }

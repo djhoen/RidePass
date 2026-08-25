@@ -121,12 +121,36 @@
                                 {{ group.title }}
                                 <span class="text-caption text-medium-emphasis ml-1">{{ group.caption }}</span>
                             </div>
-                            <div v-for="(m, i) in group.rows" :key="m.mappingKey">
-                                <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
-                                    item-title="name" item-value="id" density="compact" variant="outlined"
-                                    :label="m.label" :loading="accountsLoading" clearable
-                                    :class="i === 0 ? '' : 'mt-4'" hide-details />
-                            </div>
+
+                            <!-- Revenue grouped by the tenant's profit centers: one account per
+                                 center, expanded to the member slots on save. -->
+                            <template v-if="group.classification === 'Revenue' && centerGroups.length">
+                                <div v-for="(g, i) in centerGroups" :key="g.center.id"
+                                    class="d-flex align-center ga-3" :class="i === 0 ? '' : 'mt-4'">
+                                    <!-- The center's color, so this screen names the same buckets
+                                         the reports and charts show, in the same colors. -->
+                                    <span class="swatch" :style="{ background: seriesColor(g.center.color, isDark) }"></span>
+                                    <v-select v-model="centerAccounts[g.center.id]" :items="accountsFor('Revenue')"
+                                        item-title="name" item-value="id" density="compact" variant="outlined"
+                                        :label="g.center.name" :loading="accountsLoading" clearable
+                                        :hint="centerHint(g)" persistent-hint />
+                                </div>
+                                <div v-for="m in ungroupedRevenueRows" :key="m.mappingKey">
+                                    <v-select v-model="m.qboAccountId" :items="accountsFor('Revenue')"
+                                        item-title="name" item-value="id" density="compact" variant="outlined"
+                                        :label="m.label" :loading="accountsLoading" clearable
+                                        class="mt-4" hide-details />
+                                </div>
+                            </template>
+
+                            <template v-else>
+                                <div v-for="(m, i) in group.rows" :key="m.mappingKey">
+                                    <v-select v-model="m.qboAccountId" :items="accountsFor(m.expectedClassification)"
+                                        item-title="name" item-value="id" density="compact" variant="outlined"
+                                        :label="m.label" :loading="accountsLoading" clearable
+                                        :class="i === 0 ? '' : 'mt-4'" hide-details />
+                                </div>
+                            </template>
                         </template>
 
                         <div class="d-flex ga-2 mt-6">
@@ -195,9 +219,15 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow } from '../../../services/QuickBooksService'
+import { useTheme } from 'vuetify'
+import { ProfitCenterService, type ProfitCenter } from '../../../services/ProfitCenterService'
+import { seriesColor } from '../../../helpers/profitCenterColor'
 import { useConfirm } from '../../../composables/useConfirm'
 
 const service = new QuickBooksService()
+const profitCenterService = new ProfitCenterService()
+const theme = useTheme()
+const isDark = computed(() => theme.current.value.dark)
 const confirm = useConfirm()
 const route = useRoute()
 const router = useRouter()
@@ -223,6 +253,14 @@ const status = ref<QuickBooksStatus>({
 const accounts = ref<QboAccount[]>([])
 const mappings = ref<QboMapping[]>([])
 const syncLog = ref<QboSyncLogRow[]>([])
+
+// The tenant's profit centers (Settings > Profit Centers). When configured, the revenue section
+// asks for ONE account per center and expands it to the member slots on save. Empty = flat list.
+const profitCenters = ref<ProfitCenter[]>([])
+// Per-center account choice, keyed by center id.
+const centerAccounts = ref<Record<string, string | null>>({})
+// True when a center's member slots currently point at different accounts (pre-centers drift).
+const centerMixed = ref<Record<string, boolean>>({})
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -316,6 +354,42 @@ const mappingGroups = computed(() =>
         .filter(g => g.rows.length > 0)
 )
 
+const revenueRows = computed(() => mappings.value.filter(m => m.expectedClassification === 'Revenue'))
+
+// Only centers that actually own one of THIS tenant's required revenue slots render; a center
+// whose streams the tenant can't use (feature off) would just be an empty picker.
+const centerGroups = computed(() =>
+    profitCenters.value
+        .map(c => ({ center: c, rows: revenueRows.value.filter(m => c.revenueKeys.includes(m.mappingKey)) }))
+        .filter(g => g.rows.length > 0))
+
+const ungroupedRevenueRows = computed(() => {
+    const grouped = new Set(centerGroups.value.flatMap(g => g.rows.map(r => r.mappingKey)))
+    return revenueRows.value.filter(m => !grouped.has(m.mappingKey))
+})
+
+function centerHint(g: { center: ProfitCenter; rows: QboMapping[] }): string {
+    const streams = g.rows.map(r => r.label).join(', ')
+    return centerMixed.value[g.center.id]
+        ? `Currently split across multiple accounts; pick one to unify. Includes: ${streams}`
+        : `Includes: ${streams}`
+}
+
+// Seed each center's picker from the saved per-slot mappings: unanimous non-empty slots show
+// their shared account; anything else starts blank (saving then keeps the per-slot values).
+function initCenterAccounts() {
+    const acc: Record<string, string | null> = {}
+    const mixed: Record<string, boolean> = {}
+    for (const g of centerGroups.value) {
+        const ids = [...new Set(g.rows.map(r => r.qboAccountId).filter((id): id is string => !!id))]
+        const anyBlank = g.rows.some(r => !r.qboAccountId)
+        acc[g.center.id] = ids.length === 1 && !anyBlank ? ids[0] : null
+        mixed[g.center.id] = ids.length > 1
+    }
+    centerAccounts.value = acc
+    centerMixed.value = mixed
+}
+
 function accountsFor(classification: string) {
     const matching = accounts.value.filter(a => a.classification === classification)
     // If QBO didn't classify anything (unusual, but possible on odd charts of accounts), showing
@@ -331,7 +405,8 @@ async function load() {
         syncEnabled.value = status.value.syncEnabled
 
         if (status.value.isConnected) {
-            await Promise.all([loadMappings(), loadSyncLog(), loadAccounts()])
+            await Promise.all([loadMappings(), loadSyncLog(), loadAccounts(), loadProfitCenters()])
+            initCenterAccounts()
         }
     } catch (err: any) {
         toast(errText(err, 'Could not load your QuickBooks settings. Refresh the page to try again.'), 'error')
@@ -360,6 +435,17 @@ async function loadMappings() {
         mappings.value = resp.data.data
     } catch (err: any) {
         toast(errText(err, 'Could not load your account mapping.'), 'error')
+    }
+}
+
+async function loadProfitCenters() {
+    try {
+        const resp = await profitCenterService.get()
+        profitCenters.value = resp.data.data.usingDefaults ? [] : resp.data.data.centers
+    } catch (err: any) {
+        // The flat per-slot list still works without them; say why the grouping is missing.
+        profitCenters.value = []
+        toast(errText(err, 'Could not load your profit centers; showing the ungrouped account list.'), 'error')
     }
 }
 
@@ -456,11 +542,21 @@ async function resync(businessDate: string) {
 async function saveMappings() {
     saveLoading.value = true
     try {
-        await service.saveMappings(mappings.value.map(m => ({
-            mappingKey: m.mappingKey,
-            qboAccountId: m.qboAccountId,
-            qboAccountName: accounts.value.find(a => a.id === m.qboAccountId)?.name ?? null,
-        })))
+        // A slot inside a profit center takes the CENTER's chosen account; a center left blank
+        // keeps each slot's existing value (so an unresolved "mixed" center is never clobbered).
+        const centerByKey = new Map<string, string>()
+        for (const g of centerGroups.value) {
+            for (const r of g.rows) centerByKey.set(r.mappingKey, g.center.id)
+        }
+        await service.saveMappings(mappings.value.map(m => {
+            const centerId = centerByKey.get(m.mappingKey)
+            const accountId = (centerId && centerAccounts.value[centerId]) || m.qboAccountId
+            return {
+                mappingKey: m.mappingKey,
+                qboAccountId: accountId,
+                qboAccountName: accounts.value.find(a => a.id === accountId)?.name ?? null,
+            }
+        }))
         toast('Account mapping saved.')
         await load()
     } catch (err: any) {
@@ -494,5 +590,17 @@ export default { name: 'AdminSettingsQuickBooks' }
 /* Wide table must scroll inside its own box rather than the page scrolling sideways. */
 .table-scroll {
     overflow-x: auto;
+}
+
+/* Profit-center color beside its account picker. Sized to sit level with a compact v-select
+   that carries a persistent hint, so the row reads as one line. */
+.swatch {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    margin-bottom: 22px;
+    box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.2);
 }
 </style>

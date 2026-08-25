@@ -107,7 +107,7 @@ function selectReport(key: ReportKey) {
     router.replace({ path: route.path, query })
 }
 
-// Daily Events row click → jump to the standalone Rider Report (Admission), pre-filtered
+// Daily Events row click → jump to the standalone Rider Report (Tickets and Passes), pre-filtered
 // to that event's day + event.
 function onSelectEvent(eventId: string, date?: string) {
     router.push({ path: '/Admin/RiderReport', query: date ? { date, eventId } : { eventId } })

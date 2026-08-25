@@ -24,7 +24,11 @@
             <v-row class="mb-2">
                 <v-col v-for="d in report.departments" :key="d.key" cols="12" sm="6"
                     :md="tileWidth">
-                    <v-card><v-card-text>
+                    <v-card>
+                        <!-- The department's color on the tile edge, matching the chart and the
+                             End of Day report. -->
+                        <div class="dept-stripe" :style="{ background: seriesColor(d.color, isDark) }"></div>
+                        <v-card-text>
                         <div class="text-caption text-medium-emphasis">{{ d.label }}</div>
                         <div class="text-h4">{{ money(d.netRevenueCents) }}</div>
                         <div class="text-caption text-medium-emphasis">
@@ -66,6 +70,8 @@
                                     <v-icon size="small" class="mr-1">
                                         {{ expanded.has(d.key) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
                                     </v-icon>
+                                    <span class="swatch mr-2"
+                                        :style="{ background: seriesColor(d.color, isDark) }"></span>
                                     {{ d.label }}
                                 </td>
                                 <td class="text-right">{{ d.saleCount }}</td>
@@ -112,11 +118,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
+import { useTheme } from 'vuetify'
 import { ReportsService, type RevenueByDepartmentReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
 import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
+import { seriesColor } from '@/helpers/profitCenterColor'
 
 const service = new ReportsService()
+const theme = useTheme()
+const isDark = computed(() => theme.current.value.dark)
 
 // Same presets and same default as Sales Summary and the Tax report, so moving between the three
 // panes does not silently change the period you are looking at.
@@ -278,5 +288,21 @@ onMounted(load)
 }
 .cat-row td {
     font-size: 0.85rem;
+}
+
+/* Department color: a stripe on the tile, a swatch in the table. Same hex in both, and the same
+   one the Sales Summary chart draws that department's line in. */
+.dept-stripe {
+    height: 4px;
+    width: 100%;
+}
+
+.swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    vertical-align: middle;
+    box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.2);
 }
 </style>

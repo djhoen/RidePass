@@ -104,16 +104,33 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="line in report.revenue" :key="line.key">
-                            <td>{{ line.label }}</td>
-                            <td class="text-right">{{ line.saleCount }}</td>
-                            <td class="text-right">{{ line.refundCount }}</td>
-                            <td class="text-right">{{ money(line.grossCents) }}</td>
-                            <td class="text-right">{{ money(line.refundCents) }}</td>
-                            <td class="text-right">{{ money(line.taxCents) }}</td>
-                            <td class="text-right">{{ money(line.tipCents) }}</td>
-                            <td class="text-right">{{ money(line.netRevenueCents) }}</td>
-                        </tr>
+                        <template v-for="group in revenueGroups" :key="group.key ?? 'flat'">
+                            <!-- Profit-center subheader, only for tenants who configured centers -->
+                            <tr v-if="group.label" class="profit-center-row">
+                                <td class="font-weight-medium">
+                                    <span class="swatch mr-2"
+                                        :style="{ background: seriesColor(group.color, isDark) }"></span>
+                                    {{ group.label }}
+                                </td>
+                                <td class="text-right">{{ group.saleCount }}</td>
+                                <td class="text-right">{{ group.refundCount }}</td>
+                                <td class="text-right">{{ money(group.grossCents) }}</td>
+                                <td class="text-right">{{ money(group.refundCents) }}</td>
+                                <td class="text-right">{{ money(group.taxCents) }}</td>
+                                <td class="text-right">{{ money(group.tipCents) }}</td>
+                                <td class="text-right font-weight-medium">{{ money(group.netRevenueCents) }}</td>
+                            </tr>
+                            <tr v-for="line in group.lines" :key="line.key">
+                                <td :class="group.label ? 'pl-8' : ''">{{ line.label }}</td>
+                                <td class="text-right">{{ line.saleCount }}</td>
+                                <td class="text-right">{{ line.refundCount }}</td>
+                                <td class="text-right">{{ money(line.grossCents) }}</td>
+                                <td class="text-right">{{ money(line.refundCents) }}</td>
+                                <td class="text-right">{{ money(line.taxCents) }}</td>
+                                <td class="text-right">{{ money(line.tipCents) }}</td>
+                                <td class="text-right">{{ money(line.netRevenueCents) }}</td>
+                            </tr>
+                        </template>
                         <tr v-if="report.revenue.length === 0">
                             <td colspan="8" class="text-center text-medium-emphasis py-4">No sales on this date.</td>
                         </tr>
@@ -320,8 +337,13 @@
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ReportsService, type EndOfDayReport } from '@/services/ReportsService'
+import { useTheme } from 'vuetify'
 import { formatTenantDateTime, tenantWallClockNow } from '@/helpers/TenantTime'
 import { branding } from '@/stores/branding'
+import { seriesColor } from '@/helpers/profitCenterColor'
+
+const theme = useTheme()
+const isDark = computed(() => theme.current.value.dark)
 
 const service = new ReportsService()
 
@@ -352,6 +374,42 @@ const isEmptyDay = computed(() => {
         && r.cash.sessions.length === 0
         && r.cash.turnIns.length === 0
         && r.totals.giftCardsSoldCents === 0
+})
+
+// Revenue lines grouped by the tenant's profit center. Lines arrive with center fields only when
+// the tenant has configured centers; without them everything sits in one headerless group and the
+// table renders exactly as it always has. Lines arrive already ordered by center.
+const revenueGroups = computed(() => {
+    const lines = report.value?.revenue ?? []
+    type Group = {
+        key: string | null; label: string | null; color: string | null
+        saleCount: number; refundCount: number
+        grossCents: number; refundCents: number; taxCents: number; tipCents: number
+        netRevenueCents: number
+        lines: typeof lines
+    }
+    const groups: Group[] = []
+    for (const line of lines) {
+        const key = line.profitCenterKey ?? null
+        let g = groups.length ? groups[groups.length - 1] : null
+        if (!g || g.key !== key) {
+            g = {
+                key, label: line.profitCenterLabel ?? null, color: line.profitCenterColor ?? null,
+                saleCount: 0, refundCount: 0, grossCents: 0, refundCents: 0,
+                taxCents: 0, tipCents: 0, netRevenueCents: 0, lines: [],
+            }
+            groups.push(g)
+        }
+        g.lines.push(line)
+        g.saleCount += line.saleCount
+        g.refundCount += line.refundCount
+        g.grossCents += line.grossCents
+        g.refundCents += line.refundCents
+        g.taxCents += line.taxCents
+        g.tipCents += line.tipCents
+        g.netRevenueCents += line.netRevenueCents
+    }
+    return groups
 })
 
 const showCash = computed(() => {
@@ -486,6 +544,20 @@ onMounted(load)
 
 <style scoped>
 .print-only { display: none; }
+/* Profit-center subheader rows: subtle band so the group reads as a heading, not another line. */
+.profit-center-row td {
+    background: rgba(var(--v-theme-on-surface), 0.05);
+}
+
+/* The center's color beside its name, matching the Sales Summary chart and the settings page. */
+.swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    vertical-align: middle;
+    box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.2);
+}
 </style>
 
 <!-- Unscoped on purpose: a print stylesheet has to reach the app chrome (nav drawer, app bar,

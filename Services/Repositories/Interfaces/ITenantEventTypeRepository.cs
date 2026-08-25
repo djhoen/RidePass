@@ -22,6 +22,12 @@ namespace Services.Repositories.Interfaces
         /// <summary>Set whether Loam Pass credits are accepted for entry to this event type.</summary>
         Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow);
 
+        /// <summary>
+        /// Point this event type's revenue at a QuickBooks slot (null = source-kind default).
+        /// Values are constrained by chk_tenant_event_type_revenue_key; validate before calling.
+        /// </summary>
+        Task SetRevenueKey(Guid id, Guid tenantId, string? revenueKey);
+
         /// <summary>Atomic bulk update of sort_order for many event types at once.</summary>
         Task UpdateSortOrders(Guid tenantId, IReadOnlyList<Guid> ids, IReadOnlyList<int> sortOrders);
     }

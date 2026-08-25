@@ -31,6 +31,7 @@ namespace webapi.Controllers
         private readonly ITenantTaxRepository _tax;
         private readonly IEndOfDayReportRepository _endOfDay;
         private readonly IQuickBooksRepository _quickBooks;
+        private readonly IProfitCenterRepository _profitCenters;
 
         public ReportsController(
             IReportsRepository reports,
@@ -48,6 +49,7 @@ namespace webapi.Controllers
             ITenantTaxRepository tax,
             IEndOfDayReportRepository endOfDay,
             IQuickBooksRepository quickBooks,
+            IProfitCenterRepository profitCenters,
             Services.Audit.IAuditLogger audit)
         {
             _audit = audit;
@@ -66,6 +68,19 @@ namespace webapi.Controllers
             _tax = tax;
             _endOfDay = endOfDay;
             _quickBooks = quickBooks;
+            _profitCenters = profitCenters;
+        }
+
+        /// <summary>
+        /// The tenant's revenue-bucket resolver: their own profit centers when configured, the
+        /// built-in QboDepartments grouping otherwise. Loaded per request; two small scans.
+        /// </summary>
+        private async Task<ProfitCenterMap> LoadProfitCenterMap()
+        {
+            var tenantId = _tenantContext.TenantId;
+            var centers = await _profitCenters.ListForTenant(tenantId);
+            if (centers.Count == 0) return ProfitCenterMap.BuiltIn();
+            return ProfitCenterMap.FromConfig(centers, await _profitCenters.ListAssignments(tenantId));
         }
 
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
@@ -114,6 +129,7 @@ namespace webapi.Controllers
                     SaleCount = r.SaleCount,
                 }).ToList(),
                 DailyRevenue = daily.Select(MapDaily).ToList(),
+                RevenueByProfitCenter = await BuildProfitCenterSeries(tenantId, fromUtc, toUtc, daily),
                 TopPassProducts = topPassProducts.Select(p => new TopProductDto
                 {
                     ProductId = p.ProductId,
@@ -133,6 +149,99 @@ namespace webapi.Controllers
 
             return new ApiResponses().OkResult(summary);
         }
+
+        /// <summary>
+        /// The Sales Summary chart's per-profit-center lines: the same daily gross revenue the
+        /// total line is drawn from, split by the tenant's own centers (or the built-in
+        /// departments when they haven't configured any).
+        ///
+        /// Two properties the chart depends on, both established here rather than in the Vue app:
+        ///
+        ///   • GAPLESS. Every series carries a point for every date on the total line, zero-filled.
+        ///     Chart.js aligns a dataset to the label array by INDEX, so a series that skipped its
+        ///     quiet days would silently slide its remaining values onto the wrong dates.
+        ///   • CAPPED at the palette. Past <see cref="MaxProfitCenterSeries"/> centers the smallest
+        ///     by revenue fold into one gray "Other" line instead of being handed invented colors,
+        ///     which would put two indistinguishable hues on the same chart.
+        /// </summary>
+        private async Task<List<ProfitCenterSeriesDto>> BuildProfitCenterSeries(
+            Guid tenantId, DateTime fromUtc, DateTime toUtc, List<DailyRevenuePoint> daily)
+        {
+            if (daily.Count == 0) return new List<ProfitCenterSeriesDto>();
+
+            var rows = await _endOfDay.GetDailyRevenueBuckets(tenantId, fromUtc, toUtc);
+            if (rows.Count == 0) return new List<ProfitCenterSeriesDto>();
+
+            var map = await LoadProfitCenterMap();
+
+            // (bucket, date) -> cents. The bucket record is its own dictionary key, so two centers
+            // that happen to share a label still stay apart.
+            var totals = new Dictionary<ProfitCenterBucket, Dictionary<string, long>>();
+            foreach (var row in rows)
+            {
+                var bucket = map.ForRevenueKey(
+                    QboAccountKeys.EffectiveRevenueKey(row.SourceKind, row.RevenueKeyOverride));
+                if (!totals.TryGetValue(bucket, out var byDate))
+                {
+                    byDate = new Dictionary<string, long>(StringComparer.Ordinal);
+                    totals[bucket] = byDate;
+                }
+                byDate[row.Date] = byDate.GetValueOrDefault(row.Date) + row.GrossCents;
+            }
+
+            var dates = daily.Select(d => d.Date).ToList();
+
+            var ranked = totals
+                .Select(kv => (Bucket: kv.Key, ByDate: kv.Value, Total: kv.Value.Values.Sum()))
+                .OrderByDescending(x => x.Total)
+                .ThenBy(x => x.Bucket.SortOrder)
+                .ToList();
+
+            // Carry each series' sort key alongside it: the "Other" row has no bucket to look one
+            // up from, so it is given an explicit last-place sort rather than resolved later.
+            var series = ranked.Take(MaxProfitCenterSeries).Select(x => (
+                Sort: x.Bucket.SortOrder,
+                Dto: new ProfitCenterSeriesDto
+                {
+                    Key = x.Bucket.Key,
+                    Label = x.Bucket.Label,
+                    Color = x.Bucket.Color,
+                    TotalCents = x.Total,
+                    Points = dates.Select(d => new ProfitCenterSeriesPoint
+                    {
+                        Date = d,
+                        RevenueCents = x.ByDate.GetValueOrDefault(d),
+                    }).ToList(),
+                })).ToList();
+
+            var overflow = ranked.Skip(MaxProfitCenterSeries).ToList();
+            if (overflow.Count > 0)
+            {
+                series.Add((int.MaxValue, new ProfitCenterSeriesDto
+                {
+                    Key = "pc:other",
+                    Label = $"Other ({overflow.Count} centers)",
+                    Color = ProfitCenterPalette.Unassigned,
+                    TotalCents = overflow.Sum(x => x.Total),
+                    Points = dates.Select(d => new ProfitCenterSeriesPoint
+                    {
+                        Date = d,
+                        RevenueCents = overflow.Sum(x => x.ByDate.GetValueOrDefault(d)),
+                    }).ToList(),
+                }));
+            }
+
+            // Order the finished list the way the reports do (the tenant's own sort), not by size:
+            // the legend should read the same every range, even as the ranking moves around.
+            return series.OrderBy(s => s.Sort).Select(s => s.Dto).ToList();
+        }
+
+        /// <summary>
+        /// How many center lines the chart draws before folding the rest into "Other". Seven is
+        /// the size of the categorical palette once blue is reserved for the total line; an eighth
+        /// color would have to be invented and would not be reliably distinguishable.
+        /// </summary>
+        private const int MaxProfitCenterSeries = 7;
 
         // ── Admission / amusement tax collected ─────────────────────────────────
         // Tax the tenant collected on event admissions in the range, so they can remit it. Net =
@@ -259,13 +368,29 @@ namespace webapi.Controllers
                 line.TaxCents += b.TaxCents;
                 line.TipCents += b.TipCents;
             }
+            // Stamp each line with the tenant's profit center only when they've configured any:
+            // an unconfigured tenant keeps the classic flat category table, and the screen groups
+            // by center exactly when these fields arrive non-null.
+            var profitCenters = await LoadProfitCenterMap();
+            if (profitCenters.IsCustom)
+            {
+                foreach (var line in byKey.Values)
+                {
+                    var bucket = profitCenters.ForRevenueKey(line.Key);
+                    line.ProfitCenterKey = bucket.Key;
+                    line.ProfitCenterLabel = bucket.Label;
+                    line.ProfitCenterColor = bucket.Color;
+                    line.ProfitCenterSort = bucket.SortOrder;
+                }
+            }
             foreach (var line in byKey.Values)
             {
                 line.NetGrossCents = line.GrossCents + line.RefundCents;
                 line.NetRevenueCents = line.NetGrossCents - line.TaxCents - line.TipCents;
             }
             var revenue = byKey.Values
-                .OrderBy(l => { var i = Array.IndexOf(QboAccountKeys.All, l.Key); return i < 0 ? int.MaxValue : i; })
+                .OrderBy(l => l.ProfitCenterKey is null ? 0 : l.ProfitCenterSort)
+                .ThenBy(l => { var i = Array.IndexOf(QboAccountKeys.All, l.Key); return i < 0 ? int.MaxValue : i; })
                 .ThenBy(l => l.Key, StringComparer.Ordinal)
                 .ToList();
 
@@ -523,9 +648,10 @@ namespace webapi.Controllers
         // revenue slots, rolled up into the business units an owner actually thinks in.
         //
         // Everything here bucket by bucket agrees with the posted journal entry, because it uses
-        // the same two functions the sync does: EffectiveRevenueKey picks the slot (so a track's
-        // lessons and camps land in Training Center rather than at the gate) and QboDepartments
-        // groups the slots. Nothing about the split is computed twice.
+        // the same functions the sync does: EffectiveRevenueKey picks the slot (so a track's
+        // lessons and camps land in Training Center rather than at the gate) and ProfitCenterMap
+        // groups the slots, by the tenant's OWN profit centers when they've configured any, else
+        // the built-in QboDepartments. Nothing about the split is computed twice.
         [Authorize(Policy = TenantPermissions.Policy.ReportsView)]
         [HttpGet("Admin/RevenueByDepartment")]
         public async Task<IActionResult> GetRevenueByDepartment([FromQuery] DateTime fromUtc, [FromQuery] DateTime toUtc)
@@ -536,6 +662,7 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             var tz = string.IsNullOrWhiteSpace(_tenantContext.Tenant.Timezone) ? "UTC" : _tenantContext.Tenant.Timezone;
             var rows = await _endOfDay.GetRevenueBuckets(tenantId, fromUtc, toUtc);
+            var profitCenters = await LoadProfitCenterMap();
 
             // Net revenue is gross minus tax minus tips, the same identity JournalEntryBuilder
             // credits revenue with. Tax is the jurisdiction's and tips are staff's; neither was
@@ -561,12 +688,18 @@ namespace webapi.Controllers
 
             var totalNet = categories.Sum(c => c.NetRevenueCents);
 
+            var departmentSort = categories
+                .Select(c => profitCenters.ForRevenueKey(c.Key))
+                .GroupBy(b => b.Key, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First().SortOrder, StringComparer.Ordinal);
+
             var departments = categories
-                .GroupBy(c => QboDepartments.ForRevenueKey(c.Key), StringComparer.Ordinal)
+                .GroupBy(c => profitCenters.ForRevenueKey(c.Key))
                 .Select(g => new RevenueDepartmentRow
                 {
-                    Key = g.Key,
-                    Label = QboDepartments.Label(g.Key),
+                    Key = g.Key.Key,
+                    Label = g.Key.Label,
+                    Color = g.Key.Color,
                     NetRevenueCents = g.Sum(c => c.NetRevenueCents),
                     GrossCents = g.Sum(c => c.GrossCents),
                     TaxCents = g.Sum(c => c.TaxCents),
@@ -588,7 +721,10 @@ namespace webapi.Controllers
                 // A track with no bike shop simply never sees a bike shop heading. A department
                 // that only refunded in the period is NOT empty and stays visible.
                 .Where(d => d.SaleCount != 0 || d.RefundCount != 0 || d.GrossCents != 0)
-                .OrderBy(d => { var i = Array.IndexOf(QboDepartments.All, d.Key); return i < 0 ? int.MaxValue : i; })
+                // Custom centers sort by their own sort_order; built-in fallbacks trail them
+                // (ProfitCenterMap gives fallbacks a large sort), so a configured tenant's list
+                // leads with their buckets, and an unconfigured tenant sees the classic order.
+                .OrderBy(d => departmentSort.TryGetValue(d.Key, out var s) ? s : int.MaxValue)
                 .ToList();
 
             return new ApiResponses().OkResult(new RevenueByDepartmentReport
