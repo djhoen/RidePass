@@ -657,5 +657,166 @@ namespace UnitTests
             Assert.That(d.TotalDebitCents, Is.EqualTo(before.TotalDebitCents),
                 "and the day's totals are identical either way");
         }
+
+        // ── Profit centers (QBO classes) ────────────────────────────────
+
+        [Test]
+        public void WithNoClassMap_EveryLineIsUnclassed()
+        {
+            // The safety property for every track that never opts in: passing no class map has to
+            // produce the draft this built before classes existed, line for line.
+            var entries = new[]
+            {
+                Sale(sourceKind: "event_ticket", gross: 4400, fee: 157, cut: 400, net: 3843, tax: 300),
+                Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035, tip: 200),
+            };
+
+            var d = JournalEntryBuilder.Build(entries, Day);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.All(l => l.ClassId is null), Is.True);
+        }
+
+        [Test]
+        public void WithAClassMap_OnlyRevenueLinesCarryTheClass()
+        {
+            // Tax, tips, fees and tenders belong to no single business unit. Stamping them with one
+            // center's class would silently attribute another center's costs to it.
+            var map = new Dictionary<string, string>
+            {
+                [QboAccountKeys.RevenueConcession] = "5",
+            };
+
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035, tax: 90, tip: 200) },
+                Day, map);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueConcession).ClassId, Is.EqualTo("5"));
+            Assert.That(d.Lines.Where(l => l.AccountKey != QboAccountKeys.RevenueConcession).All(l => l.ClassId is null),
+                Is.True, "only income lines may carry a class");
+        }
+
+        [Test]
+        public void TwoCentersOnOneDay_KeepTheirOwnClasses()
+        {
+            var map = new Dictionary<string, string>
+            {
+                [QboAccountKeys.RevenueBikeShop] = "shop",
+                [QboAccountKeys.RevenueConcession] = "food",
+            };
+
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "shop_sale", gross: 8500, fee: 277, cut: 425, net: 7798),
+                    Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035),
+                },
+                Day, map);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueBikeShop).ClassId, Is.EqualTo("shop"));
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueConcession).ClassId, Is.EqualTo("food"));
+        }
+
+        [Test]
+        public void AClassMap_ChangesNoAmountLineCountOrBalance()
+        {
+            // Classes are presentation inside QuickBooks. If mapping one could move a cent, it would
+            // be a money bug wearing a reporting feature's clothes, so pin the whole draft.
+            var entries = new[]
+            {
+                Sale(sourceKind: "event_ticket", gross: 4400, fee: 157, cut: 400, net: 3843, tax: 300),
+                Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035, tip: 200),
+                Sale(sourceKind: "shop_sale", gross: 8500, fee: 277, cut: 425, net: 7798, giftCard: 2000),
+            };
+            var map = new Dictionary<string, string>
+            {
+                [QboAccountKeys.RevenueEventTicket] = "gate",
+                [QboAccountKeys.RevenueConcession] = "food",
+                [QboAccountKeys.RevenueBikeShop] = "shop",
+            };
+
+            var plain = JournalEntryBuilder.Build(entries, Day);
+            var classed = JournalEntryBuilder.Build(entries, Day, map);
+
+            AssertBalanced(classed);
+            Assert.That(classed.Lines.Count, Is.EqualTo(plain.Lines.Count));
+            Assert.That(classed.TotalDebitCents, Is.EqualTo(plain.TotalDebitCents));
+            Assert.That(
+                classed.Lines.Select(l => (l.AccountKey, l.IsDebit, l.AmountCents)),
+                Is.EqualTo(plain.Lines.Select(l => (l.AccountKey, l.IsDebit, l.AmountCents))),
+                "the class map may only add a tag; it may never change a line");
+        }
+
+        [Test]
+        public void APartiallyMappedTenant_StillPostsTheUnmappedCentersUnclassed()
+        {
+            // A track that has named a class for their shop but not their kitchen must still post.
+            // Blocking the day over a reporting tag would be a self-inflicted outage.
+            var map = new Dictionary<string, string> { [QboAccountKeys.RevenueBikeShop] = "shop" };
+
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "shop_sale", gross: 8500, fee: 277, cut: 425, net: 7798),
+                    Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035),
+                },
+                Day, map);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueBikeShop).ClassId, Is.EqualTo("shop"));
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueConcession).ClassId, Is.Null);
+        }
+
+        [Test]
+        public void AnEventTypeOverride_TakesTheClassOfTheSlotItLandsIn()
+        {
+            // The override moves a lift-ticket sale into the training slot, so it must pick up the
+            // TRAINING center's class, not the gate's. This is the case a naive
+            // "class per source kind" implementation would get wrong.
+            var map = new Dictionary<string, string>
+            {
+                [QboAccountKeys.RevenueEventTicket] = "gate",
+                [QboAccountKeys.RevenueTraining] = "training",
+            };
+
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "event_ticket", gross: 4400, fee: 157, cut: 400, net: 3843),
+                    Sale(sourceKind: "event_ticket", gross: 15000, fee: 465, cut: 450, net: 14085,
+                         revenueKeyOverride: QboAccountKeys.RevenueTraining),
+                },
+                Day, map);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueEventTicket).ClassId, Is.EqualTo("gate"));
+            Assert.That(d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueTraining).ClassId, Is.EqualTo("training"));
+        }
+
+        [Test]
+        public void ARefund_CarriesTheSameClassAsTheSaleItReverses()
+        {
+            // A refunded day nets the revenue line to a DEBIT. It still belongs to the center that
+            // took the money, otherwise a P&L by class shows income in one column and its reversal
+            // in another.
+            var map = new Dictionary<string, string> { [QboAccountKeys.RevenueConcession] = "food" };
+
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "concession", gross: 1200, fee: 65, cut: 100, net: 1035),
+                    Sale(sourceKind: "concession", gross: -2000, fee: -100, cut: -150, net: -1750,
+                         entryKind: "refund"),
+                },
+                Day, map);
+
+            AssertBalanced(d);
+            var revenue = d.Lines.Single(l => l.AccountKey == QboAccountKeys.RevenueConcession);
+            Assert.That(revenue.IsDebit, Is.True, "the day net-refunded, so revenue lands on the debit side");
+            Assert.That(revenue.ClassId, Is.EqualTo("food"));
+        }
     }
 }
+

@@ -34,6 +34,33 @@ export interface QboMapping {
     qboAccountName: string | null
 }
 
+/** One Class in the tenant's QuickBooks company. */
+export interface QboClass {
+    id: string
+    name: string
+    /** "Parent:Child" when nested; what the dropdown shows. */
+    fullyQualifiedName: string
+}
+
+export interface QboClassSettings {
+    /** False when the company has class tracking switched off in QuickBooks entirely. */
+    trackingEnabled: boolean
+    /** False when the company tracks one class per transaction rather than per line. */
+    trackingPerLine: boolean
+    classes: QboClass[]
+}
+
+/** One reporting bucket (profit center or built-in department) and the class it posts under. */
+export interface QboClassMapping {
+    bucketKey: string
+    label: string
+    color: string
+    isCustom: boolean
+    revenueStreams: string[]
+    qboClassId: string | null
+    qboClassName: string | null
+}
+
 export interface QboSyncLogRow {
     businessDate: string
     status: 'success' | 'failed' | 'no_activity'
@@ -82,6 +109,19 @@ export class QuickBooksService {
 
     saveMappings(mappings: { mappingKey: string; qboAccountId: string | null; qboAccountName: string | null }[]) {
         return axios.put(`${this.apiUrl}/QuickBooks/Mappings`, { mappings })
+    }
+
+    /** The company's classes plus its class-tracking preference, in one call. */
+    classes() {
+        return axios.get<{ data: QboClassSettings }>(`${this.apiUrl}/QuickBooks/Classes`)
+    }
+
+    classMappings() {
+        return axios.get<{ data: QboClassMapping[] }>(`${this.apiUrl}/QuickBooks/ClassMappings`)
+    }
+
+    saveClassMappings(mappings: { bucketKey: string; qboClassId: string | null; qboClassName: string | null }[]) {
+        return axios.put(`${this.apiUrl}/QuickBooks/ClassMappings`, { mappings })
     }
 
     syncLog(take = 60) {

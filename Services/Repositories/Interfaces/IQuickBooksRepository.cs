@@ -30,6 +30,15 @@ namespace Services.Repositories.Interfaces
         Task UpsertMapping(Guid tenantId, string mappingKey, string qboAccountId, string? qboAccountName);
         Task DeleteMapping(Guid tenantId, string mappingKey);
 
+        // ── Class mapping ────────────────────────────────────────────────────────────────
+        // The profit-center half of the mapping: which QBO Class each reporting bucket posts under.
+        // Separate from the account mapping because it is optional, a tenant can run the sync
+        // forever without a single class row, and because the key space is bucket keys, not
+        // QboAccountKeys slots.
+        Task<List<QboClassMapping>> ListClassMappings(Guid tenantId);
+        Task UpsertClassMapping(Guid tenantId, string bucketKey, string qboClassId, string? qboClassName);
+        Task DeleteClassMapping(Guid tenantId, string bucketKey);
+
         // ── Sync log ─────────────────────────────────────────────────────────────────────
         Task<QboSyncLogEntry?> GetSyncLog(Guid tenantId, DateOnly businessDate);
         Task<List<QboSyncLogEntry>> ListSyncLog(Guid tenantId, int take = 60);

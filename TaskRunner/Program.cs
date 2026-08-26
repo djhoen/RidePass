@@ -119,8 +119,10 @@ var quickBooksTokens = new QuickBooksTokenService(quickBooksOptions, quickBooksR
     NullLogger<QuickBooksTokenService>.Instance);
 var quickBooksApi = new QuickBooksApiClient(quickBooksOptions, quickBooksTokens, quickBooksRepo,
     NullLogger<QuickBooksApiClient>.Instance);
+// The profit centers the sync reads to stamp each revenue line with its QuickBooks class.
+var profitCenterRepo = new ProfitCenterRepository(dbHelper);
 var quickBooksSync = new QuickBooksSyncService(quickBooksRepo, accountingEntryRepo, quickBooksApi,
-    tenantRepo, NullLogger<QuickBooksSyncService>.Instance);
+    tenantRepo, profitCenterRepo, NullLogger<QuickBooksSyncService>.Instance);
 
 // Distributor catalog sync. Tenant-spanning sweep; each tenant's own encrypted dealer
 // credentials are loaded per row, because catalog content feeds are licensed per dealer.

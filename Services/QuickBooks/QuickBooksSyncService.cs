@@ -42,6 +42,7 @@ namespace Services.QuickBooks
         private readonly IAccountingEntryRepository _entries;
         private readonly IQuickBooksApiClient _api;
         private readonly ITenantRepository _tenants;
+        private readonly IProfitCenterRepository _profitCenters;
         private readonly ILogger<QuickBooksSyncService> _logger;
 
         public QuickBooksSyncService(
@@ -49,12 +50,14 @@ namespace Services.QuickBooks
             IAccountingEntryRepository entries,
             IQuickBooksApiClient api,
             ITenantRepository tenants,
+            IProfitCenterRepository profitCenters,
             ILogger<QuickBooksSyncService> logger)
         {
             _repo = repo;
             _entries = entries;
             _api = api;
             _tenants = tenants;
+            _profitCenters = profitCenters;
             _logger = logger;
         }
 
@@ -151,7 +154,7 @@ namespace Services.QuickBooks
 
                 // No tenant lookup needed: platform-vs-direct is read per entry from the payment_method
                 // the finalizer snapshotted at charge time, not from the tenant's current mode.
-                var draft = JournalEntryBuilder.Build(entries, businessDate);
+                var draft = JournalEntryBuilder.Build(entries, businessDate, await ResolveClassIds(tenantId));
                 if (draft.IsEmpty)
                 {
                     // Real activity that nets to nothing, e.g. a sale and its full refund on the
@@ -194,6 +197,43 @@ namespace Services.QuickBooks
                 _logger.LogError(ex, "QBO post failed for tenant {TenantId} date {Date}", tenantId, businessDate);
                 return new QboDayResult(businessDate, "failed", null, message);
             }
+        }
+
+        /// <summary>
+        /// Which QBO Class each revenue slot posts under, or null when this tenant maps none.
+        ///
+        /// Two hops: a revenue slot resolves to a reporting bucket via ProfitCenterMap (the tenant's
+        /// own profit centers when configured, the built-in departments otherwise), and a bucket
+        /// resolves to a class via qbo_class_mapping. Going through ProfitCenterMap rather than
+        /// re-deriving the grouping here is what keeps the classes on a posted journal entry
+        /// agreeing with the Revenue by Department report; they are the same grouping, read once.
+        ///
+        /// Returning null on the empty case is not just an optimisation: it means an unconfigured
+        /// tenant's draft is byte-identical to the one this posted before classes existed, so this
+        /// feature cannot change what a track that never opts in sees in their books.
+        /// </summary>
+        private async Task<IReadOnlyDictionary<string, string>?> ResolveClassIds(Guid tenantId)
+        {
+            var classMappings = await _repo.ListClassMappings(tenantId);
+            if (classMappings.Count == 0) return null;
+
+            var classByBucket = classMappings.ToDictionary(m => m.BucketKey, m => m.QboClassId, StringComparer.Ordinal);
+            var map = ProfitCenterMap.FromConfig(
+                await _profitCenters.ListForTenant(tenantId),
+                await _profitCenters.ListAssignments(tenantId));
+
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var revenueKey in QboAccountKeys.All.Where(k => k.StartsWith("revenue_", StringComparison.Ordinal)))
+            {
+                // A bucket the tenant left unmapped contributes nothing, so its slots post unclassed
+                // rather than blocking the day. Partial configuration has to keep posting: this is
+                // presentation inside QBO, never a correctness gate on the money.
+                if (classByBucket.TryGetValue(map.ForRevenueKey(revenueKey).Key, out var classId))
+                {
+                    result[revenueKey] = classId;
+                }
+            }
+            return result.Count > 0 ? result : null;
         }
 
         private Task Record(Guid tenantId, DateOnly date, string status, string? jeId, string? docNumber,

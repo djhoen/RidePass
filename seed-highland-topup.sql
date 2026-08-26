@@ -59,6 +59,7 @@ DECLARE
     v_lo      time;
     v_hi      time;
     v_n       int;
+    v_have    int;
     v_led     int;
     v_gc_donor uuid;
 BEGIN
@@ -101,10 +102,24 @@ BEGIN
 
         -- Incremental window (also the rerun guard): fill from the last moment this day already
         -- has, up to now for today or the whole day for a past day.
-        SELECT COALESCE(max((occurred_at_utc AT TIME ZONE v_tz)::time), '00:00'::time) INTO v_lo
+        --
+        -- A day the year fragment left as a THIN TAIL must not be read as "already covered".
+        -- Those days hold a handful of rows, and one of them can sit late in the evening (a
+        -- rental return, a work order), which drags the low water mark to 23:51 and collapses
+        -- the window to nothing -- so the day stays empty on every rerun and the End of Day
+        -- report shows a park that sold $2k on a Saturday. Only a day that ALREADY holds a real
+        -- day's worth of sales (the same >= 50 bar the donor test below uses) earns its max
+        -- timestamp as the low water mark; anything thinner is treated as empty and filled from
+        -- midnight, with the few existing rows simply left in place alongside the clone.
+        SELECT count(*) FILTER (WHERE entry_kind = 'sale'),
+               COALESCE(max((occurred_at_utc AT TIME ZONE v_tz)::time), '00:00'::time)
+          INTO v_have, v_lo
           FROM tenant_ledger_entry
          WHERE tenant_id = v_tenant
            AND (occurred_at_utc AT TIME ZONE v_tz)::date = v_day;
+        IF v_have < 50 THEN
+            v_lo := '00:00'::time;
+        END IF;
         v_hi := CASE WHEN v_day = v_today THEN (now() AT TIME ZONE v_tz)::time
                      ELSE '24:00'::time END;
         CONTINUE WHEN v_lo >= v_hi;

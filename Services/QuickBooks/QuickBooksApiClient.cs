@@ -11,6 +11,19 @@ namespace Services.QuickBooks
     /// <summary>An account in the tenant's chart of accounts, for the mapping UI.</summary>
     public record QboAccount(string Id, string Name, string AccountType, string? AccountSubType, string? Classification);
 
+    /// <summary>
+    /// A Class in the tenant's company, for the profit-center mapping UI. FullyQualifiedName is
+    /// what a human recognises when classes are nested ("Retail:Bike Shop"); Name alone is the leaf.
+    /// </summary>
+    public record QboClass(string Id, string Name, string FullyQualifiedName);
+
+    /// <summary>
+    /// The company's class-tracking preference. Posting a ClassRef into a company that has class
+    /// tracking switched off is rejected by QBO, so the settings screen reads this first and says
+    /// so, rather than letting the tenant map classes and discover it at 2am when the sync fails.
+    /// </summary>
+    public record QboClassPreferences(bool TrackingEnabled, bool TrackingPerLine);
+
     /// <summary>A posted journal entry.</summary>
     public record QboPostedEntry(string Id, string? DocNumber);
 
@@ -24,6 +37,10 @@ namespace Services.QuickBooks
     public interface IQuickBooksApiClient
     {
         Task<List<QboAccount>> ListAccountsAsync(Guid tenantId, CancellationToken ct = default);
+        /// <summary>The company's active classes, for mapping profit centers onto them.</summary>
+        Task<List<QboClass>> ListClassesAsync(Guid tenantId, CancellationToken ct = default);
+        /// <summary>Whether this company tracks classes at all, and whether it does so per line.</summary>
+        Task<QboClassPreferences> GetClassPreferencesAsync(Guid tenantId, CancellationToken ct = default);
         Task<QboPostedEntry> CreateJournalEntryAsync(Guid tenantId, JournalDraft draft, IReadOnlyDictionary<string, string> accountIdsByKey, string docNumber, CancellationToken ct = default);
         /// <summary>Round-trip proof the link still works, for the settings screen's Test button.</summary>
         Task<string?> GetCompanyNameAsync(Guid tenantId, CancellationToken ct = default);
@@ -79,6 +96,56 @@ namespace Services.QuickBooks
             return accounts.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
+        public async Task<List<QboClass>> ListClassesAsync(Guid tenantId, CancellationToken ct = default)
+        {
+            const string query = "select Id, Name, FullyQualifiedName from Class where Active = true maxresults 1000";
+            var json = await SendAsync(tenantId, HttpMethod.Get, $"query?query={Uri.EscapeDataString(query)}", null, ct);
+
+            var classes = new List<QboClass>();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("QueryResponse", out var qr) ||
+                !qr.TryGetProperty("Class", out var arr))
+            {
+                // A company with class tracking on but no classes created yet. Empty, not an error:
+                // the settings screen says "you have no classes" and points at QuickBooks.
+                return classes;
+            }
+
+            foreach (var c in arr.EnumerateArray())
+            {
+                var id = Str(c, "Id");
+                var name = Str(c, "Name");
+                if (id is null || name is null) continue;
+                classes.Add(new QboClass(id, name, Str(c, "FullyQualifiedName") ?? name));
+            }
+            // Sorted by the qualified name so nested classes sit under their parent in the dropdown.
+            return classes.OrderBy(c => c.FullyQualifiedName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public async Task<QboClassPreferences> GetClassPreferencesAsync(Guid tenantId, CancellationToken ct = default)
+        {
+            const string query = "select * from Preferences";
+            var json = await SendAsync(tenantId, HttpMethod.Get, $"query?query={Uri.EscapeDataString(query)}", null, ct);
+
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("QueryResponse", out var qr) ||
+                !qr.TryGetProperty("Preferences", out var arr) ||
+                arr.GetArrayLength() == 0 ||
+                !arr[0].TryGetProperty("AccountingInfoPrefs", out var prefs))
+            {
+                // Can't tell. Report tracking as ON rather than blocking the screen on a shape we
+                // didn't expect: the worst case is QBO rejecting the post with its own clear error,
+                // whereas a false "tracking is off" would hide a feature the tenant really has.
+                return new QboClassPreferences(true, true);
+            }
+
+            // QBO exposes the two modes separately: per whole transaction, or per line. A journal
+            // entry needs the per-LINE mode to carry a different class on each revenue line.
+            var perLine = Bool(prefs, "ClassTrackingPerTxnLine");
+            var perTxn  = Bool(prefs, "ClassTrackingPerTxn");
+            return new QboClassPreferences(perLine || perTxn, perLine);
+        }
+
         public async Task<string?> GetCompanyNameAsync(Guid tenantId, CancellationToken ct = default)
         {
             var conn = await _repo.GetConnection(tenantId);
@@ -107,16 +174,27 @@ namespace Services.QuickBooks
                         $"Set it under Settings → QuickBooks, then re-sync {draft.BusinessDate:yyyy-MM-dd}.");
                 }
 
+                // A dictionary rather than an anonymous type because ClassRef has to be ABSENT,
+                // not null, when the line carries no class: QBO rejects a null ref object, and an
+                // anonymous type can't drop a property conditionally.
+                var detail = new Dictionary<string, object>
+                {
+                    ["PostingType"] = line.IsDebit ? "Debit" : "Credit",
+                    ["AccountRef"] = new { value = accountId },
+                };
+                // This is what puts the line in a profit center inside QuickBooks. Only revenue
+                // lines ever carry one, and only once the tenant has mapped their centers to classes.
+                if (line.ClassId is not null)
+                {
+                    detail["ClassRef"] = new { value = line.ClassId };
+                }
+
                 lines.Add(new
                 {
                     DetailType = "JournalEntryLineDetail",
                     Amount = Math.Round(line.AmountCents / 100m, 2),
                     Description = QboAccountKeys.Label(line.AccountKey),
-                    JournalEntryLineDetail = new
-                    {
-                        PostingType = line.IsDebit ? "Debit" : "Credit",
-                        AccountRef = new { value = accountId },
-                    },
+                    JournalEntryLineDetail = detail,
                 });
             }
 
@@ -230,5 +308,21 @@ namespace Services.QuickBooks
 
         private static string? Str(JsonElement el, string name) =>
             el.TryGetProperty(name, out var v) ? v.ToString() : null;
+
+        /// <summary>
+        /// QBO is inconsistent about booleans in Preferences: some come back as JSON true/false,
+        /// some as the strings "true"/"false". Absent reads as false.
+        /// </summary>
+        private static bool Bool(JsonElement el, string name)
+        {
+            if (!el.TryGetProperty(name, out var v)) return false;
+            return v.ValueKind switch
+            {
+                JsonValueKind.True   => true,
+                JsonValueKind.False  => false,
+                JsonValueKind.String => bool.TryParse(v.GetString(), out var b) && b,
+                _                    => false,
+            };
+        }
     }
 }

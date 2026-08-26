@@ -2,10 +2,17 @@ using Services.Repositories.Data.QuickBooksData;
 
 namespace Services.Accounting
 {
-    /// <summary>One side of one journal line. Positive cents, side chosen by the builder.</summary>
-    public readonly record struct JournalLine(string AccountKey, bool IsDebit, int AmountCents)
+    /// <summary>
+    /// One side of one journal line. Positive cents, side chosen by the builder.
+    ///
+    /// ClassId is the QBO Class this line posts under, when the tenant has mapped their profit
+    /// centers onto classes (qbo_class_mapping). Null means "post it unclassed", which is what
+    /// every line did before classes existed and what every non-revenue line still does.
+    /// </summary>
+    public readonly record struct JournalLine(string AccountKey, bool IsDebit, int AmountCents, string? ClassId = null)
     {
-        public string Describe() => $"{(IsDebit ? "DR" : "CR")} {AccountKey} {AmountCents / 100m:0.00}";
+        public string Describe() =>
+            $"{(IsDebit ? "DR" : "CR")} {AccountKey}{(ClassId is null ? "" : $"[class {ClassId}]")} {AmountCents / 100m:0.00}";
     }
 
     /// <summary>A balanced journal entry ready to be posted as one QBO JournalEntry.</summary>
@@ -82,6 +89,27 @@ namespace Services.Accounting
     /// Nothing else moves: tax, tips, gift cards and every tender term are untouched, so a day with
     /// an override balances exactly as it did without one, just against two revenue lines instead
     /// of one.
+    ///
+    /// ── Profit centers (QBO Classes) ─────────────────────────────────────────────────────
+    /// Separation inside a customer's books used to be possible only through the chart of accounts:
+    /// map two revenue slots to one income account and no QuickBooks report can split them back
+    /// out. A tenant can now name a QBO Class per reporting bucket instead, and every revenue line
+    /// in that bucket is stamped with it, which is what makes a Profit & Loss by Class in
+    /// QuickBooks match the Revenue by Department report here.
+    ///
+    /// The class is attached at MATERIALISATION, not accumulated into the key, and that is a
+    /// deliberate correctness choice rather than a shortcut: the accumulator is already keyed by
+    /// revenue SLOT, a slot resolves to exactly one bucket, and a bucket to exactly one class, so
+    /// keying on (slot, class) could never produce a line the slot alone doesn't. Attaching it last
+    /// makes it impossible for the class map to change how many lines there are, what they total,
+    /// or whether the day balances. A tenant with no classes mapped gets a byte-identical draft to
+    /// the one this built before classes existed.
+    ///
+    /// Only revenue lines carry a class. Tax, tips, gift-card float, deposits, tenders and fees are
+    /// balance-sheet or shared-cost lines that belong to no single business unit; splitting them
+    /// would mean inventing an allocation rule (pro-rata by revenue, most likely) that the tenant
+    /// never agreed to. They post unclassed and land in the "Not Specified" column of a P&L by
+    /// Class, which is the honest answer.
     /// </summary>
     public static class JournalEntryBuilder
     {
@@ -111,9 +139,15 @@ namespace Services.Accounting
         /// stripe_connected_account_id for exactly this reason). Branching on the tenant's CURRENT mode
         /// would re-book old days under the new mode the moment someone re-synced them.
         /// </summary>
+        /// <param name="classIdByRevenueKey">
+        /// QBO Class id per revenue slot, resolved from the tenant's profit centers by the caller.
+        /// Null or empty posts everything unclassed. Keys not present here (and every non-revenue
+        /// account) simply get no class, so a partially-configured tenant still posts.
+        /// </param>
         public static JournalDraft Build(
             IReadOnlyList<AccountingEntry> entries,
-            DateOnly businessDate)
+            DateOnly businessDate,
+            IReadOnlyDictionary<string, string>? classIdByRevenueKey = null)
         {
             var acc = new Dictionary<string, long>();
             void Add(string key, long cents)
@@ -129,13 +163,18 @@ namespace Services.Accounting
                 AccrueSale(Add, e);
             }
 
+            string? ClassFor(string accountKey) =>
+                classIdByRevenueKey is not null && classIdByRevenueKey.TryGetValue(accountKey, out var classId)
+                    ? classId
+                    : null;
+
             // Materialise. Sign picks the side; zeroed accounts drop out entirely (an account that
             // nets to zero across the day carries no information and QBO rejects 0.00 lines).
             var lines = acc
                 .Where(kv => kv.Value != 0)
                 .OrderBy(kv => Array.IndexOf(QboAccountKeys.All, kv.Key))
                 .ThenBy(kv => kv.Key, StringComparer.Ordinal)
-                .Select(kv => new JournalLine(kv.Key, kv.Value > 0, (int)Math.Abs(kv.Value)))
+                .Select(kv => new JournalLine(kv.Key, kv.Value > 0, (int)Math.Abs(kv.Value), ClassFor(kv.Key)))
                 .ToList();
 
             var draft = new JournalDraft(businessDate, lines, entries.Count);

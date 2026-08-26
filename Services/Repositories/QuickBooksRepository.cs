@@ -23,6 +23,11 @@ namespace Services.Repositories
             qbo_account_id AS QboAccountId, qbo_account_name AS QboAccountName,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
+        private const string ClassMappingColumns = @"
+            id, tenant_id AS TenantId, bucket_key AS BucketKey,
+            qbo_class_id AS QboClassId, qbo_class_name AS QboClassName,
+            created_at AS CreatedAt, updated_at AS UpdatedAt";
+
         private const string SyncLogColumns = @"
             id, tenant_id AS TenantId, business_date AS BusinessDate, status,
             qbo_journal_entry_id AS QboJournalEntryId, qbo_doc_number AS QboDocNumber,
@@ -156,6 +161,31 @@ namespace Services.Repositories
         {
             await _db.Execute("DELETE FROM qbo_account_mapping WHERE tenant_id = @tenantId AND mapping_key = @mappingKey",
                 new { tenantId, mappingKey });
+        }
+
+        // ── Class mapping ────────────────────────────────────────────────────────────────
+
+        public async Task<List<QboClassMapping>> ListClassMappings(Guid tenantId)
+        {
+            var sql = $"SELECT {ClassMappingColumns} FROM qbo_class_mapping WHERE tenant_id = @tenantId ORDER BY bucket_key";
+            return (await _db.Query<QboClassMapping>(sql, new { tenantId })).ToList();
+        }
+
+        public async Task UpsertClassMapping(Guid tenantId, string bucketKey, string qboClassId, string? qboClassName)
+        {
+            const string sql = @"
+                INSERT INTO qbo_class_mapping (tenant_id, bucket_key, qbo_class_id, qbo_class_name)
+                VALUES (@tenantId, @bucketKey, @qboClassId, @qboClassName)
+                ON CONFLICT (tenant_id, bucket_key) DO UPDATE SET
+                    qbo_class_id   = EXCLUDED.qbo_class_id,
+                    qbo_class_name = EXCLUDED.qbo_class_name";
+            await _db.Execute(sql, new { tenantId, bucketKey, qboClassId, qboClassName });
+        }
+
+        public async Task DeleteClassMapping(Guid tenantId, string bucketKey)
+        {
+            await _db.Execute("DELETE FROM qbo_class_mapping WHERE tenant_id = @tenantId AND bucket_key = @bucketKey",
+                new { tenantId, bucketKey });
         }
 
         // ── Sync log ─────────────────────────────────────────────────────────────────────

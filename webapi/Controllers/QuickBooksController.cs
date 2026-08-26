@@ -26,6 +26,7 @@ namespace webapi.Controllers
         private readonly IQuickBooksSyncService _sync;
         private readonly ITenantRepository _tenants;
         private readonly ITenantEventTypeRepository _eventTypes;
+        private readonly IProfitCenterRepository _profitCenters;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
         private readonly ILogger<QuickBooksController> _logger;
@@ -37,6 +38,7 @@ namespace webapi.Controllers
             IQuickBooksSyncService sync,
             ITenantRepository tenants,
             ITenantEventTypeRepository eventTypes,
+            IProfitCenterRepository profitCenters,
             ITenantContext tenantContext,
             IConfiguration config,
             ILogger<QuickBooksController> logger)
@@ -47,6 +49,7 @@ namespace webapi.Controllers
             _sync = sync;
             _tenants = tenants;
             _eventTypes = eventTypes;
+            _profitCenters = profitCenters;
             _tenantContext = tenantContext;
             _config = config;
             _logger = logger;
@@ -299,6 +302,114 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { saved = true });
         }
 
+        // ── Profit centers (QBO classes) ─────────────────────────────────
+
+        /// <summary>
+        /// The company's classes plus its class-tracking preference, for the profit-center tab.
+        /// Both in one call: an empty class list means something completely different depending on
+        /// whether tracking is even switched on in QuickBooks.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.AccountingManage)]
+        [HttpGet("Classes")]
+        public async Task<IActionResult> Classes(CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            try
+            {
+                var prefs = await _api.GetClassPreferencesAsync(_tenantContext.TenantId, ct);
+                // Don't ask for classes a company doesn't track: QBO answers with an empty list
+                // either way, and skipping the call keeps the failure mode legible.
+                var classes = prefs.TrackingEnabled
+                    ? await _api.ListClassesAsync(_tenantContext.TenantId, ct)
+                    : new List<QboClass>();
+
+                return new ApiResponses().OkResult(new QboClassSettingsResponse
+                {
+                    TrackingEnabled = prefs.TrackingEnabled,
+                    TrackingPerLine = prefs.TrackingPerLine,
+                    Classes = classes.Select(c => new QboClassResponse
+                    {
+                        Id = c.Id,
+                        Name = c.Name,
+                        FullyQualifiedName = c.FullyQualifiedName,
+                    }).ToList(),
+                });
+            }
+            catch (QuickBooksApiException ex)
+            {
+                return new ApiResponses().BadRequestResult(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// One row per reporting bucket this tenant's money can land in, with the class it currently
+        /// posts under. The bucket list is derived exactly the way the reports and the sync derive
+        /// it (ProfitCenterMap over the slots this tenant actually uses), so the three can never
+        /// disagree about which buckets exist.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.AccountingManage)]
+        [HttpGet("ClassMappings")]
+        public async Task<IActionResult> ClassMappings()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            var saved = (await _repo.ListClassMappings(_tenantContext.TenantId))
+                .ToDictionary(m => m.BucketKey, StringComparer.Ordinal);
+
+            var rows = (await ResolveBuckets()).Select(b => new QboClassMappingResponse
+            {
+                BucketKey = b.Bucket.Key,
+                Label = b.Bucket.Label,
+                Color = b.Bucket.Color,
+                IsCustom = b.Bucket.Key.StartsWith("pc:", StringComparison.Ordinal),
+                RevenueStreams = b.RevenueKeys.Select(QboAccountKeys.Label).ToList(),
+                QboClassId = saved.TryGetValue(b.Bucket.Key, out var m) ? m.QboClassId : null,
+                QboClassName = saved.TryGetValue(b.Bucket.Key, out var m2) ? m2.QboClassName : null,
+            }).ToList();
+
+            return new ApiResponses().OkResult(rows);
+        }
+
+        /// <summary>
+        /// Save the profit-center mapping. Clearing a bucket's class stops stamping its revenue
+        /// lines, it never rewrites a day already posted: QuickBooks holds those, and re-posting a
+        /// posted day is exactly what the sync log's unique index exists to prevent.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.AccountingManage)]
+        [HttpPut("ClassMappings")]
+        public async Task<IActionResult> SaveClassMappings([FromBody] SaveQboClassMappingsRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            // Only buckets this tenant actually has are writable. Without this, a bucket key naming
+            // ANOTHER tenant's profit center would be stored happily (bucket_key has to be free
+            // text, since half its legal values name no row at all) and then quietly never resolve.
+            var known = (await ResolveBuckets())
+                .Select(b => b.Bucket.Key)
+                .ToHashSet(StringComparer.Ordinal);
+
+            foreach (var item in req.Mappings ?? new List<QboClassMappingItem>())
+            {
+                if (item.BucketKey is null || !known.Contains(item.BucketKey))
+                {
+                    return new ApiResponses().BadRequestResult($"Unknown profit center \"{item.BucketKey}\".");
+                }
+
+                if (string.IsNullOrWhiteSpace(item.QboClassId))
+                {
+                    await _repo.DeleteClassMapping(_tenantContext.TenantId, item.BucketKey);
+                }
+                else
+                {
+                    await _repo.UpsertClassMapping(_tenantContext.TenantId, item.BucketKey,
+                        item.QboClassId.Trim(), item.QboClassName);
+                }
+            }
+
+            return new ApiResponses().OkResult(new { saved = true });
+        }
+
         // ── Sync ─────────────────────────────────────────────────────────────────────────
 
         [Authorize(Policy = TenantPermissions.Policy.AccountingManage)]
@@ -448,6 +559,33 @@ namespace webapi.Controllers
             return keys.Distinct(StringComparer.Ordinal)
                        .OrderBy(k => Array.IndexOf(QboAccountKeys.All, k))
                        .ToList();
+        }
+
+        /// <summary>
+        /// The reporting buckets this tenant's revenue can land in, each with the slots that report
+        /// under it, in report order. Built from RequiredKeys so a track is never asked to file a
+        /// bucket they can't produce (no bike shop, no Bike Shop row), and through ProfitCenterMap
+        /// so a tenant who has never configured centers still sees their built-in departments.
+        /// </summary>
+        private async Task<List<(ProfitCenterBucket Bucket, List<string> RevenueKeys)>> ResolveBuckets()
+        {
+            var tenantId = _tenantContext.TenantId;
+            var map = ProfitCenterMap.FromConfig(
+                await _profitCenters.ListForTenant(tenantId),
+                await _profitCenters.ListAssignments(tenantId));
+
+            var revenueKeys = (await RequiredKeys())
+                .Where(k => k.StartsWith("revenue_", StringComparison.Ordinal))
+                .ToList();
+
+            // Grouping by the bucket RECORD works because ProfitCenterBucket is a record: two slots
+            // in the same center resolve to equal values, so they land in one group.
+            return revenueKeys
+                .GroupBy(k => map.ForRevenueKey(k), k => k)
+                .OrderBy(g => g.Key.SortOrder)
+                .ThenBy(g => g.Key.Label, StringComparer.OrdinalIgnoreCase)
+                .Select(g => (g.Key, g.OrderBy(k => Array.IndexOf(QboAccountKeys.All, k)).ToList()))
+                .ToList();
         }
 
         /// <summary>QBO's Account.Classification the slot expects, so the UI filters the dropdown.</summary>

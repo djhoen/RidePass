@@ -19,6 +19,7 @@
                 <v-chip v-if="status.isConnected && !status.mappingComplete" size="x-small" color="warning"
                     variant="flat" class="ml-2">{{ status.unmappedKeys.length }}</v-chip>
             </v-tab>
+            <v-tab value="classes" :disabled="!status.isConnected">Profit centers</v-tab>
             <v-tab value="history" :disabled="!status.isConnected">Sync history</v-tab>
         </v-tabs>
 
@@ -160,6 +161,97 @@
                 </v-card>
             </v-window-item>
 
+            <!-- ── Profit centers (QBO classes) ───────────────────────────────────── -->
+            <v-window-item value="classes">
+                <v-card class="pa-4">
+                    <v-card-text class="px-0 pt-0">
+                        <p class="text-body-2 text-medium-emphasis mb-2">
+                            Give each profit center a QuickBooks class and every sale we post gets tagged with
+                            it, so a Profit &amp; Loss by Class in QuickBooks splits out your bike shop, food and
+                            gate revenue the same way the Revenue by Department report does here. This is
+                            optional: leave it blank and revenue still posts, just untagged.
+                        </p>
+                        <p class="text-body-2 text-medium-emphasis mb-4">
+                            Only income lines are tagged. Sales tax, tips, gift card balances, processing fees
+                            and cash movements belong to the whole business rather than one center, so they post
+                            without a class and show under "Not Specified".
+                        </p>
+
+                        <div v-if="classesLoading" class="d-flex align-center ga-3 py-4">
+                            <v-progress-circular indeterminate size="20" />
+                            <span class="text-body-2">Loading your QuickBooks classes…</span>
+                        </div>
+
+                        <template v-else>
+                            <v-alert v-if="classesError" type="error" variant="tonal" density="compact" class="mb-4">
+                                {{ classesError }}
+                                <template #append>
+                                    <v-btn size="small" variant="text" @click="loadClasses">Retry</v-btn>
+                                </template>
+                            </v-alert>
+
+                            <!-- Nothing below is usable until QuickBooks itself is tracking classes, so say
+                                 exactly where the switch is rather than showing empty dropdowns. -->
+                            <v-alert v-else-if="!classSettings.trackingEnabled" type="warning" variant="tonal"
+                                density="comfortable" class="mb-4">
+                                Class tracking is switched off in QuickBooks, so we can't tag anything yet. In
+                                QuickBooks go to Settings &rarr; Account and settings &rarr; Advanced &rarr;
+                                Categories, turn on <strong>Track classes</strong>, choose
+                                <strong>Assign one to each row in transaction</strong>, then come back and
+                                reload this page.
+                            </v-alert>
+
+                            <template v-else>
+                                <!-- Per-transaction mode puts ONE class on the whole journal entry, which
+                                     would flatten every center back into a single bucket. -->
+                                <v-alert v-if="!classSettings.trackingPerLine" type="warning" variant="tonal"
+                                    density="comfortable" class="mb-4">
+                                    QuickBooks is set to one class per transaction. Because we post one summary
+                                    journal entry per day, that can't separate your centers. Switch Categories to
+                                    <strong>Assign one to each row in transaction</strong> in QuickBooks to get a
+                                    real split.
+                                </v-alert>
+
+                                <v-alert v-if="!classSettings.classes.length" type="info" variant="tonal"
+                                    density="compact" class="mb-4">
+                                    Your QuickBooks company has class tracking on but no classes created yet. Add
+                                    one per profit center in QuickBooks, then reload this page.
+                                </v-alert>
+
+                                <div v-for="(row, i) in classMappings" :key="row.bucketKey"
+                                    class="d-flex align-center ga-3" :class="i === 0 ? '' : 'mt-4'">
+                                    <!-- Same color the reports and charts draw this bucket in. -->
+                                    <span class="swatch" :style="{ background: seriesColor(row.color, isDark) }"></span>
+                                    <v-select v-model="row.qboClassId" :items="classSettings.classes"
+                                        item-title="fullyQualifiedName" item-value="id" density="compact"
+                                        variant="outlined" :label="row.label" clearable
+                                        :disabled="!classSettings.classes.length"
+                                        :hint="classHint(row)" persistent-hint />
+                                </div>
+
+                                <p v-if="usingBuiltInDepartments" class="text-caption text-medium-emphasis mt-4">
+                                    These are the built-in departments. To use your own names and grouping,
+                                    set them up under
+                                    <router-link to="/Admin/Settings/ProfitCenters">Settings &rarr; Profit centers</router-link>.
+                                </p>
+
+                                <p class="text-caption text-medium-emphasis mt-4">
+                                    Days already posted keep the classes they were posted with. To re-tag one,
+                                    delete its journal entry in QuickBooks and retry the day from Sync history.
+                                </p>
+
+                                <div class="d-flex ga-2 mt-6">
+                                    <v-btn color="primary" :loading="saveClassesLoading"
+                                        :disabled="!classSettings.classes.length" @click="saveClassMappings">
+                                        Save profit centers
+                                    </v-btn>
+                                </div>
+                            </template>
+                        </template>
+                    </v-card-text>
+                </v-card>
+            </v-window-item>
+
             <!-- ── History ────────────────────────────────────────────────────────── -->
             <v-window-item value="history">
                 <v-card class="pa-4">
@@ -218,7 +310,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow } from '../../../services/QuickBooksService'
+import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow, type QboClassSettings, type QboClassMapping } from '../../../services/QuickBooksService'
 import { useTheme } from 'vuetify'
 import { ProfitCenterService, type ProfitCenter } from '../../../services/ProfitCenterService'
 import { seriesColor } from '../../../helpers/profitCenterColor'
@@ -262,6 +354,15 @@ const centerAccounts = ref<Record<string, string | null>>({})
 // True when a center's member slots currently point at different accounts (pre-centers drift).
 const centerMixed = ref<Record<string, boolean>>({})
 
+// Profit centers -> QuickBooks classes. Optional, and the only part of this screen that needs a
+// QBO preference read, so it loads lazily the first time the tab is opened rather than on mount.
+const classSettings = ref<QboClassSettings>({ trackingEnabled: true, trackingPerLine: true, classes: [] })
+const classMappings = ref<QboClassMapping[]>([])
+const classesLoading = ref(false)
+const classesLoaded = ref(false)
+const classesError = ref('')
+const saveClassesLoading = ref(false)
+
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref<'success' | 'error'>('success')
@@ -270,6 +371,12 @@ const snackbarColor = ref<'success' | 'error'>('success')
 // sitting on one, land them back on Connection instead of a disabled tab's stale panel.
 watch(() => status.value.isConnected, connected => {
     if (!connected && tab.value !== 'connection') tab.value = 'connection'
+})
+
+// First visit to the Profit centers tab pulls the class list and the company's class-tracking
+// preference. Both are QBO round-trips, so a track that never uses classes never pays for them.
+watch(tab, async value => {
+    if (value === 'classes' && !classesLoaded.value) await loadClasses()
 })
 
 function toast(text: string, color: 'success' | 'error' = 'success') {
@@ -390,6 +497,16 @@ function initCenterAccounts() {
     centerMixed.value = mixed
 }
 
+function classHint(row: QboClassMapping): string {
+    const streams = row.revenueStreams.join(', ')
+    return streams ? `Tags: ${streams}` : 'No revenue streams report under this center yet.'
+}
+
+// True when the tenant has never configured centers and is seeing the built-in departments, which
+// is worth saying out loud: the names aren't theirs and they can change that.
+const usingBuiltInDepartments = computed(() =>
+    classMappings.value.length > 0 && classMappings.value.every(r => !r.isCustom))
+
 function accountsFor(classification: string) {
     const matching = accounts.value.filter(a => a.classification === classification)
     // If QBO didn't classify anything (unusual, but possible on odd charts of accounts), showing
@@ -426,6 +543,39 @@ async function loadAccounts() {
         accountsError.value = errText(err, 'Could not load your QuickBooks chart of accounts.')
     } finally {
         accountsLoading.value = false
+    }
+}
+
+async function loadClasses() {
+    classesLoading.value = true
+    classesError.value = ''
+    try {
+        const [settings, mappings] = await Promise.all([service.classes(), service.classMappings()])
+        classSettings.value = settings.data.data
+        classMappings.value = mappings.data.data
+        classesLoaded.value = true
+    } catch (err: any) {
+        // Never render an empty picker as "you have no classes"; say what actually failed.
+        classesError.value = errText(err, 'Could not load your QuickBooks classes. Check the connection and try again.')
+    } finally {
+        classesLoading.value = false
+    }
+}
+
+async function saveClassMappings() {
+    saveClassesLoading.value = true
+    try {
+        await service.saveClassMappings(classMappings.value.map(row => ({
+            bucketKey: row.bucketKey,
+            qboClassId: row.qboClassId,
+            qboClassName: classSettings.value.classes.find(c => c.id === row.qboClassId)?.fullyQualifiedName ?? null,
+        })))
+        toast('Profit centers saved. They apply to the next day we post.')
+        await loadClasses()
+    } catch (err: any) {
+        toast(errText(err, 'Could not save your profit center classes.'), 'error')
+    } finally {
+        saveClassesLoading.value = false
     }
 }
 
@@ -484,6 +634,11 @@ async function disconnect() {
     disconnectLoading.value = true
     try {
         await service.disconnect()
+        // Drop the cached class list with the company it came from: reconnecting to a DIFFERENT
+        // QuickBooks company must not show the old one's classes.
+        classesLoaded.value = false
+        classSettings.value = { trackingEnabled: true, trackingPerLine: true, classes: [] }
+        classMappings.value = []
         toast('QuickBooks disconnected.')
         await load()
     } catch (err: any) {
