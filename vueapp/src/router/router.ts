@@ -172,6 +172,12 @@ const routes = [
         component: () => import('../views/SuperAdmin/MiscSettings.vue'),
         meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
     },
+    {
+        path: '/SuperAdmin/TenantProvisioning',
+        name: 'SuperAdminTenantProvisioning',
+        component: () => import('../views/SuperAdmin/TenantProvisioning.vue'),
+        meta: { requiresAuth: true, requiresRoles: ['super_admin'], hideFooter: true }
+    },
 
     // Admin routes (tenant_admin or super_admin)
     {

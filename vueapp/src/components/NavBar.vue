@@ -257,6 +257,7 @@ const superAdminLinks: SuperAdminLink[] = [
     { to: '/SuperAdmin/ForTracks', icon: 'mdi-store-plus',          title: 'For Tracks page' },
     { to: '/SuperAdmin/Marketing', icon: 'mdi-bullhorn',            title: 'Marketing' },
     { to: '/SuperAdmin/MiscSettings', icon: 'mdi-cog',              title: 'Misc settings' },
+    { to: '/SuperAdmin/TenantProvisioning', icon: 'mdi-clipboard-check-outline', title: 'Tenant provisioning' },
 ]
 
 // Platform features the super-admin gates per tenant. A link carrying one of these

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "provisioning:doc": "node scripts/export-provisioning-doc.mjs",
     "preview": "vite preview",
     "serve": "node server.js",
     "e2e": "playwright test --project=smoke",
