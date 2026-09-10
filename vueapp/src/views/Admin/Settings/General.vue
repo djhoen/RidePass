@@ -102,6 +102,17 @@
                         <PhoneField v-model="form.phone" label="Phone" density="compact" />
                     </v-col>
                 </v-row>
+                <!-- Rider-facing From address. Restricted server-side to this track's subdomain of
+                     the platform sending domain, the only shape SendGrid signs for; a track's own
+                     domain needs DNS authentication and is not offered here. -->
+                <v-row>
+                    <v-col cols="12" md="6">
+                        <v-text-field v-model="form.emailFromAddress" type="email" label="Email sending address (From)"
+                            density="compact" :placeholder="'noreply@' + emailSendingDomain" persistent-hint
+                            :hint="'Emails to your riders go out from this address. It must end with @' + emailSendingDomain
+                                + '. Leave blank to send as ' + (platformFromAddress || 'the RidePass address') + ' with your track name.'"></v-text-field>
+                    </v-col>
+                </v-row>
             </v-card-text>
         </v-card>
 
@@ -205,6 +216,7 @@ const form = ref({
     latitude: null as number | null,
     longitude: null as number | null,
     contactEmail: '' as string | null,
+    emailFromAddress: '' as string | null,
     phone: '' as string | null,
     socialFacebookUrl: '' as string | null,
     socialInstagramUrl: '' as string | null,
@@ -216,6 +228,10 @@ const form = ref({
 })
 
 const saving = ref(false)
+// Sending-address rule from the API: the domain this track's From address must use, and the
+// platform default it falls back to. Read-only context for the hint text.
+const emailSendingDomain = ref('')
+const platformFromAddress = ref<string | null>(null)
 const geocoding = ref(false)
 // Set once the admin picks a timezone themselves, so an address geocode won't silently
 // overwrite their choice.
@@ -267,6 +283,9 @@ function populateForm() {
     form.value.latitude = branding.latitude
     form.value.longitude = branding.longitude
     form.value.contactEmail = branding.contactEmail ?? ''
+    form.value.emailFromAddress = branding.emailFromAddress ?? ''
+    emailSendingDomain.value = branding.emailSendingDomain ?? ''
+    platformFromAddress.value = branding.platformFromAddress ?? null
     form.value.phone = branding.phone ?? ''
     form.value.socialFacebookUrl = branding.socialFacebookUrl ?? ''
     form.value.socialInstagramUrl = branding.socialInstagramUrl ?? ''
@@ -370,6 +389,7 @@ async function save() {
         // Footer endpoint owns contactEmail / phone / social URLs / refund policy.
         await tenantService.updateFooter({
             contactEmail: normalizeString(form.value.contactEmail),
+            emailFromAddress: normalizeString(form.value.emailFromAddress),
             phone: normalizeString(form.value.phone),
             socialFacebookUrl: normalizeString(form.value.socialFacebookUrl),
             socialInstagramUrl: normalizeString(form.value.socialInstagramUrl),

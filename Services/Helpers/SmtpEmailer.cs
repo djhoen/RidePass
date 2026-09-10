@@ -13,7 +13,8 @@ namespace Services.Helpers
     /// the rider sees "Motoland" in their inbox, and hitting reply reaches the track, not a
     /// noreply mailbox. Null anywhere = fall back to the platform defaults.
     /// </summary>
-    public record EmailSender(string? FromName, string? ReplyToEmail = null, string? ReplyToName = null);
+    public record EmailSender(string? FromName, string? ReplyToEmail = null, string? ReplyToName = null,
+        string? FromAddress = null);
 
     public interface ISmtpEmailer
     {
@@ -80,7 +81,19 @@ namespace Services.Helpers
                 var port = int.TryParse(_config["Email:Smtp:Port"], out var p) ? p : 587;
                 var user = _config["Email:Smtp:User"];
                 var pass = _config["Email:Smtp:Password"];
+                // A tenant may send from its own address ONLY under the domain SendGrid signs for
+                // (noreply@highland.ridepass.io). Anything else would go out unsigned for its domain
+                // and fail DMARC, so the platform address wins and the mismatch is logged.
                 var fromAddr = _config["Email:FromAddress"]!;
+                if (!string.IsNullOrWhiteSpace(sender?.FromAddress))
+                {
+                    if (Services.Email.EmailSendingPolicy.IsUnderSendingDomain(sender!.FromAddress!,
+                            Services.Email.EmailSendingPolicy.SendingDomain(_config)))
+                        fromAddr = sender.FromAddress!;
+                    else
+                        _logger.LogWarning("Ignoring tenant from-address '{From}': not under the sending domain; using {Platform}",
+                            sender.FromAddress, fromAddr);
+                }
                 // The tenant's name when the caller supplied one, else the platform default.
                 var fromName = string.IsNullOrWhiteSpace(sender?.FromName)
                     ? (_config["Email:FromName"] ?? "RidePass")

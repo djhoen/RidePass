@@ -73,6 +73,10 @@ export interface BrandingState {
     socialInstagramUrl: string | null
     socialTiktokUrl: string | null
     socialYoutubeUrl: string | null
+    // Rider-facing From address (null = platform default) and the domain it must use.
+    emailFromAddress: string | null
+    emailSendingDomain: string
+    platformFromAddress: string | null
     refundPolicyHtml: string | null
     addressLine: string | null
     city: string | null
@@ -205,6 +209,9 @@ const defaults: BrandingState = {
     socialInstagramUrl: null,
     socialTiktokUrl: null,
     socialYoutubeUrl: null,
+    emailFromAddress: null,
+    emailSendingDomain: '',
+    platformFromAddress: null,
     refundPolicyHtml: null,
     addressLine: null,
     city: null,

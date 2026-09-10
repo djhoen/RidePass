@@ -551,8 +551,23 @@ namespace webapi.Controllers
         [HttpPut("Home/Footer")]
         public async Task<IActionResult> UpdateFooter([FromBody] UpdateTenantFooterRequest request)
         {
+            // The From address must stay under the domain SendGrid signs for, at this tenant's own
+            // subdomain (noreply@highland.ridepass.io). Anything else fails DMARC or impersonates
+            // a platform mailbox, so it is refused here rather than silently corrected.
+            var sendingDomain = Services.Email.EmailSendingPolicy.SendingDomain(_configuration);
+            var fromAddress = Services.Email.EmailSendingPolicy.Normalize(request.EmailFromAddress);
+            if (fromAddress is not null
+                && !Services.Email.EmailSendingPolicy.IsValidTenantFromAddress(fromAddress, _tenantContext.Tenant.Subdomain, sendingDomain))
+            {
+                var allowed = Services.Email.EmailSendingPolicy.TenantDomain(_tenantContext.Tenant.Subdomain, sendingDomain);
+                return new ApiResponses().BadRequestResult(
+                    $"The sending address must be an address at @{allowed} (for example noreply@{allowed}). "
+                    + $"Leave it blank to send as {_configuration["Email:FromAddress"]} with your track's name.");
+            }
+
             await _tenants.UpdateFooter(_tenantContext.TenantId,
                 contactEmail: Trim(request.ContactEmail),
+                emailFromAddress: fromAddress,
                 phone: Trim(request.Phone),
                 facebook: Trim(request.SocialFacebookUrl),
                 instagram: Trim(request.SocialInstagramUrl),
@@ -655,6 +670,10 @@ namespace webapi.Controllers
                 DailyStatusMessage = tenant.DailyStatusMessage,
                 DailyStatusUpdatedAt = tenant.DailyStatusUpdatedAt,
                 ContactEmail = tenant.ContactEmail,
+                EmailFromAddress = tenant.EmailFromAddress,
+                EmailSendingDomain = Services.Email.EmailSendingPolicy.TenantDomain(tenant.Subdomain,
+                    Services.Email.EmailSendingPolicy.SendingDomain(_configuration)),
+                PlatformFromAddress = _configuration["Email:FromAddress"],
                 SocialFacebookUrl = tenant.SocialFacebookUrl,
                 SocialInstagramUrl = tenant.SocialInstagramUrl,
                 SocialTiktokUrl = tenant.SocialTiktokUrl,

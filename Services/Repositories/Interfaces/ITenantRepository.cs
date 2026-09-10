@@ -90,7 +90,8 @@ namespace Services.Repositories.Interfaces
             string? homeBenefitsHtml, string? homeSectionsJson);
         Task UpdateDailyStatus(Guid tenantId, bool? open, string? message);
         Task UpdateFooter(Guid tenantId, string? contactEmail, string? phone,
-            string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml);
+            string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml,
+            string? emailFromAddress);
         Task UpdateGiftCardSettings(Guid tenantId, bool enabled, int minCents, int maxCents);
         /// <summary>The bike shop's customer-notification policy: whether a ready repair emails
         /// and/or texts the customer, and how many days after pickup to send a service reminder

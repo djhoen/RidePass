@@ -109,6 +109,9 @@
         public string? DailyStatusMessage { get; set; }
         public DateTime? DailyStatusUpdatedAt { get; set; }
         public string? ContactEmail { get; set; }
+        // Rider-facing From address, restricted to <local>@<subdomain>.<sending domain> (see
+        // EmailSendingPolicy). NULL = platform default with the track's name as display name.
+        public string? EmailFromAddress { get; set; }
         public string? Phone { get; set; }
         public string? SocialFacebookUrl { get; set; }
         public string? SocialInstagramUrl { get; set; }

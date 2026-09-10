@@ -60,6 +60,11 @@
         public string? DailyStatusMessage { get; set; }
         public DateTime? DailyStatusUpdatedAt { get; set; }
         public string? ContactEmail { get; set; }
+        // Rider-facing From address (null = platform default), plus the domain it must use and the
+        // platform default it falls back to, so the settings UI can explain the rule inline.
+        public string? EmailFromAddress { get; set; }
+        public string EmailSendingDomain { get; set; } = string.Empty;
+        public string? PlatformFromAddress { get; set; }
         public string? SocialFacebookUrl { get; set; }
         public string? SocialInstagramUrl { get; set; }
         public string? SocialTiktokUrl { get; set; }

@@ -190,6 +190,7 @@ export class TenantService {
 
     async updateFooter(req: {
         contactEmail: string | null
+        emailFromAddress: string | null
         phone: string | null
         socialFacebookUrl: string | null
         socialInstagramUrl: string | null

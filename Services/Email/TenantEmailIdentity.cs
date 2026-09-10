@@ -8,9 +8,11 @@ namespace Services.Email
     ///
     /// Riders have a relationship with the TRACK, not with RidePass: they bought a race entry from
     /// Motoland, so mail about it has to say Motoland, or it reads as spam from a company they've
-    /// never heard of. The From address stays the platform's authenticated noreply@ (we're
+    /// never heard of. The From address defaults to the platform's authenticated noreply@ (we're
     /// DKIM-signed for ridepass.io, and signing as a track's own domain would need that track to
     /// publish DNS records), so the tenant's identity rides on the display name and the Reply-To.
+    /// A track may opt into its own address under our domain (noreply@highland.ridepass.io); the
+    /// mailer re-checks that it is under the signed domain before using it.
     ///
     /// Change the format here and every tenant-originated email follows.
     /// </summary>
@@ -24,6 +26,7 @@ namespace Services.Email
                 : new EmailSender(
                     FromName: tenant.DisplayName,
                     ReplyToEmail: tenant.ContactEmail,
-                    ReplyToName: tenant.DisplayName);
+                    ReplyToName: tenant.DisplayName,
+                    FromAddress: tenant.EmailFromAddress);
     }
 }

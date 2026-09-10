@@ -59,6 +59,9 @@ namespace webapi.Controllers.API.Data.Tenant
     {
         [System.ComponentModel.DataAnnotations.MaxLength(200)]
         public string? ContactEmail { get; set; }
+        // Rider-facing From address; must be <local>@<subdomain>.<sending domain>. Blank = platform default.
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
+        public string? EmailFromAddress { get; set; }
         [System.ComponentModel.DataAnnotations.MaxLength(40)]
         public string? Phone { get; set; }
         public string? SocialFacebookUrl { get; set; }
