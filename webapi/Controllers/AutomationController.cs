@@ -321,10 +321,11 @@ namespace webapi.Controllers
                     : $"For this rider it would send on {wouldSendOn}.";
 
             var subject = "[TEST] " + AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
-            var html = AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true)
+            var html = EmailHtml.Wrap(
+                EmailHtml.PrepareBody(AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true), baseUrl)
                 + $@"<hr style=""border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px"">
 <p style=""font-size:12px;color:#9ca3af"">Test send from {System.Net.WebUtility.HtmlEncode(trackName)}.
-Merge fields were filled in from {(sample is null ? "sample data (nothing sold yet)" : "a real purchase")}. {System.Net.WebUtility.HtmlEncode(timingNote)}</p>";
+Merge fields were filled in from {(sample is null ? "sample data (nothing sold yet)" : "a real purchase")}. {System.Net.WebUtility.HtmlEncode(timingNote)}</p>");
 
             var ok = await _emailer.Send(request.ToEmail, subject, html, null,
                 TenantEmailIdentity.For(_tenantContext.Tenant));

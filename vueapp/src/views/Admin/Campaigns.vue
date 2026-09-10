@@ -114,7 +114,7 @@
                     <v-text-field v-model="composeForm.subject" label="Subject" density="compact"
                         :readonly="composeReadonly"></v-text-field>
                     <div class="text-caption text-medium-emphasis mb-1">Body</div>
-                    <RichTextEditor v-if="!composeReadonly" v-model="composeForm.bodyHtml" />
+                    <RichTextEditor v-if="!composeReadonly" v-model="composeForm.bodyHtml" :upload-image="uploadInlineImage" />
                     <div v-else class="rendered-body">
                         <RichTextView :html="composeForm.bodyHtml" />
                     </div>
@@ -423,6 +423,11 @@ async function cancelSchedule(c: CampaignListItem) {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not cancel the schedule.', 'error')
     }
+}
+
+async function uploadInlineImage(file: File): Promise<string> {
+    const resp = await campaignService.uploadImage(file)
+    return resp.data.data.imageUrl
 }
 
 function validate(): boolean {

@@ -174,7 +174,7 @@
                                 </div>
                                 <v-text-field v-model="s.subject" label="Subject line" density="compact" class="mt-4" />
                                 <div class="text-caption text-medium-emphasis mt-4 mb-1">Message</div>
-                                <RichTextEditor v-model="s.bodyHtml" />
+                                <RichTextEditor v-model="s.bodyHtml" :upload-image="uploadInlineImage" />
                             </v-card>
                             <v-btn variant="text" prepend-icon="mdi-plus" @click="addStep">Add another email</v-btn>
 
@@ -418,6 +418,7 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { CampaignService } from '@/services/CampaignService'
 import { branding } from '@/stores/branding'
 import {
     AutomationService,
@@ -432,7 +433,14 @@ import {
 } from '@/services/AutomationService'
 
 const service = new AutomationService()
+const campaignService = new CampaignService()
 const confirm = useConfirm()
+
+// Images go to the shared marketing upload; the send path makes them absolute and email-safe.
+async function uploadInlineImage(file: File): Promise<string> {
+    const resp = await campaignService.uploadImage(file)
+    return resp.data.data.imageUrl
+}
 const tz = () => branding.timezone || 'UTC'
 
 // The editor's step model: the sentence "[days] [before/after] [anchor]" is friendlier to edit

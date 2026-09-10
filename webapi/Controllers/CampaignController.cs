@@ -17,6 +17,7 @@ namespace webapi.Controllers
         private readonly IEmailCampaignRepository _campaigns;
         private readonly INewsletterRepository _subscribers;
         private readonly ICampaignAudienceRepository _audiences;
+        private readonly Services.Storage.IImageStorage _imageStorage;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly IScheduledTaskRepository _scheduledTasks;
@@ -27,6 +28,7 @@ namespace webapi.Controllers
             IEmailCampaignRepository campaigns,
             INewsletterRepository subscribers,
             ICampaignAudienceRepository audiences,
+            Services.Storage.IImageStorage imageStorage,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
@@ -36,6 +38,7 @@ namespace webapi.Controllers
             _campaigns = campaigns;
             _subscribers = subscribers;
             _audiences = audiences;
+            _imageStorage = imageStorage;
             _suppression = suppression;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
@@ -72,6 +75,33 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Campaign not found.");
             }
             return new ApiResponses().OkResult(ToDetail(c, await LabelFor(c)));
+        }
+
+        /// <summary>
+        /// Inline image for a campaign or automation body. Same rules as the blog and page
+        /// editors; stored under the tenant's "marketing" folder. The editor inserts the returned
+        /// URL, and EmailHtml makes it absolute and size-capped at send time.
+        /// </summary>
+        [HttpPost("Image")]
+        [RequestSizeLimit(5 * 1024 * 1024)]
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            if (file is null || file.Length == 0) return new ApiResponses().BadRequestResult("Choose an image to upload.");
+            if (file.Length > 5 * 1024 * 1024) return new ApiResponses().BadRequestResult("Images must be 5 MB or smaller.");
+            var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["image/png"] = ".png",
+                ["image/jpeg"] = ".jpg",
+                ["image/webp"] = ".webp",
+                ["image/gif"] = ".gif",
+            };
+            if (!allowed.TryGetValue(file.ContentType, out var ext))
+            {
+                return new ApiResponses().BadRequestResult("Use a PNG, JPEG, WebP, or GIF image.");
+            }
+            await using var stream = file.OpenReadStream();
+            var url = await _imageStorage.SaveAsync(stream, _tenantContext.TenantId, "marketing", ext, ct);
+            return new ApiResponses().OkResult(new { imageUrl = url });
         }
 
         /// <summary>Events, event types, and pass products this tenant can address a campaign to.</summary>

@@ -125,7 +125,10 @@ namespace Services.Scheduling.Handlers
                     // send scopes its suppression to this tenant. Other relays pass it through inertly.
                     ["X-SMTPAPI"] = JsonSerializer.Serialize(new { unique_args = new { tenant_id = task.TenantId } }),
                 };
-                var html = campaign.BodyHtml + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName);
+                // Editor HTML -> email HTML: absolute image URLs, capped image width, 600px column.
+                var html = Services.Email.EmailHtml.Wrap(
+                    Services.Email.EmailHtml.PrepareBody(campaign.BodyHtml, baseUrl)
+                    + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
 
                 var ok = await _emailer.Send(s.Email, campaign.Subject, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
                 await _campaigns.UpdateSendStatus(s.Id, ok ? "sent" : "failed", ok ? null : "SMTP send failed");

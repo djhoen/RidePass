@@ -201,7 +201,9 @@ namespace webapi.Workers
                 ["X-SMTPAPI"] = System.Text.Json.JsonSerializer.Serialize(
                     new { unique_args = new { tenant_id = a.TenantId } }),
             };
-            var html = body + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName);
+            // Editor HTML -> email HTML: absolute image URLs, capped image width, 600px column.
+            var html = EmailHtml.Wrap(EmailHtml.PrepareBody(body, baseUrl)
+                + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
 
             return await emailer.Send(subject.Email, subjectLine, html, headers, TenantEmailIdentity.For(tenant));
         }

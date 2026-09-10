@@ -56,6 +56,15 @@ export class CampaignService {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
     }
 
+    /** Inline image for a campaign or automation body; returns the URL the editor inserts. */
+    uploadImage(file: File) {
+        const form = new FormData()
+        form.append('file', file)
+        return axios.post<{ data: { imageUrl: string } }>(`${this.apiUrl}/Campaign/Image`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        })
+    }
+
     audienceOptions() {
         return axios.get<{ data: CampaignAudienceOptions }>(`${this.apiUrl}/Campaign/Audience/Options`)
     }
