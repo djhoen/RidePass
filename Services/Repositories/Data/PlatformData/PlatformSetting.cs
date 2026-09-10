@@ -16,5 +16,13 @@ namespace Services.Repositories.Data.PlatformData
     {
         // Newline-separated origins allowed to embed ANY tenant's widgets (first-party).
         public const string EmbedGlobalAllowedOrigins = "embed_global_allowed_origins";
+
+        // Super-admin kill switch + allowlist for ALL outbound email / SMS (see
+        // Services.Delivery.OutboundDeliveryGate). "true"/"false"; allowlists are
+        // newline-separated, empty = everyone.
+        public const string OutboundEmailEnabled = "outbound_email_enabled";
+        public const string OutboundEmailAllowlist = "outbound_email_allowlist";
+        public const string OutboundSmsEnabled = "outbound_sms_enabled";
+        public const string OutboundSmsAllowlist = "outbound_sms_allowlist";
     }
 }

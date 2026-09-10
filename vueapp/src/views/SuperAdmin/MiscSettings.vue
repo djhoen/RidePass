@@ -33,6 +33,53 @@
                 </v-card-text>
             </v-card>
 
+            <!-- Platform-wide outbound delivery gate. Enforced at the last hop (SmtpEmailer /
+                 TwilioSmsSender) in BOTH the web API and the TaskRunner, so no code path routes
+                 around it. Staging runs a scrubbed production clone whose fake riders would
+                 bounce by the thousand the moment a real relay key lands; the allowlist keeps
+                 demo sends pinned to inboxes and phones we own. -->
+            <v-card class="mb-4">
+                <v-card-title class="d-flex align-center flex-wrap ga-2">
+                    <span>Outbound email &amp; SMS</span>
+                    <v-chip size="small" label :color="envColor">{{ environmentName || 'unknown env' }}</v-chip>
+                    <v-chip size="small" label :color="emailConfigured ? 'success' : 'default'">
+                        SMTP {{ emailConfigured ? 'configured' : 'not configured' }}
+                    </v-chip>
+                    <v-chip size="small" label :color="smsConfigured ? 'success' : 'default'">
+                        Twilio {{ smsConfigured ? 'configured' : 'not configured' }}
+                    </v-chip>
+                </v-card-title>
+                <v-card-text>
+                    <v-alert type="warning" variant="tonal" density="comfortable" class="mb-4">
+                        These switches gate <strong>every</strong> outbound email and text on this
+                        environment: receipts, password resets, campaigns, automations, rider messages,
+                        gift cards, staff alerts. Off means nothing leaves. An allowlist restricts delivery
+                        to the listed addresses or numbers (empty = everyone). Changes reach the web API
+                        immediately and the background task runner within about 15 seconds.
+                    </v-alert>
+                    <v-row>
+                        <v-col cols="12" md="6">
+                            <v-switch v-model="outboundEmailEnabled" color="primary" inset hide-details
+                                :label="outboundEmailEnabled ? 'Email ON' : 'Email OFF'"></v-switch>
+                            <v-textarea v-model="emailAllowlistText" label="Email allowlist (one per line)"
+                                placeholder="djhoen@gmail.com&#10;ridepass.io" rows="4" auto-grow density="compact"
+                                class="mt-4"
+                                hint="Full addresses or bare domains (ridepass.io matches every @ridepass.io address). Empty = everyone."
+                                persistent-hint></v-textarea>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-switch v-model="outboundSmsEnabled" color="primary" inset hide-details
+                                :label="outboundSmsEnabled ? 'SMS ON' : 'SMS OFF'"></v-switch>
+                            <v-textarea v-model="smsAllowlistText" label="SMS allowlist (one per line)"
+                                placeholder="+18015551234" rows="4" auto-grow density="compact"
+                                class="mt-4"
+                                hint="Phone numbers in any format; a 10-digit number matches its +1 form. Empty = everyone."
+                                persistent-hint></v-textarea>
+                        </v-col>
+                    </v-row>
+                </v-card-text>
+            </v-card>
+
             <!-- Platform Stripe key check: no-op Stripe call with the configured platform
                  secret key. One-click verification after a key cutover — proves the key is
                  valid and shows whether it's LIVE or TEST, without making a charge. -->
@@ -106,7 +153,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { SuperAdminService, type StageMirrorStatus } from '@/services/SuperAdminService'
+import { SuperAdminService, type StageMirrorStatus, type MiscSettingsView } from '@/services/SuperAdminService'
 import { useConfirm } from '@/composables/useConfirm'
 
 const service = new SuperAdminService()
@@ -135,6 +182,34 @@ function toLines(arr: string[]): string {
 }
 const origins = computed(() =>
     originsText.value.split(/[\s,]+/).map(s => s.trim()).filter(s => s.length > 0))
+
+// --- Outbound delivery gate (platform-wide email / SMS kill switch + allowlist) -----
+const outboundEmailEnabled = ref(true)
+const emailAllowlistText = ref('')
+const outboundSmsEnabled = ref(true)
+const smsAllowlistText = ref('')
+const emailConfigured = ref(false)
+const smsConfigured = ref(false)
+const environmentName = ref('')
+const envColor = computed(() => {
+    const n = environmentName.value.toLowerCase()
+    if (n === 'production') return 'error'
+    if (n === 'staging') return 'warning'
+    return 'info'
+})
+function toList(text: string): string[] {
+    return text.split(/[\s,;]+/).map(s => s.trim()).filter(s => s.length > 0)
+}
+function applyView(data: MiscSettingsView) {
+    originsText.value = toLines(data.globalEmbedAllowedOrigins)
+    outboundEmailEnabled.value = data.outboundEmailEnabled
+    emailAllowlistText.value = toLines(data.outboundEmailAllowlist)
+    outboundSmsEnabled.value = data.outboundSmsEnabled
+    smsAllowlistText.value = toLines(data.outboundSmsAllowlist)
+    emailConfigured.value = data.emailConfigured
+    smsConfigured.value = data.smsConfigured
+    environmentName.value = data.environmentName
+}
 
 // --- Platform Stripe key check --------------------------------------------------
 interface PlatformStripeTest {
@@ -237,8 +312,7 @@ async function load() {
     loadError.value = null
     try {
         const r = await service.getMiscSettings()
-        const data = (r.data as any).data as { globalEmbedAllowedOrigins: string[] }
-        originsText.value = toLines(data.globalEmbedAllowedOrigins)
+        applyView((r.data as any).data as MiscSettingsView)
         loaded.value = true
     } catch (err: any) {
         loadError.value = err.response?.data?.error || 'Could not load settings.'
@@ -250,10 +324,15 @@ async function load() {
 async function save() {
     saving.value = true
     try {
-        const r = await service.updateMiscSettings({ globalEmbedAllowedOrigins: origins.value })
-        const data = (r.data as any).data as { globalEmbedAllowedOrigins: string[] }
-        // Echo back the normalized list so the admin sees exactly what was stored.
-        originsText.value = toLines(data.globalEmbedAllowedOrigins)
+        const r = await service.updateMiscSettings({
+            globalEmbedAllowedOrigins: origins.value,
+            outboundEmailEnabled: outboundEmailEnabled.value,
+            outboundEmailAllowlist: toList(emailAllowlistText.value),
+            outboundSmsEnabled: outboundSmsEnabled.value,
+            outboundSmsAllowlist: toList(smsAllowlistText.value),
+        })
+        // Echo back the normalized lists so the admin sees exactly what was stored.
+        applyView((r.data as any).data as MiscSettingsView)
         flash('Saved.')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not save settings.', 'error')

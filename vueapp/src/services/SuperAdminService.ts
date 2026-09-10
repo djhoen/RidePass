@@ -190,6 +190,18 @@ export interface ImpersonationResult {
 
 export interface MiscSettings {
     globalEmbedAllowedOrigins: string[]
+    // Platform-wide outbound delivery gate: every email / SMS on this environment.
+    outboundEmailEnabled: boolean
+    outboundEmailAllowlist: string[]   // addresses or domains; empty = everyone
+    outboundSmsEnabled: boolean
+    outboundSmsAllowlist: string[]     // phone numbers; empty = everyone
+}
+
+/** The editable settings plus read-only context the server reports alongside them. */
+export interface MiscSettingsView extends MiscSettings {
+    emailConfigured: boolean
+    smsConfigured: boolean
+    environmentName: string
 }
 
 export interface StageMirrorStatus {
@@ -253,11 +265,11 @@ export class SuperAdminService {
     }
 
     getMiscSettings() {
-        return axios.get<{ data: MiscSettings }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`)
+        return axios.get<{ data: MiscSettingsView }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`)
     }
 
     updateMiscSettings(body: MiscSettings) {
-        return axios.put<{ data: MiscSettings }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`, body)
+        return axios.put<{ data: MiscSettingsView }>(`${this.apiUrl}/SuperAdmin/Settings/Misc`, body)
     }
 
     getStageMirrorStatus() {

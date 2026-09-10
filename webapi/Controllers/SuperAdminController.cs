@@ -45,6 +45,8 @@ namespace webapi.Controllers
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<SuperAdminController> _logger;
         private readonly IMemoryCache _cache;
+        private readonly Services.Delivery.IOutboundDeliveryGate _deliveryGate;
+        private readonly ISmsSender _sms;
 
         // Demo/seed data may only ever be populated on stage or local — never production.
         private bool CanSeedData => _env.IsStaging() || _env.IsDevelopment();
@@ -71,7 +73,9 @@ namespace webapi.Controllers
             webapi.Seeding.ITenantSeeder tenantSeeder,
             IWebHostEnvironment env,
             ILogger<SuperAdminController> logger,
-            IMemoryCache cache)
+            IMemoryCache cache,
+            Services.Delivery.IOutboundDeliveryGate deliveryGate,
+            ISmsSender sms)
         {
             _users = users;
             _tenants = tenants;
@@ -95,6 +99,8 @@ namespace webapi.Controllers
             _env = env;
             _logger = logger;
             _cache = cache;
+            _deliveryGate = deliveryGate;
+            _sms = sms;
         }
 
         /// <summary>
@@ -141,8 +147,9 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// Odds-and-ends global platform settings (Misc settings page). Currently the
-        /// global embed allow-list: origins that may frame ANY tenant's widgets.
+        /// Odds-and-ends global platform settings (Misc settings page): the global embed
+        /// allow-list (origins that may frame ANY tenant's widgets) and the outbound delivery
+        /// gate (platform-wide email/SMS kill switch + allowlist, see OutboundDeliveryGate).
         /// </summary>
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
         [HttpGet("Settings/Misc")]
@@ -150,10 +157,23 @@ namespace webapi.Controllers
         {
             var raw = await _platformSettings.Get(PlatformSettingKeys.EmbedGlobalAllowedOrigins);
             var origins = Services.Embed.EmbedPolicy.NormalizeList(Services.Embed.EmbedPolicy.ParseOrigins(raw));
-            return new ApiResponses().OkResult(new MiscSettingsResponse
+            return new ApiResponses().OkResult(await BuildMiscSettingsResponse(origins));
+        }
+
+        private async Task<MiscSettingsResponse> BuildMiscSettingsResponse(IEnumerable<string> origins)
+        {
+            var delivery = await _deliveryGate.GetSettings();
+            return new MiscSettingsResponse
             {
                 GlobalEmbedAllowedOrigins = origins.ToArray(),
-            });
+                OutboundEmailEnabled = delivery.EmailEnabled,
+                OutboundEmailAllowlist = delivery.EmailAllowlist.ToArray(),
+                OutboundSmsEnabled = delivery.SmsEnabled,
+                OutboundSmsAllowlist = delivery.SmsAllowlist.ToArray(),
+                EmailConfigured = _emailer.IsConfigured,
+                SmsConfigured = _sms.IsConfigured,
+                EnvironmentName = _env.EnvironmentName,
+            };
         }
 
         [Authorize(Policy = SuperAdminRequirement.PolicyName)]
@@ -165,11 +185,41 @@ namespace webapi.Controllers
             await _platformSettings.Set(PlatformSettingKeys.EmbedGlobalAllowedOrigins, string.Join('\n', origins));
             // Bust the short-lived cache the /embed CSP endpoint reads from.
             _cache.Remove(EmbedController.GlobalOriginsCacheKey);
-            return new ApiResponses().OkResult(new MiscSettingsResponse
+
+            // Outbound delivery gate. Only the fields the client sent change, so a partial
+            // request can never silently re-open a switch. Audited: flipping email/SMS on or off
+            // platform-wide is exactly the kind of change someone will ask "who did that?" about.
+            var before = await _deliveryGate.GetSettings();
+            if (request.OutboundEmailEnabled is bool emailOn)
+                await _platformSettings.Set(PlatformSettingKeys.OutboundEmailEnabled, emailOn ? "true" : "false");
+            if (request.OutboundEmailAllowlist is not null)
+                await _platformSettings.Set(PlatformSettingKeys.OutboundEmailAllowlist,
+                    string.Join('\n', Services.Delivery.OutboundDeliveryGate.ParseList(string.Join('\n', request.OutboundEmailAllowlist))));
+            if (request.OutboundSmsEnabled is bool smsOn)
+                await _platformSettings.Set(PlatformSettingKeys.OutboundSmsEnabled, smsOn ? "true" : "false");
+            if (request.OutboundSmsAllowlist is not null)
+                await _platformSettings.Set(PlatformSettingKeys.OutboundSmsAllowlist,
+                    string.Join('\n', Services.Delivery.OutboundDeliveryGate.ParseList(string.Join('\n', request.OutboundSmsAllowlist))));
+            // This process re-reads immediately; the TaskRunner's own cache expires within
+            // OutboundDeliveryGate.CacheTtl.
+            _deliveryGate.Invalidate();
+            var after = await _deliveryGate.GetSettings();
+            if (after.EmailEnabled != before.EmailEnabled || after.SmsEnabled != before.SmsEnabled
+                || !after.EmailAllowlist.SequenceEqual(before.EmailAllowlist, StringComparer.OrdinalIgnoreCase)
+                || !after.SmsAllowlist.SequenceEqual(before.SmsAllowlist, StringComparer.OrdinalIgnoreCase))
             {
-                GlobalEmbedAllowedOrigins = origins.ToArray(),
-            });
+                await _audit.Log("platform.outbound_delivery",
+                    $"Outbound delivery: email {(after.EmailEnabled ? "ON" : "OFF")} "
+                    + $"(allowlist: {DescribeAllowlist(after.EmailAllowlist)}), "
+                    + $"SMS {(after.SmsEnabled ? "ON" : "OFF")} (allowlist: {DescribeAllowlist(after.SmsAllowlist)})",
+                    "platform_setting");
+            }
+
+            return new ApiResponses().OkResult(await BuildMiscSettingsResponse(origins));
         }
+
+        private static string DescribeAllowlist(IReadOnlyList<string> list)
+            => list.Count == 0 ? "everyone" : string.Join(", ", list);
 
         /// <summary>
         /// Staging-only: status of the "copy production down to staging" job. On any other

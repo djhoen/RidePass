@@ -164,6 +164,14 @@ builder.Services.AddScoped<IEventSubscriptionRepository, EventSubscriptionReposi
 builder.Services.AddScoped<IEventNotifier, EventNotifier>();
 builder.Services.AddScoped<IAuditLogger, webapi.Helpers.HttpContextAuditLogger>();
 builder.Services.AddHttpContextAccessor();
+// Super-admin kill switch + allowlist for ALL outbound email/SMS (staging demos, incident
+// response). Singleton with its own DbHelper because SmtpEmailer is a singleton and cannot
+// capture the request-scoped IDbHelper. Short cache, so a toggle lands within seconds.
+builder.Services.AddSingleton<Services.Delivery.IOutboundDeliveryGate>(sp =>
+    new Services.Delivery.OutboundDeliveryGate(
+        new Services.Repositories.PlatformSettingRepository(
+            new Services.Helpers.DbHelper(sp.GetRequiredService<IConfiguration>())),
+        sp.GetRequiredService<ILogger<Services.Delivery.OutboundDeliveryGate>>()));
 builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
 // One confirmation email per event order, from whichever path completed the sale (Stripe, $0
 // voucher, gift card, Loam Pass credit, counter cash). Scoped: it reads through the repositories.

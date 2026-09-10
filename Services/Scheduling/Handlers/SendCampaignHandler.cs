@@ -34,6 +34,7 @@ namespace Services.Scheduling.Handlers
         private readonly ITenantLedgerRepository _ledger;
         private readonly IConfiguration _config;
         private readonly ILogger<SendCampaignHandler> _logger;
+        private readonly Services.Delivery.IOutboundDeliveryGate? _gate;
 
         public SendCampaignHandler(
             IEmailCampaignRepository campaigns,
@@ -43,8 +44,10 @@ namespace Services.Scheduling.Handlers
             ITenantRepository tenants,
             ITenantLedgerRepository ledger,
             IConfiguration config,
-            ILogger<SendCampaignHandler> logger)
+            ILogger<SendCampaignHandler> logger,
+            Services.Delivery.IOutboundDeliveryGate? gate = null)
         {
+            _gate = gate;
             _campaigns = campaigns;
             _emailer = emailer;
             _suppression = suppression;
@@ -97,6 +100,17 @@ namespace Services.Scheduling.Handlers
                     // 'suppressed' is not in the email_campaign_send CHECK and would throw 23514 and
                     // abort the whole run. Record the reason so reporting still shows why.
                     await _campaigns.UpdateSendStatus(s.Id, "skipped", "Recipient suppressed (opt-out or bounce)");
+                    s.Status = "skipped";
+                    skipped++;
+                    continue;
+                }
+
+                // Super-admin kill switch / allowlist. SmtpEmailer enforces it too, but checking
+                // here lets the row say WHY it didn't go instead of a generic "SMTP send failed".
+                var gateReason = _gate is null ? null : await _gate.BlockReason(Services.Delivery.DeliveryChannel.Email, s.Email);
+                if (gateReason is not null)
+                {
+                    await _campaigns.UpdateSendStatus(s.Id, "skipped", gateReason);
                     s.Status = "skipped";
                     skipped++;
                     continue;

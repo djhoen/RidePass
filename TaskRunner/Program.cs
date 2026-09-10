@@ -1,4 +1,6 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using Services.Delivery;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Services.Helpers;
 using Services.Payments;
@@ -97,9 +99,16 @@ var reportsRepo = new ReportsRepository(dbHelper);
 var eventRepo = new EventRepository(dbHelper);
 var conversationRepo = new TenantConversationRepository(dbHelper);
 var smsOptOutRepo = new TenantSmsOptOutRepository(dbHelper);
+// Super-admin kill switch + allowlist for all outbound email/SMS. Same platform_setting rows
+// the web API reads; this process keeps its own short cache, so a toggle in the super-admin
+// UI reaches the runner within OutboundDeliveryGate.CacheTtl.
+var platformSettingRepo = new PlatformSettingRepository(dbHelper);
+var deliveryGate = new OutboundDeliveryGate(platformSettingRepo, new ConsoleLogger<OutboundDeliveryGate>());
+// Real (console -> pm2 log) loggers for the two senders: a NullLogger here swallowed the
+// actual SMTP exception behind every "SMTP send failed" campaign row.
 var sms = new TwilioSmsSender(configuration, conversationRepo, smsOptOutRepo,
-    NullLogger<TwilioSmsSender>.Instance);
-var emailer = new SmtpEmailer(configuration, NullLogger<SmtpEmailer>.Instance);
+    new ConsoleLogger<TwilioSmsSender>(), deliveryGate);
+var emailer = new SmtpEmailer(configuration, new ConsoleLogger<SmtpEmailer>(), deliveryGate);
 var suppressionRepo = new EmailSuppressionRepository(dbHelper);
 var emailLinkTokens = new EmailLinkTokens(configuration);
 var campaignRepo = new EmailCampaignRepository(dbHelper);
@@ -160,7 +169,7 @@ var handlers = new IScheduledTaskHandler[]
         NullLogger<SendRiderMessageHandler>.Instance),
     new SendCampaignHandler(campaignRepo, emailer, suppressionRepo, emailLinkTokens,
         tenantRepo, ledgerRepo, configuration,
-        NullLogger<SendCampaignHandler>.Instance),
+        new ConsoleLogger<SendCampaignHandler>(), deliveryGate),
 };
 var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
     NullLogger<ScheduledTaskDispatcher>.Instance);
@@ -350,3 +359,20 @@ static async Task SmsBillingAttachLoop(SmsBillingPayoutAttacher attacher, Cancel
 }
 
 public partial class Program { }
+
+/// <summary>
+/// Minimal ILogger that writes to stdout (pm2 captures it). Used for the senders where a
+/// swallowed exception hides the one line you need when a send fails.
+/// </summary>
+sealed class ConsoleLogger<T> : ILogger<T>
+{
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        if (!IsEnabled(logLevel)) return;
+        Console.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}Z [{logLevel}] {typeof(T).Name}: {formatter(state, exception)}");
+        if (exception is not null) Console.WriteLine(exception);
+    }
+}

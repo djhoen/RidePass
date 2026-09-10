@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Mail;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Services.Delivery;
 
 namespace Services.Helpers
 {
@@ -37,13 +38,18 @@ namespace Services.Helpers
     {
         private readonly IConfiguration _config;
         private readonly ILogger<SmtpEmailer> _logger;
+        private readonly IOutboundDeliveryGate? _gate;
 
         public bool IsConfigured { get; }
 
-        public SmtpEmailer(IConfiguration config, ILogger<SmtpEmailer> logger)
+        // The gate is optional so existing hand-wired constructions keep compiling, but every
+        // real deployment (web API DI + TaskRunner) passes one: it is the super-admin
+        // kill switch / allowlist and must sit at this last hop so no caller can bypass it.
+        public SmtpEmailer(IConfiguration config, ILogger<SmtpEmailer> logger, IOutboundDeliveryGate? gate = null)
         {
             _config = config;
             _logger = logger;
+            _gate = gate;
             IsConfigured = !string.IsNullOrWhiteSpace(config["Email:Smtp:Host"])
                         && !string.IsNullOrWhiteSpace(config["Email:FromAddress"]);
         }
@@ -59,6 +65,15 @@ namespace Services.Helpers
             IReadOnlyDictionary<string, string>? headers, EmailSender? sender)
         {
             if (!IsConfigured) return false;
+            if (_gate is not null)
+            {
+                var block = await _gate.BlockReason(DeliveryChannel.Email, toEmail);
+                if (block is not null)
+                {
+                    _logger.LogInformation("Suppressed email to {Email} ({Subject}): {Reason}", toEmail, subject, block);
+                    return false;
+                }
+            }
             try
             {
                 var host = _config["Email:Smtp:Host"]!;

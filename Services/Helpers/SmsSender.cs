@@ -73,6 +73,7 @@ namespace Services.Helpers
         private readonly ITenantConversationRepository _conversations;
         private readonly ITenantSmsOptOutRepository _optOuts;
         private readonly ILogger<TwilioSmsSender> _logger;
+        private readonly Services.Delivery.IOutboundDeliveryGate? _gate;
         private readonly string? _globalSid;
         private readonly string? _globalToken;
         private readonly string? _globalFrom;
@@ -87,11 +88,13 @@ namespace Services.Helpers
             IConfiguration config,
             ITenantConversationRepository conversations,
             ITenantSmsOptOutRepository optOuts,
-            ILogger<TwilioSmsSender> logger)
+            ILogger<TwilioSmsSender> logger,
+            Services.Delivery.IOutboundDeliveryGate? gate = null)
         {
             _conversations = conversations;
             _optOuts = optOuts;
             _logger = logger;
+            _gate = gate;
             _globalSid = NullIfEmpty(config["Sms:Twilio:AccountSid"]);
             _globalToken = NullIfEmpty(config["Sms:Twilio:AuthToken"]);
             _globalFrom = NullIfEmpty(config["Sms:Twilio:FromNumber"]);
@@ -103,6 +106,7 @@ namespace Services.Helpers
         public async Task<bool> Send(string toPhone, string body)
         {
             if (!IsConfigured) return false;
+            if (await IsGated(toPhone, tenantId: null)) return false;
             // Global fallback path predates Messaging Services — there's no
             // platform-level MG SID. Send via raw From.
             var result = await SendInternal(_globalSid!, _globalToken!, _globalFrom!, messagingServiceSid: null, toPhone, body);
@@ -114,6 +118,7 @@ namespace Services.Helpers
             var creds = ResolveCredentials(tenant);
             if (creds is null) return false;
             var (sid, token, from, messagingServiceSid) = creds.Value;
+            if (await IsGated(toPhone, tenant.Id)) return false;
 
             // Suppression check before we hit Twilio. The opt-out row is keyed
             // by E.164, same normalization SendInternal uses — normalize here
@@ -161,6 +166,16 @@ namespace Services.Helpers
                     toPhone, tenant.Id);
             }
 
+            return true;
+        }
+
+        /// <summary>Super-admin kill switch / allowlist (see OutboundDeliveryGate). True = do not send.</summary>
+        private async Task<bool> IsGated(string toPhone, Guid? tenantId)
+        {
+            if (_gate is null) return false;
+            var block = await _gate.BlockReason(Services.Delivery.DeliveryChannel.Sms, toPhone);
+            if (block is null) return false;
+            _logger.LogInformation("Suppressed SMS to {Phone} for tenant {TenantId}: {Reason}", toPhone, tenantId, block);
             return true;
         }
 
