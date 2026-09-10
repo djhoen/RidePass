@@ -127,6 +127,7 @@ namespace webapi.Controllers
 
             var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
             var stats = await _automations.GetStats(_tenantContext.TenantId);
+            var stepStats = await _automations.GetStepStats(a.Id, _tenantContext.TenantId);
             var basic = await ToListItem(a, steps, stats);
 
             return new ApiResponses().OkResult(new AutomationDetail
@@ -153,7 +154,7 @@ namespace webapi.Controllers
                 StopWhenUsedUp = a.StopWhenUsedUp,
                 SendWindowStart = FormatTime(a.SendWindowStart),
                 SendWindowEnd = FormatTime(a.SendWindowEnd),
-                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind)).ToList(),
+                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind, stepStats.GetValueOrDefault(s.Id))).ToList(),
             });
         }
 
@@ -523,7 +524,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             };
         }
 
-        private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind) => new()
+        private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind, MarketingAutomationStepStats? st = null) => new()
         {
             Id = s.Id,
             StepOrder = s.StepOrder,
@@ -535,6 +536,14 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             Subject = s.Subject,
             BodyHtml = s.BodyHtml,
             BodyText = s.BodyText,
+            Sent = st?.Sent ?? 0,
+            Failed = st?.Failed ?? 0,
+            Skipped = st?.Skipped ?? 0,
+            LastSentAtUtc = st?.LastSentAt is DateTime d ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null,
+            SkipReasons = st?.SkipReasons.Select(r => new AutomationSkipReasonItem
+            {
+                Status = r.Status, Reason = string.IsNullOrEmpty(r.Reason) ? "No reason recorded" : r.Reason, Count = r.Count,
+            }).ToList() ?? new List<AutomationSkipReasonItem>(),
         };
 
         private static int? FirstDelayDays(List<MarketingAutomationStep> steps)

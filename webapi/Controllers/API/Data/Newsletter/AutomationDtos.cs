@@ -57,6 +57,20 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string Subject { get; set; } = string.Empty;
         public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
+        // Reporting: how this email is doing.
+        public int Sent { get; set; }
+        public int Failed { get; set; }
+        public int Skipped { get; set; }
+        public DateTime? LastSentAtUtc { get; set; }
+        public List<AutomationSkipReasonItem> SkipReasons { get; set; } = new();
+    }
+
+    public class AutomationSkipReasonItem
+    {
+        /// <summary>skipped | failed</summary>
+        public string Status { get; set; } = string.Empty;
+        public string Reason { get; set; } = string.Empty;
+        public int Count { get; set; }
     }
 
     public class UpsertAutomationRequest

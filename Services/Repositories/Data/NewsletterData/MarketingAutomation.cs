@@ -79,6 +79,26 @@ namespace Services.Repositories.Data.NewsletterData
         public int Conversions { get; set; }
     }
 
+    /// <summary>Per-step rollup: how each email in a sequence is doing, with the skip reasons.</summary>
+    public class MarketingAutomationStepStats
+    {
+        public Guid AutomationId { get; set; }
+        public Guid StepId { get; set; }
+        public int Sent { get; set; }
+        public int Failed { get; set; }
+        public int Skipped { get; set; }
+        public DateTime? LastSentAt { get; set; }
+        public List<MarketingAutomationSkipReason> SkipReasons { get; set; } = new();
+    }
+
+    public class MarketingAutomationSkipReason
+    {
+        public Guid StepId { get; set; }
+        public string Status { get; set; } = null!;
+        public string Reason { get; set; } = null!;
+        public int Count { get; set; }
+    }
+
     /// <summary>
     /// A purchase an automation step is due to email: a season pass or an event ticket. Carries
     /// everything the merge fields and the send need, so the sweep does not re-query per rider.

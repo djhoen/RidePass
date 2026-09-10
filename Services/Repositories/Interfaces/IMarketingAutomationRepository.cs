@@ -29,6 +29,9 @@ namespace Services.Repositories.Interfaces
 
         Task<Dictionary<Guid, MarketingAutomationStats>> GetStats(Guid tenantId);
 
+        /// <summary>Per-step counts and skip/failure reasons for one automation.</summary>
+        Task<Dictionary<Guid, MarketingAutomationStepStats>> GetStepStats(Guid automationId, Guid tenantId);
+
         // ── Sweep ────────────────────────────────────────────────────────────────
         /// <summary>Every armed automation across all tenants. Sweep only, never a request.</summary>
         Task<List<MarketingAutomation>> ListActiveAcrossTenants();

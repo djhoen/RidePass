@@ -170,6 +170,38 @@ namespace Services.Repositories
             return rows.ToDictionary(r => r.AutomationId);
         }
 
+        public async Task<Dictionary<Guid, MarketingAutomationStepStats>> GetStepStats(Guid automationId, Guid tenantId)
+        {
+            const string totalsSql = @"
+                SELECT s.automation_id                                   AS AutomationId,
+                       s.step_id                                         AS StepId,
+                       COUNT(*) FILTER (WHERE s.status = 'sent')::int    AS Sent,
+                       COUNT(*) FILTER (WHERE s.status = 'failed')::int  AS Failed,
+                       COUNT(*) FILTER (WHERE s.status = 'skipped')::int AS Skipped,
+                       MAX(s.sent_at) FILTER (WHERE s.status = 'sent')   AS LastSentAt
+                FROM marketing_automation_send s
+                WHERE s.tenant_id = @tenantId AND s.automation_id = @automationId
+                GROUP BY s.automation_id, s.step_id";
+            // The reasons, so "12 skipped" can say why: bought after the send time, suppressed,
+            // blocked by the outbound gate, or a relay failure.
+            const string reasonsSql = @"
+                SELECT s.step_id AS StepId, s.status AS Status,
+                       COALESCE(s.skip_reason, '') AS Reason, COUNT(*)::int AS Count
+                FROM marketing_automation_send s
+                WHERE s.tenant_id = @tenantId AND s.automation_id = @automationId
+                  AND s.status IN ('skipped', 'failed')
+                GROUP BY s.step_id, s.status, s.skip_reason
+                ORDER BY COUNT(*) DESC";
+            var totals = (await _db.Query<MarketingAutomationStepStats>(totalsSql, new { tenantId, automationId }))
+                .ToDictionary(r => r.StepId);
+            var reasons = await _db.Query<MarketingAutomationSkipReason>(reasonsSql, new { tenantId, automationId });
+            foreach (var r in reasons)
+            {
+                if (totals.TryGetValue(r.StepId, out var t)) t.SkipReasons.Add(r);
+            }
+            return totals;
+        }
+
         public async Task<List<MarketingAutomation>> ListActiveAcrossTenants()
         {
             // Intentionally unscoped: the sweep runs outside any request and must see every

@@ -63,6 +63,12 @@
                             </v-tooltip>
                         </td>
                         <td class="text-right text-no-wrap">
+                            <v-tooltip text="How each email is doing">
+                                <template #activator="{ props }">
+                                    <v-btn v-bind="props" icon="mdi-chart-box-outline" variant="text" size="small"
+                                        @click="openReport(a)" />
+                                </template>
+                            </v-tooltip>
                             <v-tooltip text="Send yourself a test">
                                 <template #activator="{ props }">
                                     <v-btn v-bind="props" icon="mdi-email-fast-outline" variant="text" size="small"
@@ -298,6 +304,82 @@
             </v-card>
         </v-dialog>
 
+        <!-- ── Per-email report ───────────────────────────────────────────── -->
+        <v-dialog v-model="reportOpen" max-width="760">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ reportTarget?.name }}</span>
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="reportOpen = false" />
+                </v-card-title>
+                <v-divider />
+                <v-card-text>
+                    <v-alert v-if="reportError" type="error" variant="tonal" density="compact" class="mb-4">
+                        {{ reportError }}
+                    </v-alert>
+                    <v-progress-circular v-if="reportLoading" indeterminate size="24" />
+                    <template v-else-if="report">
+                        <div class="text-body-2 text-medium-emphasis mb-3">
+                            {{ report.triggerLabel }}. Counts are lifetime; a rider is counted once per email.
+                        </div>
+                        <v-table density="compact">
+                            <thead>
+                                <tr>
+                                    <th>Email</th>
+                                    <th>When</th>
+                                    <th class="text-right">Sent</th>
+                                    <th class="text-right">Skipped</th>
+                                    <th class="text-right">Failed</th>
+                                    <th>Last sent</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="s in report.steps" :key="s.id">
+                                    <td>
+                                        <div class="font-weight-medium">Email {{ s.stepOrder + 1 }}</div>
+                                        <div class="text-caption text-medium-emphasis">{{ s.subject }}</div>
+                                    </td>
+                                    <td>{{ s.label }}</td>
+                                    <td class="text-right">{{ s.sent }}</td>
+                                    <td class="text-right">
+                                        <v-tooltip v-if="s.skipped > 0" location="top">
+                                            <template #activator="{ props }">
+                                                <span v-bind="props" class="text-decoration-underline">{{ s.skipped }}</span>
+                                            </template>
+                                            <div v-for="r in s.skipReasons.filter(x => x.status === 'skipped')" :key="r.reason">
+                                                {{ r.count }}: {{ r.reason }}
+                                            </div>
+                                        </v-tooltip>
+                                        <span v-else>0</span>
+                                    </td>
+                                    <td class="text-right">
+                                        <v-tooltip v-if="s.failed > 0" location="top">
+                                            <template #activator="{ props }">
+                                                <span v-bind="props" class="text-error text-decoration-underline">{{ s.failed }}</span>
+                                            </template>
+                                            <div v-for="r in s.skipReasons.filter(x => x.status === 'failed')" :key="r.reason">
+                                                {{ r.count }}: {{ r.reason }}
+                                            </div>
+                                        </v-tooltip>
+                                        <span v-else>0</span>
+                                    </td>
+                                    <td class="text-no-wrap">{{ s.lastSentAtUtc ? formatWhen(s.lastSentAtUtc) : '-' }}</td>
+                                </tr>
+                            </tbody>
+                        </v-table>
+                        <div class="text-caption text-medium-emphasis mt-3">
+                            Hover a skipped or failed count for the reasons. "Bought after this email's send
+                            time" is by design: late buyers are not emailed late.
+                        </div>
+                    </template>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="reportOpen = false">Close</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <!-- ── Test send ──────────────────────────────────────────────────── -->
         <v-dialog v-model="testOpen" max-width="480">
             <v-card>
@@ -340,6 +422,7 @@ import { branding } from '@/stores/branding'
 import {
     AutomationService,
     type AutomationAnchor,
+    type AutomationDetail,
     type AutomationEstimate,
     type AutomationListItem,
     type AutomationTriggerKind,
@@ -396,6 +479,12 @@ const estimate = ref<AutomationEstimate | null>(null)
 const estimating = ref(false)
 const activating = ref(false)
 const activateError = ref('')
+
+const reportOpen = ref(false)
+const reportTarget = ref<AutomationListItem | null>(null)
+const report = ref<AutomationDetail | null>(null)
+const reportLoading = ref(false)
+const reportError = ref('')
 
 const testOpen = ref(false)
 const testTarget = ref<AutomationListItem | null>(null)
@@ -688,6 +777,27 @@ async function deactivate(a: AutomationListItem) {
     } catch (err: any) {
         flash(err.response?.data?.error
             ?? 'Could not turn this automation off. It is still running; try again.', 'error')
+    }
+}
+
+function formatWhen(utc: string) {
+    return dayjs(utc).tz(tz()).format('MMM D, YYYY h:mm A')
+}
+
+async function openReport(a: AutomationListItem) {
+    reportTarget.value = a
+    report.value = null
+    reportError.value = ''
+    reportOpen.value = true
+    reportLoading.value = true
+    try {
+        const { data } = await service.get(a.id)
+        report.value = data.data
+    } catch (err: any) {
+        reportError.value = err.response?.data?.error
+            ?? 'Could not load the report for this automation. Close this and try again.'
+    } finally {
+        reportLoading.value = false
     }
 }
 

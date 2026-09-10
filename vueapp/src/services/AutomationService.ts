@@ -40,6 +40,11 @@ export interface AutomationStepItem {
     subject: string
     bodyHtml: string
     bodyText: string | null
+    sent: number
+    failed: number
+    skipped: number
+    lastSentAtUtc: string | null
+    skipReasons: { status: 'skipped' | 'failed'; reason: string; count: number }[]
 }
 
 export interface AutomationDetail extends AutomationListItem {
