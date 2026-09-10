@@ -84,7 +84,8 @@ namespace Services.Helpers
                 // A tenant may send from its own address ONLY under the domain SendGrid signs for
                 // (noreply@highland.ridepass.io). Anything else would go out unsigned for its domain
                 // and fail DMARC, so the platform address wins and the mismatch is logged.
-                var fromAddr = _config["Email:FromAddress"]!;
+                var platformFrom = _config["Email:FromAddress"]!;
+                var fromAddr = platformFrom;
                 if (!string.IsNullOrWhiteSpace(sender?.FromAddress))
                 {
                     if (Services.Email.EmailSendingPolicy.IsUnderSendingDomain(sender!.FromAddress!,
@@ -127,7 +128,24 @@ namespace Services.Helpers
                 {
                     foreach (var h in headers) msg.Headers.Add(h.Key, h.Value);
                 }
-                await client.SendMailAsync(msg);
+                try
+                {
+                    await client.SendMailAsync(msg);
+                }
+                catch (SmtpException ex) when (fromAddr != platformFrom
+                    && ex.Message.Contains("Sender Identity", StringComparison.OrdinalIgnoreCase))
+                {
+                    // The relay does not (yet) recognise the tenant's address as a verified sender,
+                    // e.g. the track's subdomain is not authenticated in SendGrid. Losing the email
+                    // is worse than losing the branding: resend once from the platform address on a
+                    // fresh connection (the first session is dead after the rejected DATA).
+                    _logger.LogWarning(
+                        "Relay rejected tenant from-address '{From}' as an unverified sender; resending from {Platform}",
+                        fromAddr, platformFrom);
+                    msg.From = new MailAddress(platformFrom, fromName);
+                    using var retryClient = new SmtpClient(host, port) { EnableSsl = true, Credentials = client.Credentials };
+                    await retryClient.SendMailAsync(msg);
+                }
                 return true;
             }
             catch (Exception ex)
