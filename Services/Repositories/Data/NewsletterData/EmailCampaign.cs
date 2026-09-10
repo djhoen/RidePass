@@ -11,6 +11,10 @@ namespace Services.Repositories.Data.NewsletterData
         public DateTime? ScheduledFor { get; set; }
         public DateTime? SentAt { get; set; }
         public int RecipientCount { get; set; }
+        // Who it goes to: see CampaignAudienceKinds / CampaignAudienceConfig. Defaults keep the
+        // original "newsletter list" behaviour for every existing campaign.
+        public string AudienceKind { get; set; } = CampaignAudienceKinds.Subscribers;
+        public string AudienceConfig { get; set; } = "{}";
         public Guid? CreatedByUserId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

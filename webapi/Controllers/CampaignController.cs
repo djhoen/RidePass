@@ -16,6 +16,7 @@ namespace webapi.Controllers
     {
         private readonly IEmailCampaignRepository _campaigns;
         private readonly INewsletterRepository _subscribers;
+        private readonly ICampaignAudienceRepository _audiences;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly IScheduledTaskRepository _scheduledTasks;
@@ -25,6 +26,7 @@ namespace webapi.Controllers
         public CampaignController(
             IEmailCampaignRepository campaigns,
             INewsletterRepository subscribers,
+            ICampaignAudienceRepository audiences,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
@@ -33,6 +35,7 @@ namespace webapi.Controllers
         {
             _campaigns = campaigns;
             _subscribers = subscribers;
+            _audiences = audiences;
             _suppression = suppression;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
@@ -44,7 +47,19 @@ namespace webapi.Controllers
         public async Task<IActionResult> List()
         {
             var rows = await _campaigns.ListByTenant(_tenantContext.TenantId);
-            var items = rows.Select(ToListItem);
+            // One label lookup per distinct audience, not per row.
+            var labels = new Dictionary<string, string>();
+            var items = new List<CampaignListItem>();
+            foreach (var c in rows)
+            {
+                var key = c.AudienceKind + "|" + c.AudienceConfig;
+                if (!labels.TryGetValue(key, out var label))
+                {
+                    label = await LabelFor(c);
+                    labels[key] = label;
+                }
+                items.Add(ToListItem(c, label));
+            }
             return new ApiResponses().OkResult(items);
         }
 
@@ -56,7 +71,48 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().NotFoundResult("Campaign not found.");
             }
-            return new ApiResponses().OkResult(ToDetail(c));
+            return new ApiResponses().OkResult(ToDetail(c, await LabelFor(c)));
+        }
+
+        /// <summary>Events, event types, and pass products this tenant can address a campaign to.</summary>
+        [HttpGet("Audience/Options")]
+        public async Task<IActionResult> AudienceOptions()
+        {
+            var o = await _audiences.ListOptions(_tenantContext.TenantId);
+            return new ApiResponses().OkResult(new CampaignAudienceOptionsResponse
+            {
+                Events = o.Events.Select(e => new CampaignAudienceEventOptionDto
+                {
+                    Id = e.Id, Title = e.Title, Status = e.Status, EventTypeName = e.EventTypeName,
+                    StartsAtUtc = DateTime.SpecifyKind(e.StartsAt, DateTimeKind.Utc),
+                }).ToList(),
+                EventTypes = o.EventTypes.Select(t => new CampaignAudienceNamedOptionDto { Id = t.Id, Name = t.Name, IsActive = t.IsActive }).ToList(),
+                PassProducts = o.PassProducts.Select(p => new CampaignAudienceNamedOptionDto { Id = p.Id, Name = p.Name, IsActive = p.IsActive }).ToList(),
+            });
+        }
+
+        /// <summary>
+        /// Live size of an audience while the editor is open: distinct addresses, and how many of
+        /// them the suppression list will skip. Same resolution the send uses.
+        /// </summary>
+        [HttpGet("Audience/Count")]
+        public async Task<IActionResult> AudienceCount([FromQuery] string? kind, [FromQuery] Guid? eventId,
+            [FromQuery] Guid? eventTypeId, [FromQuery] Guid? passProductId,
+            [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc)
+        {
+            var resolved = await ResolveAudience(kind, new CampaignAudienceConfigDto
+            {
+                EventId = eventId, EventTypeId = eventTypeId, PassProductId = passProductId, FromUtc = fromUtc, ToUtc = toUtc,
+            });
+            if (resolved.Error is not null) return new ApiResponses().BadRequestResult(resolved.Error);
+
+            var recipients = await _audiences.ListRecipients(_tenantContext.TenantId, resolved.Kind, resolved.Config);
+            var blocklist = await _suppression.ListMarketingBlocklist(_tenantContext.TenantId);
+            var suppressed = recipients.Count(r => blocklist.Contains(r.Email));
+            return new ApiResponses().OkResult(new CampaignAudienceCountResponse
+            {
+                Kind = resolved.Kind, Label = resolved.Label, Recipients = recipients.Count, Suppressed = suppressed,
+            });
         }
 
         [HttpPost]
@@ -66,6 +122,9 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult("Invalid token.");
             }
+            var audience = await ResolveAudience(request.AudienceKind, request.AudienceConfig);
+            if (audience.Error is not null) return new ApiResponses().BadRequestResult(audience.Error);
+
             var c = new EmailCampaign
             {
                 TenantId = _tenantContext.TenantId,
@@ -74,9 +133,11 @@ namespace webapi.Controllers
                 BodyText = request.BodyText,
                 Status = "draft",
                 CreatedByUserId = userId,
+                AudienceKind = audience.Kind,
+                AudienceConfig = audience.Config.ToJson(),
             };
             c.Id = await _campaigns.Create(c);
-            return new ApiResponses().OkResult(ToDetail(c));
+            return new ApiResponses().OkResult(ToDetail(c, audience.Label));
         }
 
         [HttpPut("{id:guid}")]
@@ -91,11 +152,16 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult("Only draft campaigns can be edited.");
             }
+            var audience = await ResolveAudience(request.AudienceKind, request.AudienceConfig);
+            if (audience.Error is not null) return new ApiResponses().BadRequestResult(audience.Error);
+
             existing.Subject = request.Subject.Trim();
             existing.BodyHtml = request.BodyHtml;
             existing.BodyText = request.BodyText;
+            existing.AudienceKind = audience.Kind;
+            existing.AudienceConfig = audience.Config.ToJson();
             await _campaigns.Update(existing);
-            return new ApiResponses().OkResult(ToDetail(existing));
+            return new ApiResponses().OkResult(ToDetail(existing, audience.Label));
         }
 
         [HttpDelete("{id:guid}")]
@@ -140,10 +206,19 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult($"Cannot send a campaign with status '{campaign.Status}'.");
             }
 
-            var recipients = await _subscribers.ListActiveForSend(_tenantContext.TenantId);
+            // Resolve the audience NOW (send time), not when the draft was written, so a camp
+            // that sold more tickets since the draft reaches everyone who bought.
+            var audienceConfig = CampaignAudienceConfig.Parse(campaign.AudienceConfig);
+            var audienceLabel = await _audiences.DescribeAudience(_tenantContext.TenantId, campaign.AudienceKind, audienceConfig);
+            if (audienceLabel is null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This campaign's audience no longer exists (the event, event type, or pass was removed). Edit the campaign and pick another audience.");
+            }
+            var recipients = await _audiences.ListRecipients(_tenantContext.TenantId, campaign.AudienceKind, audienceConfig);
             if (recipients.Count == 0)
             {
-                return new ApiResponses().BadRequestResult("No active subscribers to send to.");
+                return new ApiResponses().BadRequestResult($"Nobody is in this audience yet ({audienceLabel}); nothing to send.");
             }
 
             // Compliance gate: drop anyone on the suppression list (hard bounces + marketing
@@ -155,7 +230,7 @@ namespace webapi.Controllers
             var suppressedCount = beforeCount - recipients.Count;
             if (recipients.Count == 0)
             {
-                return new ApiResponses().BadRequestResult("Every subscriber is on the suppression list; nothing to send.");
+                return new ApiResponses().BadRequestResult("Everyone in this audience is on the suppression list; nothing to send.");
             }
 
             // A future time (60s grace for clock skew) schedules; otherwise send now. The
@@ -166,7 +241,7 @@ namespace webapi.Controllers
 
             await _campaigns.CreateSendRows(id, recipients.Select(r => new EmailCampaignSend
             {
-                SubscriberId = r.Id,
+                SubscriberId = r.SubscriberId,
                 Email = r.Email,
                 Name = r.Name,
                 Status = "pending",
@@ -189,7 +264,7 @@ namespace webapi.Controllers
                 Status = isScheduled ? "scheduled" : "sending",
                 SendNotice = isScheduled
                     ? $"Scheduled for {runAt!.Value:yyyy-MM-dd HH:mm} UTC, {recipients.Count} recipient{(recipients.Count == 1 ? "" : "s")}{suppressedNote}."
-                    : $"Sending to {recipients.Count} subscriber{(recipients.Count == 1 ? "" : "s")} in the background{suppressedNote}.",
+                    : $"Sending to {recipients.Count} recipient{(recipients.Count == 1 ? "" : "s")} ({audienceLabel}) in the background{suppressedNote}.",
             });
         }
 
@@ -229,23 +304,85 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { unscheduled = true });
         }
 
-        private static CampaignListItem ToListItem(EmailCampaign c) => new()
+        /// <summary>
+        /// Validates and normalizes an audience from a request. Subscribers is the default when
+        /// nothing is sent (older clients, and the common case). A target id that does not belong
+        /// to this tenant fails here with a plain message rather than silently addressing nobody.
+        /// </summary>
+        private async Task<(string Kind, CampaignAudienceConfig Config, string Label, string? Error)> ResolveAudience(
+            string? kindRaw, CampaignAudienceConfigDto? dto)
+        {
+            var kind = string.IsNullOrWhiteSpace(kindRaw) ? CampaignAudienceKinds.Subscribers : kindRaw.Trim().ToLowerInvariant();
+            if (!CampaignAudienceKinds.IsValid(kind))
+            {
+                return (kind, new CampaignAudienceConfig(), string.Empty, "Unknown audience. Choose subscribers, an event, an event type, or a pass product.");
+            }
+            var config = new CampaignAudienceConfig();
+            switch (kind)
+            {
+                case CampaignAudienceKinds.Event:
+                    if (dto?.EventId is null) return (kind, config, string.Empty, "Pick the event whose purchasers this campaign goes to.");
+                    config.EventId = dto.EventId;
+                    break;
+                case CampaignAudienceKinds.EventType:
+                    if (dto?.EventTypeId is null) return (kind, config, string.Empty, "Pick the event type whose purchasers this campaign goes to.");
+                    config.EventTypeId = dto.EventTypeId;
+                    config.FromUtc = dto.FromUtc?.ToUniversalTime();
+                    config.ToUtc = dto.ToUtc?.ToUniversalTime();
+                    if (config.FromUtc is not null && config.ToUtc is not null && config.ToUtc <= config.FromUtc)
+                        return (kind, config, string.Empty, "The event date range is backwards: the end must be after the start.");
+                    break;
+                case CampaignAudienceKinds.PassProduct:
+                    if (dto?.PassProductId is null) return (kind, config, string.Empty, "Pick the pass product whose holders this campaign goes to.");
+                    config.PassProductId = dto.PassProductId;
+                    break;
+            }
+            var label = await _audiences.DescribeAudience(_tenantContext.TenantId, kind, config);
+            if (label is null)
+            {
+                return (kind, config, string.Empty, "That event, event type, or pass product was not found for this track.");
+            }
+            return (kind, config, label, null);
+        }
+
+        private async Task<string> LabelFor(EmailCampaign c)
+            => await _audiences.DescribeAudience(_tenantContext.TenantId, c.AudienceKind, CampaignAudienceConfig.Parse(c.AudienceConfig))
+               ?? "Audience no longer exists";
+
+        private static CampaignAudienceConfigDto ToConfigDto(EmailCampaign c)
+        {
+            var cfg = CampaignAudienceConfig.Parse(c.AudienceConfig);
+            return new CampaignAudienceConfigDto
+            {
+                EventId = cfg.EventId, EventTypeId = cfg.EventTypeId, PassProductId = cfg.PassProductId,
+                FromUtc = cfg.FromUtc.HasValue ? DateTime.SpecifyKind(cfg.FromUtc.Value, DateTimeKind.Utc) : null,
+                ToUtc = cfg.ToUtc.HasValue ? DateTime.SpecifyKind(cfg.ToUtc.Value, DateTimeKind.Utc) : null,
+            };
+        }
+
+        private static CampaignListItem ToListItem(EmailCampaign c, string audienceLabel) => new()
         {
             Id = c.Id,
             Subject = c.Subject,
             Status = c.Status,
             RecipientCount = c.RecipientCount,
+            AudienceKind = c.AudienceKind,
+            AudienceLabel = audienceLabel,
+            AudienceConfig = ToConfigDto(c),
             SentAtUtc = c.SentAt.HasValue ? DateTime.SpecifyKind(c.SentAt.Value, DateTimeKind.Utc) : null,
             ScheduledForUtc = c.ScheduledFor.HasValue ? DateTime.SpecifyKind(c.ScheduledFor.Value, DateTimeKind.Utc) : null,
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
         };
 
-        private static CampaignDetail ToDetail(EmailCampaign c) => new()
+        private static CampaignDetail ToDetail(EmailCampaign c, string audienceLabel) => new()
         {
             Id = c.Id,
             Subject = c.Subject,
             Status = c.Status,
             RecipientCount = c.RecipientCount,
+            AudienceKind = c.AudienceKind,
+            AudienceLabel = audienceLabel,
+            AudienceConfig = ToConfigDto(c),
             SentAtUtc = c.SentAt.HasValue ? DateTime.SpecifyKind(c.SentAt.Value, DateTimeKind.Utc) : null,
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
             BodyHtml = c.BodyHtml,

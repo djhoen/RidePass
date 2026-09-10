@@ -8,6 +8,11 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string Subject { get; set; } = null!;
         public string Status { get; set; } = null!;
         public int RecipientCount { get; set; }
+        // Audience: kind + a human label ("Purchasers of Spring Camp") + the raw target so the
+        // list can re-count before a send without loading the detail.
+        public string AudienceKind { get; set; } = "subscribers";
+        public string AudienceLabel { get; set; } = string.Empty;
+        public CampaignAudienceConfigDto AudienceConfig { get; set; } = new();
         public DateTime? SentAtUtc { get; set; }
         public DateTime? ScheduledForUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
@@ -24,6 +29,9 @@ namespace webapi.Controllers.API.Data.Newsletter
         [Required] public string Subject { get; set; } = null!;
         [Required] public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
+        // Omitted = newsletter subscribers (the original behaviour).
+        public string? AudienceKind { get; set; }
+        public CampaignAudienceConfigDto? AudienceConfig { get; set; }
     }
 
     public class SendCampaignResponse

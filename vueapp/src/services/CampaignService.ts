@@ -1,10 +1,37 @@
 import axios from 'axios'
 
+export type CampaignAudienceKind = 'subscribers' | 'event' | 'event_type' | 'pass_product'
+
+/** Target of a non-subscriber audience. Only the field the kind needs is set. */
+export interface CampaignAudienceConfig {
+    eventId: string | null
+    eventTypeId: string | null
+    passProductId: string | null
+    fromUtc: string | null
+    toUtc: string | null
+}
+
+export interface CampaignAudienceOptions {
+    events: { id: string; title: string; startsAtUtc: string; status: string; eventTypeName: string }[]
+    eventTypes: { id: string; name: string; isActive: boolean }[]
+    passProducts: { id: string; name: string; isActive: boolean }[]
+}
+
+export interface CampaignAudienceCount {
+    kind: CampaignAudienceKind
+    label: string
+    recipients: number
+    suppressed: number
+}
+
 export interface CampaignListItem {
     id: string
     subject: string
     status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed'
     recipientCount: number
+    audienceKind: CampaignAudienceKind
+    audienceLabel: string
+    audienceConfig: CampaignAudienceConfig
     sentAtUtc: string | null
     scheduledForUtc: string | null
     createdAtUtc: string
@@ -27,6 +54,20 @@ export class CampaignService {
 
     constructor() {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
+    }
+
+    audienceOptions() {
+        return axios.get<{ data: CampaignAudienceOptions }>(`${this.apiUrl}/Campaign/Audience/Options`)
+    }
+
+    audienceCount(kind: CampaignAudienceKind, config: CampaignAudienceConfig) {
+        const params: Record<string, string> = { kind }
+        if (config.eventId) params.eventId = config.eventId
+        if (config.eventTypeId) params.eventTypeId = config.eventTypeId
+        if (config.passProductId) params.passProductId = config.passProductId
+        if (config.fromUtc) params.fromUtc = config.fromUtc
+        if (config.toUtc) params.toUtc = config.toUtc
+        return axios.get<{ data: CampaignAudienceCount }>(`${this.apiUrl}/Campaign/Audience/Count`, { params })
     }
 
     list() {

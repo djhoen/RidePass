@@ -109,6 +109,7 @@ builder.Services.AddScoped<IDiscoverRepository, DiscoverRepository>();
 builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpService>();
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
+builder.Services.AddScoped<ICampaignAudienceRepository, CampaignAudienceRepository>();
 builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();
 builder.Services.AddScoped<IMarketingAutomationRepository, MarketingAutomationRepository>();
 builder.Services.AddScoped<Services.TenantSync.ITenantSyncRepository, Services.TenantSync.TenantSyncRepository>();

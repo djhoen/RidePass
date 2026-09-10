@@ -10,6 +10,7 @@ namespace Services.Repositories
             id, tenant_id AS TenantId, subject, body_html AS BodyHtml, body_text AS BodyText,
             status, scheduled_for AS ScheduledFor, sent_at AS SentAt,
             recipient_count AS RecipientCount,
+            audience_kind AS AudienceKind, audience_config::text AS AudienceConfig,
             created_by_user_id AS CreatedByUserId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
@@ -44,10 +45,10 @@ namespace Services.Repositories
             const string sql = @"
                 INSERT INTO email_campaign
                     (tenant_id, subject, body_html, body_text, status,
-                     scheduled_for, created_by_user_id)
+                     scheduled_for, created_by_user_id, audience_kind, audience_config)
                 VALUES
                     (@TenantId, @Subject, @BodyHtml, @BodyText, @Status,
-                     @ScheduledFor, @CreatedByUserId)
+                     @ScheduledFor, @CreatedByUserId, @AudienceKind, @AudienceConfig::jsonb)
                 RETURNING id";
             var r = await _db.Query<Guid>(sql, c);
             return r.First();
@@ -60,6 +61,8 @@ namespace Services.Repositories
                 SET subject = @Subject,
                     body_html = @BodyHtml,
                     body_text = @BodyText,
+                    audience_kind = @AudienceKind,
+                    audience_config = @AudienceConfig::jsonb,
                     status = @Status,
                     scheduled_for = @ScheduledFor
                 WHERE id = @Id AND tenant_id = @TenantId";
