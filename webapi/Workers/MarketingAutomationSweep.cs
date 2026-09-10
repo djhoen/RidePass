@@ -66,6 +66,7 @@ namespace webapi.Workers
             var tokens = sp.GetRequiredService<IEmailLinkTokens>();
             var ledger = sp.GetRequiredService<ITenantLedgerRepository>();
             var config = sp.GetRequiredService<IConfiguration>();
+            var gate = sp.GetRequiredService<Services.Delivery.IOutboundDeliveryGate>();
 
             if (!emailer.IsConfigured) return;   // ships dark until SMTP is set
 
@@ -91,7 +92,7 @@ namespace webapi.Workers
                         continue;
                     }
 
-                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, rootDomain, tickStart, ct);
+                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, gate, rootDomain, tickStart, ct);
                     if (sent > 0)
                     {
                         await Bill(repo, ledger, a, sent, tickStart);
@@ -107,7 +108,8 @@ namespace webapi.Workers
 
         private async Task<int> RunAutomation(
             MarketingAutomation a, Tenant tenant, IMarketingAutomationRepository repo,
-            ISmtpEmailer emailer, IEmailLinkTokens tokens, string rootDomain, DateTime tickStart, CancellationToken ct)
+            ISmtpEmailer emailer, IEmailLinkTokens tokens, Services.Delivery.IOutboundDeliveryGate gate,
+            string rootDomain, DateTime tickStart, CancellationToken ct)
         {
             var steps = await repo.ListSteps(a.Id, a.TenantId);
             if (steps.Count == 0) return 0;
@@ -149,6 +151,15 @@ namespace webapi.Workers
                         SkipReason = subject.DueBeforePurchase ? SkipBoughtAfterSendTime : null,
                     });
                     if (sendId is null || subject.DueBeforePurchase) continue;
+
+                    // Super-admin kill switch / allowlist. The mailer enforces it too, but checking
+                    // here records WHY the row did not go instead of a generic failure.
+                    var gateReason = await gate.BlockReason(Services.Delivery.DeliveryChannel.Email, subject.Email);
+                    if (gateReason is not null)
+                    {
+                        await repo.MarkSendOutcome(sendId.Value, a.TenantId, "skipped", gateReason);
+                        continue;
+                    }
 
                     var ok = false;
                     try

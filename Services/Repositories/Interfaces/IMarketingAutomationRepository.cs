@@ -55,6 +55,9 @@ namespace Services.Repositories.Interfaces
         Task<Guid?> RecordSend(MarketingAutomationSend send);
 
         Task MarkSendFailed(Guid sendId, Guid tenantId, string reason);
+        /// <summary>Correct a claimed row to 'failed' or 'skipped' with the reason (e.g. the
+        /// outbound delivery gate refused the address).</summary>
+        Task MarkSendOutcome(Guid sendId, Guid tenantId, string status, string reason);
 
         /// <summary>
         /// Every email sent this calendar month across campaigns AND automations, for the

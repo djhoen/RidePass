@@ -124,7 +124,7 @@
                                 label="Which pass" density="compact" class="mt-4" clearable />
 
                             <!-- Event trigger: this event, or any event of a type. -->
-                            <template v-else>
+                            <template v-else-if="form.triggerKind === 'event_ticket_purchased'">
                                 <v-radio-group v-model="eventScope" inline density="compact" hide-details class="mt-2">
                                     <v-radio label="This event" value="event" />
                                     <v-radio label="Any event of a type" value="event_type" />
@@ -161,7 +161,7 @@
                                         style="max-width: 190px" hide-details />
                                 </div>
                                 <div v-if="s.anchor === 'purchase' && s.days === 0" class="text-caption text-medium-emphasis mt-1">
-                                    Sends on the next hourly run after the purchase.
+                                    Sends on the next hourly run after {{ anchorPhrase('purchase') }}.
                                 </div>
                                 <div v-else-if="s.anchor !== 'purchase' && s.anchor !== 'fixed_date'" class="text-caption text-medium-emphasis mt-1">
                                     Riders who buy after this time are skipped, not emailed late.
@@ -179,7 +179,7 @@
                                 <v-checkbox v-model="form.stopWhenUsedUp" density="compact" hide-details
                                     label="Their pass expires or is used up" />
                             </template>
-                            <template v-else>
+                            <template v-else-if="form.triggerKind === 'event_ticket_purchased'">
                                 <v-checkbox :model-value="true" disabled density="compact" hide-details
                                     label="Their ticket is refunded or cancelled (always on)" />
                                 <v-checkbox :model-value="true" disabled density="compact" hide-details
@@ -225,10 +225,14 @@
                                 <router-link to="/Admin/PassUpgrades">Pass Upgrades</router-link>.
                                 Without an upgrade offer, <code>{{ tokenText('upgrade_price') }}</code> comes out empty.
                             </v-alert>
-                            <v-alert v-else type="info" variant="tonal" density="compact">
+                            <v-alert v-else-if="form.triggerKind === 'event_ticket_purchased'" type="info" variant="tonal" density="compact">
                                 A camp series usually mixes timings: a welcome the day after they buy,
                                 "what to bring" a week before the event starts, and a thank-you two
                                 days after it ends. Each email is its own step.
+                            </v-alert>
+                            <v-alert v-else type="info" variant="tonal" density="compact">
+                                A welcome series for new subscribers: straight away, then a few days
+                                later. Anyone who unsubscribes drops out before the next email.
                             </v-alert>
                         </v-col>
                     </v-row>
@@ -447,7 +451,7 @@ function emptyForm(): EditorForm {
 // "Before" only makes sense against something in the future; the purchase is the past.
 function directionItems(s: StepForm) {
     return s.anchor === 'purchase'
-        ? [{ title: 'after they buy', value: 'after' }]
+        ? [{ title: `after ${anchorPhrase('purchase')}`, value: 'after' }]
         : [
             { title: `before ${anchorPhrase(s.anchor)}`, value: 'before' },
             { title: `after ${anchorPhrase(s.anchor)}`, value: 'after' },

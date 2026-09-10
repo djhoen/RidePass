@@ -80,7 +80,7 @@ namespace webapi.Controllers
                     Kind = k,
                     Label = AutomationTriggers.Label(k),
                     Anchors = AutomationTriggers.AnchorsFor(k)
-                        .Select(an => new AutomationAnchorOption { Value = an, Phrase = AutomationTriggers.AnchorPhrase(an) })
+                        .Select(an => new AutomationAnchorOption { Value = an, Phrase = AutomationTriggers.AnchorPhrase(an, k) })
                         .ToList(),
                     MergeFields = AutomationMergeFields.AvailableFor(k)
                         .Select(x => new MergeFieldItem { Token = x.Token, Description = x.Description })
@@ -153,7 +153,7 @@ namespace webapi.Controllers
                 StopWhenUsedUp = a.StopWhenUsedUp,
                 SendWindowStart = FormatTime(a.SendWindowStart),
                 SendWindowEnd = FormatTime(a.SendWindowEnd),
-                Steps = steps.Select(ToStepItem).ToList(),
+                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind)).ToList(),
             });
         }
 
@@ -388,7 +388,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
 
             if (!AutomationTriggers.IsKind(kind))
             {
-                return (kind, config, steps, "Pick what starts this automation: a pass sale or an event ticket sale.");
+                return (kind, config, steps, "Pick what starts this automation: a pass sale, an event ticket sale, or a newsletter signup.");
             }
             if (request.Steps.Count == 0)
             {
@@ -405,7 +405,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                     config.FromProductId = pid;
                 }
             }
-            else
+            else if (kind == AutomationTriggers.EventTicketPurchased)
             {
                 if ((request.EventId is null) == (request.EventTypeId is null))
                 {
@@ -513,7 +513,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                 IsActive = a.IsActive,
                 StepCount = steps.Count,
                 FirstDelayDays = FirstDelayDays(steps),
-                FirstStepLabel = first is null ? null : AutomationTriggers.DescribeStep(first.Anchor, first.OffsetDays, first.SendOn),
+                FirstStepLabel = first is null ? null : AutomationTriggers.DescribeStep(first.Anchor, first.OffsetDays, first.SendOn, a.TriggerKind),
                 Sent = st?.Sent ?? 0,
                 Failed = st?.Failed ?? 0,
                 Skipped = st?.Skipped ?? 0,
@@ -523,7 +523,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             };
         }
 
-        private static AutomationStepItem ToStepItem(MarketingAutomationStep s) => new()
+        private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind) => new()
         {
             Id = s.Id,
             StepOrder = s.StepOrder,
@@ -531,7 +531,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             Anchor = s.Anchor,
             OffsetDays = s.OffsetDays,
             SendOn = s.SendOn?.ToString("yyyy-MM-dd"),
-            Label = AutomationTriggers.DescribeStep(s.Anchor, s.OffsetDays, s.SendOn),
+            Label = AutomationTriggers.DescribeStep(s.Anchor, s.OffsetDays, s.SendOn, triggerKind),
             Subject = s.Subject,
             BodyHtml = s.BodyHtml,
             BodyText = s.BodyText,

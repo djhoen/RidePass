@@ -51,6 +51,7 @@ namespace Services.Email
         public static (string Token, string Description)[] AvailableFor(string triggerKind) => triggerKind switch
         {
             AutomationTriggers.EventTicketPurchased => Common.Concat(Event).ToArray(),
+            AutomationTriggers.NewsletterSubscribed => Common,
             _ => Common.Concat(Pass).ToArray(),
         };
 
@@ -68,6 +69,8 @@ namespace Services.Email
                 ["track_name"] = trackName,
             };
             var root = baseUrl.TrimEnd('/');
+
+            if (s.SubjectKind == "newsletter_subscriber") return v;
 
             if (s.SubjectKind == "event_ticket_purchase")
             {
@@ -105,6 +108,7 @@ namespace Services.Email
                 ["holder_name"] = "Alex Rivera",
                 ["track_name"] = trackName,
             };
+            if (triggerKind == AutomationTriggers.NewsletterSubscribed) return v;
             if (triggerKind == AutomationTriggers.EventTicketPurchased)
             {
                 var start = DateTime.UtcNow.AddDays(14);

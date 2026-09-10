@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased'
+export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased' | 'newsletter_subscribed'
 export type AutomationAnchor = 'purchase' | 'event_start' | 'event_end' | 'pass_expiry' | 'fixed_date'
 
 export interface AutomationListItem {

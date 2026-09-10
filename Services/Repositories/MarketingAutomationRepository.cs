@@ -81,7 +81,7 @@ namespace Services.Repositories
             const string sql = @"
                 UPDATE marketing_automation
                 SET is_active = @isActive,
-                    enrol_from_utc = CASE WHEN @isActive THEN @enrolFromUtc ELSE enrol_from_utc END,
+                    enrol_from_utc = CASE WHEN @isActive THEN CAST(@enrolFromUtc AS timestamptz) ELSE enrol_from_utc END,
                     updated_at = now()
                 WHERE id = @id AND tenant_id = @tenantId";
             await _db.Execute(sql, new { id, tenantId, isActive, enrolFromUtc });
@@ -187,12 +187,18 @@ namespace Services.Repositories
         // sweep records a skip instead of emailing a "two weeks out" reminder to someone who
         // bought yesterday.
 
+        private static string PurchaseExpr(string triggerKind) => triggerKind switch
+        {
+            AutomationTriggers.EventTicketPurchased => "p.created_at",
+            AutomationTriggers.NewsletterSubscribed => "ns.subscribed_at",
+            _ => "sp.created_at",
+        };
+
         private static string AnchorExpr(string triggerKind, string anchor)
         {
-            var isEvent = triggerKind == AutomationTriggers.EventTicketPurchased;
             return anchor switch
             {
-                AutomationTriggers.Anchors.Purchase => isEvent ? "p.created_at" : "sp.created_at",
+                AutomationTriggers.Anchors.Purchase => PurchaseExpr(triggerKind),
                 AutomationTriggers.Anchors.EventStart => "e.starts_at",
                 AutomationTriggers.Anchors.EventEnd => "e.ends_at",
                 AutomationTriggers.Anchors.PassExpiry => "(sp.valid_to_date::timestamptz)",
@@ -202,7 +208,7 @@ namespace Services.Repositories
 
         private static (string Due, string Skip) TimingClauses(string triggerKind, string anchor)
         {
-            var purchase = triggerKind == AutomationTriggers.EventTicketPurchased ? "p.created_at" : "sp.created_at";
+            var purchase = PurchaseExpr(triggerKind);
             if (anchor == AutomationTriggers.Anchors.FixedDate)
             {
                 // Due-ness was decided in C# against the tenant's calendar; here only the
@@ -308,6 +314,29 @@ namespace Services.Repositories
                       AND (es.tenant_id IS NULL OR es.tenant_id = p.tenant_id)
                       AND es.scope IN ('all', 'marketing'))";
 
+        private const string NewsletterSelect = @"
+                SELECT 'newsletter_subscriber' AS SubjectKind,
+                       ns.id                AS SubjectId,
+                       ns.tenant_id         AS TenantId,
+                       ns.email             AS Email,
+                       ns.name              AS HolderName,
+                       'Newsletter'         AS ProductName,
+                       ns.subscribed_at     AS PurchasedAtUtc,
+                       {SKIP}               AS DueBeforePurchase
+                FROM newsletter_subscriber ns";
+
+        /// <summary>Eligibility for newsletter subjects: still subscribed and not suppressed.</summary>
+        private const string NewsletterEligible = @"
+            ns.tenant_id = @tenantId
+            AND ns.unsubscribed_at IS NULL
+            AND ns.email IS NOT NULL AND ns.email <> ''
+            AND (CAST(@enrolFromUtc AS timestamptz) IS NULL OR ns.subscribed_at >= CAST(@enrolFromUtc AS timestamptz))
+            AND NOT EXISTS (
+                    SELECT 1 FROM email_suppression es
+                    WHERE lower(es.email) = lower(ns.email)
+                      AND (es.tenant_id IS NULL OR es.tenant_id = ns.tenant_id)
+                      AND es.scope IN ('all', 'marketing'))";
+
         private static bool FixedDateNotYetDue(MarketingAutomationStep step, DateTime tenantToday)
             => step.Anchor == AutomationTriggers.Anchors.FixedDate
                && (step.SendOn is null || step.SendOn.Value.Date > tenantToday.Date);
@@ -320,6 +349,23 @@ namespace Services.Repositories
             var (due, skip) = TimingClauses(a.TriggerKind, step.Anchor);
             var subjectKind = AutomationTriggers.SubjectKindFor(a.TriggerKind);
 
+            if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
+            {
+                var sql = NewsletterSelect.Replace("{SKIP}", skip) + $@"
+                WHERE {NewsletterEligible}
+                  AND {due}
+                  AND NOT EXISTS (
+                        SELECT 1 FROM marketing_automation_send ms
+                        WHERE ms.step_id = @stepId AND ms.subject_kind = @subjectKind AND ms.subject_id = ns.id)
+                ORDER BY ns.subscribed_at
+                LIMIT @take";
+                return (await _db.Query<AutomationSubject>(sql, new
+                {
+                    tenantId = a.TenantId, stepId = step.Id, subjectKind, take, nowUtc,
+                    enrolFromUtc = a.EnrolFromUtc,
+                    offsetDays = step.OffsetDays, sendOn = step.SendOn,
+                })).ToList();
+            }
             if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
             {
                 var sql = EventSelect.Replace("{SKIP}", skip) + $@"
@@ -376,11 +422,14 @@ namespace Services.Repositories
         }
 
         public async Task MarkSendFailed(Guid sendId, Guid tenantId, string reason)
+            => await MarkSendOutcome(sendId, tenantId, "failed", reason);
+
+        public async Task MarkSendOutcome(Guid sendId, Guid tenantId, string status, string reason)
         {
             await _db.Execute(@"
-                UPDATE marketing_automation_send SET status = 'failed', skip_reason = @reason
+                UPDATE marketing_automation_send SET status = @status, skip_reason = @reason
                 WHERE id = @sendId AND tenant_id = @tenantId",
-                new { sendId, tenantId, reason });
+                new { sendId, tenantId, status, reason });
         }
 
         public async Task<int> CountSentEmailsInMonth(Guid tenantId, DateTime monthStartUtc)
@@ -410,6 +459,24 @@ namespace Services.Repositories
             var (due, _) = TimingClauses(a.TriggerKind, firstStep.Anchor);
             if (FixedDateNotYetDue(firstStep, tenantToday)) due = "FALSE";
 
+            if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
+            {
+                var sql = $@"
+                    SELECT (
+                        SELECT COUNT(*)::int FROM newsletter_subscriber ns
+                        WHERE {NewsletterEligible} AND {due}
+                    ) AS Backlog,
+                    (
+                        SELECT COUNT(*)::int FROM newsletter_subscriber ns
+                        WHERE ns.tenant_id = @tenantId AND ns.unsubscribed_at IS NULL
+                          AND ns.subscribed_at >= now() - interval '30 days'
+                    ) AS Last30Days";
+                return (await _db.Query<(int Backlog, int Last30Days)>(sql, new
+                {
+                    tenantId = a.TenantId, nowUtc, enrolFromUtc,
+                    offsetDays = firstStep.OffsetDays, sendOn = firstStep.SendOn,
+                })).First();
+            }
             if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
             {
                 var sql = $@"
@@ -468,6 +535,14 @@ namespace Services.Repositories
         public async Task<AutomationSubject?> SampleSubject(MarketingAutomation a)
         {
             var cfg = AutomationTriggerConfig.For(a);
+            if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
+            {
+                var sql = NewsletterSelect.Replace("{SKIP}", "FALSE") + @"
+                WHERE ns.tenant_id = @tenantId AND ns.unsubscribed_at IS NULL
+                ORDER BY ns.subscribed_at DESC
+                LIMIT 1";
+                return (await _db.Query<AutomationSubject>(sql, new { tenantId = a.TenantId })).FirstOrDefault();
+            }
             if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
             {
                 var sql = EventSelect.Replace("{SKIP}", "FALSE") + @"

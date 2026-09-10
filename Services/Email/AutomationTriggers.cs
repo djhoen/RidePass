@@ -12,8 +12,9 @@ namespace Services.Email
     {
         public const string SeasonPassPurchased = "season_pass_purchased";
         public const string EventTicketPurchased = "event_ticket_purchased";
+        public const string NewsletterSubscribed = "newsletter_subscribed";
 
-        public static readonly string[] Kinds = { SeasonPassPurchased, EventTicketPurchased };
+        public static readonly string[] Kinds = { SeasonPassPurchased, EventTicketPurchased, NewsletterSubscribed };
 
         public static bool IsKind(string? kind) => kind is not null && Array.IndexOf(Kinds, kind) >= 0;
 
@@ -22,6 +23,7 @@ namespace Services.Email
         {
             SeasonPassPurchased => "season_pass_purchase",
             EventTicketPurchased => "event_ticket_purchase",
+            NewsletterSubscribed => "newsletter_subscriber",
             _ => throw new ArgumentOutOfRangeException(nameof(triggerKind), triggerKind, "Unknown trigger"),
         };
 
@@ -29,6 +31,7 @@ namespace Services.Email
         {
             SeasonPassPurchased => "A rider buys a season pass",
             EventTicketPurchased => "A rider buys a ticket to an event",
+            NewsletterSubscribed => "Someone joins the newsletter",
             _ => triggerKind,
         };
 
@@ -49,13 +52,15 @@ namespace Services.Email
         {
             SeasonPassPurchased => new[] { Anchors.Purchase, Anchors.PassExpiry, Anchors.FixedDate },
             EventTicketPurchased => new[] { Anchors.Purchase, Anchors.EventStart, Anchors.EventEnd, Anchors.FixedDate },
+            NewsletterSubscribed => new[] { Anchors.Purchase, Anchors.FixedDate },
             _ => Array.Empty<string>(),
         };
 
-        /// <summary>The phrase that follows "N days before/after".</summary>
-        public static string AnchorPhrase(string anchor) => anchor switch
+        /// <summary>The phrase that follows "N days before/after". The 'purchase' anchor is the
+        /// moment the subject came into being, which for a newsletter signup is the signup.</summary>
+        public static string AnchorPhrase(string anchor, string? triggerKind = null) => anchor switch
         {
-            Anchors.Purchase => "they buy",
+            Anchors.Purchase => triggerKind == NewsletterSubscribed ? "they subscribe" : "they buy",
             Anchors.EventStart => "the event starts",
             Anchors.EventEnd => "the event ends",
             Anchors.PassExpiry => "their pass expires",
@@ -64,13 +69,13 @@ namespace Services.Email
         };
 
         /// <summary>"7 days before the event starts", "Straight away after they buy", "On May 1, 2026".</summary>
-        public static string DescribeStep(string anchor, int offsetDays, DateTime? sendOn)
+        public static string DescribeStep(string anchor, int offsetDays, DateTime? sendOn, string? triggerKind = null)
         {
             if (anchor == Anchors.FixedDate)
             {
                 return sendOn is DateTime d ? $"On {d:MMMM d, yyyy}" : "On a date you choose";
             }
-            var phrase = AnchorPhrase(anchor);
+            var phrase = AnchorPhrase(anchor, triggerKind);
             if (offsetDays == 0) return $"Straight away after {phrase}";
             var n = Math.Abs(offsetDays);
             var unit = n == 1 ? "day" : "days";
@@ -85,7 +90,7 @@ namespace Services.Email
         {
             if (!AnchorsFor(triggerKind).Contains(anchor))
             {
-                return $"\"{AnchorPhrase(anchor)}\" is not a timing this trigger supports.";
+                return $"\"{AnchorPhrase(anchor, triggerKind)}\" is not a timing this trigger supports.";
             }
             if (anchor == Anchors.FixedDate)
             {
@@ -94,7 +99,9 @@ namespace Services.Email
             if (sendOn is not null) return "Only a fixed-date email carries a date.";
             if (anchor == Anchors.Purchase && offsetDays < 0)
             {
-                return "An email can't send before the purchase that starts it.";
+                return triggerKind == NewsletterSubscribed
+                    ? "An email can't send before the signup that starts it."
+                    : "An email can't send before the purchase that starts it.";
             }
             if (offsetDays < -365 || offsetDays > 3650)
             {
@@ -110,6 +117,7 @@ namespace Services.Email
             {
                 SeasonPassPurchased => targetName is null ? "Buys any pass" : $"Buys {targetName}",
                 EventTicketPurchased => targetName is null ? "Buys an event ticket" : $"Buys a ticket to {targetName}",
+                NewsletterSubscribed => "Joins the newsletter",
                 _ => triggerKind,
             };
         }
