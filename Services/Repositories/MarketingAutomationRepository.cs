@@ -251,7 +251,8 @@ namespace Services.Repositories
             AND sp.status = 'paid'
             AND sp.purchaser_email IS NOT NULL AND sp.purchaser_email <> ''
             AND (@fromProductId IS NULL OR sp.product_id = @fromProductId)
-            AND (@enrolFromUtc IS NULL OR sp.created_at >= @enrolFromUtc)
+            -- CAST: a null DateTime? parameter otherwise reaches Postgres untyped (42P08).
+            AND (CAST(@enrolFromUtc AS timestamptz) IS NULL OR sp.created_at >= CAST(@enrolFromUtc AS timestamptz))
             -- Exit conditions, evaluated HERE (send time) rather than at enrolment: state
             -- changing during the wait is the entire point of the wait.
             AND (NOT @stopOnUpgrade OR NOT EXISTS (
@@ -300,7 +301,7 @@ namespace Services.Repositories
             AND e.status = 'scheduled'
             AND (@eventId IS NULL OR e.id = @eventId)
             AND (@eventTypeId IS NULL OR e.event_type_id = @eventTypeId)
-            AND (@enrolFromUtc IS NULL OR p.created_at >= @enrolFromUtc)
+            AND (CAST(@enrolFromUtc AS timestamptz) IS NULL OR p.created_at >= CAST(@enrolFromUtc AS timestamptz))
             AND NOT EXISTS (
                     SELECT 1 FROM email_suppression es
                     WHERE lower(es.email) = lower(p.purchaser_email)
