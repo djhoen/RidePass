@@ -115,6 +115,27 @@ namespace Services.Repositories
             };
         }
 
+        public async Task<string?> TargetName(Guid tenantId, string kind, CampaignAudienceConfig config)
+        {
+            switch (kind)
+            {
+                case CampaignAudienceKinds.Event:
+                    if (config.EventId is null) return null;
+                    return (await _db.Query<string>("SELECT title FROM event WHERE id = @id AND tenant_id = @tenantId",
+                        new { id = config.EventId, tenantId })).FirstOrDefault();
+                case CampaignAudienceKinds.EventType:
+                    if (config.EventTypeId is null) return null;
+                    return (await _db.Query<string>("SELECT name FROM tenant_event_type WHERE id = @id AND tenant_id = @tenantId",
+                        new { id = config.EventTypeId, tenantId })).FirstOrDefault();
+                case CampaignAudienceKinds.PassProduct:
+                    if (config.PassProductId is null) return null;
+                    return (await _db.Query<string>("SELECT name FROM season_pass_product WHERE id = @id AND tenant_id = @tenantId",
+                        new { id = config.PassProductId, tenantId })).FirstOrDefault();
+                default:
+                    return null;
+            }
+        }
+
         public async Task<string?> DescribeAudience(Guid tenantId, string kind, CampaignAudienceConfig config)
         {
             switch (kind)

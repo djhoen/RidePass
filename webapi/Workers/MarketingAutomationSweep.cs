@@ -7,18 +7,18 @@ using Services.Repositories.Data.NewsletterData;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Data.TenantData;
 using Services.Repositories.Interfaces;
-using webapi.Controllers;
 
 namespace webapi.Workers
 {
     /// <summary>
     /// Delivers drip campaigns. One tenant-spanning periodic job, following the payout-drafter
-    /// precedent: per armed automation, per step, find the passes that came due and email them.
+    /// precedent: per armed automation, per step, find the subjects (passes or event tickets)
+    /// that came due and email them.
     ///
     /// Steps evaluate INDEPENDENTLY. There is no flow-state to advance, so a rider who becomes
     /// ineligible after step 1 simply never matches step 2, and a tick that dies halfway through
     /// re-sends nothing on the next one. That is the whole simplification the linear model buys.
-    /// See docs/drip-campaigns.md §6.
+    /// See docs/drip-campaigns.md §6 and docs/dynamic-campaigns-plan.md §5.
     /// </summary>
     public class MarketingAutomationSweep : BackgroundService
     {
@@ -31,6 +31,8 @@ namespace webapi.Workers
         // Cap per (automation, step) per tick so one track's back catalogue can't monopolise a
         // tick or a mail relay's rate limit. The remainder goes out on the next one.
         private const int BatchSize = 200;
+
+        public const string SkipBoughtAfterSendTime = "Bought after this email's send time";
 
         public MarketingAutomationSweep(IServiceProvider services, ILogger<MarketingAutomationSweep> logger)
         {
@@ -89,7 +91,7 @@ namespace webapi.Workers
                         continue;
                     }
 
-                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, rootDomain, ct);
+                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, rootDomain, tickStart, ct);
                     if (sent > 0)
                     {
                         await Bill(repo, ledger, a, sent, tickStart);
@@ -105,20 +107,21 @@ namespace webapi.Workers
 
         private async Task<int> RunAutomation(
             MarketingAutomation a, Tenant tenant, IMarketingAutomationRepository repo,
-            ISmtpEmailer emailer, IEmailLinkTokens tokens, string rootDomain, CancellationToken ct)
+            ISmtpEmailer emailer, IEmailLinkTokens tokens, string rootDomain, DateTime tickStart, CancellationToken ct)
         {
             var steps = await repo.ListSteps(a.Id, a.TenantId);
             if (steps.Count == 0) return 0;
 
-            var fromProductId = AutomationController.FromProductId(a);
             var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
+            // Fixed-date steps compare against the track's calendar, not UTC's.
+            var tenantToday = SendWindow.ToLocal(tickStart, tenant.Timezone).Date;
             var sentCount = 0;
 
             foreach (var step in steps)
             {
                 if (ct.IsCancellationRequested) return sentCount;
 
-                var due = await repo.ListDuePassSubjects(a, step, fromProductId, BatchSize);
+                var due = await repo.ListDueSubjects(a, step, BatchSize, tickStart, tenantToday);
                 if (due.Count == BatchSize)
                 {
                     // Never let a cap look like "that was everyone".
@@ -131,19 +134,21 @@ namespace webapi.Workers
                 {
                     if (ct.IsCancellationRequested) return sentCount;
 
-                    // Claim BEFORE sending. Two workers can both see this pass as due; the unique
-                    // index makes exactly one of them the sender.
+                    // Claim BEFORE sending. Two workers can both see this subject as due; the
+                    // unique index makes exactly one of them the sender. A subject that bought
+                    // after this step's send time is claimed as a skip so it is never revisited.
                     var sendId = await repo.RecordSend(new MarketingAutomationSend
                     {
                         TenantId = a.TenantId,
                         AutomationId = a.Id,
                         StepId = step.Id,
-                        SubjectKind = "season_pass_purchase",
-                        SubjectId = subject.PurchaseId,
+                        SubjectKind = subject.SubjectKind,
+                        SubjectId = subject.SubjectId,
                         Email = subject.Email,
-                        Status = "sent",
+                        Status = subject.DueBeforePurchase ? "skipped" : "sent",
+                        SkipReason = subject.DueBeforePurchase ? SkipBoughtAfterSendTime : null,
                     });
-                    if (sendId is null) continue;
+                    if (sendId is null || subject.DueBeforePurchase) continue;
 
                     var ok = false;
                     try
@@ -168,10 +173,10 @@ namespace webapi.Workers
         }
 
         private static async Task<bool> Send(
-            MarketingAutomation a, MarketingAutomationStep step, AutomationPassSubject subject,
+            MarketingAutomation a, MarketingAutomationStep step, AutomationSubject subject,
             Tenant tenant, ISmtpEmailer emailer, IEmailLinkTokens tokens, string baseUrl)
         {
-            var values = AutomationMergeFields.For(subject, tenant.DisplayName, baseUrl);
+            var values = AutomationMergeFields.For(subject, tenant.DisplayName, baseUrl, tenant.Timezone);
             var subjectLine = AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
             var body = AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true);
 
@@ -240,9 +245,13 @@ namespace webapi.Workers
             return new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key)));
         }
 
-        private static string UnsubscribeFooter(string url, string tenantName) =>
-            $@"<hr style=""border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px"">
-<p style=""font-size:12px;color:#9ca3af"">You're receiving this because you bought a pass from {System.Net.WebUtility.HtmlEncode(tenantName)}.
-<a href=""{url}"" style=""color:#9ca3af"">Unsubscribe</a>.</p>";
+        private static string UnsubscribeFooter(string unsubscribeUrl, string trackName)
+        {
+            var name = System.Net.WebUtility.HtmlEncode(trackName);
+            return $@"
+<hr style=""border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px"">
+<p style=""font-size:12px;color:#6b7280"">You're receiving this because you bought from {name}.
+<a href=""{unsubscribeUrl}"" style=""color:#6b7280"">Unsubscribe</a>.</p>";
+        }
     }
 }

@@ -1,6 +1,6 @@
 # Dynamic email campaigns: plan
 
-Status: **decided 2026-09-10, ready to build**. Builds on the drip system that already exists
+Status: **Phase 0 and Phase 1 built on stage 2026-09-10** (audiences; trigger registry, timing anchors, event + pass triggers, editor). Phases 2 and 3 open. Builds on the drip system that already exists
 (`docs/drip-campaigns.md`, `Script0256_MarketingAutomations.sql`, `MarketingAutomationSweep`,
 `Automations.vue`). Nothing here replaces that system; it generalizes it.
 

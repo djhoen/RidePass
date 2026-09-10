@@ -1,15 +1,24 @@
 import axios from 'axios'
 
+export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased'
+export type AutomationAnchor = 'purchase' | 'event_start' | 'event_end' | 'pass_expiry' | 'fixed_date'
+
 export interface AutomationListItem {
     id: string
     name: string
-    triggerKind: string
+    triggerKind: AutomationTriggerKind
+    /** "Buys a ticket to Spring Camp", "Buys any pass". */
+    triggerLabel: string
     fromProductId: string | null
     fromProductName: string | null
+    eventId: string | null
+    eventTypeId: string | null
     isActive: boolean
     stepCount: number
-    /** Delay on the first email, so the list can say "30 days after purchase". */
+    /** Delay on the first email when it counts from the purchase; kept for the upgrades panel. */
     firstDelayDays: number | null
+    /** "7 days before the event starts", ready for the list. */
+    firstStepLabel: string | null
     sent: number
     failed: number
     skipped: number
@@ -22,6 +31,12 @@ export interface AutomationStepItem {
     id: string
     stepOrder: number
     delayDays: number
+    anchor: AutomationAnchor
+    /** Signed days from the anchor; negative = before. */
+    offsetDays: number
+    /** yyyy-MM-dd for a fixed_date step. */
+    sendOn: string | null
+    label: string
     subject: string
     bodyHtml: string
     bodyText: string | null
@@ -37,7 +52,9 @@ export interface AutomationDetail extends AutomationListItem {
 }
 
 export interface UpsertAutomationStep {
-    delayDays: number
+    anchor: AutomationAnchor
+    offsetDays: number
+    sendOn: string | null
     subject: string
     bodyHtml: string
     bodyText?: string | null
@@ -45,7 +62,10 @@ export interface UpsertAutomationStep {
 
 export interface UpsertAutomationRequest {
     name: string
+    triggerKind: AutomationTriggerKind
     fromProductId: string | null
+    eventId: string | null
+    eventTypeId: string | null
     stopOnUpgrade: boolean
     stopWhenUsedUp: boolean
     sendWindowStart: string | null
@@ -64,6 +84,33 @@ export interface AutomationEstimate {
 export interface MergeFieldItem {
     token: string
     description: string
+}
+
+export interface AutomationAnchorOption {
+    value: AutomationAnchor
+    /** The phrase after "N days before/after": "they buy", "the event starts". */
+    phrase: string
+}
+
+export interface AutomationTriggerOption {
+    kind: AutomationTriggerKind
+    label: string
+    anchors: AutomationAnchorOption[]
+    mergeFields: MergeFieldItem[]
+}
+
+export interface AutomationTriggerOptions {
+    triggers: AutomationTriggerOption[]
+    events: { id: string; title: string; startsAtUtc: string; status: string; eventTypeName: string }[]
+    eventTypes: { id: string; name: string; isActive: boolean }[]
+    passProducts: { id: string; name: string; isActive: boolean }[]
+}
+
+export interface TestSendResponse {
+    usedRealSubject: boolean
+    sampleName: string | null
+    wouldSendOn: string | null
+    wouldSkip: boolean
 }
 
 /** Backing data for the "is anyone being told about this?" panel on Pass Upgrades. */
@@ -92,14 +139,20 @@ export class AutomationService {
         return axios.get<{ data: AutomationDetail }>(`${this.apiUrl}/Automation/${id}`)
     }
 
+    /** Triggers, anchors, merge fields, and the events / event types / pass products to target. */
+    triggerOptions() {
+        return axios.get<{ data: AutomationTriggerOptions }>(`${this.apiUrl}/Automation/TriggerOptions`)
+    }
+
     /** Pass products for the trigger select, reachable with campaigns.manage alone. */
     products() {
         return axios.get<{ data: { id: string; name: string; isActive: boolean }[] }>(
             `${this.apiUrl}/Automation/Products`)
     }
 
-    mergeFields() {
-        return axios.get<{ data: MergeFieldItem[] }>(`${this.apiUrl}/Automation/MergeFields`)
+    mergeFields(triggerKind?: AutomationTriggerKind) {
+        return axios.get<{ data: MergeFieldItem[] }>(`${this.apiUrl}/Automation/MergeFields`,
+            { params: triggerKind ? { triggerKind } : undefined })
     }
 
     create(req: UpsertAutomationRequest) {
@@ -124,7 +177,7 @@ export class AutomationService {
     }
 
     testSend(id: string, stepIndex: number, toEmail: string) {
-        return axios.post<{ data: { usedRealPass: boolean; sampleProduct: string | null } }>(
+        return axios.post<{ data: TestSendResponse }>(
             `${this.apiUrl}/Automation/${id}/TestSend`, { stepIndex, toEmail })
     }
 

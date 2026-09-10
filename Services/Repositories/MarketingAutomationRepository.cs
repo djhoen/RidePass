@@ -1,3 +1,4 @@
+using Services.Email;
 using Services.Helpers.Interfaces;
 using Services.Repositories.Data.NewsletterData;
 using Services.Repositories.Interfaces;
@@ -40,15 +41,13 @@ namespace Services.Repositories
 
         public async Task<Guid> Create(MarketingAutomation a)
         {
-            // is_active is deliberately NOT settable here: a new automation is always a draft, so
-            // there is no path where saving a form arms one by accident.
             const string sql = @"
                 INSERT INTO marketing_automation
                     (tenant_id, name, trigger_kind, trigger_config, stop_on_upgrade, stop_when_used_up,
-                     send_window_start, send_window_end, created_by_user_id)
+                     send_window_start, send_window_end, is_active, created_by_user_id)
                 VALUES
                     (@TenantId, @Name, @TriggerKind, @TriggerConfig::jsonb, @StopOnUpgrade, @StopWhenUsedUp,
-                     @SendWindowStart, @SendWindowEnd, @CreatedByUserId)
+                     @SendWindowStart, @SendWindowEnd, false, @CreatedByUserId)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, a)).First();
         }
@@ -77,15 +76,13 @@ namespace Services.Repositories
 
         public async Task SetActive(Guid id, Guid tenantId, bool isActive, DateTime? enrolFromUtc)
         {
-            // enrol_from_utc is only ever written on the way UP, and only when the caller asked
-            // for it. Disarming leaves it alone so a re-arm doesn't silently re-open the back
-            // catalogue the first arming excluded.
+            // Arming with a cut-off stamps it; arming without one (include the backlog) clears it;
+            // disarming leaves it alone so a later re-arm can keep the same enrolment boundary.
             const string sql = @"
                 UPDATE marketing_automation
-                SET is_active      = @isActive,
-                    enrol_from_utc = CASE WHEN @isActive AND @enrolFromUtc IS NOT NULL
-                                          THEN @enrolFromUtc ELSE enrol_from_utc END,
-                    updated_at     = now()
+                SET is_active = @isActive,
+                    enrol_from_utc = CASE WHEN @isActive THEN @enrolFromUtc ELSE enrol_from_utc END,
+                    updated_at = now()
                 WHERE id = @id AND tenant_id = @tenantId";
             await _db.Execute(sql, new { id, tenantId, isActive, enrolFromUtc });
         }
@@ -97,7 +94,8 @@ namespace Services.Repositories
             // caller that forgets would leak another tenant's email copy.
             const string sql = @"
                 SELECT s.id AS Id, s.automation_id AS AutomationId, s.step_order AS StepOrder,
-                       s.delay_days AS DelayDays, s.subject AS Subject,
+                       s.delay_days AS DelayDays, s.anchor AS Anchor, s.offset_days AS OffsetDays,
+                       s.send_on AS SendOn, s.subject AS Subject,
                        s.body_html AS BodyHtml, s.body_text AS BodyText, s.created_at AS CreatedAt
                 FROM marketing_automation_step s
                 JOIN marketing_automation a ON a.id = s.automation_id AND a.tenant_id = @tenantId
@@ -118,8 +116,8 @@ namespace Services.Repositories
             var statements = new List<(string, object?)>
             {
                 // Deleting a step cascades its send rows, so an edited automation can re-send its
-                // history. Tolerable while steps are authored before arming; revisit if editing an
-                // ARMED automation's steps becomes a normal thing to do.
+                // history. Tolerable while steps are authored before arming; the API refuses to
+                // edit an armed automation for exactly this reason.
                 ("DELETE FROM marketing_automation_step WHERE automation_id = @automationId",
                     new { automationId }),
             };
@@ -128,13 +126,18 @@ namespace Services.Repositories
             {
                 statements.Add((@"
                     INSERT INTO marketing_automation_step
-                        (automation_id, step_order, delay_days, subject, body_html, body_text)
-                    VALUES (@automationId, @stepOrder, @delayDays, @subject, @bodyHtml, @bodyText)",
+                        (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text)
+                    VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText)",
                     new
                     {
                         automationId,
                         stepOrder = order++,
-                        delayDays = s.DelayDays,
+                        // delay_days is the legacy column: it mirrors the offset for purchase-anchored
+                        // steps and is 0 for every other anchor.
+                        delayDays = s.Anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, s.OffsetDays) : 0,
+                        anchor = s.Anchor,
+                        offsetDays = s.Anchor == AutomationTriggers.Anchors.FixedDate ? 0 : s.OffsetDays,
+                        sendOn = s.Anchor == AutomationTriggers.Anchors.FixedDate ? s.SendOn : null,
                         subject = s.Subject,
                         bodyHtml = s.BodyHtml,
                         bodyText = s.BodyText,
@@ -145,9 +148,9 @@ namespace Services.Repositories
 
         public async Task<Dictionary<Guid, MarketingAutomationStats>> GetStats(Guid tenantId)
         {
-            // Conversions join the emailed purchase to any pass that replaced it. An upgrade that
-            // would have happened anyway still counts, which is the same attribution every email
-            // platform reports and the same caveat.
+            // Conversions join the emailed purchase to any pass that replaced it (pass trigger only).
+            // An upgrade that would have happened anyway still counts, which is the same
+            // attribution every email platform reports and the same caveat.
             const string sql = @"
                 SELECT s.automation_id                                          AS AutomationId,
                        COUNT(*) FILTER (WHERE s.status = 'sent')::int           AS Sent,
@@ -175,16 +178,79 @@ namespace Services.Repositories
             return (await _db.Query<MarketingAutomation>(sql)).ToList();
         }
 
+        // ── Timing ───────────────────────────────────────────────────────────────
+        //
+        // A step is due for a subject when anchor + offset has passed. The anchor is a column of
+        // the subject row (purchase time, event start/end, pass expiry) or, for fixed_date, a
+        // calendar day the C# side has already compared against the tenant's today. A subject
+        // whose send time passed BEFORE it bought is reported with DueBeforePurchase = true so the
+        // sweep records a skip instead of emailing a "two weeks out" reminder to someone who
+        // bought yesterday.
+
+        private static string AnchorExpr(string triggerKind, string anchor)
+        {
+            var isEvent = triggerKind == AutomationTriggers.EventTicketPurchased;
+            return anchor switch
+            {
+                AutomationTriggers.Anchors.Purchase => isEvent ? "p.created_at" : "sp.created_at",
+                AutomationTriggers.Anchors.EventStart => "e.starts_at",
+                AutomationTriggers.Anchors.EventEnd => "e.ends_at",
+                AutomationTriggers.Anchors.PassExpiry => "(sp.valid_to_date::timestamptz)",
+                _ => throw new ArgumentOutOfRangeException(nameof(anchor), anchor, "Unknown anchor"),
+            };
+        }
+
+        private static (string Due, string Skip) TimingClauses(string triggerKind, string anchor)
+        {
+            var purchase = triggerKind == AutomationTriggers.EventTicketPurchased ? "p.created_at" : "sp.created_at";
+            if (anchor == AutomationTriggers.Anchors.FixedDate)
+            {
+                // Due-ness was decided in C# against the tenant's calendar; here only the
+                // bought-after-the-date skip remains.
+                return ("TRUE", $"(CAST(@sendOn AS date) < ({purchase})::date)");
+            }
+            var when = $"({AnchorExpr(triggerKind, anchor)} + make_interval(days => @offsetDays))";
+            var skip = anchor == AutomationTriggers.Anchors.Purchase ? "FALSE" : $"({when} < {purchase})";
+            return ($"{when} <= @nowUtc", skip);
+        }
+
+        private const string PassSelect = @"
+                SELECT 'season_pass_purchase' AS SubjectKind,
+                       sp.id                AS SubjectId,
+                       sp.tenant_id         AS TenantId,
+                       sp.purchaser_email   AS Email,
+                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sp.holder_first_name, sp.holder_last_name)), ''),
+                                sp.purchaser_name)                AS HolderName,
+                       pr.name              AS ProductName,
+                       sp.created_at        AS PurchasedAtUtc,
+                       sp.valid_to_date     AS ValidToDate,
+                       sp.credits_remaining AS CreditsRemaining,
+                       up.price_cents       AS UpgradePriceCents,
+                       tp.name              AS UpgradeProductName,
+                       {SKIP}               AS DueBeforePurchase
+                FROM season_pass_purchase sp
+                JOIN season_pass_product pr ON pr.id = sp.product_id
+                -- Cheapest live upgrade off this pass, for the merge fields. LEFT so an automation
+                -- can still send when no upgrade is configured; the price token renders empty.
+                LEFT JOIN LATERAL (
+                    SELECT u.price_cents, u.to_product_id
+                    FROM season_pass_upgrade_path u
+                    WHERE u.tenant_id = sp.tenant_id AND u.from_product_id = sp.product_id AND u.is_active
+                    ORDER BY u.price_cents
+                    LIMIT 1
+                ) up ON true
+                LEFT JOIN season_pass_product tp ON tp.id = up.to_product_id";
+
         /// <summary>
-        /// The eligibility predicate shared by the sweep and the activation estimate, so the
-        /// number a tenant is shown before arming is produced by the same rules that decide who
-        /// actually gets emailed. Expects `sp` = season_pass_purchase, `pr` = season_pass_product.
+        /// The eligibility predicate for pass subjects, shared by the sweep and the activation
+        /// estimate so the number a tenant is shown before arming is produced by the same rules
+        /// that decide who actually gets emailed. Expects sp = season_pass_purchase, pr = product.
         /// </summary>
-        private const string SubjectEligibleExpr = @"
-            sp.status = 'paid'
+        private const string PassEligible = @"
+            sp.tenant_id = @tenantId
+            AND sp.status = 'paid'
             AND sp.purchaser_email IS NOT NULL AND sp.purchaser_email <> ''
             AND (@fromProductId IS NULL OR sp.product_id = @fromProductId)
-            AND sp.created_at <= @dueBefore
             AND (@enrolFromUtc IS NULL OR sp.created_at >= @enrolFromUtc)
             -- Exit conditions, evaluated HERE (send time) rather than at enrolment: state
             -- changing during the wait is the entire point of the wait.
@@ -202,53 +268,94 @@ namespace Services.Repositories
                       AND (es.tenant_id IS NULL OR es.tenant_id = sp.tenant_id)
                       AND es.scope IN ('all', 'marketing'))";
 
-        public async Task<List<AutomationPassSubject>> ListDuePassSubjects(
-            MarketingAutomation automation, MarketingAutomationStep step, Guid? fromProductId, int take)
+        private const string EventSelect = @"
+                SELECT 'event_ticket_purchase' AS SubjectKind,
+                       p.id                 AS SubjectId,
+                       p.tenant_id          AS TenantId,
+                       p.purchaser_email    AS Email,
+                       p.purchaser_name     AS HolderName,
+                       e.title              AS ProductName,
+                       p.created_at         AS PurchasedAtUtc,
+                       e.id                 AS EventId,
+                       e.starts_at          AS EventStartsAt,
+                       e.ends_at            AS EventEndsAt,
+                       e.all_day            AS EventAllDay,
+                       e.location_label     AS EventLocation,
+                       t.name               AS TicketTierName,
+                       {SKIP}               AS DueBeforePurchase
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id
+                JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id";
+
+        /// <summary>
+        /// Eligibility for event-ticket subjects. 'redeemed' is a paid ticket that was scanned at
+        /// the gate and still a purchaser; a refunded or cancelled ticket drops out, and so does
+        /// every ticket to a cancelled event (a "what to bring" email for a cancelled camp is the
+        /// one email nobody wants). Expects p = event_ticket_purchase, e = event.
+        /// </summary>
+        private const string EventEligible = @"
+            p.tenant_id = @tenantId
+            AND p.status IN ('paid', 'redeemed')
+            AND p.purchaser_email IS NOT NULL AND p.purchaser_email <> ''
+            AND e.status = 'scheduled'
+            AND (@eventId IS NULL OR e.id = @eventId)
+            AND (@eventTypeId IS NULL OR e.event_type_id = @eventTypeId)
+            AND (@enrolFromUtc IS NULL OR p.created_at >= @enrolFromUtc)
+            AND NOT EXISTS (
+                    SELECT 1 FROM email_suppression es
+                    WHERE lower(es.email) = lower(p.purchaser_email)
+                      AND (es.tenant_id IS NULL OR es.tenant_id = p.tenant_id)
+                      AND es.scope IN ('all', 'marketing'))";
+
+        private static bool FixedDateNotYetDue(MarketingAutomationStep step, DateTime tenantToday)
+            => step.Anchor == AutomationTriggers.Anchors.FixedDate
+               && (step.SendOn is null || step.SendOn.Value.Date > tenantToday.Date);
+
+        public async Task<List<AutomationSubject>> ListDueSubjects(
+            MarketingAutomation a, MarketingAutomationStep step, int take, DateTime nowUtc, DateTime tenantToday)
         {
-            var sql = $@"
-                SELECT sp.id                AS PurchaseId,
-                       sp.tenant_id         AS TenantId,
-                       sp.purchaser_email   AS Email,
-                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sp.holder_first_name, sp.holder_last_name)), ''),
-                                sp.purchaser_name)                AS HolderName,
-                       pr.name              AS ProductName,
-                       sp.created_at        AS PurchasedAtUtc,
-                       sp.valid_to_date     AS ValidToDate,
-                       sp.credits_remaining AS CreditsRemaining,
-                       up.price_cents       AS UpgradePriceCents,
-                       tp.name              AS UpgradeProductName
-                FROM season_pass_purchase sp
-                JOIN season_pass_product pr ON pr.id = sp.product_id
-                -- Cheapest live upgrade off this pass, for the merge fields. LEFT so an automation
-                -- can still send when no upgrade is configured; the price token renders empty.
-                LEFT JOIN LATERAL (
-                    SELECT u.price_cents, u.to_product_id
-                    FROM season_pass_upgrade_path u
-                    WHERE u.tenant_id = sp.tenant_id AND u.from_product_id = sp.product_id AND u.is_active
-                    ORDER BY u.price_cents
-                    LIMIT 1
-                ) up ON true
-                LEFT JOIN season_pass_product tp ON tp.id = up.to_product_id
-                WHERE sp.tenant_id = @tenantId
-                  AND {SubjectEligibleExpr}
+            if (FixedDateNotYetDue(step, tenantToday)) return new List<AutomationSubject>();
+            var cfg = AutomationTriggerConfig.For(a);
+            var (due, skip) = TimingClauses(a.TriggerKind, step.Anchor);
+            var subjectKind = AutomationTriggers.SubjectKindFor(a.TriggerKind);
+
+            if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
+            {
+                var sql = EventSelect.Replace("{SKIP}", skip) + $@"
+                WHERE {EventEligible}
+                  AND {due}
                   AND NOT EXISTS (
                         SELECT 1 FROM marketing_automation_send ms
-                        WHERE ms.step_id = @stepId
-                          AND ms.subject_kind = 'season_pass_purchase'
-                          AND ms.subject_id = sp.id)
+                        WHERE ms.step_id = @stepId AND ms.subject_kind = @subjectKind AND ms.subject_id = p.id)
+                ORDER BY p.created_at
+                LIMIT @take";
+                return (await _db.Query<AutomationSubject>(sql, new
+                {
+                    tenantId = a.TenantId, stepId = step.Id, subjectKind, take, nowUtc,
+                    eventId = cfg.EventId, eventTypeId = cfg.EventTypeId,
+                    enrolFromUtc = a.EnrolFromUtc,
+                    offsetDays = step.OffsetDays, sendOn = step.SendOn,
+                })).ToList();
+            }
+            else
+            {
+                var sql = PassSelect.Replace("{SKIP}", skip) + $@"
+                WHERE {PassEligible}
+                  AND {due}
+                  AND NOT EXISTS (
+                        SELECT 1 FROM marketing_automation_send ms
+                        WHERE ms.step_id = @stepId AND ms.subject_kind = @subjectKind AND ms.subject_id = sp.id)
                 ORDER BY sp.created_at
                 LIMIT @take";
-            return (await _db.Query<AutomationPassSubject>(sql, new
-            {
-                tenantId = automation.TenantId,
-                stepId = step.Id,
-                fromProductId,
-                dueBefore = DateTime.UtcNow.AddDays(-step.DelayDays),
-                enrolFromUtc = automation.EnrolFromUtc,
-                stopOnUpgrade = automation.StopOnUpgrade,
-                stopWhenUsedUp = automation.StopWhenUsedUp,
-                take,
-            })).ToList();
+                return (await _db.Query<AutomationSubject>(sql, new
+                {
+                    tenantId = a.TenantId, stepId = step.Id, subjectKind, take, nowUtc,
+                    fromProductId = cfg.FromProductId,
+                    enrolFromUtc = a.EnrolFromUtc,
+                    stopOnUpgrade = a.StopOnUpgrade, stopWhenUsedUp = a.StopWhenUsedUp,
+                    offsetDays = step.OffsetDays, sendOn = step.SendOn,
+                })).ToList();
+            }
         }
 
         public async Task<Guid?> RecordSend(MarketingAutomationSend send)
@@ -294,67 +401,95 @@ namespace Services.Repositories
         }
 
         public async Task<(int Backlog, int Last30Days)> EstimateAudience(
-            Guid tenantId, Guid? fromProductId, int delayDays, bool stopOnUpgrade, bool stopWhenUsedUp,
-            DateTime? enrolFromUtc)
+            MarketingAutomation a, MarketingAutomationStep firstStep, DateTime nowUtc, DateTime tenantToday, DateTime? enrolFromUtc)
         {
             // Backlog uses the SAME predicate as the sweep, minus the send-log check (nothing has
             // been sent yet), so the number shown before arming is the number that goes out.
-            var sql = $@"
-                SELECT (
-                    SELECT COUNT(*)::int
-                    FROM season_pass_purchase sp
-                    JOIN season_pass_product pr ON pr.id = sp.product_id
-                    WHERE sp.tenant_id = @tenantId AND {SubjectEligibleExpr}
-                ) AS Backlog,
-                (
-                    SELECT COUNT(*)::int
-                    FROM season_pass_purchase sp
-                    WHERE sp.tenant_id = @tenantId AND sp.status = 'paid'
-                      AND (@fromProductId IS NULL OR sp.product_id = @fromProductId)
-                      AND sp.created_at >= now() - interval '30 days'
-                ) AS Last30Days";
-            var row = (await _db.Query<(int Backlog, int Last30Days)>(sql, new
+            var cfg = AutomationTriggerConfig.For(a);
+            var (due, _) = TimingClauses(a.TriggerKind, firstStep.Anchor);
+            if (FixedDateNotYetDue(firstStep, tenantToday)) due = "FALSE";
+
+            if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
             {
-                tenantId,
-                fromProductId,
-                dueBefore = DateTime.UtcNow.AddDays(-delayDays),
-                enrolFromUtc,
-                stopOnUpgrade,
-                stopWhenUsedUp,
-            })).First();
-            return row;
+                var sql = $@"
+                    SELECT (
+                        SELECT COUNT(*)::int
+                        FROM event_ticket_purchase p
+                        JOIN event_ticket_tier t ON t.id = p.tier_id
+                        JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
+                        WHERE {EventEligible} AND {due}
+                    ) AS Backlog,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM event_ticket_purchase p
+                        JOIN event_ticket_tier t ON t.id = p.tier_id
+                        JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
+                        WHERE p.tenant_id = @tenantId AND p.status IN ('paid', 'redeemed')
+                          AND (@eventId IS NULL OR e.id = @eventId)
+                          AND (@eventTypeId IS NULL OR e.event_type_id = @eventTypeId)
+                          AND p.created_at >= now() - interval '30 days'
+                    ) AS Last30Days";
+                return (await _db.Query<(int Backlog, int Last30Days)>(sql, new
+                {
+                    tenantId = a.TenantId, nowUtc,
+                    eventId = cfg.EventId, eventTypeId = cfg.EventTypeId,
+                    enrolFromUtc,
+                    offsetDays = firstStep.OffsetDays, sendOn = firstStep.SendOn,
+                })).First();
+            }
+            else
+            {
+                var sql = $@"
+                    SELECT (
+                        SELECT COUNT(*)::int
+                        FROM season_pass_purchase sp
+                        JOIN season_pass_product pr ON pr.id = sp.product_id
+                        WHERE {PassEligible} AND {due}
+                    ) AS Backlog,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM season_pass_purchase sp
+                        WHERE sp.tenant_id = @tenantId AND sp.status = 'paid'
+                          AND (@fromProductId IS NULL OR sp.product_id = @fromProductId)
+                          AND sp.created_at >= now() - interval '30 days'
+                    ) AS Last30Days";
+                return (await _db.Query<(int Backlog, int Last30Days)>(sql, new
+                {
+                    tenantId = a.TenantId, nowUtc,
+                    fromProductId = cfg.FromProductId,
+                    enrolFromUtc,
+                    stopOnUpgrade = a.StopOnUpgrade, stopWhenUsedUp = a.StopWhenUsedUp,
+                    offsetDays = firstStep.OffsetDays, sendOn = firstStep.SendOn,
+                })).First();
+            }
         }
 
-        public async Task<AutomationPassSubject?> SampleSubject(Guid tenantId, Guid? fromProductId)
+        public async Task<AutomationSubject?> SampleSubject(MarketingAutomation a)
         {
-            const string sql = @"
-                SELECT sp.id                AS PurchaseId,
-                       sp.tenant_id         AS TenantId,
-                       sp.purchaser_email   AS Email,
-                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sp.holder_first_name, sp.holder_last_name)), ''),
-                                sp.purchaser_name)                AS HolderName,
-                       pr.name              AS ProductName,
-                       sp.created_at        AS PurchasedAtUtc,
-                       sp.valid_to_date     AS ValidToDate,
-                       sp.credits_remaining AS CreditsRemaining,
-                       up.price_cents       AS UpgradePriceCents,
-                       tp.name              AS UpgradeProductName
-                FROM season_pass_purchase sp
-                JOIN season_pass_product pr ON pr.id = sp.product_id
-                LEFT JOIN LATERAL (
-                    SELECT u.price_cents, u.to_product_id
-                    FROM season_pass_upgrade_path u
-                    WHERE u.tenant_id = sp.tenant_id AND u.from_product_id = sp.product_id AND u.is_active
-                    ORDER BY u.price_cents
-                    LIMIT 1
-                ) up ON true
-                LEFT JOIN season_pass_product tp ON tp.id = up.to_product_id
+            var cfg = AutomationTriggerConfig.For(a);
+            if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
+            {
+                var sql = EventSelect.Replace("{SKIP}", "FALSE") + @"
+                WHERE p.tenant_id = @tenantId
+                  AND p.status IN ('paid', 'redeemed')
+                  AND (@eventId IS NULL OR e.id = @eventId)
+                  AND (@eventTypeId IS NULL OR e.event_type_id = @eventTypeId)
+                ORDER BY p.created_at DESC
+                LIMIT 1";
+                return (await _db.Query<AutomationSubject>(sql,
+                    new { tenantId = a.TenantId, eventId = cfg.EventId, eventTypeId = cfg.EventTypeId })).FirstOrDefault();
+            }
+            else
+            {
+                var sql = PassSelect.Replace("{SKIP}", "FALSE") + @"
                 WHERE sp.tenant_id = @tenantId
                   AND sp.status = 'paid'
                   AND (@fromProductId IS NULL OR sp.product_id = @fromProductId)
                 ORDER BY sp.created_at DESC
                 LIMIT 1";
-            return (await _db.Query<AutomationPassSubject>(sql, new { tenantId, fromProductId })).FirstOrDefault();
+                return (await _db.Query<AutomationSubject>(sql,
+                    new { tenantId = a.TenantId, fromProductId = cfg.FromProductId })).FirstOrDefault();
+            }
         }
 
         public async Task<List<MarketingAutomation>> ListByTriggerProduct(Guid tenantId)

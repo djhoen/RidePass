@@ -7,14 +7,21 @@ namespace webapi.Controllers.API.Data.Newsletter
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = string.Empty;
+        /// <summary>One of the registry's kinds: season_pass_purchased, event_ticket_purchased.</summary>
         public string TriggerKind { get; set; } = string.Empty;
+        /// <summary>"Buys a ticket to Spring Camp", "Buys any pass".</summary>
+        public string TriggerLabel { get; set; } = string.Empty;
+        // Trigger target. Pass trigger: FromProductId (null = any). Event trigger: one of EventId / EventTypeId.
         public Guid? FromProductId { get; set; }
         public string? FromProductName { get; set; }
+        public Guid? EventId { get; set; }
+        public Guid? EventTypeId { get; set; }
         public bool IsActive { get; set; }
         public int StepCount { get; set; }
-        /// <summary>Delay on the first step, which is what the list needs to say
-        /// "30 days after purchase" without loading every step.</summary>
+        /// <summary>Delay on the first step when it is purchase-anchored; kept for the upgrades panel.</summary>
         public int? FirstDelayDays { get; set; }
+        /// <summary>"7 days before the event starts", ready for the list.</summary>
+        public string? FirstStepLabel { get; set; }
         public int Sent { get; set; }
         public int Failed { get; set; }
         public int Skipped { get; set; }
@@ -37,7 +44,16 @@ namespace webapi.Controllers.API.Data.Newsletter
     {
         public Guid Id { get; set; }
         public int StepOrder { get; set; }
+        /// <summary>Legacy mirror of OffsetDays for purchase-anchored steps.</summary>
         public int DelayDays { get; set; }
+        /// <summary>purchase | event_start | event_end | pass_expiry | fixed_date</summary>
+        public string Anchor { get; set; } = "purchase";
+        /// <summary>Signed days from the anchor; negative = before.</summary>
+        public int OffsetDays { get; set; }
+        /// <summary>yyyy-MM-dd for a fixed_date step.</summary>
+        public string? SendOn { get; set; }
+        /// <summary>"3 days before the event starts".</summary>
+        public string Label { get; set; } = string.Empty;
         public string Subject { get; set; } = string.Empty;
         public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
@@ -48,8 +64,14 @@ namespace webapi.Controllers.API.Data.Newsletter
         [Required, StringLength(120, MinimumLength = 1)]
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Null means "any pass product".</summary>
+        /// <summary>Defaults to season_pass_purchased for older clients.</summary>
+        public string? TriggerKind { get; set; }
+
+        /// <summary>Pass trigger: null means "any pass product".</summary>
         public Guid? FromProductId { get; set; }
+        /// <summary>Event trigger: exactly one of these.</summary>
+        public Guid? EventId { get; set; }
+        public Guid? EventTypeId { get; set; }
 
         public bool StopOnUpgrade { get; set; } = true;
         public bool StopWhenUsedUp { get; set; } = true;
@@ -65,7 +87,13 @@ namespace webapi.Controllers.API.Data.Newsletter
 
     public class UpsertAutomationStep
     {
+        /// <summary>Defaults to purchase. See AutomationTriggers.Anchors.</summary>
+        public string? Anchor { get; set; }
+        /// <summary>Signed days from the anchor. Older clients send DelayDays instead.</summary>
+        public int? OffsetDays { get; set; }
         [Range(0, 3650)] public int DelayDays { get; set; }
+        /// <summary>yyyy-MM-dd, required for the fixed_date anchor.</summary>
+        public string? SendOn { get; set; }
         [Required, StringLength(200, MinimumLength = 1)] public string Subject { get; set; } = string.Empty;
         [Required, MinLength(1)] public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
@@ -82,7 +110,7 @@ namespace webapi.Controllers.API.Data.Newsletter
         /// is included.</summary>
         public int BacklogCount { get; set; }
         public int BacklogChargeCents { get; set; }
-        /// <summary>Passes sold in the last 30 days, as the ongoing rate.</summary>
+        /// <summary>Matching purchases in the last 30 days, as the ongoing rate.</summary>
         public int Last30DayRate { get; set; }
         public int OngoingChargeCents { get; set; }
     }
@@ -90,7 +118,7 @@ namespace webapi.Controllers.API.Data.Newsletter
     public class ActivateAutomationRequest
     {
         public bool IsActive { get; set; }
-        /// <summary>True (the default) enrols only passes bought from now on, so arming does not
+        /// <summary>True (the default) enrols only purchases from now on, so arming does not
         /// blast the back catalogue.</summary>
         public bool NewPurchasesOnly { get; set; } = true;
     }
@@ -101,10 +129,47 @@ namespace webapi.Controllers.API.Data.Newsletter
         [Required, EmailAddress] public string ToEmail { get; set; } = string.Empty;
     }
 
+    public class TestSendResponse
+    {
+        /// <summary>Merge values came from a real purchase rather than placeholders.</summary>
+        public bool UsedRealSubject { get; set; }
+        /// <summary>The pass or event the sample came from, so "no upgrade price" can be told
+        /// apart from a template bug.</summary>
+        public string? SampleName { get; set; }
+        /// <summary>When this step would actually send for that sample, tenant-local date; null
+        /// when it already would have been skipped (bought after the send time).</summary>
+        public string? WouldSendOn { get; set; }
+        public bool WouldSkip { get; set; }
+    }
+
     public class MergeFieldItem
     {
         public string Token { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
+    }
+
+    /// <summary>Everything the editor needs to offer triggers, targets, anchors, and tokens.</summary>
+    public class AutomationTriggerOptionsResponse
+    {
+        public List<AutomationTriggerOption> Triggers { get; set; } = new();
+        public List<CampaignAudienceEventOptionDto> Events { get; set; } = new();
+        public List<CampaignAudienceNamedOptionDto> EventTypes { get; set; } = new();
+        public List<CampaignAudienceNamedOptionDto> PassProducts { get; set; } = new();
+    }
+
+    public class AutomationTriggerOption
+    {
+        public string Kind { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public List<AutomationAnchorOption> Anchors { get; set; } = new();
+        public List<MergeFieldItem> MergeFields { get; set; } = new();
+    }
+
+    public class AutomationAnchorOption
+    {
+        public string Value { get; set; } = string.Empty;
+        /// <summary>The phrase after "N days before/after": "they buy", "the event starts".</summary>
+        public string Phrase { get; set; } = string.Empty;
     }
 
     /// <summary>

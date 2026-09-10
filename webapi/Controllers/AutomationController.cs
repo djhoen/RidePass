@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Services.Email;
@@ -14,7 +14,7 @@ namespace webapi.Controllers
     /// <summary>
     /// Drip campaigns. Separate from <see cref="CampaignController"/> because a broadcast and an
     /// automation have different lifecycles: one is sent and done, one runs forever.
-    /// Design: docs/drip-campaigns.md.
+    /// Design: docs/drip-campaigns.md and docs/dynamic-campaigns-plan.md.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -23,6 +23,7 @@ namespace webapi.Controllers
     {
         private readonly IMarketingAutomationRepository _automations;
         private readonly ISeasonPassRepository _passes;
+        private readonly ICampaignAudienceRepository _audiences;
         private readonly ISmtpEmailer _emailer;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
@@ -31,6 +32,7 @@ namespace webapi.Controllers
         public AutomationController(
             IMarketingAutomationRepository automations,
             ISeasonPassRepository passes,
+            ICampaignAudienceRepository audiences,
             ISmtpEmailer emailer,
             ITenantContext tenantContext,
             IConfiguration config,
@@ -38,6 +40,7 @@ namespace webapi.Controllers
         {
             _automations = automations;
             _passes = passes;
+            _audiences = audiences;
             _emailer = emailer;
             _tenantContext = tenantContext;
             _config = config;
@@ -50,22 +53,50 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var rows = await _automations.ListForTenant(_tenantContext.TenantId);
             var stats = await _automations.GetStats(_tenantContext.TenantId);
-            var products = await _passes.ListProductsForTenant(_tenantContext.TenantId, activeOnly: false);
 
             var items = new List<AutomationListItem>();
             foreach (var a in rows)
             {
                 var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
-                items.Add(ToListItem(a, steps, stats, products));
+                items.Add(await ToListItem(a, steps, stats));
             }
             return new ApiResponses().OkResult(items);
         }
 
         /// <summary>
-        /// Pass products for the trigger select. Served from here rather than reusing the catalog
-        /// endpoint so a marketing user can build an automation without also holding catalog
-        /// rights. Employee products are excluded: they are staff grants, never an upgrade market.
+        /// Everything the editor needs: the triggers with their anchors and merge fields, plus the
+        /// events, event types, and pass products this tenant can target. Served from here so a
+        /// marketing user can build an automation without catalog rights.
         /// </summary>
+        [HttpGet("TriggerOptions")]
+        public async Task<IActionResult> TriggerOptions()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var o = await _audiences.ListOptions(_tenantContext.TenantId);
+            return new ApiResponses().OkResult(new AutomationTriggerOptionsResponse
+            {
+                Triggers = AutomationTriggers.Kinds.Select(k => new AutomationTriggerOption
+                {
+                    Kind = k,
+                    Label = AutomationTriggers.Label(k),
+                    Anchors = AutomationTriggers.AnchorsFor(k)
+                        .Select(an => new AutomationAnchorOption { Value = an, Phrase = AutomationTriggers.AnchorPhrase(an) })
+                        .ToList(),
+                    MergeFields = AutomationMergeFields.AvailableFor(k)
+                        .Select(x => new MergeFieldItem { Token = x.Token, Description = x.Description })
+                        .ToList(),
+                }).ToList(),
+                Events = o.Events.Select(e => new CampaignAudienceEventOptionDto
+                {
+                    Id = e.Id, Title = e.Title, Status = e.Status, EventTypeName = e.EventTypeName,
+                    StartsAtUtc = DateTime.SpecifyKind(e.StartsAt, DateTimeKind.Utc),
+                }).ToList(),
+                EventTypes = o.EventTypes.Select(t => new CampaignAudienceNamedOptionDto { Id = t.Id, Name = t.Name, IsActive = t.IsActive }).ToList(),
+                PassProducts = o.PassProducts.Select(p => new CampaignAudienceNamedOptionDto { Id = p.Id, Name = p.Name, IsActive = p.IsActive }).ToList(),
+            });
+        }
+
+        /// <summary>Pass products for older clients of the trigger select.</summary>
         [HttpGet("Products")]
         public async Task<IActionResult> Products()
         {
@@ -77,10 +108,15 @@ namespace webapi.Controllers
         }
 
         [HttpGet("MergeFields")]
-        public IActionResult MergeFields() =>
-            new ApiResponses().OkResult(AutomationMergeFields.Available
+        public IActionResult MergeFields([FromQuery] string? triggerKind = null)
+        {
+            var fields = AutomationTriggers.IsKind(triggerKind)
+                ? AutomationMergeFields.AvailableFor(triggerKind!)
+                : AutomationMergeFields.Available;
+            return new ApiResponses().OkResult(fields
                 .Select(x => new MergeFieldItem { Token = x.Token, Description = x.Description })
                 .ToList());
+        }
 
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> Get(Guid id)
@@ -91,19 +127,22 @@ namespace webapi.Controllers
 
             var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
             var stats = await _automations.GetStats(_tenantContext.TenantId);
-            var products = await _passes.ListProductsForTenant(_tenantContext.TenantId, activeOnly: false);
-            var basic = ToListItem(a, steps, stats, products);
+            var basic = await ToListItem(a, steps, stats);
 
             return new ApiResponses().OkResult(new AutomationDetail
             {
                 Id = basic.Id,
                 Name = basic.Name,
                 TriggerKind = basic.TriggerKind,
+                TriggerLabel = basic.TriggerLabel,
                 FromProductId = basic.FromProductId,
                 FromProductName = basic.FromProductName,
+                EventId = basic.EventId,
+                EventTypeId = basic.EventTypeId,
                 IsActive = basic.IsActive,
                 StepCount = basic.StepCount,
                 FirstDelayDays = basic.FirstDelayDays,
+                FirstStepLabel = basic.FirstStepLabel,
                 Sent = basic.Sent,
                 Failed = basic.Failed,
                 Skipped = basic.Skipped,
@@ -114,15 +153,7 @@ namespace webapi.Controllers
                 StopWhenUsedUp = a.StopWhenUsedUp,
                 SendWindowStart = FormatTime(a.SendWindowStart),
                 SendWindowEnd = FormatTime(a.SendWindowEnd),
-                Steps = steps.Select(s => new AutomationStepItem
-                {
-                    Id = s.Id,
-                    StepOrder = s.StepOrder,
-                    DelayDays = s.DelayDays,
-                    Subject = s.Subject,
-                    BodyHtml = s.BodyHtml,
-                    BodyText = s.BodyText,
-                }).ToList(),
+                Steps = steps.Select(ToStepItem).ToList(),
             });
         }
 
@@ -130,22 +161,22 @@ namespace webapi.Controllers
         public async Task<IActionResult> Create([FromBody] UpsertAutomationRequest request)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var invalid = await Validate(request);
-            if (invalid is not null) return invalid;
+            var parsed = await ValidateAndParse(request);
+            if (parsed.Error is not null) return new ApiResponses().BadRequestResult(parsed.Error);
 
             var id = await _automations.Create(new MarketingAutomation
             {
                 TenantId = _tenantContext.TenantId,
                 Name = request.Name.Trim(),
-                TriggerKind = "season_pass_purchased",
-                TriggerConfig = TriggerConfigJson(request.FromProductId),
+                TriggerKind = parsed.Kind,
+                TriggerConfig = parsed.Config.ToJson(),
                 StopOnUpgrade = request.StopOnUpgrade,
                 StopWhenUsedUp = request.StopWhenUsedUp,
                 SendWindowStart = ParseTime(request.SendWindowStart),
                 SendWindowEnd = ParseTime(request.SendWindowEnd),
                 CreatedByUserId = CurrentUserId(),
             });
-            await _automations.ReplaceSteps(id, _tenantContext.TenantId, ToSteps(request));
+            await _automations.ReplaceSteps(id, _tenantContext.TenantId, parsed.Steps);
             return new ApiResponses().OkResult(new { id });
         }
 
@@ -155,8 +186,8 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var existing = await _automations.GetById(id, _tenantContext.TenantId);
             if (existing is null) return new ApiResponses().NotFoundResult("Automation not found.");
-            var invalid = await Validate(request);
-            if (invalid is not null) return invalid;
+            var parsed = await ValidateAndParse(request);
+            if (parsed.Error is not null) return new ApiResponses().BadRequestResult(parsed.Error);
 
             // Editing an ARMED automation's steps would delete their send rows (FK cascade) and
             // re-send everyone. Make them disarm first rather than silently re-mailing the list.
@@ -168,13 +199,14 @@ namespace webapi.Controllers
             }
 
             existing.Name = request.Name.Trim();
-            existing.TriggerConfig = TriggerConfigJson(request.FromProductId);
+            existing.TriggerKind = parsed.Kind;
+            existing.TriggerConfig = parsed.Config.ToJson();
             existing.StopOnUpgrade = request.StopOnUpgrade;
             existing.StopWhenUsedUp = request.StopWhenUsedUp;
             existing.SendWindowStart = ParseTime(request.SendWindowStart);
             existing.SendWindowEnd = ParseTime(request.SendWindowEnd);
             await _automations.Update(existing);
-            await _automations.ReplaceSteps(id, _tenantContext.TenantId, ToSteps(request));
+            await _automations.ReplaceSteps(id, _tenantContext.TenantId, parsed.Steps);
             return new ApiResponses().OkResult();
         }
 
@@ -200,14 +232,13 @@ namespace webapi.Controllers
             if (steps.Count == 0) return new ApiResponses().BadRequestResult("This automation has no emails yet.");
 
             // Estimated against the FIRST step: it is the one whose backlog lands immediately.
-            var delayDays = steps[0].DelayDays;
+            var now = DateTime.UtcNow;
             var (backlog, last30) = await _automations.EstimateAudience(
-                _tenantContext.TenantId, FromProductId(a), delayDays,
-                a.StopOnUpgrade, a.StopWhenUsedUp,
+                a, steps[0], now, TenantToday(now),
                 // Mirrors what SetActive would stamp, so the estimate matches the outcome.
-                newPurchasesOnly ? DateTime.UtcNow : a.EnrolFromUtc);
+                newPurchasesOnly ? now : a.EnrolFromUtc);
 
-            var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var monthToDate = await _automations.CountSentEmailsInMonth(_tenantContext.TenantId, monthStart);
 
             return new ApiResponses().OkResult(new AutomationEstimate
@@ -250,9 +281,9 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// Render one step with a real pass's merge values and send it to the caller. Nothing about
-        /// a drip is verifiable by reading the editor, and the first live send is a bad time to
-        /// find out a merge field is wrong.
+        /// Render one step with a real purchase's merge values and send it to the caller. Nothing
+        /// about a drip is verifiable by reading the editor, and the first live send is a bad time
+        /// to find out a merge field is wrong or an email would land after the camp.
         /// </summary>
         [HttpPost("{id:guid}/TestSend")]
         public async Task<IActionResult> TestSend(Guid id, [FromBody] TestSendRequest request)
@@ -273,16 +304,26 @@ namespace webapi.Controllers
 
             var baseUrl = TenantBaseUrl();
             var trackName = _tenantContext.Tenant?.DisplayName ?? "the track";
-            var sample = await _automations.SampleSubject(_tenantContext.TenantId, FromProductId(a));
+            var timezone = _tenantContext.Tenant?.Timezone;
+            var sample = await _automations.SampleSubject(a);
             var values = sample is null
-                ? AutomationMergeFields.Sample(trackName, baseUrl)
-                : AutomationMergeFields.For(sample, trackName, baseUrl);
+                ? AutomationMergeFields.Sample(a.TriggerKind, trackName, baseUrl)
+                : AutomationMergeFields.For(sample, trackName, baseUrl, timezone);
+
+            // Show the admin WHEN this would go, not just what it says: a wrong anchor sends
+            // "what to bring" after the camp, and only the date makes that visible.
+            var (wouldSendOn, wouldSkip) = sample is null ? (null, false) : WhenWouldSend(step, sample, timezone);
+            var timingNote = sample is null
+                ? ""
+                : wouldSkip
+                    ? "For this rider the email would be SKIPPED: they bought after its send time."
+                    : $"For this rider it would send on {wouldSendOn}.";
 
             var subject = "[TEST] " + AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
             var html = AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true)
                 + $@"<hr style=""border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px"">
 <p style=""font-size:12px;color:#9ca3af"">Test send from {System.Net.WebUtility.HtmlEncode(trackName)}.
-Merge fields were filled in from {(sample is null ? "sample data (no pass sold yet)" : "a real pass")}.</p>";
+Merge fields were filled in from {(sample is null ? "sample data (nothing sold yet)" : "a real purchase")}. {System.Net.WebUtility.HtmlEncode(timingNote)}</p>";
 
             var ok = await _emailer.Send(request.ToEmail, subject, html, null,
                 TenantEmailIdentity.For(_tenantContext.Tenant));
@@ -292,12 +333,12 @@ Merge fields were filled in from {(sample is null ? "sample data (no pass sold y
                 return new ApiResponses().BadRequestResult(
                     "The test email could not be sent. The email service rejected it; check the address and try again.");
             }
-            return new ApiResponses().OkResult(new
+            return new ApiResponses().OkResult(new TestSendResponse
             {
-                usedRealPass = sample is not null,
-                // Named so the admin can tell whether "no upgrade price" is a template bug or
-                // just a pass with no upgrade configured.
-                sampleProduct = sample?.ProductName,
+                UsedRealSubject = sample is not null,
+                SampleName = sample?.ProductName,
+                WouldSendOn = wouldSendOn,
+                WouldSkip = wouldSkip,
             });
         }
 
@@ -320,11 +361,11 @@ Merge fields were filled in from {(sample is null ? "sample data (no pass sold y
                 stats.TryGetValue(a.Id, out var st);
                 items.Add(new UpgradeAutomationStatus
                 {
-                    FromProductId = FromProductId(a),
+                    FromProductId = AutomationTriggerConfig.For(a).FromProductId,
                     AutomationId = a.Id,
                     Name = a.Name,
                     IsActive = a.IsActive,
-                    FirstDelayDays = steps.Count > 0 ? steps[0].DelayDays : null,
+                    FirstDelayDays = FirstDelayDays(steps),
                     Sent = st?.Sent ?? 0,
                     Conversions = st?.Conversions ?? 0,
                 });
@@ -334,68 +375,145 @@ Merge fields were filled in from {(sample is null ? "sample data (no pass sold y
 
         // ── Helpers ──────────────────────────────────────────────────────────────
 
-        private async Task<IActionResult?> Validate(UpsertAutomationRequest request)
+        /// <summary>
+        /// Everything that can be wrong with a request, in the order a tenant would fix it. Steps
+        /// come back normalized (anchor defaulted, offsets signed, fixed dates parsed).
+        /// </summary>
+        private async Task<(string Kind, AutomationTriggerConfig Config, List<MarketingAutomationStep> Steps, string? Error)> ValidateAndParse(
+            UpsertAutomationRequest request)
         {
+            var kind = string.IsNullOrWhiteSpace(request.TriggerKind) ? AutomationTriggers.SeasonPassPurchased : request.TriggerKind.Trim();
+            var config = new AutomationTriggerConfig();
+            var steps = new List<MarketingAutomationStep>();
+
+            if (!AutomationTriggers.IsKind(kind))
+            {
+                return (kind, config, steps, "Pick what starts this automation: a pass sale or an event ticket sale.");
+            }
             if (request.Steps.Count == 0)
             {
-                return new ApiResponses().BadRequestResult("An automation needs at least one email.");
+                return (kind, config, steps, "An automation needs at least one email.");
             }
+
+            // Trigger target, checked against THIS tenant so a foreign id fails plainly.
+            if (kind == AutomationTriggers.SeasonPassPurchased)
+            {
+                if (request.FromProductId is Guid pid)
+                {
+                    var product = await _passes.GetProduct(pid, _tenantContext.TenantId);
+                    if (product is null) return (kind, config, steps, "That pass product wasn't found.");
+                    config.FromProductId = pid;
+                }
+            }
+            else
+            {
+                if ((request.EventId is null) == (request.EventTypeId is null))
+                {
+                    return (kind, config, steps, "Pick either one event or one event type for this automation.");
+                }
+                if (request.EventId is Guid eid)
+                {
+                    var name = await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.Event,
+                        new CampaignAudienceConfig { EventId = eid });
+                    if (name is null) return (kind, config, steps, "That event wasn't found.");
+                    config.EventId = eid;
+                }
+                else
+                {
+                    var name = await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.EventType,
+                        new CampaignAudienceConfig { EventTypeId = request.EventTypeId });
+                    if (name is null) return (kind, config, steps, "That event type wasn't found.");
+                    config.EventTypeId = request.EventTypeId;
+                }
+            }
+
             // Half a window is ambiguous: the sweep would have to guess which side of the day it
             // meant, so reject it rather than pick.
             if (string.IsNullOrWhiteSpace(request.SendWindowStart) != string.IsNullOrWhiteSpace(request.SendWindowEnd))
             {
-                return new ApiResponses().BadRequestResult(
-                    "A send window needs both a start and an end time, or neither.");
+                return (kind, config, steps, "A send window needs both a start and an end time, or neither.");
             }
             if (ParseTime(request.SendWindowStart) is null != string.IsNullOrWhiteSpace(request.SendWindowStart))
             {
-                return new ApiResponses().BadRequestResult("The send window times must look like 09:00.");
+                return (kind, config, steps, "The send window times must look like 09:00.");
             }
-            // Duplicate delays on the same automation mean two emails land the same day, which is
-            // never what was meant and reads as a bug to the recipient.
-            var delays = request.Steps.Select(s => s.DelayDays).ToList();
-            if (delays.Distinct().Count() != delays.Count)
+
+            var seen = new HashSet<string>();
+            var n = 0;
+            foreach (var s in request.Steps)
             {
-                return new ApiResponses().BadRequestResult(
-                    "Two emails are set to send the same number of days after purchase. Give each one its own delay.");
+                n++;
+                var anchor = string.IsNullOrWhiteSpace(s.Anchor) ? AutomationTriggers.Anchors.Purchase : s.Anchor.Trim();
+                var offset = s.OffsetDays ?? s.DelayDays;
+                DateTime? sendOn = null;
+                if (anchor == AutomationTriggers.Anchors.FixedDate)
+                {
+                    if (!DateTime.TryParseExact(s.SendOn, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+                    {
+                        return (kind, config, steps, $"Email {n}: pick the date it should send on.");
+                    }
+                    sendOn = d.Date;
+                    offset = 0;
+                }
+                var problem = AutomationTriggers.ValidateStep(kind, anchor, offset, sendOn);
+                if (problem is not null) return (kind, config, steps, $"Email {n}: {problem}");
+
+                // Two emails at the same moment read as a bug to the recipient.
+                var key = $"{anchor}|{offset}|{sendOn:yyyy-MM-dd}";
+                if (!seen.Add(key))
+                {
+                    return (kind, config, steps, $"Email {n} is set to send at the same time as an earlier one. Give each email its own timing.");
+                }
+
+                steps.Add(new MarketingAutomationStep
+                {
+                    Anchor = anchor,
+                    OffsetDays = offset,
+                    DelayDays = anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, offset) : 0,
+                    SendOn = sendOn,
+                    Subject = s.Subject.Trim(),
+                    BodyHtml = s.BodyHtml,
+                    BodyText = s.BodyText,
+                });
             }
-            if (request.FromProductId is Guid pid)
-            {
-                var product = await _passes.GetProduct(pid, _tenantContext.TenantId);
-                if (product is null) return new ApiResponses().BadRequestResult("That pass product wasn't found.");
-            }
-            return null;
+
+            return (kind, config, steps, null);
         }
 
-        private static IEnumerable<MarketingAutomationStep> ToSteps(UpsertAutomationRequest request) =>
-            // Ordered by delay rather than by the order they were typed, so "step 2" always means
-            // the one that sends second.
-            request.Steps.OrderBy(s => s.DelayDays).Select(s => new MarketingAutomationStep
-            {
-                DelayDays = s.DelayDays,
-                Subject = s.Subject.Trim(),
-                BodyHtml = s.BodyHtml,
-                BodyText = s.BodyText,
-            });
-
-        private AutomationListItem ToListItem(
-            MarketingAutomation a,
-            List<MarketingAutomationStep> steps,
-            Dictionary<Guid, MarketingAutomationStats> stats,
-            List<Services.Repositories.Data.PaymentData.SeasonPassProduct> products)
+        private async Task<AutomationListItem> ToListItem(
+            MarketingAutomation a, List<MarketingAutomationStep> steps, Dictionary<Guid, MarketingAutomationStats> stats)
         {
             stats.TryGetValue(a.Id, out var st);
-            var fromId = FromProductId(a);
+            var cfg = AutomationTriggerConfig.For(a);
+            string? targetName = null;
+            if (a.TriggerKind == AutomationTriggers.EventTicketPurchased)
+            {
+                targetName = cfg.EventId is not null
+                    ? await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.Event, new CampaignAudienceConfig { EventId = cfg.EventId })
+                    : cfg.EventTypeId is not null
+                        ? "any " + await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.EventType, new CampaignAudienceConfig { EventTypeId = cfg.EventTypeId })
+                        : null;
+            }
+            else if (cfg.FromProductId is not null)
+            {
+                targetName = await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.PassProduct, new CampaignAudienceConfig { PassProductId = cfg.FromProductId });
+            }
+
+            var first = steps.FirstOrDefault();
             return new AutomationListItem
             {
                 Id = a.Id,
                 Name = a.Name,
                 TriggerKind = a.TriggerKind,
-                FromProductId = fromId,
-                FromProductName = fromId is Guid f ? products.FirstOrDefault(p => p.Id == f)?.Name : null,
+                TriggerLabel = AutomationTriggers.DescribeTrigger(a.TriggerKind, targetName),
+                FromProductId = cfg.FromProductId,
+                FromProductName = a.TriggerKind == AutomationTriggers.SeasonPassPurchased ? targetName : null,
+                EventId = cfg.EventId,
+                EventTypeId = cfg.EventTypeId,
                 IsActive = a.IsActive,
                 StepCount = steps.Count,
-                FirstDelayDays = steps.Count > 0 ? steps[0].DelayDays : null,
+                FirstDelayDays = FirstDelayDays(steps),
+                FirstStepLabel = first is null ? null : AutomationTriggers.DescribeStep(first.Anchor, first.OffsetDays, first.SendOn),
                 Sent = st?.Sent ?? 0,
                 Failed = st?.Failed ?? 0,
                 Skipped = st?.Skipped ?? 0,
@@ -405,27 +523,47 @@ Merge fields were filled in from {(sample is null ? "sample data (no pass sold y
             };
         }
 
-        private static string TriggerConfigJson(Guid? fromProductId) =>
-            JsonSerializer.Serialize(new { fromProductId });
-
-        /// <summary>Reads the trigger's product filter out of the jsonb blob. Null means
-        /// "any pass product", which is also what a malformed blob degrades to.</summary>
-        internal static Guid? FromProductId(MarketingAutomation a)
+        private static AutomationStepItem ToStepItem(MarketingAutomationStep s) => new()
         {
-            if (string.IsNullOrWhiteSpace(a.TriggerConfig)) return null;
-            try
-            {
-                using var doc = JsonDocument.Parse(a.TriggerConfig);
-                if (doc.RootElement.TryGetProperty("fromProductId", out var el)
-                    && el.ValueKind == JsonValueKind.String
-                    && Guid.TryParse(el.GetString(), out var id))
-                {
-                    return id;
-                }
-            }
-            catch (JsonException) { /* treated as "any product" */ }
-            return null;
+            Id = s.Id,
+            StepOrder = s.StepOrder,
+            DelayDays = s.DelayDays,
+            Anchor = s.Anchor,
+            OffsetDays = s.OffsetDays,
+            SendOn = s.SendOn?.ToString("yyyy-MM-dd"),
+            Label = AutomationTriggers.DescribeStep(s.Anchor, s.OffsetDays, s.SendOn),
+            Subject = s.Subject,
+            BodyHtml = s.BodyHtml,
+            BodyText = s.BodyText,
+        };
+
+        private static int? FirstDelayDays(List<MarketingAutomationStep> steps)
+        {
+            var first = steps.FirstOrDefault();
+            return first is null ? null : first.Anchor == AutomationTriggers.Anchors.Purchase ? first.OffsetDays : null;
         }
+
+        /// <summary>Tenant-local calendar date the step would send for a subject, or a skip.</summary>
+        private static (string? WouldSendOn, bool WouldSkip) WhenWouldSend(MarketingAutomationStep step, AutomationSubject s, string? timezone)
+        {
+            DateTime? anchorUtc = step.Anchor switch
+            {
+                AutomationTriggers.Anchors.Purchase => s.PurchasedAtUtc,
+                AutomationTriggers.Anchors.EventStart => s.EventStartsAt,
+                AutomationTriggers.Anchors.EventEnd => s.EventEndsAt,
+                AutomationTriggers.Anchors.PassExpiry => s.ValidToDate,
+                _ => null,
+            };
+            DateTime? whenUtc = step.Anchor == AutomationTriggers.Anchors.FixedDate
+                ? step.SendOn
+                : anchorUtc?.AddDays(step.OffsetDays);
+            if (whenUtc is null) return (null, false);
+            var skip = step.Anchor != AutomationTriggers.Anchors.Purchase && whenUtc.Value < s.PurchasedAtUtc;
+            var local = step.Anchor == AutomationTriggers.Anchors.FixedDate ? whenUtc.Value : SendWindow.ToLocal(whenUtc.Value, timezone);
+            return (local.ToString("MMMM d, yyyy"), skip);
+        }
+
+        private DateTime TenantToday(DateTime nowUtc) => SendWindow.ToLocal(nowUtc, _tenantContext.Tenant?.Timezone).Date;
 
         private static TimeSpan? ParseTime(string? hhmm) =>
             TimeSpan.TryParse(hhmm, out var t) ? t : null;

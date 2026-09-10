@@ -19,5 +19,9 @@ namespace Services.Repositories.Interfaces
         /// does not exist in this tenant, which the API treats as a validation failure.
         /// </summary>
         Task<string?> DescribeAudience(Guid tenantId, string kind, CampaignAudienceConfig config);
+
+        /// <summary>Just the target's name ("Spring Camp", "Lift Day", "Season Pass"), or null when
+        /// it does not exist in this tenant. Used for automation trigger labels.</summary>
+        Task<string?> TargetName(Guid tenantId, string kind, CampaignAudienceConfig config);
     }
 }

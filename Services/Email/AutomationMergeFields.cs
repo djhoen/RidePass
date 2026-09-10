@@ -1,4 +1,5 @@
 using System.Net;
+using Services.Helpers;
 using Services.Repositories.Data.NewsletterData;
 
 namespace Services.Email
@@ -14,58 +15,116 @@ namespace Services.Email
     /// </summary>
     public static class AutomationMergeFields
     {
-        /// <summary>What the editor lists, in the order it lists them.</summary>
-        public static readonly (string Token, string Description)[] Available =
+        private static readonly (string Token, string Description)[] Common =
         {
-            ("first_name",        "The rider's first name (\"there\" if unknown)"),
-            ("holder_name",       "The rider's full name"),
+            ("first_name", "The rider's first name (\"there\" if unknown)"),
+            ("holder_name", "The rider's full name"),
+            ("track_name",  "Your track's name"),
+        };
+
+        private static readonly (string Token, string Description)[] Pass =
+        {
             ("pass_name",         "The pass they hold, e.g. \"Season Pass\""),
             ("expires_on",        "The date their pass runs out"),
             ("credits_remaining", "Rides left, for a credit pack (empty for unlimited passes)"),
             ("upgrade_name",      "The pass they can move up to"),
             ("upgrade_price",     "What the upgrade costs, e.g. \"$125.00\""),
             ("upgrade_link",      "A link straight to their upgrade page"),
-            ("track_name",        "Your track's name"),
+        };
+
+        private static readonly (string Token, string Description)[] Event =
+        {
+            ("event_name",       "The event they bought a ticket to"),
+            ("event_date",       "The day it starts, e.g. \"Saturday, June 14\""),
+            ("event_start_time", "The start time in your track's timezone (empty for all-day events)"),
+            ("event_end_date",   "The day it ends"),
+            ("event_location",   "The location on the event, if one is set"),
+            ("ticket_tier",      "The ticket they bought, e.g. \"Rider\""),
+            ("event_link",       "A link to the event page"),
+        };
+
+        /// <summary>Every token, for the legacy MergeFields endpoint.</summary>
+        public static readonly (string Token, string Description)[] Available =
+            Common.Concat(Pass).Concat(Event).ToArray();
+
+        /// <summary>The tokens a trigger can fill, in the order the editor lists them.</summary>
+        public static (string Token, string Description)[] AvailableFor(string triggerKind) => triggerKind switch
+        {
+            AutomationTriggers.EventTicketPurchased => Common.Concat(Event).ToArray(),
+            _ => Common.Concat(Pass).ToArray(),
         };
 
         /// <summary>
-        /// Build the token values for one pass. <paramref name="baseUrl"/> is the tenant's site
-        /// root, e.g. https://motoland.ridepass.io.
+        /// Build the token values for one subject. <paramref name="baseUrl"/> is the tenant's site
+        /// root, e.g. https://motoland.ridepass.io; <paramref name="timezone"/> formats event times.
         /// </summary>
-        public static Dictionary<string, string> For(AutomationPassSubject s, string trackName, string baseUrl)
+        public static Dictionary<string, string> For(AutomationSubject s, string trackName, string baseUrl, string? timezone)
         {
             var first = (s.HolderName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var v = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["first_name"] = string.IsNullOrWhiteSpace(first) ? "there" : first,
                 ["holder_name"] = s.HolderName ?? "",
-                ["pass_name"] = s.ProductName,
-                ["expires_on"] = s.ValidToDate.ToString("MMMM d, yyyy"),
-                // Empty, not "0" and not "unlimited": an unlimited pass has no credit count, and
-                // rendering a number there would be a lie in an email the rider acts on.
-                ["credits_remaining"] = s.CreditsRemaining?.ToString() ?? "",
-                ["upgrade_name"] = s.UpgradeProductName ?? "",
-                // Empty rather than "$0.00" when no upgrade is configured; "$0.00" reads as free.
-                ["upgrade_price"] = s.UpgradePriceCents is int c ? $"${c / 100m:0.00}" : "",
-                ["upgrade_link"] = $"{baseUrl.TrimEnd('/')}/User/PassUpgrade/{s.PurchaseId}",
                 ["track_name"] = trackName,
             };
+            var root = baseUrl.TrimEnd('/');
+
+            if (s.SubjectKind == "event_ticket_purchase")
+            {
+                var start = s.EventStartsAt.HasValue ? SendWindow.ToLocal(s.EventStartsAt.Value, timezone) : (DateTime?)null;
+                var end = s.EventEndsAt.HasValue ? SendWindow.ToLocal(s.EventEndsAt.Value, timezone) : (DateTime?)null;
+                v["event_name"] = s.ProductName;
+                v["event_date"] = start?.ToString("dddd, MMMM d") ?? "";
+                v["event_start_time"] = s.EventAllDay || start is null ? "" : start.Value.ToString("h:mm tt");
+                v["event_end_date"] = end?.ToString("dddd, MMMM d") ?? "";
+                v["event_location"] = s.EventLocation ?? "";
+                v["ticket_tier"] = s.TicketTierName ?? "";
+                v["event_link"] = s.EventId is Guid eid ? $"{root}/Events/{eid}" : $"{root}/Events";
+                return v;
+            }
+
+            v["pass_name"] = s.ProductName;
+            v["expires_on"] = s.ValidToDate?.ToString("MMMM d, yyyy") ?? "";
+            // Empty, not "0" and not "unlimited": an unlimited pass has no credit count, and
+            // rendering a number there would be a lie in an email the rider acts on.
+            v["credits_remaining"] = s.CreditsRemaining?.ToString() ?? "";
+            v["upgrade_name"] = s.UpgradeProductName ?? "";
+            // Empty rather than "$0.00" when no upgrade is configured; "$0.00" reads as free.
+            v["upgrade_price"] = s.UpgradePriceCents is int c ? $"${c / 100m:0.00}" : "";
+            v["upgrade_link"] = $"{root}/User/PassUpgrade/{s.SubjectId}";
+            return v;
         }
 
-        /// <summary>Placeholder values for a test send when the tenant has no eligible pass yet.</summary>
-        public static Dictionary<string, string> Sample(string trackName, string baseUrl) =>
-            new(StringComparer.OrdinalIgnoreCase)
+        /// <summary>Placeholder values for a test send when the tenant has no eligible subject yet.</summary>
+        public static Dictionary<string, string> Sample(string triggerKind, string trackName, string baseUrl)
+        {
+            var root = baseUrl.TrimEnd('/');
+            var v = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["first_name"] = "Alex",
                 ["holder_name"] = "Alex Rivera",
-                ["pass_name"] = "Season Pass",
-                ["expires_on"] = DateTime.UtcNow.AddMonths(6).ToString("MMMM d, yyyy"),
-                ["credits_remaining"] = "3",
-                ["upgrade_name"] = "Season Pass Plus",
-                ["upgrade_price"] = "$125.00",
-                ["upgrade_link"] = $"{baseUrl.TrimEnd('/')}/User/MyPasses",
                 ["track_name"] = trackName,
             };
+            if (triggerKind == AutomationTriggers.EventTicketPurchased)
+            {
+                var start = DateTime.UtcNow.AddDays(14);
+                v["event_name"] = "Spring Skills Camp";
+                v["event_date"] = start.ToString("dddd, MMMM d");
+                v["event_start_time"] = "9:00 AM";
+                v["event_end_date"] = start.AddDays(2).ToString("dddd, MMMM d");
+                v["event_location"] = "Main lodge";
+                v["ticket_tier"] = "Rider";
+                v["event_link"] = $"{root}/Events";
+                return v;
+            }
+            v["pass_name"] = "Season Pass";
+            v["expires_on"] = DateTime.UtcNow.AddMonths(6).ToString("MMMM d, yyyy");
+            v["credits_remaining"] = "3";
+            v["upgrade_name"] = "Season Pass Plus";
+            v["upgrade_price"] = "$125.00";
+            v["upgrade_link"] = $"{root}/User/MyPasses";
+            return v;
+        }
 
         /// <summary>
         /// Replace every <c>{{token}}</c>. <paramref name="htmlEncode"/> for bodies that are HTML

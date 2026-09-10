@@ -10,9 +10,11 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public string Name { get; set; } = null!;
+        /// <summary>One of Services.Email.AutomationTriggers.Kinds.</summary>
         public string TriggerKind { get; set; } = "season_pass_purchased";
-        /// <summary>Raw jsonb, e.g. {"fromProductId":"..."}. Parsed by the trigger that owns it.</summary>
+        /// <summary>Raw jsonb; parsed by <c>AutomationTriggerConfig</c>.</summary>
         public string TriggerConfig { get; set; } = "{}";
+        // Pass-trigger exit conditions. Ignored by other triggers.
         public bool StopOnUpgrade { get; set; } = true;
         public bool StopWhenUsedUp { get; set; } = true;
         public TimeSpan? SendWindowStart { get; set; }
@@ -30,8 +32,14 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid Id { get; set; }
         public Guid AutomationId { get; set; }
         public int StepOrder { get; set; }
-        /// <summary>Days after the TRIGGER, not after the previous step.</summary>
+        /// <summary>Legacy: days after purchase. Kept equal to OffsetDays for purchase-anchored steps.</summary>
         public int DelayDays { get; set; }
+        /// <summary>What the wait is measured from: one of AutomationTriggers.Anchors.</summary>
+        public string Anchor { get; set; } = "purchase";
+        /// <summary>Signed days from the anchor; negative means before. Unused for fixed_date.</summary>
+        public int OffsetDays { get; set; }
+        /// <summary>The calendar date for a fixed_date step (tenant-local day).</summary>
+        public DateTime? SendOn { get; set; }
         public string Subject { get; set; } = null!;
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
@@ -65,29 +73,50 @@ namespace Services.Repositories.Data.NewsletterData
         public int Failed { get; set; }
         public int Skipped { get; set; }
         /// <summary>
-        /// Emailed passes that were subsequently upgraded. The number that justifies the spend,
-        /// and the reason the send log stores the purchase id rather than just an email address.
+        /// Emailed passes that were subsequently upgraded. Pass trigger only; the number that
+        /// justifies the spend, and the reason the send log stores the purchase id.
         /// </summary>
         public int Conversions { get; set; }
     }
 
     /// <summary>
-    /// A pass that a 'season_pass_purchased' automation step is due to email. Carries everything
-    /// the merge fields and the send need, so the sweep does not re-query per rider.
+    /// A purchase an automation step is due to email: a season pass or an event ticket. Carries
+    /// everything the merge fields and the send need, so the sweep does not re-query per rider.
+    /// Fields that do not apply to the subject's kind stay null.
     /// </summary>
-    public class AutomationPassSubject
+    public class AutomationSubject
     {
-        public Guid PurchaseId { get; set; }
+        /// <summary>'season_pass_purchase' or 'event_ticket_purchase' (the send log's subject_kind).</summary>
+        public string SubjectKind { get; set; } = null!;
+        public Guid SubjectId { get; set; }
         public Guid TenantId { get; set; }
         public string Email { get; set; } = null!;
         public string? HolderName { get; set; }
+        /// <summary>The pass product name, or the event title.</summary>
         public string ProductName { get; set; } = null!;
         public DateTime PurchasedAtUtc { get; set; }
-        public DateTime ValidToDate { get; set; }
+
+        // Pass subjects
+        public DateTime? ValidToDate { get; set; }
         public int? CreditsRemaining { get; set; }
         /// <summary>Cheapest live upgrade off this pass, when one exists. Null renders the
         /// price merge field empty rather than "$0.00", which would read as a free upgrade.</summary>
         public int? UpgradePriceCents { get; set; }
         public string? UpgradeProductName { get; set; }
+
+        // Event subjects
+        public Guid? EventId { get; set; }
+        public DateTime? EventStartsAt { get; set; }
+        public DateTime? EventEndsAt { get; set; }
+        public bool EventAllDay { get; set; }
+        public string? EventLocation { get; set; }
+        public string? TicketTierName { get; set; }
+
+        /// <summary>
+        /// True when this step's send time had already passed when the rider bought (a camp
+        /// ticket bought the day before does not get the "two weeks out" email). The sweep records
+        /// a skip instead of sending. Decided 2026-09-10.
+        /// </summary>
+        public bool DueBeforePurchase { get; set; }
     }
 }
