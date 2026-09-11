@@ -86,7 +86,7 @@
                     </template>
                 </div>
                 <v-spacer />
-                <v-btn size="small" variant="tonal" prepend-icon="mdi-robot-outline" to="/Admin/Automations">
+                <v-btn size="small" variant="tonal" prepend-icon="mdi-robot-outline" to="/Admin/Email/Automations">
                     {{ automations.length ? 'Review offer emails' : 'Set up an offer email' }}
                 </v-btn>
             </div>

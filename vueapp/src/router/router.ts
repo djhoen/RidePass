@@ -622,19 +622,31 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
     },
     {
-        path: '/Admin/Campaigns',
-        name: 'AdminCampaigns',
-        component: () => import('../views/Admin/Campaigns.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+        // One Email page with two tabs: Campaigns (one send, one list, one date) and Automations
+        // (a rule that keeps sending). Separate views because a broadcast is sent and done while
+        // an automation runs forever; one page because the choice is explained where it is made.
+        path: '/Admin/Email',
+        component: () => import('../views/Admin/Email.vue'),
+        redirect: '/Admin/Email/Campaigns',
+        meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true },
+        children: [
+            {
+                path: 'Campaigns',
+                name: 'AdminCampaigns',
+                component: () => import('../views/Admin/Campaigns.vue'),
+                meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+            },
+            {
+                path: 'Automations',
+                name: 'AdminAutomations',
+                component: () => import('../views/Admin/Automations.vue'),
+                meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+            },
+        ]
     },
-    {
-        // Drip campaigns. Separate from Campaigns because a broadcast is sent and done while an
-        // automation runs forever.
-        path: '/Admin/Automations',
-        name: 'AdminAutomations',
-        component: () => import('../views/Admin/Automations.vue'),
-        meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
-    },
+    // The pre-merge URLs, kept for bookmarks and in-app links.
+    { path: '/Admin/Campaigns', redirect: '/Admin/Email/Campaigns' },
+    { path: '/Admin/Automations', redirect: '/Admin/Email/Automations' },
     {
         path: '/Admin/Blog',
         name: 'AdminBlog',

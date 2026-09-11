@@ -78,6 +78,7 @@ export interface BrandingState {
     emailSendingDomain: string
     platformFromAddress: string | null
     refundPolicyHtml: string | null
+    marketingEmailFooterHtml: string | null
     addressLine: string | null
     city: string | null
     region: string | null
@@ -213,6 +214,7 @@ const defaults: BrandingState = {
     emailSendingDomain: '',
     platformFromAddress: null,
     refundPolicyHtml: null,
+    marketingEmailFooterHtml: null,
     addressLine: null,
     city: null,
     region: null,
@@ -384,6 +386,7 @@ export async function loadBranding(): Promise<void> {
         branding.socialTiktokUrl = data.socialTiktokUrl ?? null
         branding.socialYoutubeUrl = data.socialYoutubeUrl ?? null
         branding.refundPolicyHtml = data.refundPolicyHtml ?? null
+        branding.marketingEmailFooterHtml = data.marketingEmailFooterHtml ?? null
         branding.addressLine = data.addressLine ?? null
         branding.city = data.city ?? null
         branding.region = data.region ?? null

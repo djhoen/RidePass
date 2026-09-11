@@ -1,7 +1,7 @@
 <template>
     <v-container>
         <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Email Campaigns</h1>
+            <span class="text-body-2 text-medium-emphasis">One email to a list, sent now or on a date you pick.</span>
             <v-chip v-if="activeSubscriberCount !== null" size="small" color="success" variant="tonal">
                 {{ activeSubscriberCount }} active subscribers
             </v-chip>

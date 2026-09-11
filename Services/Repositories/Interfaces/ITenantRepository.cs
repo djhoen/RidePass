@@ -91,7 +91,7 @@ namespace Services.Repositories.Interfaces
         Task UpdateDailyStatus(Guid tenantId, bool? open, string? message);
         Task UpdateFooter(Guid tenantId, string? contactEmail, string? phone,
             string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml,
-            string? emailFromAddress);
+            string? emailFromAddress, string? marketingEmailFooterHtml);
         Task UpdateGiftCardSettings(Guid tenantId, bool enabled, int minCents, int maxCents);
         /// <summary>The bike shop's customer-notification policy: whether a ready repair emails
         /// and/or texts the customer, and how many days after pickup to send a service reminder

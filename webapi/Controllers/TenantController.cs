@@ -573,7 +573,8 @@ namespace webapi.Controllers
                 instagram: Trim(request.SocialInstagramUrl),
                 tiktok: Trim(request.SocialTiktokUrl),
                 youtube: Trim(request.SocialYoutubeUrl),
-                refundPolicyHtml: Trim(request.RefundPolicyHtml));
+                refundPolicyHtml: Trim(request.RefundPolicyHtml),
+                marketingEmailFooterHtml: Trim(request.MarketingEmailFooterHtml));
             return await GetBranding();
         }
 
@@ -679,6 +680,7 @@ namespace webapi.Controllers
                 SocialTiktokUrl = tenant.SocialTiktokUrl,
                 SocialYoutubeUrl = tenant.SocialYoutubeUrl,
                 RefundPolicyHtml = tenant.RefundPolicyHtml,
+                MarketingEmailFooterHtml = tenant.MarketingEmailFooterHtml,
                 AddressLine = tenant.AddressLine,
                 City = tenant.City,
                 Region = tenant.Region,

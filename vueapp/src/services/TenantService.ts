@@ -197,6 +197,7 @@ export class TenantService {
         socialTiktokUrl: string | null
         socialYoutubeUrl: string | null
         refundPolicyHtml: string | null
+        marketingEmailFooterHtml: string | null
     }) {
         return axios.put(`${this.apiUrl}/Tenant/Home/Footer`, req)
     }

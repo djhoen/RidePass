@@ -19,6 +19,8 @@ namespace Services.Repositories.Interfaces
         Task<List<EmailClickUrlStats>> GetCampaignClickUrls(Guid campaignId, Guid tenantId);
 
         /// <summary>Per automation step, for one automation.</summary>
+        /// <summary>Per automation, all steps together, for the list. Key = automation id.</summary>
+        Task<Dictionary<Guid, EmailEngagementStats>> GetAutomationStats(Guid tenantId);
         Task<Dictionary<Guid, EmailEngagementStats>> GetAutomationStepStats(Guid automationId, Guid tenantId);
     }
 

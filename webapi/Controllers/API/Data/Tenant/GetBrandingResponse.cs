@@ -70,6 +70,8 @@
         public string? SocialTiktokUrl { get; set; }
         public string? SocialYoutubeUrl { get; set; }
         public string? RefundPolicyHtml { get; set; }
+        /// <summary>Editor HTML added to every marketing email above the address block.</summary>
+        public string? MarketingEmailFooterHtml { get; set; }
         public string? AddressLine { get; set; }
         public string? City { get; set; }
         public string? Region { get; set; }

@@ -1,7 +1,6 @@
 <template>
     <v-container fluid>
         <div class="d-flex align-center mb-2 flex-wrap ga-2">
-            <h1 class="text-h5">Automations</h1>
             <v-spacer />
             <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
             <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New automation</v-btn>
@@ -22,13 +21,15 @@
                         <th>First email</th>
                         <th class="text-center">Status</th>
                         <th class="text-right">Sent</th>
+                        <th class="text-right">Opens</th>
+                        <th class="text-right">Clicks</th>
                         <th class="text-right">Skipped</th>
                         <th class="text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-if="!loading && items.length === 0">
-                        <td colspan="7" class="text-center text-medium-emphasis py-6">
+                        <td colspan="9" class="text-center text-medium-emphasis py-6">
                             No automations yet. Two common first ones: a welcome email two days after
                             a pass sale, or a "what to bring" email a week before a camp.
                         </td>
@@ -54,6 +55,16 @@
                                     </span>
                                 </template>
                             </v-tooltip>
+                        </td>
+                        <td class="text-right">
+                            <v-tooltip text="Distinct people who opened. Includes automatic opens from Apple Mail, so treat as a ceiling." location="top">
+                                <template #activator="{ props }">
+                                    <span v-bind="props">{{ a.uniqueOpens }} <span class="text-caption text-medium-emphasis">{{ pct(a.uniqueOpens, a.sent) }}</span></span>
+                                </template>
+                            </v-tooltip>
+                        </td>
+                        <td class="text-right">
+                            {{ a.uniqueClicks }} <span class="text-caption text-medium-emphasis">{{ pct(a.uniqueClicks, a.sent) }}</span>
                         </td>
                         <td class="text-right">
                             <v-tooltip text="Riders who bought after an email's send time, or were suppressed">
@@ -543,6 +554,10 @@ const loadError = ref('')
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
 const editingActive = ref(false)
+
+function pct(n: number, of: number): string {
+    return of > 0 ? `(${Math.round((n / of) * 100)}%)` : ''
+}
 const eventScope = ref<'event' | 'event_type'>('event')
 const useWindow = ref(false)
 const saving = ref(false)

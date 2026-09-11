@@ -17,7 +17,8 @@ namespace Services.Email
         string? AddressLine,
         string? Phone,
         string? ContactEmail,
-        IReadOnlyList<(string Label, string Url)> Socials)
+        IReadOnlyList<(string Label, string Url)> Socials,
+        string? CustomFooterHtml = null)
     {
         public static EmailBranding From(Tenant tenant, TenantBranding? branding, string siteUrl)
         {
@@ -39,7 +40,8 @@ namespace Services.Email
                 AddressLine: string.IsNullOrWhiteSpace(address) ? null : address,
                 Phone: tenant.Phone,
                 ContactEmail: tenant.ContactEmail,
-                Socials: socials);
+                Socials: socials,
+                CustomFooterHtml: string.IsNullOrWhiteSpace(tenant.MarketingEmailFooterHtml) ? null : tenant.MarketingEmailFooterHtml);
         }
 
         private static string? JoinCity(Tenant t)
@@ -196,6 +198,15 @@ namespace Services.Email
             sb.Append("<div style=\"padding:24px\">")
               .Append(PrepareBody(editorHtml, brand.SiteUrl, brand.PrimaryColor))
               .Append("</div>");
+
+            // The tenant's own footer (hours, a tagline, a legal line) sits between the body and
+            // the address block, prepared the same way as the body so links and images behave.
+            if (!string.IsNullOrWhiteSpace(brand.CustomFooterHtml))
+            {
+                sb.Append("<div style=\"padding:0 24px 20px;font-size:14px;line-height:1.5;color:#374151\">")
+                  .Append(PrepareBody(brand.CustomFooterHtml, brand.SiteUrl, brand.PrimaryColor))
+                  .Append("</div>");
+            }
 
             // Footer: who sent it and how to reach them. CAN-SPAM wants a physical address on
             // marketing mail, which is why the track's address is here and not optional.

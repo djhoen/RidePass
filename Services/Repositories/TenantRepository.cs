@@ -53,6 +53,7 @@ namespace Services.Repositories
             social_tiktok_url AS SocialTiktokUrl,
             social_youtube_url AS SocialYoutubeUrl,
             refund_policy_html AS RefundPolicyHtml,
+            marketing_email_footer_html AS MarketingEmailFooterHtml,
             address_line AS AddressLine, city, region, postal_code AS PostalCode, country,
             latitude, longitude,
             is_published AS IsPublished,
@@ -490,7 +491,7 @@ namespace Services.Repositories
 
         public async Task UpdateFooter(Guid tenantId, string? contactEmail, string? phone,
             string? facebook, string? instagram, string? tiktok, string? youtube, string? refundPolicyHtml,
-            string? emailFromAddress)
+            string? emailFromAddress, string? marketingEmailFooterHtml)
         {
             const string sql = @"
                 UPDATE tenant
@@ -501,9 +502,10 @@ namespace Services.Repositories
                     social_instagram_url = @instagram,
                     social_tiktok_url = @tiktok,
                     social_youtube_url = @youtube,
-                    refund_policy_html = @refundPolicyHtml
+                    refund_policy_html = @refundPolicyHtml,
+                    marketing_email_footer_html = @marketingEmailFooterHtml
                 WHERE id = @tenantId";
-            await _db.Execute(sql, new { tenantId, contactEmail, phone, facebook, instagram, tiktok, youtube, refundPolicyHtml, emailFromAddress });
+            await _db.Execute(sql, new { tenantId, contactEmail, phone, facebook, instagram, tiktok, youtube, refundPolicyHtml, emailFromAddress, marketingEmailFooterHtml });
         }
 
         public async Task UpdateGiftCardSettings(Guid tenantId, bool enabled, int minCents, int maxCents)

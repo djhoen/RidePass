@@ -59,12 +59,13 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var rows = await _automations.ListForTenant(_tenantContext.TenantId);
             var stats = await _automations.GetStats(_tenantContext.TenantId);
+            var engagement = await _engagement.GetAutomationStats(_tenantContext.TenantId);
 
             var items = new List<AutomationListItem>();
             foreach (var a in rows)
             {
                 var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
-                items.Add(await ToListItem(a, steps, stats));
+                items.Add(await ToListItem(a, steps, stats, engagement.GetValueOrDefault(a.Id)));
             }
             return new ApiResponses().OkResult(items);
         }
@@ -489,7 +490,8 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
         }
 
         private async Task<AutomationListItem> ToListItem(
-            MarketingAutomation a, List<MarketingAutomationStep> steps, Dictionary<Guid, MarketingAutomationStats> stats)
+            MarketingAutomation a, List<MarketingAutomationStep> steps, Dictionary<Guid, MarketingAutomationStats> stats,
+            EmailEngagementStats? eng = null)
         {
             stats.TryGetValue(a.Id, out var st);
             var cfg = AutomationTriggerConfig.For(a);
@@ -526,6 +528,8 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                 Failed = st?.Failed ?? 0,
                 Skipped = st?.Skipped ?? 0,
                 Conversions = st?.Conversions ?? 0,
+                UniqueOpens = eng?.UniqueOpens ?? 0,
+                UniqueClicks = eng?.UniqueClicks ?? 0,
                 EnrolFromUtc = a.EnrolFromUtc,
                 UpdatedAt = a.UpdatedAt,
             };

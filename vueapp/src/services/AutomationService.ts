@@ -23,6 +23,9 @@ export interface AutomationListItem {
     failed: number
     skipped: number
     conversions: number
+    /** Distinct sends opened / clicked across every step; opens are a ceiling. */
+    uniqueOpens: number
+    uniqueClicks: number
     enrolFromUtc: string | null
     updatedAt: string
 }

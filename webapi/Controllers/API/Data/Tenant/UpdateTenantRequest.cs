@@ -69,6 +69,8 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? SocialTiktokUrl { get; set; }
         public string? SocialYoutubeUrl { get; set; }
         public string? RefundPolicyHtml { get; set; }
+        // Editor HTML added to every marketing email above the address block. Blank = none.
+        public string? MarketingEmailFooterHtml { get; set; }
     }
 
     public class UpdateTenantLocationRequest

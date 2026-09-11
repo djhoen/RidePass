@@ -56,6 +56,22 @@ namespace Services.Repositories
             return (await _db.Query<EmailClickUrlStats>(sql, new { campaignId, tenantId })).ToList();
         }
 
+        public async Task<Dictionary<Guid, EmailEngagementStats>> GetAutomationStats(Guid tenantId)
+        {
+            // Same shape as the campaign list: distinct sends opened or clicked, over every step.
+            const string sql = @"
+                SELECT ms.automation_id AS Key,
+                       COUNT(DISTINCT e.source_send_id) FILTER (WHERE e.event = 'open')::int  AS UniqueOpens,
+                       COUNT(DISTINCT e.source_send_id) FILTER (WHERE e.event = 'click')::int AS UniqueClicks,
+                       COUNT(*) FILTER (WHERE e.event = 'click')::int                          AS TotalClicks
+                FROM email_engagement e
+                JOIN marketing_automation_send ms ON ms.id = e.source_send_id AND ms.tenant_id = @tenantId
+                WHERE e.tenant_id = @tenantId AND e.source_kind = 'automation'
+                GROUP BY ms.automation_id";
+            var rows = await _db.Query<EmailEngagementStats>(sql, new { tenantId });
+            return rows.ToDictionary(r => r.Key);
+        }
+
         public async Task<Dictionary<Guid, EmailEngagementStats>> GetAutomationStepStats(Guid automationId, Guid tenantId)
         {
             const string sql = @"

@@ -26,6 +26,9 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int Failed { get; set; }
         public int Skipped { get; set; }
         public int Conversions { get; set; }
+        /// <summary>Distinct sends opened / clicked across every step. Opens are a ceiling (Apple Mail pre-fetch).</summary>
+        public int UniqueOpens { get; set; }
+        public int UniqueClicks { get; set; }
         public DateTime? EnrolFromUtc { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

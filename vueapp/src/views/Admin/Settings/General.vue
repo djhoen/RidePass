@@ -116,6 +116,19 @@
             </v-card-text>
         </v-card>
 
+        <!-- Marketing email footer -->
+        <v-card class="mb-4">
+            <v-card-item>
+                <template #prepend><v-icon color="primary">mdi-email-newsletter</v-icon></template>
+                <v-card-title>Marketing email footer</v-card-title>
+                <v-card-subtitle>Added to every campaign and automation email, above your name, address, and social links. Hours, a tagline, a legal line.</v-card-subtitle>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-card-text>
+                <RichTextEditor v-model="form.marketingEmailFooterHtml" email-buttons />
+            </v-card-text>
+        </v-card>
+
         <!-- Social links -->
         <v-card class="mb-4">
             <v-card-item>
@@ -225,6 +238,7 @@ const form = ref({
     riderGateLabel: '' as string | null,
     spectatorGateLabel: '' as string | null,
     refundPolicyHtml: '',
+    marketingEmailFooterHtml: '',
 })
 
 const saving = ref(false)
@@ -294,6 +308,7 @@ function populateForm() {
     form.value.riderGateLabel = branding.riderGateLabel ?? ''
     form.value.spectatorGateLabel = branding.spectatorGateLabel ?? ''
     form.value.refundPolicyHtml = branding.refundPolicyHtml ?? ''
+    form.value.marketingEmailFooterHtml = branding.marketingEmailFooterHtml ?? ''
 }
 
 function normalizeString(s: string | null): string | null {
@@ -396,6 +411,7 @@ async function save() {
             socialTiktokUrl: normalizeString(form.value.socialTiktokUrl),
             socialYoutubeUrl: normalizeString(form.value.socialYoutubeUrl),
             refundPolicyHtml: normalizeString(form.value.refundPolicyHtml),
+            marketingEmailFooterHtml: normalizeString(form.value.marketingEmailFooterHtml),
         })
         // Gate-fee section headings (blank = platform default).
         await tenantService.updateGateLabels({
