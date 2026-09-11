@@ -206,13 +206,13 @@ namespace Services.Email
             return r.Kind switch
             {
                 AudienceRuleKinds.EventPurchased => r.Ids.Count == 0
-                    ? (not ? "has not bought an event ticket" : "bought an event ticket")
+                    ? (not ? "have not bought an event ticket" : "bought an event ticket")
                     : (not ? "did not buy a ticket to " : "bought a ticket to ") + names(r.Ids),
                 AudienceRuleKinds.EventTypePurchased => (not ? "did not buy a ticket to any " : "bought a ticket to any ") + names(r.Ids),
                 AudienceRuleKinds.PassHolder => r.Ids.Count == 0
-                    ? (not ? "does not hold a pass" : (r.ActiveOnly ? "holds a current pass" : "has bought a pass"))
-                    : (not ? "does not hold " : (r.ActiveOnly ? "holds a current " : "has bought ")) + names(r.Ids),
-                AudienceRuleKinds.PassExpiring => (not ? "pass does not end" : "pass ends") + $" within {r.Days ?? 30} days",
+                    ? (not ? "do not hold a pass" : (r.ActiveOnly ? "hold a current pass" : "have bought a pass"))
+                    : (not ? "do not hold " : (r.ActiveOnly ? "hold a current " : "have bought ")) + names(r.Ids),
+                AudienceRuleKinds.PassExpiring => (not ? "whose pass does not end" : "whose pass ends") + $" within {r.Days ?? 30} days",
                 AudienceRuleKinds.AbandonedCart => (not ? "did not leave" : "left") + $" a checkout unfinished in the last {r.Days ?? 1} day{((r.Days ?? 1) == 1 ? "" : "s")}",
                 AudienceRuleKinds.PostalCode => (not ? "ZIP is not " : "ZIP is ") + string.Join(", ", r.Values),
                 AudienceRuleKinds.State => (not ? "state is not " : "state is ") + string.Join(", ", r.Values),
