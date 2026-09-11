@@ -71,6 +71,10 @@
                             <v-btn v-if="c.status === 'sent'" variant="text" size="small" @click="openCompose(c.id)">
                                 View
                             </v-btn>
+                            <v-btn v-if="c.status !== 'sending'" variant="text" size="small" prepend-icon="mdi-content-copy"
+                                @click="duplicateCampaign(c)">
+                                Duplicate
+                            </v-btn>
                         </td>
                     </tr>
                     <tr v-if="!loading && campaigns.length === 0">
@@ -543,6 +547,17 @@ async function sendCampaign(c: CampaignListItem) {
         await load()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Send failed.', 'error')
+    }
+}
+
+async function duplicateCampaign(c: CampaignListItem) {
+    try {
+        const { data } = await campaignService.duplicate(c.id)
+        flash('Copied as a new draft.', 'success')
+        await load()
+        await openCompose(data.data.id)
+    } catch (err: any) {
+        flash(err.response?.data?.error || `Could not copy "${c.subject}". Reload the page and try again.`, 'error')
     }
 }
 

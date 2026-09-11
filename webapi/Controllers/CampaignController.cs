@@ -241,6 +241,39 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(ToDetail(existing, audience.Label));
         }
 
+        /// <summary>
+        /// A new draft with the same subject, preview text, body, and audience as an existing
+        /// campaign (sent or not). Nothing about the send is copied: no schedule, no recipients,
+        /// no stats. The admin lands in the composer to change what they want and send.
+        /// </summary>
+        [HttpPost("{id:guid}/Duplicate")]
+        public async Task<IActionResult> Duplicate(Guid id)
+        {
+            if (!TryGetUserId(out var userId))
+            {
+                return new ApiResponses().BadRequestResult("Invalid token.");
+            }
+            var source = await _campaigns.GetById(id, _tenantContext.TenantId);
+            if (source is null)
+            {
+                return new ApiResponses().NotFoundResult("Campaign not found.");
+            }
+            var c = new EmailCampaign
+            {
+                TenantId = _tenantContext.TenantId,
+                Subject = source.Subject,
+                BodyHtml = source.BodyHtml,
+                BodyText = source.BodyText,
+                PreviewText = source.PreviewText,
+                Status = "draft",
+                CreatedByUserId = userId,
+                AudienceKind = source.AudienceKind,
+                AudienceConfig = source.AudienceConfig,
+            };
+            c.Id = await _campaigns.Create(c);
+            return new ApiResponses().OkResult(ToDetail(c, await LabelFor(c)));
+        }
+
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> Delete(Guid id)
         {

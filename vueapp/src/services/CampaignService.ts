@@ -106,6 +106,11 @@ export class CampaignService {
         return axios.put<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign/${id}`, req)
     }
 
+    /** A new draft copied from any campaign: subject, preview text, body, audience. */
+    duplicate(id: string) {
+        return axios.post<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign/${id}/Duplicate`)
+    }
+
     delete(id: string) {
         return axios.delete(`${this.apiUrl}/Campaign/${id}`)
     }
