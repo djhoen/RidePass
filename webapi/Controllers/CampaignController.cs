@@ -173,11 +173,12 @@ namespace webapi.Controllers
         [HttpGet("Audience/Count")]
         public async Task<IActionResult> AudienceCount([FromQuery] string? kind, [FromQuery] Guid? eventId,
             [FromQuery] Guid? eventTypeId, [FromQuery] Guid? passProductId,
-            [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc)
+            [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc, [FromQuery] Guid? audienceId)
         {
             var resolved = await ResolveAudience(kind, new CampaignAudienceConfigDto
             {
                 EventId = eventId, EventTypeId = eventTypeId, PassProductId = passProductId, FromUtc = fromUtc, ToUtc = toUtc,
+                AudienceId = audienceId,
             });
             if (resolved.Error is not null) return new ApiResponses().BadRequestResult(resolved.Error);
 
@@ -425,7 +426,7 @@ namespace webapi.Controllers
             var kind = string.IsNullOrWhiteSpace(kindRaw) ? CampaignAudienceKinds.Subscribers : kindRaw.Trim().ToLowerInvariant();
             if (!CampaignAudienceKinds.IsValid(kind))
             {
-                return (kind, new CampaignAudienceConfig(), string.Empty, "Unknown audience. Choose subscribers, an event, an event type, or a pass product.");
+                return (kind, new CampaignAudienceConfig(), string.Empty, "Unknown audience. Pick one of your saved audiences.");
             }
             var config = new CampaignAudienceConfig();
             switch (kind)
@@ -446,6 +447,10 @@ namespace webapi.Controllers
                     if (dto?.PassProductId is null) return (kind, config, string.Empty, "Pick the pass product whose holders this campaign goes to.");
                     config.PassProductId = dto.PassProductId;
                     break;
+                case CampaignAudienceKinds.Audience:
+                    if (dto?.AudienceId is null) return (kind, config, string.Empty, "Pick the audience this campaign goes to.");
+                    config.AudienceId = dto.AudienceId;
+                    break;
             }
             var label = await _audiences.DescribeAudience(_tenantContext.TenantId, kind, config);
             if (label is null)
@@ -465,6 +470,7 @@ namespace webapi.Controllers
             return new CampaignAudienceConfigDto
             {
                 EventId = cfg.EventId, EventTypeId = cfg.EventTypeId, PassProductId = cfg.PassProductId,
+                AudienceId = cfg.AudienceId,
                 FromUtc = cfg.FromUtc.HasValue ? DateTime.SpecifyKind(cfg.FromUtc.Value, DateTimeKind.Utc) : null,
                 ToUtc = cfg.ToUtc.HasValue ? DateTime.SpecifyKind(cfg.ToUtc.Value, DateTimeKind.Utc) : null,
             };

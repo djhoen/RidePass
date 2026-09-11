@@ -10,8 +10,9 @@ namespace Services.Repositories.Data.NewsletterData
         public const string Event = "event";               // purchasers of one event
         public const string EventType = "event_type";      // purchasers of any event of one type (optional date window)
         public const string PassProduct = "pass_product";  // holders of one season pass product
+        public const string Audience = "audience";         // a saved, rule-based audience (the Audiences tab)
 
-        public static readonly string[] All = { Subscribers, Event, EventType, PassProduct };
+        public static readonly string[] All = { Subscribers, Event, EventType, PassProduct, Audience };
         public static bool IsValid(string? kind) => kind is not null && Array.IndexOf(All, kind) >= 0;
     }
 
@@ -29,6 +30,8 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid? EventId { get; set; }
         public Guid? EventTypeId { get; set; }
         public Guid? PassProductId { get; set; }
+        /// <summary>Saved audience id for the 'audience' kind.</summary>
+        public Guid? AudienceId { get; set; }
         /// <summary>Optional window on event start for the event-type audience (UTC).</summary>
         public DateTime? FromUtc { get; set; }
         public DateTime? ToUtc { get; set; }

@@ -1,9 +1,11 @@
 import axios from 'axios'
 
-export type CampaignAudienceKind = 'subscribers' | 'event' | 'event_type' | 'pass_product'
+export type CampaignAudienceKind = 'subscribers' | 'event' | 'event_type' | 'pass_product' | 'audience'
 
 /** Target of a non-subscriber audience. Only the field the kind needs is set. */
 export interface CampaignAudienceConfig {
+    /** Saved audience (kind 'audience'). */
+    audienceId?: string | null
     eventId: string | null
     eventTypeId: string | null
     passProductId: string | null
@@ -85,6 +87,7 @@ export class CampaignService {
         if (config.eventId) params.eventId = config.eventId
         if (config.eventTypeId) params.eventTypeId = config.eventTypeId
         if (config.passProductId) params.passProductId = config.passProductId
+        if (config.audienceId) params.audienceId = config.audienceId
         if (config.fromUtc) params.fromUtc = config.fromUtc
         if (config.toUtc) params.toUtc = config.toUtc
         return axios.get<{ data: CampaignAudienceCount }>(`${this.apiUrl}/Campaign/Audience/Count`, { params })

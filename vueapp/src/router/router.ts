@@ -642,6 +642,12 @@ const routes = [
                 component: () => import('../views/Admin/Automations.vue'),
                 meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
             },
+            {
+                path: 'Audiences',
+                name: 'AdminAudiences',
+                component: () => import('../views/Admin/Audiences.vue'),
+                meta: { requiresAuth: true, requiresPermission: 'campaigns.manage', hideFooter: true }
+            },
         ]
     },
     // The pre-merge URLs, kept for bookmarks and in-app links.

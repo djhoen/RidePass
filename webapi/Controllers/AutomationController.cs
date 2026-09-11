@@ -24,6 +24,7 @@ namespace webapi.Controllers
         private readonly IMarketingAutomationRepository _automations;
         private readonly ISeasonPassRepository _passes;
         private readonly ICampaignAudienceRepository _audiences;
+        private readonly IAudienceRepository _savedAudiences;
         private readonly ITenantBrandingRepository _brandings;
         private readonly IEmailEngagementRepository _engagement;
         private readonly ISmtpEmailer _emailer;
@@ -35,6 +36,7 @@ namespace webapi.Controllers
             IMarketingAutomationRepository automations,
             ISeasonPassRepository passes,
             ICampaignAudienceRepository audiences,
+            IAudienceRepository savedAudiences,
             ITenantBrandingRepository brandings,
             IEmailEngagementRepository engagement,
             ISmtpEmailer emailer,
@@ -45,6 +47,7 @@ namespace webapi.Controllers
             _automations = automations;
             _passes = passes;
             _audiences = audiences;
+            _savedAudiences = savedAudiences;
             _brandings = brandings;
             _engagement = engagement;
             _emailer = emailer;
@@ -100,6 +103,8 @@ namespace webapi.Controllers
                 }).ToList(),
                 EventTypes = o.EventTypes.Select(t => new CampaignAudienceNamedOptionDto { Id = t.Id, Name = t.Name, IsActive = t.IsActive }).ToList(),
                 PassProducts = o.PassProducts.Select(p => new CampaignAudienceNamedOptionDto { Id = p.Id, Name = p.Name, IsActive = p.IsActive }).ToList(),
+                Audiences = (await _savedAudiences.ListForTenant(_tenantContext.TenantId))
+                    .Select(x => new CampaignAudienceNamedOptionDto { Id = x.Id, Name = x.Name, IsActive = true }).ToList(),
             });
         }
 
@@ -235,6 +240,7 @@ namespace webapi.Controllers
             if (steps.Count == 0) return new ApiResponses().BadRequestResult("This automation has no emails yet.");
 
             // Estimated against the FIRST step: it is the one whose backlog lands immediately.
+            await RefreshAudienceFor(a);
             var now = DateTime.UtcNow;
             var (backlog, last30) = await _automations.EstimateAudience(
                 a, steps[0], now, TenantToday(now),
@@ -278,9 +284,22 @@ namespace webapi.Controllers
                 }
             }
 
+            // Membership is brought up to date before the enrol-from stamp, so "only riders from
+            // now on" means exactly that and the backlog choice covers everyone already in.
+            if (request.IsActive) await RefreshAudienceFor(a);
             await _automations.SetActive(id, _tenantContext.TenantId, request.IsActive,
                 request.IsActive && request.NewPurchasesOnly ? DateTime.UtcNow : null);
             return new ApiResponses().OkResult();
+        }
+
+        /// <summary>The audience trigger reads audience_member; make sure it reflects right now.</summary>
+        private async Task RefreshAudienceFor(MarketingAutomation a)
+        {
+            if (a.TriggerKind != AutomationTriggers.AudienceJoined) return;
+            var cfg = AutomationTriggerConfig.For(a);
+            if (cfg.AudienceId is not Guid aid) return;
+            var audience = await _savedAudiences.GetById(aid, _tenantContext.TenantId);
+            if (audience is not null) await _savedAudiences.RefreshMembers(audience);
         }
 
         /// <summary>
@@ -395,7 +414,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
 
             if (!AutomationTriggers.IsKind(kind))
             {
-                return (kind, config, steps, "Pick what starts this automation: a pass sale, an event ticket sale, or a newsletter signup.");
+                return (kind, config, steps, "Pick what starts this automation: a pass sale, an event ticket sale, a newsletter signup, or someone joining an audience.");
             }
             if (request.Steps.Count == 0)
             {
@@ -411,6 +430,16 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                     if (product is null) return (kind, config, steps, "That pass product wasn't found.");
                     config.FromProductId = pid;
                 }
+            }
+            else if (kind == AutomationTriggers.AudienceJoined)
+            {
+                if (request.AudienceId is not Guid audId)
+                {
+                    return (kind, config, steps, "Pick the audience that starts this automation.");
+                }
+                var audience = await _savedAudiences.GetById(audId, _tenantContext.TenantId);
+                if (audience is null) return (kind, config, steps, "That audience wasn't found.");
+                config.AudienceId = audId;
             }
             else if (kind == AutomationTriggers.EventTicketPurchased)
             {
@@ -504,6 +533,12 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                         ? "any " + await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.EventType, new CampaignAudienceConfig { EventTypeId = cfg.EventTypeId })
                         : null;
             }
+            else if (a.TriggerKind == AutomationTriggers.AudienceJoined)
+            {
+                targetName = cfg.AudienceId is Guid aid
+                    ? (await _savedAudiences.GetById(aid, _tenantContext.TenantId))?.Name ?? "a removed audience"
+                    : null;
+            }
             else if (cfg.FromProductId is not null)
             {
                 targetName = await _audiences.TargetName(_tenantContext.TenantId, CampaignAudienceKinds.PassProduct, new CampaignAudienceConfig { PassProductId = cfg.FromProductId });
@@ -520,6 +555,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                 FromProductName = a.TriggerKind == AutomationTriggers.SeasonPassPurchased ? targetName : null,
                 EventId = cfg.EventId,
                 EventTypeId = cfg.EventTypeId,
+                AudienceId = cfg.AudienceId,
                 IsActive = a.IsActive,
                 StepCount = steps.Count,
                 FirstDelayDays = FirstDelayDays(steps),

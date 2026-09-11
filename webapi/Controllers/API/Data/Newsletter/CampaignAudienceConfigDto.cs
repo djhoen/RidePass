@@ -6,6 +6,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         public Guid? EventId { get; set; }
         public Guid? EventTypeId { get; set; }
         public Guid? PassProductId { get; set; }
+        /// <summary>Saved audience (the Audiences tab); the kind is 'audience'.</summary>
+        public Guid? AudienceId { get; set; }
         // Optional window on event start for the event-type audience (UTC).
         public DateTime? FromUtc { get; set; }
         public DateTime? ToUtc { get; set; }

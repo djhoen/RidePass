@@ -95,31 +95,12 @@
                     <v-btn icon="mdi-close" variant="text" size="small" @click="composeOpen = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
-                    <!-- Audience: who this goes to. Purchase audiences are resolved again at send
-                         time, so the count shown here is a preview, not a snapshot. -->
-                    <v-select v-model="audienceKind" :items="audienceKindItems" item-title="title" item-value="value"
-                        label="Audience" density="compact" :readonly="composeReadonly"></v-select>
-                    <v-autocomplete v-if="audienceKind === 'event'" v-model="audienceConfig.eventId" :items="eventItems"
-                        item-title="title" item-value="id" label="Event" density="compact" class="mt-4"
-                        :readonly="composeReadonly" :loading="!audienceOptions" no-data-text="No events in the last two years"></v-autocomplete>
-                    <template v-if="audienceKind === 'event_type'">
-                        <v-autocomplete v-model="audienceConfig.eventTypeId" :items="audienceOptions?.eventTypes ?? []"
-                            item-title="name" item-value="id" label="Event type" density="compact" class="mt-4"
-                            :readonly="composeReadonly" :loading="!audienceOptions"></v-autocomplete>
-                        <v-row dense class="mt-2">
-                            <v-col cols="12" sm="6">
-                                <v-text-field v-model="audienceFromLocal" type="date" label="Events from (optional)"
-                                    density="compact" :readonly="composeReadonly" hint="Limit to events starting on or after this date" persistent-hint></v-text-field>
-                            </v-col>
-                            <v-col cols="12" sm="6">
-                                <v-text-field v-model="audienceToLocal" type="date" label="Events through (optional)"
-                                    density="compact" :readonly="composeReadonly" hint="Limit to events starting on or before this date" persistent-hint></v-text-field>
-                            </v-col>
-                        </v-row>
-                    </template>
-                    <v-autocomplete v-if="audienceKind === 'pass_product'" v-model="audienceConfig.passProductId"
-                        :items="audienceOptions?.passProducts ?? []" item-title="name" item-value="id" label="Pass product"
-                        density="compact" class="mt-4" :readonly="composeReadonly" :loading="!audienceOptions"></v-autocomplete>
+                    <!-- Audience: a saved audience from the Audiences tab. It is resolved again at
+                         send time, so the count shown here is a preview, not a snapshot. -->
+                    <v-select v-model="audienceId" :items="audienceItems" item-title="title" item-value="value"
+                        label="Audience" density="compact" :readonly="composeReadonly" :loading="audiencesLoading"
+                        :hint="legacyAudienceLabel || 'Build and edit audiences on the Audiences tab.'" persistent-hint
+                        no-data-text="No audiences yet. Add them on the Audiences tab."></v-select>
                     <div class="text-caption mt-1 mb-4">
                         <span v-if="audienceCountLoading" class="text-medium-emphasis">Counting recipients...</span>
                         <span v-else-if="audienceCountError" class="text-error">{{ audienceCountError }}</span>
@@ -219,7 +200,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
-import { CampaignService, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceOptions, type CampaignAudienceCount } from '@/services/CampaignService'
+import { useRoute } from 'vue-router'
+import { CampaignService, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceCount } from '@/services/CampaignService'
+import { AudienceService, type AudienceItem } from '@/services/AudienceService'
 import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import RichTextView from '@/components/RichTextView.vue'
@@ -325,70 +308,40 @@ watch(composeView, async (v) => {
 })
 
 // --- Audience ------------------------------------------------------------------------
-const audienceKindItems: { title: string; value: CampaignAudienceKind }[] = [
-    { title: 'Newsletter subscribers', value: 'subscribers' },
-    { title: 'Purchasers of an event', value: 'event' },
-    { title: 'Purchasers of an event type', value: 'event_type' },
-    { title: 'Holders of a pass product', value: 'pass_product' },
-]
-function emptyAudienceConfig(): CampaignAudienceConfig {
-    return { eventId: null, eventTypeId: null, passProductId: null, fromUtc: null, toUtc: null }
-}
-const audienceKind = ref<CampaignAudienceKind>('subscribers')
-const audienceConfig = ref<CampaignAudienceConfig>(emptyAudienceConfig())
-// Date-only inputs in the track's timezone; converted to a UTC window at the API boundary.
-const audienceFromLocal = ref('')
-const audienceToLocal = ref('')
-const audienceOptions = ref<CampaignAudienceOptions | null>(null)
+// Saved audiences (the Audiences tab) are the only picker now. A campaign written before they
+// existed keeps its old target, shown as a hint until the admin picks a saved audience.
+const audienceService = new AudienceService()
+const audiences = ref<AudienceItem[]>([])
+const audiencesLoading = ref(false)
+const audienceId = ref<string | null>(null)
+const legacyAudienceLabel = ref('')
 const audienceCount = ref<CampaignAudienceCount | null>(null)
 const audienceCountLoading = ref(false)
 const audienceCountError = ref('')
+const audienceItems = computed(() => audiences.value.map(a => ({ value: a.id, title: `${a.name} (${a.memberCount})` })))
 
-const eventItems = computed(() => (audienceOptions.value?.events ?? []).map(e => ({
-    id: e.id,
-    title: `${e.title} (${dayjs(e.startsAtUtc).tz(tz()).format('MMM D, YYYY')}${e.status === 'cancelled' ? ', cancelled' : ''})`,
-})))
-
-// The config the API receives: only the target the kind uses, dates widened to whole days.
 function currentAudienceConfig(): CampaignAudienceConfig {
-    const c = emptyAudienceConfig()
-    if (audienceKind.value === 'event') c.eventId = audienceConfig.value.eventId
-    if (audienceKind.value === 'event_type') {
-        c.eventTypeId = audienceConfig.value.eventTypeId
-        c.fromUtc = audienceFromLocal.value ? dayjs.tz(audienceFromLocal.value, tz()).utc().toISOString() : null
-        c.toUtc = audienceToLocal.value ? dayjs.tz(audienceToLocal.value, tz()).add(1, 'day').utc().toISOString() : null
-    }
-    if (audienceKind.value === 'pass_product') c.passProductId = audienceConfig.value.passProductId
-    return c
+    return { eventId: null, eventTypeId: null, passProductId: null, fromUtc: null, toUtc: null, audienceId: audienceId.value }
 }
 function audienceTargetChosen(): boolean {
-    const c = currentAudienceConfig()
-    switch (audienceKind.value) {
-        case 'event': return !!c.eventId
-        case 'event_type': return !!c.eventTypeId
-        case 'pass_product': return !!c.passProductId
-        default: return true
-    }
+    return !!audienceId.value
 }
 function composePayload() {
-    return { ...composeForm.value, audienceKind: audienceKind.value, audienceConfig: currentAudienceConfig() }
+    return { ...composeForm.value, audienceKind: 'audience' as CampaignAudienceKind, audienceConfig: currentAudienceConfig() }
 }
-function applyAudience(kind: CampaignAudienceKind | undefined, cfg: Partial<CampaignAudienceConfig> | null | undefined) {
-    audienceKind.value = kind ?? 'subscribers'
-    audienceConfig.value = { ...emptyAudienceConfig(), ...(cfg ?? {}) }
-    audienceFromLocal.value = cfg?.fromUtc ? dayjs(cfg.fromUtc).tz(tz()).format('YYYY-MM-DD') : ''
-    // toUtc is stored as the exclusive start of the day after the chosen "through" date.
-    audienceToLocal.value = cfg?.toUtc ? dayjs(cfg.toUtc).tz(tz()).subtract(1, 'day').format('YYYY-MM-DD') : ''
+function applyAudience(kind: CampaignAudienceKind | undefined, cfg: Partial<CampaignAudienceConfig> | null | undefined, label?: string) {
+    audienceId.value = kind === 'audience' ? (cfg?.audienceId ?? null) : null
+    legacyAudienceLabel.value = kind && kind !== 'audience' ? `Currently: ${label ?? kind}. Pick a saved audience to change it.` : ''
     audienceCount.value = null
     audienceCountError.value = ''
 }
 
 let countTimer: ReturnType<typeof setTimeout> | null = null
-watch([audienceKind, audienceConfig, audienceFromLocal, audienceToLocal], () => {
+watch(audienceId, () => {
     if (!composeOpen.value) return
     if (countTimer) clearTimeout(countTimer)
     countTimer = setTimeout(refreshAudienceCount, 300)
-}, { deep: true })
+})
 
 async function refreshAudienceCount() {
     audienceCount.value = null
@@ -396,22 +349,24 @@ async function refreshAudienceCount() {
     if (!audienceTargetChosen()) return
     audienceCountLoading.value = true
     try {
-        const r = await campaignService.audienceCount(audienceKind.value, currentAudienceConfig())
+        const r = await campaignService.audienceCount('audience', currentAudienceConfig())
         audienceCount.value = (r.data as any).data
     } catch (err: any) {
-        audienceCountError.value = err.response?.data?.error || 'Could not count this audience. Try again or pick a different target.'
+        audienceCountError.value = err.response?.data?.error || 'Could not count this audience. Try again or pick a different one.'
     } finally {
         audienceCountLoading.value = false
     }
 }
 
 async function loadAudienceOptions() {
-    if (audienceOptions.value) return
+    audiencesLoading.value = true
     try {
-        const r = await campaignService.audienceOptions()
-        audienceOptions.value = (r.data as any).data
+        const r = await audienceService.list()
+        audiences.value = r.data.data
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Could not load the events and passes for the audience picker. Reopen the campaign to retry.', 'error')
+        flash(err.response?.data?.error || 'Could not load your audiences. Open the Audiences tab to check them, then reopen the campaign.', 'error')
+    } finally {
+        audiencesLoading.value = false
     }
 }
 // datetime-local string in the tenant's timezone; blank = send immediately.
@@ -425,7 +380,11 @@ const snackbarColor = ref<'success' | 'error'>('success')
 
 const composeTitle = computed(() => composeReadonly.value ? 'Campaign' : (composeId.value ? 'Edit Campaign' : 'New Campaign'))
 
-onMounted(load)
+const route = useRoute()
+onMounted(async () => {
+    await load()
+    if (typeof route.query.audience === 'string') openCompose(null)
+})
 
 async function load() {
     loading.value = true
@@ -454,7 +413,7 @@ async function openCompose(id: string | null) {
             composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml, previewText: d.previewText ?? '' }
             viewClickUrls.value = d.clickUrls ?? []
             composeReadonly.value = d.status !== 'draft'
-            applyAudience(d.audienceKind, d.audienceConfig)
+            applyAudience(d.audienceKind, d.audienceConfig, d.audienceLabel)
         } catch (err: any) {
             flash(err.response?.data?.error || 'Failed to load campaign.', 'error')
             return
@@ -462,7 +421,9 @@ async function openCompose(id: string | null) {
     } else {
         composeForm.value = { subject: '', bodyHtml: '', previewText: '' }
         viewClickUrls.value = []
-        applyAudience('subscribers', null)
+        // Arriving from the Audiences tab ("send a campaign to this audience") preselects it.
+        const preselect = typeof route.query.audience === 'string' ? route.query.audience : null
+        applyAudience('audience', { audienceId: preselect })
     }
     composeView.value = 'edit'
     templatePick.value = null

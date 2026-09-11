@@ -68,6 +68,7 @@ namespace webapi.Workers
             var config = sp.GetRequiredService<IConfiguration>();
             var gate = sp.GetRequiredService<Services.Delivery.IOutboundDeliveryGate>();
             var brandings = sp.GetRequiredService<ITenantBrandingRepository>();
+            var savedAudiences = sp.GetRequiredService<IAudienceRepository>();
 
             if (!emailer.IsConfigured) return;   // ships dark until SMTP is set
 
@@ -84,6 +85,15 @@ namespace webapi.Workers
                 {
                     var tenant = await tenants.GetById(a.TenantId);
                     if (tenant is null) continue;
+
+                    // An audience trigger reads audience_member, so bring it up to date first:
+                    // whoever newly matches (bought the pass, joined the list) joins now.
+                    if (a.TriggerKind == AutomationTriggers.AudienceJoined
+                        && AutomationTriggerConfig.For(a).AudienceId is Guid audienceId)
+                    {
+                        var audience = await savedAudiences.GetById(audienceId, a.TenantId);
+                        if (audience is not null) await savedAudiences.RefreshMembers(audience);
+                    }
 
                     // Outside the window there is nothing to do: the send log is keyed on
                     // (step, subject) and nothing has been written, so the step simply comes due

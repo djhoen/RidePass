@@ -52,6 +52,7 @@ namespace Services.Email
         {
             AutomationTriggers.EventTicketPurchased => Common.Concat(Event).ToArray(),
             AutomationTriggers.NewsletterSubscribed => Common,
+            AutomationTriggers.AudienceJoined => Common,
             _ => Common.Concat(Pass).ToArray(),
         };
 
@@ -70,7 +71,7 @@ namespace Services.Email
             };
             var root = baseUrl.TrimEnd('/');
 
-            if (s.SubjectKind == "newsletter_subscriber") return v;
+            if (s.SubjectKind is "newsletter_subscriber" or "audience_member") return v;
 
             if (s.SubjectKind == "event_ticket_purchase")
             {

@@ -158,6 +158,17 @@
                                     :loading="!options" />
                             </template>
 
+                            <!-- Audience trigger: fires when someone newly matches a saved audience. -->
+                            <template v-else-if="form.triggerKind === 'audience_joined'">
+                                <v-select v-model="form.audienceId" :items="audienceItems" item-title="title" item-value="value"
+                                    label="Which audience" density="compact" class="mt-4" :loading="!options"
+                                    no-data-text="No audiences yet. Add them on the Audiences tab." />
+                                <div class="text-caption text-medium-emphasis mt-1">
+                                    Audiences are re-checked every hour. Someone who newly matches (buys the pass, joins
+                                    the list) starts the sequence from that moment.
+                                </div>
+                            </template>
+
                             <div class="text-subtitle-2 mt-6 mb-2">Emails</div>
                             <v-card v-for="(s, i) in form.steps" :key="i" variant="outlined" class="pa-3 mb-3">
                                 <div class="d-flex align-center mb-2">
@@ -259,6 +270,11 @@
                                 A camp series usually mixes timings: a welcome the day after they buy,
                                 "what to bring" a week before the event starts, and a thank-you two
                                 days after it ends. Each email is its own step.
+                            </v-alert>
+                            <v-alert v-else-if="form.triggerKind === 'audience_joined'" type="info" variant="tonal" density="compact">
+                                Build the audience on the Audiences tab (season pass holders, riders in a ZIP,
+                                yesterday's abandoned carts) and time each email off the day they join it. To
+                                time an email off an event date or a pass expiry, use the ticket or pass trigger.
                             </v-alert>
                             <v-alert v-else type="info" variant="tonal" density="compact">
                                 A welcome series for new subscribers: straight away, then a few days
@@ -539,6 +555,7 @@ interface EditorForm {
     fromProductId: string | null
     eventId: string | null
     eventTypeId: string | null
+    audienceId: string | null
     stopOnUpgrade: boolean
     stopWhenUsedUp: boolean
     sendWindowStart: string | null
@@ -637,6 +654,7 @@ const eventItems = computed(() => (options.value?.events ?? []).map(e => ({
     id: e.id,
     title: `${e.title} (${dayjs(e.startsAtUtc).tz(tz()).format('MMM D, YYYY')}${e.status === 'cancelled' ? ', cancelled' : ''})`,
 })))
+const audienceItems = computed(() => (options.value?.audiences ?? []).map(a => ({ title: a.name, value: a.id })))
 const testStepOptions = computed(() =>
     Array.from({ length: testTarget.value?.stepCount ?? 1 },
         (_, i) => ({ title: `Email ${i + 1}`, value: i })))
@@ -648,6 +666,7 @@ function emptyForm(): EditorForm {
         fromProductId: null,
         eventId: null,
         eventTypeId: null,
+        audienceId: null,
         stopOnUpgrade: true,
         stopWhenUsedUp: true,
         sendWindowStart: null,
@@ -735,6 +754,7 @@ async function openEdit(a: AutomationListItem) {
             fromProductId: d.fromProductId,
             eventId: d.eventId,
             eventTypeId: d.eventTypeId,
+            audienceId: d.audienceId ?? null,
             stopOnUpgrade: d.stopOnUpgrade,
             stopWhenUsedUp: d.stopWhenUsedUp,
             sendWindowStart: d.sendWindowStart,
@@ -781,6 +801,7 @@ function toPayload(): UpsertAutomationRequest {
         fromProductId: isEvent ? null : form.value.fromProductId,
         eventId: isEvent && eventScope.value === 'event' ? form.value.eventId : null,
         eventTypeId: isEvent && eventScope.value === 'event_type' ? form.value.eventTypeId : null,
+        audienceId: form.value.triggerKind === 'audience_joined' ? form.value.audienceId : null,
         stopOnUpgrade: form.value.stopOnUpgrade,
         stopWhenUsedUp: form.value.stopWhenUsedUp,
         sendWindowStart: useWindow.value ? form.value.sendWindowStart : null,
@@ -805,6 +826,7 @@ async function save() {
         if (eventScope.value === 'event' && !form.value.eventId) { editorError.value = 'Pick the event.'; return }
         if (eventScope.value === 'event_type' && !form.value.eventTypeId) { editorError.value = 'Pick the event type.'; return }
     }
+    if (form.value.triggerKind === 'audience_joined' && !form.value.audienceId) { editorError.value = 'Pick the audience.'; return }
     if (form.value.steps.some(s => !s.subject.trim() || !s.bodyHtml.trim())) {
         editorError.value = 'Every email needs a subject line and a message.'
         return

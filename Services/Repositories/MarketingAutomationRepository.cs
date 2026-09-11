@@ -253,6 +253,7 @@ namespace Services.Repositories
         {
             AutomationTriggers.EventTicketPurchased => "p.created_at",
             AutomationTriggers.NewsletterSubscribed => "ns.subscribed_at",
+            AutomationTriggers.AudienceJoined => "am.joined_at",
             _ => "sp.created_at",
         };
 
@@ -399,6 +400,33 @@ namespace Services.Repositories
                       AND (es.tenant_id IS NULL OR es.tenant_id = ns.tenant_id)
                       AND es.scope IN ('all', 'marketing'))";
 
+        /// <summary>
+        /// Audience subjects are audience_member rows: one per person per audience, stamped when
+        /// they first matched. The sweep refreshes membership before reading these.
+        /// </summary>
+        private const string AudienceSelect = @"
+                SELECT 'audience_member'    AS SubjectKind,
+                       am.id                AS SubjectId,
+                       am.tenant_id         AS TenantId,
+                       am.email             AS Email,
+                       am.name              AS HolderName,
+                       au.name              AS ProductName,
+                       am.joined_at         AS PurchasedAtUtc,
+                       {SKIP}               AS DueBeforePurchase
+                FROM audience_member am
+                JOIN audience au ON au.id = am.audience_id AND au.tenant_id = am.tenant_id";
+
+        private const string AudienceEligible = @"
+            am.tenant_id = @tenantId
+            AND am.audience_id = CAST(@audienceId AS uuid)
+            AND am.left_at IS NULL
+            AND (CAST(@enrolFromUtc AS timestamptz) IS NULL OR am.joined_at >= CAST(@enrolFromUtc AS timestamptz))
+            AND NOT EXISTS (
+                    SELECT 1 FROM email_suppression es
+                    WHERE lower(es.email) = lower(am.email)
+                      AND (es.tenant_id IS NULL OR es.tenant_id = am.tenant_id)
+                      AND es.scope IN ('all', 'marketing'))";
+
         private static bool FixedDateNotYetDue(MarketingAutomationStep step, DateTime tenantToday)
             => step.Anchor == AutomationTriggers.Anchors.FixedDate
                && (step.SendOn is null || step.SendOn.Value.Date > tenantToday.Date);
@@ -411,6 +439,24 @@ namespace Services.Repositories
             var (due, skip) = TimingClauses(a.TriggerKind, step.Anchor);
             var subjectKind = AutomationTriggers.SubjectKindFor(a.TriggerKind);
 
+            if (a.TriggerKind == AutomationTriggers.AudienceJoined)
+            {
+                var sql = AudienceSelect.Replace("{SKIP}", skip) + $@"
+                WHERE {AudienceEligible}
+                  AND {due}
+                  AND NOT EXISTS (
+                        SELECT 1 FROM marketing_automation_send ms
+                        WHERE ms.step_id = @stepId AND ms.subject_kind = @subjectKind AND ms.subject_id = am.id)
+                ORDER BY am.joined_at
+                LIMIT @take";
+                return (await _db.Query<AutomationSubject>(sql, new
+                {
+                    tenantId = a.TenantId, stepId = step.Id, subjectKind, take, nowUtc,
+                    audienceId = cfg.AudienceId,
+                    enrolFromUtc = a.EnrolFromUtc,
+                    offsetDays = step.OffsetDays, sendOn = step.SendOn,
+                })).ToList();
+            }
             if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
             {
                 var sql = NewsletterSelect.Replace("{SKIP}", skip) + $@"
@@ -521,6 +567,24 @@ namespace Services.Repositories
             var (due, _) = TimingClauses(a.TriggerKind, firstStep.Anchor);
             if (FixedDateNotYetDue(firstStep, tenantToday)) due = "FALSE";
 
+            if (a.TriggerKind == AutomationTriggers.AudienceJoined)
+            {
+                var sql = $@"
+                    SELECT (
+                        SELECT COUNT(*)::int FROM audience_member am
+                        WHERE {AudienceEligible} AND {due}
+                    ) AS Backlog,
+                    (
+                        SELECT COUNT(*)::int FROM audience_member am
+                        WHERE am.tenant_id = @tenantId AND am.audience_id = CAST(@audienceId AS uuid)
+                          AND am.left_at IS NULL AND am.joined_at >= now() - interval '30 days'
+                    ) AS Last30Days";
+                return (await _db.Query<(int Backlog, int Last30Days)>(sql, new
+                {
+                    tenantId = a.TenantId, nowUtc, enrolFromUtc, audienceId = cfg.AudienceId,
+                    offsetDays = firstStep.OffsetDays, sendOn = firstStep.SendOn,
+                })).First();
+            }
             if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
             {
                 var sql = $@"
@@ -597,6 +661,14 @@ namespace Services.Repositories
         public async Task<AutomationSubject?> SampleSubject(MarketingAutomation a)
         {
             var cfg = AutomationTriggerConfig.For(a);
+            if (a.TriggerKind == AutomationTriggers.AudienceJoined)
+            {
+                var sql = AudienceSelect.Replace("{SKIP}", "FALSE") + @"
+                WHERE am.tenant_id = @tenantId AND am.audience_id = CAST(@audienceId AS uuid) AND am.left_at IS NULL
+                ORDER BY am.joined_at DESC
+                LIMIT 1";
+                return (await _db.Query<AutomationSubject>(sql, new { tenantId = a.TenantId, audienceId = cfg.AudienceId })).FirstOrDefault();
+            }
             if (a.TriggerKind == AutomationTriggers.NewsletterSubscribed)
             {
                 var sql = NewsletterSelect.Replace("{SKIP}", "FALSE") + @"

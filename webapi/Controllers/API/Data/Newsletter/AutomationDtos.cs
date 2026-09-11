@@ -16,6 +16,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string? FromProductName { get; set; }
         public Guid? EventId { get; set; }
         public Guid? EventTypeId { get; set; }
+        /// <summary>Audience trigger: the saved audience.</summary>
+        public Guid? AudienceId { get; set; }
         public bool IsActive { get; set; }
         public int StepCount { get; set; }
         /// <summary>Delay on the first step when it is purchase-anchored; kept for the upgrades panel.</summary>
@@ -92,6 +94,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         /// <summary>Event trigger: exactly one of these.</summary>
         public Guid? EventId { get; set; }
         public Guid? EventTypeId { get; set; }
+        /// <summary>Audience trigger: the saved audience.</summary>
+        public Guid? AudienceId { get; set; }
 
         public bool StopOnUpgrade { get; set; } = true;
         public bool StopWhenUsedUp { get; set; } = true;
@@ -179,6 +183,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         public List<CampaignAudienceEventOptionDto> Events { get; set; } = new();
         public List<CampaignAudienceNamedOptionDto> EventTypes { get; set; } = new();
         public List<CampaignAudienceNamedOptionDto> PassProducts { get; set; } = new();
+        /// <summary>Saved audiences, for the "joins an audience" trigger.</summary>
+        public List<CampaignAudienceNamedOptionDto> Audiences { get; set; } = new();
     }
 
     public class AutomationTriggerOption

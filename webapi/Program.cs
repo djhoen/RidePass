@@ -110,6 +110,7 @@ builder.Services.AddSingleton<Services.Geo.IGeoIpService, Services.Geo.GeoIpServ
 builder.Services.AddScoped<INewsletterRepository, NewsletterRepository>();
 builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
 builder.Services.AddScoped<ICampaignAudienceRepository, CampaignAudienceRepository>();
+builder.Services.AddScoped<IAudienceRepository, AudienceRepository>();
 builder.Services.AddScoped<IEmailEngagementRepository, EmailEngagementRepository>();
 builder.Services.AddScoped<IEmailTemplateRepository, EmailTemplateRepository>();
 builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();

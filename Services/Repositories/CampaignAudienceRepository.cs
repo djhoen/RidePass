@@ -7,8 +7,13 @@ namespace Services.Repositories
     public class CampaignAudienceRepository : ICampaignAudienceRepository
     {
         private readonly IDbHelper _db;
+        private readonly IAudienceRepository _savedAudiences;
 
-        public CampaignAudienceRepository(IDbHelper db) => _db = db;
+        public CampaignAudienceRepository(IDbHelper db, IAudienceRepository savedAudiences)
+        {
+            _db = db;
+            _savedAudiences = savedAudiences;
+        }
 
         public async Task<List<CampaignAudienceRecipient>> ListRecipients(Guid tenantId, string kind, CampaignAudienceConfig config)
         {
@@ -77,6 +82,15 @@ namespace Services.Repositories
                     var r = await _db.Query<CampaignAudienceRecipient>(sql, new { tenantId, productId = config.PassProductId });
                     return r.ToList();
                 }
+                case CampaignAudienceKinds.Audience:
+                {
+                    // Evaluated live, so the send reaches whoever matches at send time.
+                    if (config.AudienceId is null) return new List<CampaignAudienceRecipient>();
+                    var audience = await _savedAudiences.GetById(config.AudienceId.Value, tenantId);
+                    if (audience is null) return new List<CampaignAudienceRecipient>();
+                    var people = await _savedAudiences.Evaluate(tenantId, AudienceDefinition.Parse(audience.Definition));
+                    return people.Select(p => new CampaignAudienceRecipient(p.Email, p.Name, null)).ToList();
+                }
                 default:
                     return new List<CampaignAudienceRecipient>();
             }
@@ -131,6 +145,9 @@ namespace Services.Repositories
                     if (config.PassProductId is null) return null;
                     return (await _db.Query<string>("SELECT name FROM season_pass_product WHERE id = @id AND tenant_id = @tenantId",
                         new { id = config.PassProductId, tenantId })).FirstOrDefault();
+                case CampaignAudienceKinds.Audience:
+                    if (config.AudienceId is null) return null;
+                    return (await _savedAudiences.GetById(config.AudienceId.Value, tenantId))?.Name;
                 default:
                     return null;
             }
@@ -176,6 +193,11 @@ namespace Services.Repositories
                         new { id = config.PassProductId, tenantId });
                     var name = r.FirstOrDefault();
                     return name is null ? null : $"Holders of {name}";
+                }
+                case CampaignAudienceKinds.Audience:
+                {
+                    if (config.AudienceId is null) return null;
+                    return (await _savedAudiences.GetById(config.AudienceId.Value, tenantId))?.Name;
                 }
                 default:
                     return null;

@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased' | 'newsletter_subscribed'
+export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased' | 'newsletter_subscribed' | 'audience_joined'
 export type AutomationAnchor = 'purchase' | 'event_start' | 'event_end' | 'pass_expiry' | 'fixed_date'
 
 export interface AutomationListItem {
@@ -13,6 +13,8 @@ export interface AutomationListItem {
     fromProductName: string | null
     eventId: string | null
     eventTypeId: string | null
+    /** Audience trigger: the saved audience. */
+    audienceId: string | null
     isActive: boolean
     stepCount: number
     /** Delay on the first email when it counts from the purchase; kept for the upgrades panel. */
@@ -80,6 +82,7 @@ export interface UpsertAutomationRequest {
     fromProductId: string | null
     eventId: string | null
     eventTypeId: string | null
+    audienceId: string | null
     stopOnUpgrade: boolean
     stopWhenUsedUp: boolean
     sendWindowStart: string | null
@@ -118,6 +121,8 @@ export interface AutomationTriggerOptions {
     events: { id: string; title: string; startsAtUtc: string; status: string; eventTypeName: string }[]
     eventTypes: { id: string; name: string; isActive: boolean }[]
     passProducts: { id: string; name: string; isActive: boolean }[]
+    /** Saved audiences, for the "joins an audience" trigger. */
+    audiences: { id: string; name: string; isActive: boolean }[]
 }
 
 export interface TestSendResponse {
