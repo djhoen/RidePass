@@ -249,3 +249,22 @@ All three were decided on 2026-09-10:
    with a specific pass product.
 2. Late buyers skip past-due steps; the skip and its reason are recorded on the send row.
 3. Memberships wait until a tenant sells them.
+
+## Addendum 2026-09-10: saved audiences (built)
+
+The Email page has a third tab, Audiences. An audience is a base list (everyone we have an
+email for, newsletter subscribers, or customers) plus rules, combined with "all of these" or
+"any of these", each rule "is" or "is not": bought a ticket to an event / event type (optional
+start window), holds a pass (optionally only a current one), pass ends within N days, left a
+checkout unfinished in the last N days (not today; excluded if they bought since), ZIP (full or
+prefix), state, city. Address rules read the rider's account address.
+
+It is evaluated live wherever it is used (`Services/Email/AudienceQuery.cs` builds one SQL
+statement; every subquery is tenant-scoped). Campaigns store `audience_kind = 'audience'` with
+`{ audienceId }` and resolve at send time. Automations gain the trigger `audience_joined`:
+`audience_member` records the first moment a person matched (`joined_at`, the timing anchor)
+and `left_at` when they stop matching; the sweep, the estimate, and activation refresh
+membership first. Seven samples are seeded per tenant on request ("Add sample audiences"):
+newsletter subscribers, all customers, season pass holders, bought an event ticket this year,
+yesterday's abandoned carts, subscribers who have never bought, passes ending in 30 days.
+Deleting an audience is refused while an unsent campaign or any automation points at it.
