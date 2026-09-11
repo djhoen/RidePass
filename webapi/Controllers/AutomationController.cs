@@ -153,6 +153,7 @@ namespace webapi.Controllers
                 FromProductName = basic.FromProductName,
                 EventId = basic.EventId,
                 EventTypeId = basic.EventTypeId,
+                AudienceId = basic.AudienceId,
                 IsActive = basic.IsActive,
                 StepCount = basic.StepCount,
                 FirstDelayDays = basic.FirstDelayDays,

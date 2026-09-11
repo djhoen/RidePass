@@ -5,8 +5,9 @@ namespace Services.Email
     /// <summary>
     /// The registry of what an automation can start from and what a step can be timed against.
     /// The sweep, the controller, the estimate, the test send, and the editor all read from here,
-    /// so adding a trigger is: a kind constant, its anchors, its merge fields, and the two SQL
-    /// sources in the repository. Design: docs/dynamic-campaigns-plan.md §3.1.
+    /// so adding a trigger is: a kind constant, its anchors, its merge fields, the two SQL
+    /// sources in the repository, AND a migration widening ck_marketing_automation_trigger
+    /// (see Script0287). Design: docs/dynamic-campaigns-plan.md §3.1.
     /// </summary>
     public static class AutomationTriggers
     {
