@@ -66,6 +66,12 @@
             </v-btn-group>
             <input v-if="uploadImage" ref="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
                 class="d-none" @change="onImageFileChange" />
+            <!-- YouTube video: stored as a linked thumbnail so it works in email; pages show a player. -->
+            <v-btn-group density="compact" variant="text" divided class="ml-2">
+                <v-btn size="small" :active="editor?.isActive('videoEmbed')" aria-label="Insert video" @click="openVideoDialog">
+                    <v-icon>mdi-youtube</v-icon>
+                </v-btn>
+            </v-btn-group>
             <!-- Email call-to-action button: only for the campaign and automation editors. -->
             <v-btn-group v-if="emailButtons" density="compact" variant="text" divided class="ml-2">
                 <v-btn size="small" :active="editor?.isActive('emailButton')" aria-label="Insert button" @click="openButtonDialog">
@@ -104,6 +110,31 @@
         <div class="d-none">
         </div>
 
+        <!-- Video dialog: a YouTube link or the embed snippet from Share > Embed. -->
+        <v-dialog v-model="videoDialog" max-width="480">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Insert video</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="videoDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-textarea v-model="videoInput" label="YouTube link or embed code" density="compact" rows="2" auto-grow autofocus
+                        hide-details placeholder="https://www.youtube.com/watch?v=... or <iframe ...>"></v-textarea>
+                    <div class="text-caption mt-2" :class="videoId ? 'text-success' : 'text-medium-emphasis'">
+                        <template v-if="videoId">Found video {{ videoId }}.</template>
+                        <template v-else-if="videoInput.trim()">That doesn't look like a YouTube link. Paste the page URL or the Share, Embed code.</template>
+                        <template v-else>Emails can't play video, so it goes in as a thumbnail that opens the video. On a web page it plays in place.</template>
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="videoDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :disabled="!videoId" @click="applyVideo">Insert</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <!-- Link dialog: replaces the browser-native window.prompt (banned in this project). -->
         <v-dialog v-model="linkDialog" max-width="440">
             <v-card>
@@ -134,13 +165,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import { EmailButton } from '@/components/tiptap/EmailButton'
+import { VideoEmbed, parseYouTubeId } from '@/components/tiptap/VideoEmbed'
 
 const props = defineProps<{
     modelValue: string
@@ -163,6 +195,9 @@ const buttonDialog = ref(false)
 const buttonLabel = ref('')
 const buttonUrl = ref('')
 const buttonExisting = ref(false)
+const videoDialog = ref(false)
+const videoInput = ref('')
+const videoId = computed(() => parseYouTubeId(videoInput.value))
 
 const editor = useEditor({
     content: props.modelValue,
@@ -171,6 +206,7 @@ const editor = useEditor({
         Underline,
         Link.configure({ openOnClick: false, autolink: true }),
         Image,
+        VideoEmbed,
         ...(props.emailButtons ? [EmailButton] : []),
     ],
     onUpdate: ({ editor }) => {
@@ -188,6 +224,16 @@ watch(() => props.modelValue, (incoming) => {
 onBeforeUnmount(() => {
     editor.value?.destroy()
 })
+
+function openVideoDialog() {
+    videoInput.value = ''
+    videoDialog.value = true
+}
+function applyVideo() {
+    if (!editor.value || !videoId.value) return
+    editor.value.chain().focus().insertVideoEmbed({ videoId: videoId.value }).run()
+    videoDialog.value = false
+}
 
 function openButtonDialog() {
     if (!editor.value) return
@@ -292,6 +338,41 @@ async function onImageFileChange(e: Event) {
     margin: 0 0 0.6em;
     padding-left: 0.8em;
     opacity: 0.85;
+}
+.rich-text-editor .ProseMirror a.rp-video {
+    display: block;
+    position: relative;
+    width: min(100%, 480px);
+    margin: 12px 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+}
+.rich-text-editor .ProseMirror a.rp-video img {
+    display: block;
+    width: 100%;
+    height: auto;
+    opacity: 0.9;
+}
+.rich-text-editor .ProseMirror a.rp-video::after {
+    content: '\25B6';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(220, 38, 38, 0.92);
+    color: #fff;
+    font-size: 22px;
+    line-height: 56px;
+    text-align: center;
+    padding-left: 4px;
+    box-sizing: border-box;
+}
+.rich-text-editor .ProseMirror a.rp-video.ProseMirror-selectednode {
+    outline: 2px solid rgb(var(--v-theme-primary));
 }
 .rich-text-editor .ProseMirror hr {
     border: none;
