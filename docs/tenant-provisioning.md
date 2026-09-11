@@ -204,7 +204,7 @@ _Both | manual | cost: One real charge plus its refund on production._ (added 20
 
 ## 5. Text messaging
 
-SMS is off until a toll-free number is provisioned. The platform Twilio credentials are a once-per-environment setup.
+SMS is off until a toll-free number is provisioned. The platform Twilio credentials are a once-per-environment setup. Rider messages, text campaigns, and automation text steps all wait on this section.
 
 ### Platform Twilio credentials (once per environment)
 
@@ -254,6 +254,21 @@ _Both | manual_ (added 2026-09-10)
 2. Reply STOP, then START, and confirm the opt-out toggles in the Inbox thread.
 
 **Verify:** Delivery status reaches the thread and a billing ledger row appears for the message.
+
+### Text campaigns and automation text steps
+
+_Both | assisted_ (added 2026-09-11)
+
+**Where:** Tenant admin, Campaigns (Send once, Send automatically, Audiences) (`/Admin/Email`)
+
+1. Prerequisites: the steps above (number provisioned, SMS switched on, toll-free verification approved). Until then a text campaign refuses to send and an automation with a text step refuses to turn on, each with a message naming this page.
+2. Texts go to the phone on the rider's account (entered at checkout on the Racer Info step or on the profile). The Audiences tab and the campaign composer show how many people in an audience can be texted; a track whose riders never gave a phone will see 0.
+3. Open Send automatically, add an email with Send as: Text (or Both), write the text with merge fields, and use Send yourself a test with your phone number. The test arrives with "Reply STOP to opt out" appended, which every marketing text carries.
+4. On a first bulk text, send to a small audience first: carriers throttle unverified toll-free numbers to roughly ten messages a day.
+
+**Verify:** The test text lands, a billing ledger row appears for it (Twilio's price via the status webhook), and a STOP reply from that phone marks it opted out in the Inbox and is then skipped by the next campaign with the reason "Recipient replied STOP".
+
+**Notes:** Texts are billed per message segment from Twilio's price, separately from the email tier. A text campaign to an audience with no phones sends nothing and says so rather than sending emails instead.
 
 ## 6. Integrations (optional)
 

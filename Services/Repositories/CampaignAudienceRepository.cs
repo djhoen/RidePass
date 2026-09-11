@@ -84,12 +84,30 @@ namespace Services.Repositories
                 }
                 case CampaignAudienceKinds.Audience:
                 {
-                    // Evaluated live, so the send reaches whoever matches at send time.
-                    if (config.AudienceId is null) return new List<CampaignAudienceRecipient>();
-                    var audience = await _savedAudiences.GetById(config.AudienceId.Value, tenantId);
-                    if (audience is null) return new List<CampaignAudienceRecipient>();
-                    var people = await _savedAudiences.Evaluate(tenantId, AudienceDefinition.Parse(audience.Definition));
-                    return people.Select(p => new CampaignAudienceRecipient(p.Email, p.Name, null, p.Phone)).ToList();
+                    // Evaluated live, so the send reaches whoever matches at send time. Several
+                    // audiences are unioned by email: a person in two of them is one recipient,
+                    // keeping the row that knows more (a name, a phone).
+                    var merged = new Dictionary<string, CampaignAudienceRecipient>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var id in config.AllAudienceIds())
+                    {
+                        var audience = await _savedAudiences.GetById(id, tenantId);
+                        if (audience is null) continue;
+                        var people = await _savedAudiences.Evaluate(tenantId, AudienceDefinition.Parse(audience.Definition));
+                        foreach (var p in people)
+                        {
+                            if (merged.TryGetValue(p.Email, out var have))
+                            {
+                                merged[p.Email] = new CampaignAudienceRecipient(have.Email,
+                                    string.IsNullOrWhiteSpace(have.Name) ? p.Name : have.Name, null,
+                                    string.IsNullOrWhiteSpace(have.Phone) ? p.Phone : have.Phone);
+                            }
+                            else
+                            {
+                                merged[p.Email] = new CampaignAudienceRecipient(p.Email, p.Name, null, p.Phone);
+                            }
+                        }
+                    }
+                    return merged.Values.OrderBy(r => r.Email, StringComparer.Ordinal).ToList();
                 }
                 default:
                     return new List<CampaignAudienceRecipient>();
@@ -146,11 +164,22 @@ namespace Services.Repositories
                     return (await _db.Query<string>("SELECT name FROM season_pass_product WHERE id = @id AND tenant_id = @tenantId",
                         new { id = config.PassProductId, tenantId })).FirstOrDefault();
                 case CampaignAudienceKinds.Audience:
-                    if (config.AudienceId is null) return null;
-                    return (await _savedAudiences.GetById(config.AudienceId.Value, tenantId))?.Name;
+                    return await AudienceNames(tenantId, config);
                 default:
                     return null;
             }
+        }
+
+        /// <summary>"Season pass holders", or "Season pass holders + Newsletter subscribers". Null when none exist any more.</summary>
+        private async Task<string?> AudienceNames(Guid tenantId, CampaignAudienceConfig config)
+        {
+            var names = new List<string>();
+            foreach (var id in config.AllAudienceIds())
+            {
+                var a = await _savedAudiences.GetById(id, tenantId);
+                if (a is not null) names.Add(a.Name);
+            }
+            return names.Count == 0 ? null : string.Join(" + ", names);
         }
 
         public async Task<string?> DescribeAudience(Guid tenantId, string kind, CampaignAudienceConfig config)
@@ -195,10 +224,7 @@ namespace Services.Repositories
                     return name is null ? null : $"Holders of {name}";
                 }
                 case CampaignAudienceKinds.Audience:
-                {
-                    if (config.AudienceId is null) return null;
-                    return (await _savedAudiences.GetById(config.AudienceId.Value, tenantId))?.Name;
-                }
+                    return await AudienceNames(tenantId, config);
                 default:
                     return null;
             }

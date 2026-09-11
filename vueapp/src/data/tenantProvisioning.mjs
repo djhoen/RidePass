@@ -260,7 +260,7 @@ export const provisioningPhases = [
     {
         id: 'sms',
         title: '5. Text messaging',
-        intro: 'SMS is off until a toll-free number is provisioned. The platform Twilio credentials are a once-per-environment setup.',
+        intro: 'SMS is off until a toll-free number is provisioned. The platform Twilio credentials are a once-per-environment setup. Rider messages, text campaigns, and automation text steps all wait on this section.',
         steps: [
             {
                 id: 'twilio-master',
@@ -317,6 +317,22 @@ export const provisioningPhases = [
                 ],
                 verify: 'Delivery status reaches the thread and a billing ledger row appears for the message.',
                 added: '2026-09-10',
+            },
+            {
+                id: 'text-campaigns',
+                title: 'Text campaigns and automation text steps',
+                owner: 'Both',
+                automation: 'assisted',
+                where: { label: 'Tenant admin, Campaigns (Send once, Send automatically, Audiences)', to: '/Admin/Email' },
+                steps: [
+                    'Prerequisites: the steps above (number provisioned, SMS switched on, toll-free verification approved). Until then a text campaign refuses to send and an automation with a text step refuses to turn on, each with a message naming this page.',
+                    'Texts go to the phone on the rider\'s account (entered at checkout on the Racer Info step or on the profile). The Audiences tab and the campaign composer show how many people in an audience can be texted; a track whose riders never gave a phone will see 0.',
+                    'Open Send automatically, add an email with Send as: Text (or Both), write the text with merge fields, and use Send yourself a test with your phone number. The test arrives with "Reply STOP to opt out" appended, which every marketing text carries.',
+                    'On a first bulk text, send to a small audience first: carriers throttle unverified toll-free numbers to roughly ten messages a day.',
+                ],
+                verify: 'The test text lands, a billing ledger row appears for it (Twilio\'s price via the status webhook), and a STOP reply from that phone marks it opted out in the Inbox and is then skipped by the next campaign with the reason "Recipient replied STOP".',
+                notes: 'Texts are billed per message segment from Twilio\'s price, separately from the email tier. A text campaign to an audience with no phones sends nothing and says so rather than sending emails instead.',
+                added: '2026-09-11',
             },
         ],
     },

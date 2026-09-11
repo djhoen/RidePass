@@ -119,7 +119,8 @@ namespace Services.Repositories
                 SELECT a.id AS AudienceId,
                        (SELECT COUNT(*)::int FROM email_campaign c
                         WHERE c.tenant_id = a.tenant_id AND c.audience_kind = 'audience'
-                          AND c.audience_config->>'audienceId' = a.id::text
+                          AND (c.audience_config->>'audienceId' = a.id::text
+                               OR jsonb_exists(COALESCE(c.audience_config->'audienceIds', '[]'::jsonb), a.id::text))
                           AND c.status IN ('draft', 'scheduled')) AS Campaigns,
                        (SELECT COUNT(*)::int FROM marketing_automation m
                         WHERE m.tenant_id = a.tenant_id AND m.trigger_kind = 'audience_joined'

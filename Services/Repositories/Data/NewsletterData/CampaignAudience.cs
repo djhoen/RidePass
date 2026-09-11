@@ -30,8 +30,19 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid? EventId { get; set; }
         public Guid? EventTypeId { get; set; }
         public Guid? PassProductId { get; set; }
-        /// <summary>Saved audience id for the 'audience' kind.</summary>
+        /// <summary>Saved audience id for the 'audience' kind (the first one, kept for older rows).</summary>
         public Guid? AudienceId { get; set; }
+        /// <summary>Every saved audience the campaign goes to; people in more than one are sent once.</summary>
+        public List<Guid>? AudienceIds { get; set; }
+
+        /// <summary>All audience ids, old shape and new, in order, without repeats.</summary>
+        public List<Guid> AllAudienceIds()
+        {
+            var ids = new List<Guid>();
+            if (AudienceIds is not null) ids.AddRange(AudienceIds);
+            if (AudienceId is Guid one && !ids.Contains(one)) ids.Insert(0, one);
+            return ids.Distinct().ToList();
+        }
         /// <summary>Optional window on event start for the event-type audience (UTC).</summary>
         public DateTime? FromUtc { get; set; }
         public DateTime? ToUtc { get; set; }

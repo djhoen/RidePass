@@ -105,9 +105,10 @@
                 <v-card-text>
                     <!-- Audience: a saved audience from the Audiences tab. It is resolved again at
                          send time, so the count shown here is a preview, not a snapshot. -->
-                    <v-select v-model="audienceId" :items="audienceItems" item-title="title" item-value="value"
-                        label="Audience" density="compact" :readonly="composeReadonly" :loading="audiencesLoading"
-                        :hint="legacyAudienceLabel || 'Build and edit audiences on the Audiences tab.'" persistent-hint
+                    <v-select v-model="audienceIds" :items="audienceItems" item-title="title" item-value="value"
+                        label="Audiences" density="compact" :readonly="composeReadonly" :loading="audiencesLoading"
+                        multiple chips closable-chips
+                        :hint="legacyAudienceLabel || 'Pick one or more. Someone in several audiences is sent once. Build audiences on the Audiences tab.'" persistent-hint
                         no-data-text="No audiences yet. Add them on the Audiences tab."></v-select>
                     <div class="text-caption mt-1 mb-4">
                         <span v-if="audienceCountLoading" class="text-medium-emphasis">Counting recipients...</span>
@@ -346,7 +347,7 @@ watch(composeView, async (v) => {
 const audienceService = new AudienceService()
 const audiences = ref<AudienceItem[]>([])
 const audiencesLoading = ref(false)
-const audienceId = ref<string | null>(null)
+const audienceIds = ref<string[]>([])
 const legacyAudienceLabel = ref('')
 const audienceCount = ref<CampaignAudienceCount | null>(null)
 const audienceCountLoading = ref(false)
@@ -354,27 +355,32 @@ const audienceCountError = ref('')
 const audienceItems = computed(() => audiences.value.map(a => ({ value: a.id, title: `${a.name} (${a.memberCount})` })))
 
 function currentAudienceConfig(): CampaignAudienceConfig {
-    return { eventId: null, eventTypeId: null, passProductId: null, fromUtc: null, toUtc: null, audienceId: audienceId.value }
+    return {
+        eventId: null, eventTypeId: null, passProductId: null, fromUtc: null, toUtc: null,
+        audienceId: audienceIds.value[0] ?? null, audienceIds: [...audienceIds.value],
+    }
 }
 function audienceTargetChosen(): boolean {
-    return !!audienceId.value
+    return audienceIds.value.length > 0
 }
 function composePayload() {
     return { ...composeForm.value, audienceKind: 'audience' as CampaignAudienceKind, audienceConfig: currentAudienceConfig() }
 }
 function applyAudience(kind: CampaignAudienceKind | undefined, cfg: Partial<CampaignAudienceConfig> | null | undefined, label?: string) {
-    audienceId.value = kind === 'audience' ? (cfg?.audienceId ?? null) : null
+    audienceIds.value = kind !== 'audience' ? []
+        : cfg?.audienceIds?.length ? [...cfg.audienceIds]
+        : cfg?.audienceId ? [cfg.audienceId] : []
     legacyAudienceLabel.value = kind && kind !== 'audience' ? `Currently: ${label ?? kind}. Pick a saved audience to change it.` : ''
     audienceCount.value = null
     audienceCountError.value = ''
 }
 
 let countTimer: ReturnType<typeof setTimeout> | null = null
-watch(audienceId, () => {
+watch(audienceIds, () => {
     if (!composeOpen.value) return
     if (countTimer) clearTimeout(countTimer)
     countTimer = setTimeout(refreshAudienceCount, 300)
-})
+}, { deep: true })
 
 async function refreshAudienceCount() {
     audienceCount.value = null
@@ -456,7 +462,7 @@ async function openCompose(id: string | null) {
         viewClickUrls.value = []
         // Arriving from the Audiences tab ("send a campaign to this audience") preselects it.
         const preselect = typeof route.query.audience === 'string' ? route.query.audience : null
-        applyAudience('audience', { audienceId: preselect })
+        applyAudience('audience', { audienceIds: preselect ? [preselect] : [] })
     }
     composeView.value = 'edit'
     templatePick.value = null

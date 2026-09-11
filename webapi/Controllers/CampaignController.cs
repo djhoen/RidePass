@@ -182,12 +182,13 @@ namespace webapi.Controllers
         [HttpGet("Audience/Count")]
         public async Task<IActionResult> AudienceCount([FromQuery] string? kind, [FromQuery] Guid? eventId,
             [FromQuery] Guid? eventTypeId, [FromQuery] Guid? passProductId,
-            [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc, [FromQuery] Guid? audienceId)
+            [FromQuery] DateTime? fromUtc, [FromQuery] DateTime? toUtc, [FromQuery] Guid? audienceId,
+            [FromQuery] List<Guid>? audienceIds)
         {
             var resolved = await ResolveAudience(kind, new CampaignAudienceConfigDto
             {
                 EventId = eventId, EventTypeId = eventTypeId, PassProductId = passProductId, FromUtc = fromUtc, ToUtc = toUtc,
-                AudienceId = audienceId,
+                AudienceId = audienceId, AudienceIds = audienceIds,
             });
             if (resolved.Error is not null) return new ApiResponses().BadRequestResult(resolved.Error);
 
@@ -499,9 +500,15 @@ namespace webapi.Controllers
                     config.PassProductId = dto.PassProductId;
                     break;
                 case CampaignAudienceKinds.Audience:
-                    if (dto?.AudienceId is null) return (kind, config, string.Empty, "Pick the audience this campaign goes to.");
-                    config.AudienceId = dto.AudienceId;
+                {
+                    var ids = (dto?.AudienceIds ?? new List<Guid>()).Where(i => i != Guid.Empty).ToList();
+                    if (dto?.AudienceId is Guid one && !ids.Contains(one)) ids.Insert(0, one);
+                    ids = ids.Distinct().ToList();
+                    if (ids.Count == 0) return (kind, config, string.Empty, "Pick at least one audience this campaign goes to.");
+                    config.AudienceId = ids[0];
+                    config.AudienceIds = ids;
                     break;
+                }
             }
             var label = await _audiences.DescribeAudience(_tenantContext.TenantId, kind, config);
             if (label is null)
@@ -548,6 +555,7 @@ namespace webapi.Controllers
             {
                 EventId = cfg.EventId, EventTypeId = cfg.EventTypeId, PassProductId = cfg.PassProductId,
                 AudienceId = cfg.AudienceId,
+                AudienceIds = cfg.AllAudienceIds(),
                 FromUtc = cfg.FromUtc.HasValue ? DateTime.SpecifyKind(cfg.FromUtc.Value, DateTimeKind.Utc) : null,
                 ToUtc = cfg.ToUtc.HasValue ? DateTime.SpecifyKind(cfg.ToUtc.Value, DateTimeKind.Utc) : null,
             };

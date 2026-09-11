@@ -16,8 +16,10 @@ export function smsSegments(text: string): { chars: number; segments: number } {
 
 /** Target of a non-subscriber audience. Only the field the kind needs is set. */
 export interface CampaignAudienceConfig {
-    /** Saved audience (kind 'audience'). */
+    /** Saved audience (kind 'audience'); the first of audienceIds, kept for older rows. */
     audienceId?: string | null
+    /** Every saved audience the campaign goes to; people in more than one are sent once. */
+    audienceIds?: string[] | null
     eventId: string | null
     eventTypeId: string | null
     passProductId: string | null
@@ -108,7 +110,10 @@ export class CampaignService {
         if (config.audienceId) params.audienceId = config.audienceId
         if (config.fromUtc) params.fromUtc = config.fromUtc
         if (config.toUtc) params.toUtc = config.toUtc
-        return axios.get<{ data: CampaignAudienceCount }>(`${this.apiUrl}/Campaign/Audience/Count`, { params })
+        // Repeated audienceIds= entries, the shape ASP.NET binds a list from (axios would bracket them).
+        const extra = (config.audienceIds ?? []).map(id => '&audienceIds=' + encodeURIComponent(id)).join('')
+        const qs = new URLSearchParams(params).toString()
+        return axios.get<{ data: CampaignAudienceCount }>(`${this.apiUrl}/Campaign/Audience/Count?${qs}${extra}`)
     }
 
     list() {
