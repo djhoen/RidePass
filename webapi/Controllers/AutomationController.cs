@@ -197,15 +197,9 @@ namespace webapi.Controllers
             var parsed = await ValidateAndParse(request);
             if (parsed.Error is not null) return new ApiResponses().BadRequestResult(parsed.Error);
 
-            // Editing an ARMED automation's steps would delete their send rows (FK cascade) and
-            // re-send everyone. Make them disarm first rather than silently re-mailing the list.
-            if (existing.IsActive)
-            {
-                return new ApiResponses().BadRequestResult(
-                    "Turn this automation off before editing it. Editing the emails while it's running " +
-                    "would send them again to everyone who already got them.");
-            }
-
+            // Editing a running automation is fine: steps keep their ids, so the send history
+            // survives and riders who already received an email are not sent it again. A step the
+            // admin deletes takes its history with it, which is the meaning of deleting it.
             existing.Name = request.Name.Trim();
             existing.TriggerKind = parsed.Kind;
             existing.TriggerConfig = parsed.Config.ToJson();
@@ -479,6 +473,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
 
                 steps.Add(new MarketingAutomationStep
                 {
+                    Id = s.Id ?? Guid.Empty,
                     Anchor = anchor,
                     OffsetDays = offset,
                     DelayDays = anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, offset) : 0,

@@ -104,6 +104,8 @@ namespace webapi.Controllers.API.Data.Newsletter
 
     public class UpsertAutomationStep
     {
+        /// <summary>The existing step's id when editing, so its send history is kept. Omit for a new email.</summary>
+        public Guid? Id { get; set; }
         /// <summary>Defaults to purchase. See AutomationTriggers.Anchors.</summary>
         public string? Anchor { get; set; }
         /// <summary>Signed days from the anchor. Older clients send DelayDays instead.</summary>

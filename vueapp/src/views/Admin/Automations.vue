@@ -114,6 +114,10 @@
                     <v-alert v-if="editorError" type="error" variant="tonal" density="compact" class="mb-4">
                         {{ editorError }}
                     </v-alert>
+                    <v-alert v-if="editingActive" type="info" variant="tonal" density="compact" class="mb-4">
+                        This automation is on. Changes apply to emails that have not gone out yet; riders who
+                        already received an email will not get it again. Deleting an email drops its history.
+                    </v-alert>
 
                     <v-row>
                         <v-col cols="12" md="7">
@@ -508,6 +512,7 @@ const tz = () => branding.timezone || 'UTC'
 // The editor's step model: the sentence "[days] [before/after] [anchor]" is friendlier to edit
 // than a signed offset, so the sign lives in `direction` until save.
 interface StepForm {
+    id?: string | null
     previewText: string
     anchor: AutomationAnchor
     days: number
@@ -537,6 +542,7 @@ const loadError = ref('')
 
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
+const editingActive = ref(false)
 const eventScope = ref<'event' | 'event_type'>('event')
 const useWindow = ref(false)
 const saving = ref(false)
@@ -693,6 +699,7 @@ async function load() {
 
 function openNew() {
     editingId.value = null
+    editingActive.value = false
     form.value = emptyForm()
     eventScope.value = 'event'
     useWindow.value = false
@@ -706,6 +713,7 @@ async function openEdit(a: AutomationListItem) {
         const { data } = await service.get(a.id)
         const d = data.data
         editingId.value = d.id
+        editingActive.value = d.isActive
         form.value = {
             name: d.name,
             triggerKind: d.triggerKind,
@@ -717,6 +725,7 @@ async function openEdit(a: AutomationListItem) {
             sendWindowStart: d.sendWindowStart,
             sendWindowEnd: d.sendWindowEnd,
             steps: d.steps.map(s => ({
+                id: s.id,
                 anchor: s.anchor,
                 days: Math.abs(s.offsetDays),
                 direction: s.offsetDays < 0 ? 'before' : 'after',
@@ -762,6 +771,7 @@ function toPayload(): UpsertAutomationRequest {
         sendWindowStart: useWindow.value ? form.value.sendWindowStart : null,
         sendWindowEnd: useWindow.value ? form.value.sendWindowEnd : null,
         steps: form.value.steps.map(s => ({
+            id: s.id ?? null,
             anchor: s.anchor,
             offsetDays: s.anchor === 'fixed_date' ? 0 : (s.direction === 'before' ? -1 : 1) * Math.abs(Number(s.days) || 0),
             sendOn: s.anchor === 'fixed_date' ? (s.sendOn || null) : null,

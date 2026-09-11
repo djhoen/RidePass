@@ -60,6 +60,8 @@ export interface AutomationDetail extends AutomationListItem {
 }
 
 export interface UpsertAutomationStep {
+    /** Existing step id when editing, so its send history is kept; omit for a new email. */
+    id?: string | null
     anchor: AutomationAnchor
     offsetDays: number
     sendOn: string | null

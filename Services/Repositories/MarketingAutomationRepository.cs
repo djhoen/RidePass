@@ -113,36 +113,65 @@ namespace Services.Repositories
                                WHERE id = @automationId AND tenant_id = @tenantId)";
             if (!(await _db.Query<bool>(ownedSql, new { automationId, tenantId })).First()) return;
 
-            var statements = new List<(string, object?)>
+            // Steps keep their identity across an edit. The send log hangs off the step id (one
+            // row per step + rider), so rewriting steps as new rows would make a running
+            // automation re-send everything. Instead: update the steps the client sent back with
+            // an id, insert the ones without, and delete only the ones it dropped (their history
+            // goes with them, which is what "delete this email" means).
+            var incoming = steps.ToList();
+            var existingIds = (await _db.Query<Guid>(
+                "SELECT id FROM marketing_automation_step WHERE automation_id = @automationId", new { automationId })).ToHashSet();
+            var keep = incoming.Where(s => s.Id != Guid.Empty && existingIds.Contains(s.Id)).Select(s => s.Id).ToHashSet();
+
+            var statements = new List<(string, object?)>();
+            foreach (var gone in existingIds.Where(id => !keep.Contains(id)))
             {
-                // Deleting a step cascades its send rows, so an edited automation can re-send its
-                // history. Tolerable while steps are authored before arming; the API refuses to
-                // edit an armed automation for exactly this reason.
-                ("DELETE FROM marketing_automation_step WHERE automation_id = @automationId",
-                    new { automationId }),
-            };
+                statements.Add(("DELETE FROM marketing_automation_step WHERE id = @id AND automation_id = @automationId",
+                    new { id = gone, automationId }));
+            }
+            // Two passes on step_order so a reorder cannot collide with uk_automation_step_order
+            // mid-batch: park every kept row on a negative order first, then assign the final one.
+            statements.Add(("UPDATE marketing_automation_step SET step_order = -step_order - 1 WHERE automation_id = @automationId",
+                new { automationId }));
             var order = 0;
-            foreach (var s in steps)
+            var seen = new HashSet<Guid>();
+            foreach (var s in incoming)
             {
-                statements.Add((@"
-                    INSERT INTO marketing_automation_step
-                        (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text, preview_text)
-                    VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText, @previewText)",
-                    new
-                    {
-                        automationId,
-                        stepOrder = order++,
-                        // delay_days is the legacy column: it mirrors the offset for purchase-anchored
-                        // steps and is 0 for every other anchor.
-                        delayDays = s.Anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, s.OffsetDays) : 0,
-                        anchor = s.Anchor,
-                        offsetDays = s.Anchor == AutomationTriggers.Anchors.FixedDate ? 0 : s.OffsetDays,
-                        sendOn = s.Anchor == AutomationTriggers.Anchors.FixedDate ? s.SendOn : null,
-                        subject = s.Subject,
-                        bodyHtml = s.BodyHtml,
-                        bodyText = s.BodyText,
-                        previewText = s.PreviewText,
-                    }));
+                // The same id twice in one payload: the first occurrence keeps the history, the
+                // repeat becomes a new step rather than silently overwriting the first.
+                var update = keep.Contains(s.Id) && seen.Add(s.Id);
+                var p = new
+                {
+                    id = s.Id,
+                    automationId,
+                    stepOrder = order++,
+                    // delay_days is the legacy column: it mirrors the offset for purchase-anchored
+                    // steps and is 0 for every other anchor.
+                    delayDays = s.Anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, s.OffsetDays) : 0,
+                    anchor = s.Anchor,
+                    offsetDays = s.Anchor == AutomationTriggers.Anchors.FixedDate ? 0 : s.OffsetDays,
+                    sendOn = s.Anchor == AutomationTriggers.Anchors.FixedDate ? s.SendOn : null,
+                    subject = s.Subject,
+                    bodyHtml = s.BodyHtml,
+                    bodyText = s.BodyText,
+                    previewText = s.PreviewText,
+                };
+                if (update)
+                {
+                    statements.Add((@"
+                        UPDATE marketing_automation_step
+                        SET step_order = @stepOrder, delay_days = @delayDays, anchor = @anchor, offset_days = @offsetDays,
+                            send_on = CAST(@sendOn AS date), subject = @subject, body_html = @bodyHtml,
+                            body_text = @bodyText, preview_text = @previewText
+                        WHERE id = @id AND automation_id = @automationId", p));
+                }
+                else
+                {
+                    statements.Add((@"
+                        INSERT INTO marketing_automation_step
+                            (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text, preview_text)
+                        VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText, @previewText)", p));
+                }
             }
             await _db.ExecuteBatch(statements);
         }

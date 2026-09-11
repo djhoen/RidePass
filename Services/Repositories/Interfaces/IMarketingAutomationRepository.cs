@@ -23,8 +23,10 @@ namespace Services.Repositories.Interfaces
         Task SetActive(Guid id, Guid tenantId, bool isActive, DateTime? enrolFromUtc);
 
         Task<List<MarketingAutomationStep>> ListSteps(Guid automationId, Guid tenantId);
-        /// <summary>Replace the whole step list. Steps are edited as a set, so a diff would be
-        /// more code for the same result.</summary>
+        /// <summary>
+        /// Save the step list: steps carrying an existing id are updated in place (their send
+        /// history survives), new ones are inserted, and ones no longer present are deleted.
+        /// </summary>
         Task ReplaceSteps(Guid automationId, Guid tenantId, IEnumerable<MarketingAutomationStep> steps);
 
         Task<Dictionary<Guid, MarketingAutomationStats>> GetStats(Guid tenantId);
