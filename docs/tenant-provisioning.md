@@ -12,6 +12,7 @@ backlog.
 ## Still manual today
 
 - **Branded sending address (noreply@<subdomain>.ridepass.io)** (3. Email; RidePass)
+- **SendGrid event webhook: bounces, spam reports, opens, clicks (once per environment)** (3. Email; RidePass)
 - **Test purchase and refund** (4. Payments; Both)
 - **Platform Twilio credentials (once per environment)** (5. Text messaging; RidePass)
 - **Test a text and the STOP/START keywords** (5. Text messaging; Both)
@@ -137,6 +138,20 @@ _RidePass | manual_ (added 2026-09-10)
 **Verify:** Request a password reset from the tenant subdomain to your own inbox. In Gmail, Show original: From is the branded address and signed-by is ridepass.io. The stage web API log must show no "Relay rejected tenant from-address" line for it.
 
 **Notes:** SendGrid treats every subdomain as a separate sender identity; authenticating ridepass.io does not cover its subdomains. Until a subdomain is verified, the mailer automatically resends from noreply@ridepass.io and logs the fallback, so the track is never left without email. A track's OWN domain (info@track.com) is a different, larger job: the track must add records to its DNS, and it is not offered yet. Planned automation: create the SendGrid entry and the DigitalOcean records through their APIs when the address is saved.
+
+### SendGrid event webhook: bounces, spam reports, opens, clicks (once per environment)
+
+_RidePass | manual_ (added 2026-09-10)
+
+**Where:** [SendGrid, Settings, Mail Settings, Event Webhook; then the server env file](https://app.sendgrid.com/settings/mail_settings)
+
+1. In the live SendGrid account: Settings, Mail Settings, Event Webhook. Create a webhook with the HTTP POST URL https://<env host>/api/SendGridWebhook, and tick Bounced, Dropped, Spam Reports, Unsubscribes, Opened, and Clicked. Enable the Signed Event Webhook and copy the verification key.
+2. In the env file set Email__SendGrid__WebhookEnabled=true and Email__SendGrid__WebhookVerificationKey=<key>, then restart the web API.
+3. Also under Mail Settings, Tracking: leave Open Tracking and Click Tracking available; each marketing send switches them on for itself.
+
+**Verify:** SendGrid's "Test Your Integration" returns 2xx (403 means the key is wrong, 404 means WebhookEnabled is off). After a campaign, a click on a link shows up in the campaign list's Clicks column within a minute.
+
+**Notes:** Without this, hard bounces and spam reports never reach the suppression list, and the Opens and Clicks columns stay at zero. Opens include Apple Mail's automatic pre-fetch, so clicks are the honest engagement number.
 
 ### Newsletter list import
 
