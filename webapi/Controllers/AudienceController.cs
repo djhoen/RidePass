@@ -47,13 +47,16 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             var rows = await _audiences.ListForTenant(tenantId);
             var usage = await _audiences.UsageCounts(tenantId);
+            // Stored counts: refreshed hourly by the sweep and whenever an audience is saved.
+            // Evaluating every audience live here made the list take tens of seconds.
+            var members = await _audiences.ActiveMemberCounts(tenantId);
             var names = await NameLookup();
             var items = new List<AudienceItem>();
             foreach (var a in rows)
             {
                 var def = AudienceDefinition.Parse(a.Definition);
                 var item = ToItem(a, def, names);
-                item.MemberCount = await _audiences.Count(tenantId, def);
+                item.MemberCount = members.GetValueOrDefault(a.Id);
                 if (usage.TryGetValue(a.Id, out var u))
                 {
                     item.UsedByCampaigns = u.Campaigns;

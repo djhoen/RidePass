@@ -70,6 +70,15 @@ namespace webapi.Workers
             var brandings = sp.GetRequiredService<ITenantBrandingRepository>();
             var savedAudiences = sp.GetRequiredService<IAudienceRepository>();
 
+            // Audiences are live lists; this tick is what keeps audience_member (the list page's
+            // counts and the "joins an audience" trigger) within an hour of the truth.
+            foreach (var audience in await savedAudiences.ListAllAcrossTenants())
+            {
+                if (ct.IsCancellationRequested) return;
+                try { await savedAudiences.RefreshMembers(audience); }
+                catch (Exception ex) { _logger.LogError(ex, "Audience {Id} refresh failed", audience.Id); }
+            }
+
             if (!emailer.IsConfigured) return;   // ships dark until SMTP is set
 
             var automations = await repo.ListActiveAcrossTenants();

@@ -23,6 +23,25 @@ namespace Services.Repositories
             return (await _db.Query<Audience>(sql, new { tenantId })).ToList();
         }
 
+        public async Task<List<Audience>> ListAllAcrossTenants()
+        {
+            // Intentionally unscoped: the sweep runs outside any request. Every refresh it drives
+            // uses the audience's own tenant_id.
+            var sql = $"SELECT {Columns} FROM audience ORDER BY tenant_id, lower(name)";
+            return (await _db.Query<Audience>(sql)).ToList();
+        }
+
+        public async Task<Dictionary<Guid, int>> ActiveMemberCounts(Guid tenantId)
+        {
+            const string sql = @"
+                SELECT audience_id AS Key, COUNT(*)::int AS Value
+                FROM audience_member
+                WHERE tenant_id = @tenantId AND left_at IS NULL
+                GROUP BY audience_id";
+            var rows = await _db.Query<(Guid Key, int Value)>(sql, new { tenantId });
+            return rows.ToDictionary(r => r.Key, r => r.Value);
+        }
+
         public async Task<Audience?> GetById(Guid id, Guid tenantId)
         {
             var sql = $"SELECT {Columns} FROM audience WHERE id = @id AND tenant_id = @tenantId LIMIT 1";

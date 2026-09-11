@@ -143,23 +143,27 @@ namespace Services.Email
                     var days = Math.Clamp(rule.Days ?? 1, 1, 365);
                     p.Add(n + "from", todayStartUtc.AddDays(-days));
                     p.Add(n + "to", todayStartUtc);
-                    return $@"EXISTS (
-                        SELECT 1 FROM (
+                    // Written as a non-correlated IN so Postgres builds the (small) set of
+                    // unfinished checkouts once and hashes it, rather than re-scanning both
+                    // purchase tables for each of tens of thousands of people.
+                    return $@"ps.email IN (
+                        SELECT lower(c.purchaser_email)
+                        FROM (
                             SELECT x.purchaser_email, x.created_at FROM event_ticket_purchase x
                             WHERE x.tenant_id = @tenantId AND x.status IN ('pending', 'abandoned', 'failed')
+                              AND x.created_at >= @{n}from AND x.created_at < @{n}to
                             UNION ALL
                             SELECT sp.purchaser_email, sp.created_at FROM season_pass_purchase sp
                             WHERE sp.tenant_id = @tenantId AND sp.status IN ('pending', 'abandoned', 'failed')
+                              AND sp.created_at >= @{n}from AND sp.created_at < @{n}to
                         ) c
-                        WHERE lower(c.purchaser_email) = ps.email
-                          AND c.created_at >= @{n}from AND c.created_at < @{n}to
-                          AND NOT EXISTS (
+                        WHERE NOT EXISTS (
                                 SELECT 1 FROM event_ticket_purchase y
-                                WHERE y.tenant_id = @tenantId AND lower(y.purchaser_email) = ps.email
+                                WHERE y.tenant_id = @tenantId AND lower(y.purchaser_email) = lower(c.purchaser_email)
                                   AND y.status IN ('paid', 'redeemed') AND y.created_at >= c.created_at)
                           AND NOT EXISTS (
                                 SELECT 1 FROM season_pass_purchase z
-                                WHERE z.tenant_id = @tenantId AND lower(z.purchaser_email) = ps.email
+                                WHERE z.tenant_id = @tenantId AND lower(z.purchaser_email) = lower(c.purchaser_email)
                                   AND z.status = 'paid' AND z.created_at >= c.created_at))";
                 }
                 case AudienceRuleKinds.PostalCode:

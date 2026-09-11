@@ -68,6 +68,9 @@
                 </tbody>
             </v-table>
         </v-card>
+        <div class="text-caption text-medium-emphasis mt-2">
+            People counts refresh every hour and whenever an audience is saved. The builder shows the live number.
+        </div>
 
         <!-- Builder -->
         <v-dialog v-model="editorOpen" max-width="900" scrollable>

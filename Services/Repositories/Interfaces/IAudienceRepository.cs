@@ -5,6 +5,10 @@ namespace Services.Repositories.Interfaces
     public interface IAudienceRepository
     {
         Task<List<Audience>> ListForTenant(Guid tenantId);
+        /// <summary>Every audience of every tenant, for the hourly membership refresh.</summary>
+        Task<List<Audience>> ListAllAcrossTenants();
+        /// <summary>Current members per audience from audience_member (as of the last refresh).</summary>
+        Task<Dictionary<Guid, int>> ActiveMemberCounts(Guid tenantId);
         Task<Audience?> GetById(Guid id, Guid tenantId);
         Task<Guid> Create(Audience a);
         Task Update(Audience a);
