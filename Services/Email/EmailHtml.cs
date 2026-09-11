@@ -163,12 +163,29 @@ namespace Services.Email
             + bodyHtml + "</div>";
 
         /// <summary>
+        /// Stamped at the top of every composed email so the mailer can tell a finished email
+        /// from a bare fragment (receipts and the like are written as a few paragraphs and dressed
+        /// at the last hop). A full document (&lt;html&gt;) is also left alone.
+        /// </summary>
+        public const string ComposedMarker = "<!--rp-composed-->";
+
+        public static bool IsComposed(string html)
+        {
+            if (string.IsNullOrEmpty(html)) return false;
+            var head = html.AsSpan().TrimStart();
+            return head.StartsWith(ComposedMarker, StringComparison.Ordinal)
+                || head.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+                || head.StartsWith("<html", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// The full email: preheader, branded header, prepared body, branded footer, then the
         /// caller's compliance footer (unsubscribe line for marketing; nothing for a test).
         /// </summary>
         public static string Compose(string editorHtml, string? previewText, EmailBranding brand, string? complianceFooterHtml)
         {
             var sb = new StringBuilder(editorHtml.Length + 2048);
+            sb.Append(ComposedMarker);
             sb.Append("<div style=\"background:#f3f4f6;padding:24px 8px\">");
 
             if (!string.IsNullOrWhiteSpace(previewText))

@@ -27,6 +27,7 @@ namespace Services.Email
                     FromName: tenant.DisplayName,
                     ReplyToEmail: tenant.ContactEmail,
                     ReplyToName: tenant.DisplayName,
-                    FromAddress: tenant.EmailFromAddress);
+                    FromAddress: tenant.EmailFromAddress,
+                    Tenant: tenant);
     }
 }

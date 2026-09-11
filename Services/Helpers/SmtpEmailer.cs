@@ -14,7 +14,10 @@ namespace Services.Helpers
     /// noreply mailbox. Null anywhere = fall back to the platform defaults.
     /// </summary>
     public record EmailSender(string? FromName, string? ReplyToEmail = null, string? ReplyToName = null,
-        string? FromAddress = null);
+        string? FromAddress = null,
+        // The tenant the email is sent as. When present, a bare body (a receipt written as a few
+        // paragraphs) is dressed in that tenant's header and footer at send time.
+        Services.Repositories.Data.TenantData.Tenant? Tenant = null);
 
     public interface ISmtpEmailer
     {
@@ -40,17 +43,61 @@ namespace Services.Helpers
         private readonly IConfiguration _config;
         private readonly ILogger<SmtpEmailer> _logger;
         private readonly IOutboundDeliveryGate? _gate;
+        private readonly Services.Repositories.Interfaces.ITenantBrandingRepository? _brandings;
+        // Logo and colors per tenant, refreshed every minute: a receipt burst should not hit the
+        // branding table once per email, and a logo change need not wait for a restart.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, (DateTime At, Services.Repositories.Data.TenantData.TenantBranding? Row)> _brandingCache = new();
+        private static readonly TimeSpan BrandingTtl = TimeSpan.FromMinutes(1);
 
         public bool IsConfigured { get; }
+
+        /// <summary>
+        /// Every email sent AS a tenant wears that tenant's header (logo or name) and footer (name,
+        /// address, phone, socials). Callers write the middle as plain paragraphs; marketing mail
+        /// arrives already composed and is passed through, as is any full HTML document.
+        /// </summary>
+        private async Task<string> Dress(string htmlBody, EmailSender? sender)
+        {
+            var tenant = sender?.Tenant;
+            if (tenant is null || Services.Email.EmailHtml.IsComposed(htmlBody)) return htmlBody;
+            try
+            {
+                var rootDomain = _config["Tenant:RootDomain"] ?? _config["App:RootDomain"] ?? "ridepass.io";
+                var siteUrl = $"https://{tenant.Subdomain}.{rootDomain}";
+                var branding = await BrandingFor(tenant.Id);
+                // The marketing footer is for marketing; a receipt gets the address block only.
+                var brand = Services.Email.EmailBranding.From(tenant, branding, siteUrl) with { CustomFooterHtml = null };
+                return Services.Email.EmailHtml.Compose(htmlBody, null, brand, null);
+            }
+            catch (Exception ex)
+            {
+                // Dressing is cosmetic; a branding lookup failure must not lose a receipt.
+                _logger.LogWarning(ex, "Could not apply tenant branding to an email for {Tenant}; sending plain", tenant.Subdomain);
+                return htmlBody;
+            }
+        }
+
+        private async Task<Services.Repositories.Data.TenantData.TenantBranding?> BrandingFor(Guid tenantId)
+        {
+            if (_brandings is null) return null;
+            if (_brandingCache.TryGetValue(tenantId, out var hit) && DateTime.UtcNow - hit.At < BrandingTtl) return hit.Row;
+            var row = await _brandings.GetByTenantId(tenantId);
+            _brandingCache[tenantId] = (DateTime.UtcNow, row);
+            return row;
+        }
 
         // The gate is optional so existing hand-wired constructions keep compiling, but every
         // real deployment (web API DI + TaskRunner) passes one: it is the super-admin
         // kill switch / allowlist and must sit at this last hop so no caller can bypass it.
-        public SmtpEmailer(IConfiguration config, ILogger<SmtpEmailer> logger, IOutboundDeliveryGate? gate = null)
+        // The branding repository is optional the same way; without it a tenant email still gets
+        // the tenant's name, address, and socials, only without the logo and color.
+        public SmtpEmailer(IConfiguration config, ILogger<SmtpEmailer> logger, IOutboundDeliveryGate? gate = null,
+            Services.Repositories.Interfaces.ITenantBrandingRepository? brandings = null)
         {
             _config = config;
             _logger = logger;
             _gate = gate;
+            _brandings = brandings;
             IsConfigured = !string.IsNullOrWhiteSpace(config["Email:Smtp:Host"])
                         && !string.IsNullOrWhiteSpace(config["Email:FromAddress"]);
         }
@@ -75,6 +122,7 @@ namespace Services.Helpers
                     return false;
                 }
             }
+            htmlBody = await Dress(htmlBody, sender);
             try
             {
                 var host = _config["Email:Smtp:Host"]!;

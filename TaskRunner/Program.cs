@@ -108,7 +108,8 @@ var deliveryGate = new OutboundDeliveryGate(platformSettingRepo, new ConsoleLogg
 // actual SMTP exception behind every "SMTP send failed" campaign row.
 var sms = new TwilioSmsSender(configuration, conversationRepo, smsOptOutRepo,
     new ConsoleLogger<TwilioSmsSender>(), deliveryGate);
-var emailer = new SmtpEmailer(configuration, new ConsoleLogger<SmtpEmailer>(), deliveryGate);
+var emailer = new SmtpEmailer(configuration, new ConsoleLogger<SmtpEmailer>(), deliveryGate,
+    new TenantBrandingRepository(dbHelper));
 var suppressionRepo = new EmailSuppressionRepository(dbHelper);
 var emailLinkTokens = new EmailLinkTokens(configuration);
 var campaignRepo = new EmailCampaignRepository(dbHelper);

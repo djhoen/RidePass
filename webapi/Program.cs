@@ -175,7 +175,13 @@ builder.Services.AddSingleton<Services.Delivery.IOutboundDeliveryGate>(sp =>
         new Services.Repositories.PlatformSettingRepository(
             new Services.Helpers.DbHelper(sp.GetRequiredService<IConfiguration>())),
         sp.GetRequiredService<ILogger<Services.Delivery.OutboundDeliveryGate>>()));
-builder.Services.AddSingleton<ISmtpEmailer, SmtpEmailer>();
+// Own DbHelper for the same reason as the gate: the mailer is a singleton and dresses every
+// tenant email in that tenant's logo and colors at the last hop.
+builder.Services.AddSingleton<ISmtpEmailer>(sp => new SmtpEmailer(
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<ILogger<SmtpEmailer>>(),
+    sp.GetRequiredService<Services.Delivery.IOutboundDeliveryGate>(),
+    new TenantBrandingRepository(new Services.Helpers.DbHelper(sp.GetRequiredService<IConfiguration>()))));
 // One confirmation email per event order, from whichever path completed the sale (Stripe, $0
 // voucher, gift card, Loam Pass credit, counter cash). Scoped: it reads through the repositories.
 builder.Services.AddScoped<Services.Email.IEventOrderConfirmationEmailer, Services.Email.EventOrderConfirmationEmailer>();
