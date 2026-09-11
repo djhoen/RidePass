@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Services.Repositories.Data.NewsletterData;
 using Services.Repositories.Interfaces;
 
 namespace Services.Email
@@ -36,13 +37,16 @@ namespace Services.Email
         private readonly IEmailSuppressionRepository _suppression;
         private readonly IConfiguration _config;
         private readonly ILogger<SendGridEventService> _logger;
+        private readonly IEmailEngagementRepository? _engagement;
 
         public SendGridEventService(
             IEmailSuppressionRepository suppression,
             IConfiguration config,
-            ILogger<SendGridEventService> logger)
+            ILogger<SendGridEventService> logger,
+            IEmailEngagementRepository? engagement = null)
         {
             _suppression = suppression;
+            _engagement = engagement;
             _config = config;
             _logger = logger;
         }
@@ -121,7 +125,12 @@ namespace Services.Email
                         await SafeSuppress(tenantId, email, "unsubscribe", "marketing", "sendgrid_unsubscribe", kind);
                         break;
 
-                    // delivered / open / click / processed / deferred / group_resubscribe: nothing to do.
+                    case "open":
+                    case "click":
+                        await RecordEngagement(ev, kind, tenantId);
+                        break;
+
+                    // delivered / processed / deferred / group_resubscribe: nothing to do.
                 }
             }
             return SendGridHandleResult.Handled;
@@ -182,6 +191,45 @@ namespace Services.Email
 
         // Custom args (stamped via X-SMTPAPI unique_args on outbound sends) arrive as top-level
         // properties on each event. Returns null when absent so the suppression lands platform-wide.
+        /// <summary>
+        /// An open or click on a marketing send. The send row id rides on the event as a unique
+        /// arg (campaign_send_id / automation_send_id); events without one (receipts, tests)
+        /// are ignored. Failures are logged, never thrown: engagement is nice-to-have and must
+        /// not make SendGrid retry the whole batch.
+        /// </summary>
+        private async Task RecordEngagement(JsonElement ev, string kind, Guid? tenantId)
+        {
+            if (_engagement is null || tenantId is null) return;
+            string sourceKind;
+            Guid sendId;
+            if (Guid.TryParse(Str(ev, "campaign_send_id"), out var cid)) { sourceKind = "campaign"; sendId = cid; }
+            else if (Guid.TryParse(Str(ev, "automation_send_id"), out var aid)) { sourceKind = "automation"; sendId = aid; }
+            else return;
+
+            var occurred = ev.TryGetProperty("timestamp", out var ts) && ts.ValueKind == JsonValueKind.Number && ts.TryGetInt64(out var unix)
+                ? DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime
+                : DateTime.UtcNow;
+            var url = Str(ev, "url");
+            var sgEventId = Str(ev, "sg_event_id");
+            try
+            {
+                await _engagement.Record(new EmailEngagement
+                {
+                    TenantId = tenantId.Value,
+                    SourceKind = sourceKind,
+                    SourceSendId = sendId,
+                    Event = kind,
+                    Url = string.IsNullOrWhiteSpace(url) ? null : url[..Math.Min(url.Length, 2000)],
+                    SgEventId = string.IsNullOrWhiteSpace(sgEventId) ? null : sgEventId,
+                    OccurredAt = occurred,
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not record SendGrid {Kind} for send {SendId}", kind, sendId);
+            }
+        }
+
         private static Guid? ExtractTenantId(JsonElement ev) =>
             ev.TryGetProperty("tenant_id", out var v) && v.ValueKind == JsonValueKind.String
                 && Guid.TryParse(v.GetString(), out var g) ? g : null;

@@ -20,6 +20,7 @@ namespace webapi.Controllers
         private readonly Services.Storage.IImageStorage _imageStorage;
         private readonly ITenantBrandingRepository _brandings;
         private readonly IConfiguration _config;
+        private readonly IEmailEngagementRepository _engagement;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly IScheduledTaskRepository _scheduledTasks;
@@ -33,6 +34,7 @@ namespace webapi.Controllers
             Services.Storage.IImageStorage imageStorage,
             ITenantBrandingRepository brandings,
             IConfiguration config,
+            IEmailEngagementRepository engagement,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
@@ -45,6 +47,7 @@ namespace webapi.Controllers
             _imageStorage = imageStorage;
             _brandings = brandings;
             _config = config;
+            _engagement = engagement;
             _suppression = suppression;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
@@ -58,6 +61,7 @@ namespace webapi.Controllers
             var rows = await _campaigns.ListByTenant(_tenantContext.TenantId);
             // One label lookup per distinct audience, not per row.
             var labels = new Dictionary<string, string>();
+            var engagement = await _engagement.GetCampaignStats(_tenantContext.TenantId);
             var items = new List<CampaignListItem>();
             foreach (var c in rows)
             {
@@ -67,7 +71,7 @@ namespace webapi.Controllers
                     label = await LabelFor(c);
                     labels[key] = label;
                 }
-                items.Add(ToListItem(c, label));
+                items.Add(ToListItem(c, label, engagement.GetValueOrDefault(c.Id)));
             }
             return new ApiResponses().OkResult(items);
         }
@@ -80,7 +84,12 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().NotFoundResult("Campaign not found.");
             }
-            return new ApiResponses().OkResult(ToDetail(c, await LabelFor(c)));
+            var stats = (await _engagement.GetCampaignStats(_tenantContext.TenantId)).GetValueOrDefault(c.Id);
+            var detail = ToDetail(c, await LabelFor(c), stats);
+            detail.ClickUrls = (await _engagement.GetCampaignClickUrls(c.Id, _tenantContext.TenantId))
+                .Select(u => new CampaignClickUrlItem { Url = u.Url, UniqueClickers = u.UniqueClickers, TotalClicks = u.TotalClicks })
+                .ToList();
+            return new ApiResponses().OkResult(detail);
         }
 
         /// <summary>
@@ -428,7 +437,7 @@ namespace webapi.Controllers
             };
         }
 
-        private static CampaignListItem ToListItem(EmailCampaign c, string audienceLabel) => new()
+        private static CampaignListItem ToListItem(EmailCampaign c, string audienceLabel, EmailEngagementStats? eng = null) => new()
         {
             Id = c.Id,
             Subject = c.Subject,
@@ -437,12 +446,15 @@ namespace webapi.Controllers
             AudienceKind = c.AudienceKind,
             AudienceLabel = audienceLabel,
             AudienceConfig = ToConfigDto(c),
+            UniqueOpens = eng?.UniqueOpens ?? 0,
+            UniqueClicks = eng?.UniqueClicks ?? 0,
+            TotalClicks = eng?.TotalClicks ?? 0,
             SentAtUtc = c.SentAt.HasValue ? DateTime.SpecifyKind(c.SentAt.Value, DateTimeKind.Utc) : null,
             ScheduledForUtc = c.ScheduledFor.HasValue ? DateTime.SpecifyKind(c.ScheduledFor.Value, DateTimeKind.Utc) : null,
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
         };
 
-        private static CampaignDetail ToDetail(EmailCampaign c, string audienceLabel) => new()
+        private static CampaignDetail ToDetail(EmailCampaign c, string audienceLabel, EmailEngagementStats? eng = null) => new()
         {
             Id = c.Id,
             Subject = c.Subject,
@@ -451,6 +463,9 @@ namespace webapi.Controllers
             AudienceKind = c.AudienceKind,
             AudienceLabel = audienceLabel,
             AudienceConfig = ToConfigDto(c),
+            UniqueOpens = eng?.UniqueOpens ?? 0,
+            UniqueClicks = eng?.UniqueClicks ?? 0,
+            TotalClicks = eng?.TotalClicks ?? 0,
             SentAtUtc = c.SentAt.HasValue ? DateTime.SpecifyKind(c.SentAt.Value, DateTimeKind.Utc) : null,
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
             BodyHtml = c.BodyHtml,

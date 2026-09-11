@@ -79,6 +79,30 @@ namespace Services.Email
         private const string ImgStyle = "max-width:100%;height:auto;display:block;margin:12px 0;";
         private const string FontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
+        /// <summary>
+        /// The X-SMTPAPI header for a marketing send: unique args SendGrid copies onto every
+        /// webhook event (tenant for suppression scoping, the send row id so opens and clicks
+        /// come back to the right person), plus open and click tracking switched on for this
+        /// message regardless of the account default.
+        /// </summary>
+        public static string SmtpApiHeader(Guid tenantId, string sendIdKey, Guid sendId)
+        {
+            var uniqueArgs = new Dictionary<string, string>
+            {
+                ["tenant_id"] = tenantId.ToString(),
+                [sendIdKey] = sendId.ToString(),
+            };
+            return System.Text.Json.JsonSerializer.Serialize(new
+            {
+                unique_args = uniqueArgs,
+                filters = new
+                {
+                    clicktrack = new { settings = new { enable = 1, enable_text = 0 } },
+                    opentrack = new { settings = new { enable = 1 } },
+                },
+            });
+        }
+
         /// <summary>Site-relative URL to absolute; absolute and empty values pass through.</summary>
         public static string? AbsoluteUrl(string? url, string siteUrl)
         {

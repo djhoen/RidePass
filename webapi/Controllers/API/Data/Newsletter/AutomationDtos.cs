@@ -64,6 +64,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int Skipped { get; set; }
         public DateTime? LastSentAtUtc { get; set; }
         public List<AutomationSkipReasonItem> SkipReasons { get; set; } = new();
+        public int UniqueOpens { get; set; }
+        public int UniqueClicks { get; set; }
     }
 
     public class AutomationSkipReasonItem

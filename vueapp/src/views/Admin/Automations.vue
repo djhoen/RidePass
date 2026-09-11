@@ -172,6 +172,9 @@
                                 <div v-else-if="s.anchor !== 'purchase' && s.anchor !== 'fixed_date'" class="text-caption text-medium-emphasis mt-1">
                                     Riders who buy after this time are skipped, not emailed late.
                                 </div>
+                                <v-select v-if="templates.length" :items="templates" item-title="name" item-value="id"
+                                    label="Insert a saved template" density="compact" class="mt-4" clearable hide-details
+                                    :model-value="null" @update:model-value="(id: string | null) => applyTemplateToStep(s, id)" />
                                 <v-text-field v-model="s.subject" label="Subject line" density="compact" class="mt-4" />
                                 <v-text-field v-model="s.previewText" label="Preview text (optional)" density="compact" class="mt-4"
                                     hint="The snippet inboxes show under the subject line; merge fields work here too" persistent-hint />
@@ -363,6 +366,8 @@
                                     <th class="text-right">Sent</th>
                                     <th class="text-right">Skipped</th>
                                     <th class="text-right">Failed</th>
+                                    <th class="text-right">Opens</th>
+                                    <th class="text-right">Clicks</th>
                                     <th>Last sent</th>
                                 </tr>
                             </thead>
@@ -396,6 +401,12 @@
                                         </v-tooltip>
                                         <span v-else>0</span>
                                     </td>
+                                    <td class="text-right">
+                                        <v-tooltip text="Distinct people who opened; includes Apple Mail's automatic opens" location="top">
+                                            <template #activator="{ props }"><span v-bind="props">{{ s.uniqueOpens }}</span></template>
+                                        </v-tooltip>
+                                    </td>
+                                    <td class="text-right">{{ s.uniqueClicks }}</td>
                                     <td class="text-no-wrap">{{ s.lastSentAtUtc ? formatWhen(s.lastSentAtUtc) : '-' }}</td>
                                 </tr>
                             </tbody>
@@ -452,6 +463,7 @@ import dayjs from 'dayjs'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { CampaignService } from '@/services/CampaignService'
+import { EmailTemplateService, type EmailTemplateItem } from '@/services/EmailTemplateService'
 import { branding } from '@/stores/branding'
 import {
     AutomationService,
@@ -467,7 +479,24 @@ import {
 
 const service = new AutomationService()
 const campaignService = new CampaignService()
+const templateService = new EmailTemplateService()
+const templates = ref<EmailTemplateItem[]>([])
 const confirm = useConfirm()
+
+async function applyTemplateToStep(s: StepForm, id: string | null) {
+    if (!id) return
+    const t = templates.value.find(x => x.id === id)
+    if (!t) return
+    const hasBody = s.bodyHtml.trim() && s.bodyHtml !== '<p></p>'
+    if (hasBody && !await confirm({
+        title: 'Replace this email?',
+        message: `Replace this email's subject and body with the "${t.name}" template?`,
+        confirmText: 'Replace',
+    })) return
+    if (t.subject) s.subject = t.subject
+    if (t.previewText) s.previewText = t.previewText
+    s.bodyHtml = t.bodyHtml
+}
 
 // Images go to the shared marketing upload; the send path makes them absolute and email-safe.
 async function uploadInlineImage(file: File): Promise<string> {
@@ -652,6 +681,8 @@ async function load() {
         const [list, opts] = await Promise.all([service.list(), service.triggerOptions()])
         items.value = list.data.data
         options.value = opts.data.data
+        // Templates are optional furniture; a failure here must not hide the automations.
+        try { templates.value = (await templateService.list()).data.data } catch { templates.value = [] }
     } catch (err: any) {
         loadError.value = err.response?.data?.error
             ?? 'Could not load your automations. Use Refresh to try again.'

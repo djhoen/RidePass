@@ -20,6 +20,8 @@
                         <th style="width: 220px">Audience</th>
                         <th style="width: 130px">Status</th>
                         <th style="width: 140px">Recipients</th>
+                        <th style="width: 110px">Opens</th>
+                        <th style="width: 110px">Clicks</th>
                         <th style="width: 180px">Sent / Scheduled</th>
                         <th style="width: 160px">Created</th>
                         <th style="width: 260px" class="text-right"></th>
@@ -31,6 +33,18 @@
                         <td class="text-medium-emphasis">{{ c.audienceLabel }}</td>
                         <td><v-chip size="small" :color="statusColor(c.status)">{{ c.status }}</v-chip></td>
                         <td>{{ c.recipientCount }}</td>
+                        <td>
+                            <v-tooltip v-if="c.status === 'sent'" text="Distinct people who opened. Includes automatic opens from Apple Mail, so treat as a ceiling." location="top">
+                                <template #activator="{ props }">
+                                    <span v-bind="props">{{ c.uniqueOpens }} <span class="text-caption text-medium-emphasis">{{ pct(c.uniqueOpens, c.recipientCount) }}</span></span>
+                                </template>
+                            </v-tooltip>
+                            <span v-else class="text-medium-emphasis">-</span>
+                        </td>
+                        <td>
+                            <span v-if="c.status === 'sent'">{{ c.uniqueClicks }} <span class="text-caption text-medium-emphasis">{{ pct(c.uniqueClicks, c.recipientCount) }}</span></span>
+                            <span v-else class="text-medium-emphasis">-</span>
+                        </td>
                         <td>
                             <span v-if="c.status === 'scheduled' && c.scheduledForUtc" class="text-info">
                                 {{ formatDate(c.scheduledForUtc) }}
@@ -60,7 +74,7 @@
                         </td>
                     </tr>
                     <tr v-if="!loading && campaigns.length === 0">
-                        <td colspan="7" class="text-center text-medium-emphasis py-8">
+                        <td colspan="9" class="text-center text-medium-emphasis py-8">
                             No campaigns yet. Compose one to get started.
                         </td>
                     </tr>
@@ -111,12 +125,17 @@
                         </span>
                         <span v-else class="text-medium-emphasis">Pick an audience to see how many people it reaches.</span>
                     </div>
+                    <v-select v-if="!composeReadonly && templates.length" v-model="templatePick" :items="templates"
+                        item-title="name" item-value="id" label="Start from a saved template" density="compact" clearable
+                        class="mb-2" @update:model-value="applyTemplate"></v-select>
                     <v-text-field v-model="composeForm.subject" label="Subject" density="compact"
                         :readonly="composeReadonly"></v-text-field>
                     <v-text-field v-model="composeForm.previewText" label="Preview text (optional)" density="compact" class="mt-4"
                         :readonly="composeReadonly" hint="The snippet inboxes show under the subject line" persistent-hint></v-text-field>
                     <div class="d-flex align-center mt-4 mb-1">
                         <span class="text-caption text-medium-emphasis">Body</span>
+                        <v-btn v-if="!composeReadonly" size="x-small" variant="text" class="ml-2" prepend-icon="mdi-content-save-outline"
+                            @click="openSaveTemplate">Save as template</v-btn>
                         <v-spacer></v-spacer>
                         <v-btn-toggle v-model="composeView" mandatory density="compact" variant="outlined" divided>
                             <v-btn value="edit" size="small">Edit</v-btn>
@@ -135,6 +154,19 @@
                         <div v-else-if="previewError" class="text-error text-body-2 pa-4">{{ previewError }}</div>
                         <iframe v-else :srcdoc="previewHtml" title="Email preview" sandbox=""></iframe>
                     </div>
+                    <!-- Sent campaigns: which links people clicked, distinct people first. -->
+                    <v-table v-if="composeReadonly && viewClickUrls.length" density="compact" class="mt-4">
+                        <thead>
+                            <tr><th>Link clicked</th><th class="text-right">People</th><th class="text-right">Clicks</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="u in viewClickUrls" :key="u.url">
+                                <td class="text-truncate" style="max-width: 520px"><a :href="u.url" target="_blank" rel="noopener">{{ u.url }}</a></td>
+                                <td class="text-right">{{ u.uniqueClickers }}</td>
+                                <td class="text-right">{{ u.totalClicks }}</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
                     <v-text-field v-if="!composeReadonly" v-model="scheduleLocal" type="datetime-local"
                         label="Schedule for (optional)" density="compact" class="mt-4"
                         hint="Leave blank to send now. Time is in your track's timezone." persistent-hint
@@ -154,6 +186,27 @@
             </v-card>
         </v-dialog>
 
+        <!-- Save the current body as a reusable template. -->
+        <v-dialog v-model="saveTemplateOpen" max-width="440">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Save as template</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="saveTemplateOpen = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-text-field v-model="saveTemplateName" label="Template name" density="compact" autofocus
+                        placeholder="Monthly newsletter" @keyup.enter="saveTemplate"></v-text-field>
+                    <div class="text-caption text-medium-emphasis">Saves the subject, preview text, and body as they are now.</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="saveTemplateOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingTemplate" :disabled="!saveTemplateName.trim()" @click="saveTemplate">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="5000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -167,6 +220,7 @@ import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import RichTextView from '@/components/RichTextView.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { EmailTemplateService, type EmailTemplateItem } from '@/services/EmailTemplateService'
 import { formatEmailCost } from '@/helpers/EmailPricing'
 import { branding } from '@/stores/branding'
 
@@ -185,6 +239,70 @@ const composeReadonly = ref(false)
 const composeForm = ref({ subject: '', bodyHtml: '', previewText: '' as string | null })
 // Edit / phone / desktop. The preview is the real send-time HTML from the API, not a guess.
 const composeView = ref<'edit' | 'phone' | 'desktop'>('edit')
+const viewClickUrls = ref<{ url: string; uniqueClickers: number; totalClicks: number }[]>([])
+
+// --- Templates ------------------------------------------------------------------------
+const templateService = new EmailTemplateService()
+const templates = ref<EmailTemplateItem[]>([])
+const templatePick = ref<string | null>(null)
+const saveTemplateOpen = ref(false)
+const saveTemplateName = ref('')
+const savingTemplate = ref(false)
+
+function pct(n: number, of: number): string {
+    return of > 0 ? `(${Math.round((n / of) * 100)}%)` : ''
+}
+
+async function loadTemplates() {
+    try {
+        const r = await templateService.list()
+        templates.value = (r.data as any).data
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load saved templates. You can still write the campaign.', 'error')
+    }
+}
+
+async function applyTemplate(id: string | null) {
+    if (!id) return
+    const t = templates.value.find(x => x.id === id)
+    if (!t) return
+    const hasBody = composeForm.value.bodyHtml.trim() && composeForm.value.bodyHtml !== '<p></p>'
+    if (hasBody && !await confirm({
+        title: 'Replace the body?',
+        message: `Replace what you have written with the "${t.name}" template?`,
+        confirmText: 'Replace',
+    })) { templatePick.value = null; return }
+    composeForm.value = {
+        subject: t.subject ?? composeForm.value.subject,
+        previewText: t.previewText ?? composeForm.value.previewText,
+        bodyHtml: t.bodyHtml,
+    }
+}
+
+function openSaveTemplate() {
+    saveTemplateName.value = composeForm.value.subject || ''
+    saveTemplateOpen.value = true
+}
+
+async function saveTemplate() {
+    if (!saveTemplateName.value.trim()) return
+    savingTemplate.value = true
+    try {
+        await templateService.create({
+            name: saveTemplateName.value.trim(),
+            subject: composeForm.value.subject || null,
+            previewText: composeForm.value.previewText || null,
+            bodyHtml: composeForm.value.bodyHtml,
+        })
+        saveTemplateOpen.value = false
+        flash('Template saved.')
+        await loadTemplates()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not save the template. Check the name and body and try again.', 'error')
+    } finally {
+        savingTemplate.value = false
+    }
+}
 const previewHtml = ref('')
 const previewLoading = ref(false)
 const previewError = ref('')
@@ -330,6 +448,7 @@ async function openCompose(id: string | null) {
             const r = await campaignService.get(id)
             const d: any = (r.data as any).data
             composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml, previewText: d.previewText ?? '' }
+            viewClickUrls.value = d.clickUrls ?? []
             composeReadonly.value = d.status !== 'draft'
             applyAudience(d.audienceKind, d.audienceConfig)
         } catch (err: any) {
@@ -338,10 +457,13 @@ async function openCompose(id: string | null) {
         }
     } else {
         composeForm.value = { subject: '', bodyHtml: '', previewText: '' }
+        viewClickUrls.value = []
         applyAudience('subscribers', null)
     }
     composeView.value = 'edit'
+    templatePick.value = null
     composeOpen.value = true
+    loadTemplates()
     loadAudienceOptions()
     refreshAudienceCount()
 }

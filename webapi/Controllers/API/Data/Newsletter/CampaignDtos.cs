@@ -13,6 +13,11 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string AudienceKind { get; set; } = "subscribers";
         public string AudienceLabel { get; set; } = string.Empty;
         public CampaignAudienceConfigDto AudienceConfig { get; set; } = new();
+        // Engagement from SendGrid events: distinct people. Opens are inflated by Apple Mail's
+        // privacy proxy, so clicks are the honest number; both are shown.
+        public int UniqueOpens { get; set; }
+        public int UniqueClicks { get; set; }
+        public int TotalClicks { get; set; }
         public DateTime? SentAtUtc { get; set; }
         public DateTime? ScheduledForUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
@@ -23,6 +28,7 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
         public string? PreviewText { get; set; }
+        public List<CampaignClickUrlItem> ClickUrls { get; set; } = new();
     }
 
     public class UpsertCampaignRequest

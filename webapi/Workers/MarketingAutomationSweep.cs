@@ -166,7 +166,7 @@ namespace webapi.Workers
                     var ok = false;
                     try
                     {
-                        ok = await Send(a, step, subject, tenant, brand, emailer, tokens, baseUrl);
+                        ok = await Send(a, step, subject, tenant, brand, emailer, tokens, baseUrl, sendId.Value);
                     }
                     catch (Exception ex)
                     {
@@ -187,7 +187,7 @@ namespace webapi.Workers
 
         private static async Task<bool> Send(
             MarketingAutomation a, MarketingAutomationStep step, AutomationSubject subject,
-            Tenant tenant, EmailBranding brand, ISmtpEmailer emailer, IEmailLinkTokens tokens, string baseUrl)
+            Tenant tenant, EmailBranding brand, ISmtpEmailer emailer, IEmailLinkTokens tokens, string baseUrl, Guid sendId)
         {
             var values = AutomationMergeFields.For(subject, tenant.DisplayName, baseUrl, tenant.Timezone);
             var subjectLine = AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
@@ -202,8 +202,7 @@ namespace webapi.Workers
             {
                 ["List-Unsubscribe"] = $"<{baseUrl}/api/Unsubscribe?token={enc}>",
                 ["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click",
-                ["X-SMTPAPI"] = System.Text.Json.JsonSerializer.Serialize(
-                    new { unique_args = new { tenant_id = a.TenantId } }),
+                ["X-SMTPAPI"] = EmailHtml.SmtpApiHeader(a.TenantId, "automation_send_id", sendId),
             };
             // Editor HTML -> the branded email: preheader, header, body, footer, unsubscribe.
             var html = EmailHtml.Compose(body, preview, brand,

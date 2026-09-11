@@ -46,6 +46,8 @@ export interface AutomationStepItem {
     skipped: number
     lastSentAtUtc: string | null
     skipReasons: { status: 'skipped' | 'failed'; reason: string; count: number }[]
+    uniqueOpens: number
+    uniqueClicks: number
 }
 
 export interface AutomationDetail extends AutomationListItem {

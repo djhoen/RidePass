@@ -32,6 +32,10 @@ export interface CampaignListItem {
     audienceKind: CampaignAudienceKind
     audienceLabel: string
     audienceConfig: CampaignAudienceConfig
+    /** Distinct openers / clickers from SendGrid events. Opens include Apple Mail's automatic ones. */
+    uniqueOpens: number
+    uniqueClicks: number
+    totalClicks: number
     sentAtUtc: string | null
     scheduledForUtc: string | null
     createdAtUtc: string
@@ -41,6 +45,7 @@ export interface CampaignDetail extends CampaignListItem {
     bodyHtml: string
     bodyText: string | null
     previewText: string | null
+    clickUrls: { url: string; uniqueClickers: number; totalClicks: number }[]
 }
 
 export interface SendCampaignResponse {

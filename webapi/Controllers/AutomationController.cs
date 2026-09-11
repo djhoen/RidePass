@@ -25,6 +25,7 @@ namespace webapi.Controllers
         private readonly ISeasonPassRepository _passes;
         private readonly ICampaignAudienceRepository _audiences;
         private readonly ITenantBrandingRepository _brandings;
+        private readonly IEmailEngagementRepository _engagement;
         private readonly ISmtpEmailer _emailer;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
@@ -35,6 +36,7 @@ namespace webapi.Controllers
             ISeasonPassRepository passes,
             ICampaignAudienceRepository audiences,
             ITenantBrandingRepository brandings,
+            IEmailEngagementRepository engagement,
             ISmtpEmailer emailer,
             ITenantContext tenantContext,
             IConfiguration config,
@@ -44,6 +46,7 @@ namespace webapi.Controllers
             _passes = passes;
             _audiences = audiences;
             _brandings = brandings;
+            _engagement = engagement;
             _emailer = emailer;
             _tenantContext = tenantContext;
             _config = config;
@@ -131,6 +134,7 @@ namespace webapi.Controllers
             var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
             var stats = await _automations.GetStats(_tenantContext.TenantId);
             var stepStats = await _automations.GetStepStats(a.Id, _tenantContext.TenantId);
+            var engagement = await _engagement.GetAutomationStepStats(a.Id, _tenantContext.TenantId);
             var basic = await ToListItem(a, steps, stats);
 
             return new ApiResponses().OkResult(new AutomationDetail
@@ -157,7 +161,7 @@ namespace webapi.Controllers
                 StopWhenUsedUp = a.StopWhenUsedUp,
                 SendWindowStart = FormatTime(a.SendWindowStart),
                 SendWindowEnd = FormatTime(a.SendWindowEnd),
-                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind, stepStats.GetValueOrDefault(s.Id))).ToList(),
+                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind, stepStats.GetValueOrDefault(s.Id), engagement.GetValueOrDefault(s.Id))).ToList(),
             });
         }
 
@@ -532,7 +536,8 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             };
         }
 
-        private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind, MarketingAutomationStepStats? st = null) => new()
+        private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind,
+            MarketingAutomationStepStats? st = null, EmailEngagementStats? eng = null) => new()
         {
             Id = s.Id,
             StepOrder = s.StepOrder,
@@ -549,6 +554,8 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             Failed = st?.Failed ?? 0,
             Skipped = st?.Skipped ?? 0,
             LastSentAtUtc = st?.LastSentAt is DateTime d ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null,
+            UniqueOpens = eng?.UniqueOpens ?? 0,
+            UniqueClicks = eng?.UniqueClicks ?? 0,
             SkipReasons = st?.SkipReasons.Select(r => new AutomationSkipReasonItem
             {
                 Status = r.Status, Reason = string.IsNullOrEmpty(r.Reason) ? "No reason recorded" : r.Reason, Count = r.Count,
