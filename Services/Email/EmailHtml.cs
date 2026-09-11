@@ -72,7 +72,9 @@ namespace Services.Email
         private static readonly Regex StyleAttr = new(@"\bstyle\s*=\s*([""'])(?<css>[^""']*)\1", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex RelativeHref = new(@"\bhref\s*=\s*([""'])(?<url>/[^""']*)\1", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex ButtonAnchor = new(
-            @"<a\b(?<attrs>[^>]*\bclass\s*=\s*([""'])[^""']*\brp-button\b[^""']*\2[^>]*)>(?<label>.*?)</a>",
+            // Named backreference on purpose: .NET numbers named groups AFTER unnamed ones, so a
+            // bare \2 here would point at the attrs group and the button would never match.
+            @"<a\b(?<attrs>[^>]*\bclass\s*=\s*(?<q>[""'])[^""']*\brp-button\b[^""']*\k<q>[^>]*)>(?<label>.*?)</a>",
             RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
         private static readonly Regex HrefAny = new(@"\bhref\s*=\s*([""'])(?<url>[^""']*)\1", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
