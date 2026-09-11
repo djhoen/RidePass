@@ -1,6 +1,6 @@
 # Email builder: where we stand against Mailchimp
 
-Status: gap analysis, 2026-09-10. The question was "can they insert images, and does our
+Status: gap analysis 2026-09-10; **Phases A and B built on stage the same day** (buttons, branded header/footer, preview text, phone/desktop preview, opens and clicks, saved templates). The question was "can they insert images, and does our
 functionality match Mailchimp". Images: yes as of today (see §2). Full parity: no, and most of
 the gap is deliberate. This document says what we have, what Mailchimp has that a track would
 notice, and which of those are worth building.

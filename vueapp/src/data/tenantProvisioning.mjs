@@ -179,6 +179,21 @@ export const provisioningPhases = [
                 added: '2026-09-10',
             },
             {
+                id: 'sendgrid-event-webhook',
+                title: 'SendGrid event webhook: bounces, spam reports, opens, clicks (once per environment)',
+                owner: 'RidePass',
+                automation: 'manual',
+                where: { label: 'SendGrid, Settings, Mail Settings, Event Webhook; then the server env file', href: 'https://app.sendgrid.com/settings/mail_settings' },
+                steps: [
+                    'In the live SendGrid account: Settings, Mail Settings, Event Webhook. Create a webhook with the HTTP POST URL https://<env host>/api/SendGridWebhook, and tick Bounced, Dropped, Spam Reports, Unsubscribes, Opened, and Clicked. Enable the Signed Event Webhook and copy the verification key.',
+                    'In the env file set Email__SendGrid__WebhookEnabled=true and Email__SendGrid__WebhookVerificationKey=<key>, then restart the web API.',
+                    'Also under Mail Settings, Tracking: leave Open Tracking and Click Tracking available; each marketing send switches them on for itself.',
+                ],
+                verify: 'SendGrid's "Test Your Integration" returns 2xx (403 means the key is wrong, 404 means WebhookEnabled is off). After a campaign, a click on a link shows up in the campaign list's Clicks column within a minute.',
+                notes: 'Without this, hard bounces and spam reports never reach the suppression list, and the Opens and Clicks columns stay at zero. Opens include Apple Mail's automatic pre-fetch, so clicks are the honest engagement number.',
+                added: '2026-09-10',
+            },
+            {
                 id: 'subscribers',
                 title: 'Newsletter list import',
                 owner: 'Track',
