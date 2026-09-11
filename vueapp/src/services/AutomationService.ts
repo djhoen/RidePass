@@ -40,6 +40,7 @@ export interface AutomationStepItem {
     subject: string
     bodyHtml: string
     bodyText: string | null
+    previewText: string | null
     sent: number
     failed: number
     skipped: number
@@ -63,6 +64,7 @@ export interface UpsertAutomationStep {
     subject: string
     bodyHtml: string
     bodyText?: string | null
+    previewText?: string | null
 }
 
 export interface UpsertAutomationRequest {

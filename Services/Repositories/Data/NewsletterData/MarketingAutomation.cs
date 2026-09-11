@@ -43,6 +43,8 @@ namespace Services.Repositories.Data.NewsletterData
         public string Subject { get; set; } = null!;
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
+        /// <summary>Inbox snippet under the subject; merge fields apply.</summary>
+        public string? PreviewText { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 

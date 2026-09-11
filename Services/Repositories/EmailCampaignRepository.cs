@@ -8,6 +8,7 @@ namespace Services.Repositories
     {
         private const string CampaignColumns = @"
             id, tenant_id AS TenantId, subject, body_html AS BodyHtml, body_text AS BodyText,
+            preview_text AS PreviewText,
             status, scheduled_for AS ScheduledFor, sent_at AS SentAt,
             recipient_count AS RecipientCount,
             audience_kind AS AudienceKind, audience_config::text AS AudienceConfig,
@@ -44,10 +45,10 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO email_campaign
-                    (tenant_id, subject, body_html, body_text, status,
+                    (tenant_id, subject, body_html, body_text, preview_text, status,
                      scheduled_for, created_by_user_id, audience_kind, audience_config)
                 VALUES
-                    (@TenantId, @Subject, @BodyHtml, @BodyText, @Status,
+                    (@TenantId, @Subject, @BodyHtml, @BodyText, @PreviewText, @Status,
                      @ScheduledFor, @CreatedByUserId, @AudienceKind, @AudienceConfig::jsonb)
                 RETURNING id";
             var r = await _db.Query<Guid>(sql, c);
@@ -61,6 +62,7 @@ namespace Services.Repositories
                 SET subject = @Subject,
                     body_html = @BodyHtml,
                     body_text = @BodyText,
+                    preview_text = @PreviewText,
                     audience_kind = @AudienceKind,
                     audience_config = @AudienceConfig::jsonb,
                     status = @Status,

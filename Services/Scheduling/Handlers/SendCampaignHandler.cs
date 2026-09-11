@@ -35,6 +35,7 @@ namespace Services.Scheduling.Handlers
         private readonly IConfiguration _config;
         private readonly ILogger<SendCampaignHandler> _logger;
         private readonly Services.Delivery.IOutboundDeliveryGate? _gate;
+        private readonly ITenantBrandingRepository? _brandings;
 
         public SendCampaignHandler(
             IEmailCampaignRepository campaigns,
@@ -45,9 +46,11 @@ namespace Services.Scheduling.Handlers
             ITenantLedgerRepository ledger,
             IConfiguration config,
             ILogger<SendCampaignHandler> logger,
-            Services.Delivery.IOutboundDeliveryGate? gate = null)
+            Services.Delivery.IOutboundDeliveryGate? gate = null,
+            ITenantBrandingRepository? brandings = null)
         {
             _gate = gate;
+            _brandings = brandings;
             _campaigns = campaigns;
             _emailer = emailer;
             _suppression = suppression;
@@ -89,6 +92,10 @@ namespace Services.Scheduling.Handlers
             var blocklist = await _suppression.ListMarketingBlocklist(task.TenantId);
             var sends = await _campaigns.ListSends(payload.CampaignId);
 
+            // The track's logo, color, address, and socials dress every email in this run.
+            var brand = Services.Email.EmailBranding.From(tenant,
+                _brandings is null ? null : await _brandings.GetByTenantId(task.TenantId), baseUrl);
+
             int sent = 0, failed = 0, skipped = 0;
             foreach (var s in sends)
             {
@@ -125,10 +132,9 @@ namespace Services.Scheduling.Handlers
                     // send scopes its suppression to this tenant. Other relays pass it through inertly.
                     ["X-SMTPAPI"] = JsonSerializer.Serialize(new { unique_args = new { tenant_id = task.TenantId } }),
                 };
-                // Editor HTML -> email HTML: absolute image URLs, capped image width, 600px column.
-                var html = Services.Email.EmailHtml.Wrap(
-                    Services.Email.EmailHtml.PrepareBody(campaign.BodyHtml, baseUrl)
-                    + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
+                // Editor HTML -> the branded email: preheader, header, body, footer, unsubscribe.
+                var html = Services.Email.EmailHtml.Compose(campaign.BodyHtml, campaign.PreviewText, brand,
+                    UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
 
                 var ok = await _emailer.Send(s.Email, campaign.Subject, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
                 await _campaigns.UpdateSendStatus(s.Id, ok ? "sent" : "failed", ok ? null : "SMTP send failed");

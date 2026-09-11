@@ -18,6 +18,8 @@ namespace webapi.Controllers
         private readonly INewsletterRepository _subscribers;
         private readonly ICampaignAudienceRepository _audiences;
         private readonly Services.Storage.IImageStorage _imageStorage;
+        private readonly ITenantBrandingRepository _brandings;
+        private readonly IConfiguration _config;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly IScheduledTaskRepository _scheduledTasks;
@@ -29,6 +31,8 @@ namespace webapi.Controllers
             INewsletterRepository subscribers,
             ICampaignAudienceRepository audiences,
             Services.Storage.IImageStorage imageStorage,
+            ITenantBrandingRepository brandings,
+            IConfiguration config,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             IScheduledTaskRepository scheduledTasks,
@@ -39,6 +43,8 @@ namespace webapi.Controllers
             _subscribers = subscribers;
             _audiences = audiences;
             _imageStorage = imageStorage;
+            _brandings = brandings;
+            _config = config;
             _suppression = suppression;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
@@ -104,6 +110,36 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new { imageUrl = url });
         }
 
+        /// <summary>
+        /// The email exactly as it would be sent (branded header and footer, buttons, capped
+        /// images, preheader), for the phone/desktop preview in the composer. With a trigger kind
+        /// the merge fields are filled with that trigger's sample values.
+        /// </summary>
+        [HttpPost("Preview")]
+        public async Task<IActionResult> Preview([FromBody] CampaignPreviewRequest request)
+        {
+            var tenant = _tenantContext.Tenant;
+            if (tenant is null) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rootDomain = _config["Tenant:RootDomain"] ?? _config["App:RootDomain"] ?? "ridepass.io";
+            var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
+            var brand = Services.Email.EmailBranding.From(tenant, await _brandings.GetByTenantId(tenant.Id), baseUrl);
+
+            var body = request.BodyHtml ?? string.Empty;
+            var preview = request.PreviewText;
+            if (Services.Email.AutomationTriggers.IsKind(request.TriggerKind))
+            {
+                var values = Services.Email.AutomationMergeFields.Sample(request.TriggerKind!, tenant.DisplayName, baseUrl);
+                body = Services.Email.AutomationMergeFields.Render(body, values, htmlEncode: true);
+                preview = string.IsNullOrWhiteSpace(preview) ? null : Services.Email.AutomationMergeFields.Render(preview, values, htmlEncode: false);
+            }
+            var footer = "<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:16px 0 8px\">"
+                + $"<p style=\"font-size:12px;color:#9ca3af\">You're receiving this because you subscribed to updates from {System.Net.WebUtility.HtmlEncode(tenant.DisplayName)}. <a href=\"#\" style=\"color:#9ca3af\">Unsubscribe</a>.</p>";
+            return new ApiResponses().OkResult(new CampaignPreviewResponse
+            {
+                Html = Services.Email.EmailHtml.Compose(body, preview, brand, footer),
+            });
+        }
+
         /// <summary>Events, event types, and pass products this tenant can address a campaign to.</summary>
         [HttpGet("Audience/Options")]
         public async Task<IActionResult> AudienceOptions()
@@ -161,6 +197,7 @@ namespace webapi.Controllers
                 Subject = request.Subject.Trim(),
                 BodyHtml = request.BodyHtml,
                 BodyText = request.BodyText,
+                PreviewText = Trim(request.PreviewText),
                 Status = "draft",
                 CreatedByUserId = userId,
                 AudienceKind = audience.Kind,
@@ -188,6 +225,7 @@ namespace webapi.Controllers
             existing.Subject = request.Subject.Trim();
             existing.BodyHtml = request.BodyHtml;
             existing.BodyText = request.BodyText;
+            existing.PreviewText = Trim(request.PreviewText);
             existing.AudienceKind = audience.Kind;
             existing.AudienceConfig = audience.Config.ToJson();
             await _campaigns.Update(existing);
@@ -417,7 +455,10 @@ namespace webapi.Controllers
             CreatedAtUtc = DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc),
             BodyHtml = c.BodyHtml,
             BodyText = c.BodyText,
+            PreviewText = c.PreviewText,
         };
+
+        private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
         private bool TryGetUserId(out Guid userId)
         {

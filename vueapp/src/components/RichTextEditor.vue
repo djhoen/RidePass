@@ -64,8 +64,44 @@
                     <v-icon>mdi-image</v-icon>
                 </v-btn>
             </v-btn-group>
-            <input v-if="uploadImage" ref="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp"
+            <input v-if="uploadImage" ref="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
                 class="d-none" @change="onImageFileChange" />
+            <!-- Email call-to-action button: only for the campaign and automation editors. -->
+            <v-btn-group v-if="emailButtons" density="compact" variant="text" divided class="ml-2">
+                <v-btn size="small" :active="editor?.isActive('emailButton')" aria-label="Insert button" @click="openButtonDialog">
+                    <v-icon>mdi-gesture-tap-button</v-icon>
+                </v-btn>
+            </v-btn-group>
+        </div>
+
+        <!-- Button dialog: label + link. Editing an existing button pre-fills it. -->
+        <v-dialog v-model="buttonDialog" max-width="440">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>{{ buttonExisting ? 'Edit button' : 'Insert button' }}</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="buttonDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <v-text-field v-model="buttonLabel" label="Button text" density="compact" autofocus hide-details
+                        placeholder="Buy tickets"></v-text-field>
+                    <v-text-field v-model="buttonUrl" label="Link URL" density="compact" class="mt-4" hide-details
+                        placeholder="https://example.com or /Events" @keyup.enter="applyButton"></v-text-field>
+                    <div class="text-caption text-medium-emphasis mt-2">
+                        Rendered as a solid button in your primary color. A link starting with / points at your site.
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-btn v-if="buttonExisting" color="error" variant="text" @click="removeButton">Remove</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="buttonDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :disabled="!buttonLabel.trim() || !buttonUrl.trim()" @click="applyButton">
+                        {{ buttonExisting ? 'Update' : 'Insert' }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+        <div class="d-none">
         </div>
 
         <!-- Link dialog: replaces the browser-native window.prompt (banned in this project). -->
@@ -104,12 +140,15 @@ import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
+import { EmailButton } from '@/components/tiptap/EmailButton'
 
 const props = defineProps<{
     modelValue: string
     /** Optional: when provided, shows an image-insert toolbar button that uploads the
      *  chosen file and inserts the returned URL inline. Omit to keep the editor image-free. */
     uploadImage?: (file: File) => Promise<string>
+    /** Optional: enable the email call-to-action button block (campaigns and automations). */
+    emailButtons?: boolean
 }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
 
@@ -120,6 +159,10 @@ const linkDialog = ref(false)
 const linkUrl = ref('')
 const linkExisting = ref(false)
 const snackbarText = ref('')
+const buttonDialog = ref(false)
+const buttonLabel = ref('')
+const buttonUrl = ref('')
+const buttonExisting = ref(false)
 
 const editor = useEditor({
     content: props.modelValue,
@@ -128,6 +171,7 @@ const editor = useEditor({
         Underline,
         Link.configure({ openOnClick: false, autolink: true }),
         Image,
+        ...(props.emailButtons ? [EmailButton] : []),
     ],
     onUpdate: ({ editor }) => {
         emit('update:modelValue', editor.getHTML())
@@ -144,6 +188,27 @@ watch(() => props.modelValue, (incoming) => {
 onBeforeUnmount(() => {
     editor.value?.destroy()
 })
+
+function openButtonDialog() {
+    if (!editor.value) return
+    const existing = editor.value.isActive('emailButton') ? editor.value.getAttributes('emailButton') : null
+    buttonExisting.value = !!existing
+    buttonLabel.value = existing?.label ?? ''
+    buttonUrl.value = existing?.href ?? 'https://'
+    buttonDialog.value = true
+}
+function applyButton() {
+    if (!editor.value) return
+    const attrs = { label: buttonLabel.value.trim(), href: buttonUrl.value.trim() }
+    if (!attrs.label || !attrs.href) return
+    if (buttonExisting.value) editor.value.chain().focus().updateEmailButton(attrs).run()
+    else editor.value.chain().focus().insertEmailButton(attrs).run()
+    buttonDialog.value = false
+}
+function removeButton() {
+    editor.value?.chain().focus().deleteSelection().run()
+    buttonDialog.value = false
+}
 
 function toggleLink() {
     if (!editor.value) return

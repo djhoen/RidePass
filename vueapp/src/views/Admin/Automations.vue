@@ -173,8 +173,14 @@
                                     Riders who buy after this time are skipped, not emailed late.
                                 </div>
                                 <v-text-field v-model="s.subject" label="Subject line" density="compact" class="mt-4" />
-                                <div class="text-caption text-medium-emphasis mt-4 mb-1">Message</div>
-                                <RichTextEditor v-model="s.bodyHtml" :upload-image="uploadInlineImage" />
+                                <v-text-field v-model="s.previewText" label="Preview text (optional)" density="compact" class="mt-4"
+                                    hint="The snippet inboxes show under the subject line; merge fields work here too" persistent-hint />
+                                <div class="d-flex align-center mt-4 mb-1">
+                                    <span class="text-caption text-medium-emphasis">Message</span>
+                                    <v-spacer />
+                                    <v-btn size="small" variant="text" prepend-icon="mdi-cellphone" @click="openPreview(s)">Preview</v-btn>
+                                </div>
+                                <RichTextEditor v-model="s.bodyHtml" :upload-image="uploadInlineImage" email-buttons />
                             </v-card>
                             <v-btn variant="text" prepend-icon="mdi-plus" @click="addStep">Add another email</v-btn>
 
@@ -301,6 +307,33 @@
                     <v-btn variant="text" @click="activateOpen = false">Cancel</v-btn>
                     <v-btn color="success" :loading="activating" @click="confirmActivate">Turn on</v-btn>
                 </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- ── Email preview (phone / desktop) ────────────────────────────── -->
+        <v-dialog v-model="previewOpen" :max-width="previewMode === 'phone' ? 460 : 760">
+            <v-card>
+                <v-card-title class="d-flex align-center ga-2">
+                    <span>Preview</span>
+                    <v-btn-toggle v-model="previewMode" mandatory density="compact" variant="outlined" divided class="ml-2"
+                        @update:model-value="loadPreview">
+                        <v-btn value="phone" size="small" prepend-icon="mdi-cellphone">Phone</v-btn>
+                        <v-btn value="desktop" size="small" prepend-icon="mdi-monitor">Desktop</v-btn>
+                    </v-btn-toggle>
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="previewOpen = false" />
+                </v-card-title>
+                <v-divider />
+                <v-card-text class="pa-2">
+                    <div class="email-preview-frame" :class="{ phone: previewMode === 'phone' }">
+                        <div v-if="previewLoading" class="text-center py-8"><v-progress-circular indeterminate size="24" /></div>
+                        <div v-else-if="previewError" class="text-error text-body-2 pa-4">{{ previewError }}</div>
+                        <iframe v-else :srcdoc="previewHtml" title="Email preview" sandbox=""></iframe>
+                    </div>
+                    <div class="text-caption text-medium-emphasis mt-2 px-2">
+                        Merge fields are filled with sample values here; a test send uses a real rider.
+                    </div>
+                </v-card-text>
             </v-card>
         </v-dialog>
 
@@ -446,6 +479,7 @@ const tz = () => branding.timezone || 'UTC'
 // The editor's step model: the sentence "[days] [before/after] [anchor]" is friendlier to edit
 // than a signed offset, so the sign lives in `direction` until save.
 interface StepForm {
+    previewText: string
     anchor: AutomationAnchor
     days: number
     direction: 'before' | 'after'
@@ -487,6 +521,33 @@ const estimate = ref<AutomationEstimate | null>(null)
 const estimating = ref(false)
 const activating = ref(false)
 const activateError = ref('')
+
+const previewOpen = ref(false)
+const previewMode = ref<'phone' | 'desktop'>('phone')
+const previewStep = ref<StepForm | null>(null)
+const previewHtml = ref('')
+const previewLoading = ref(false)
+const previewError = ref('')
+
+function openPreview(s: StepForm) {
+    previewStep.value = s
+    previewOpen.value = true
+    loadPreview()
+}
+async function loadPreview() {
+    const s = previewStep.value
+    if (!s) return
+    previewLoading.value = true
+    previewError.value = ''
+    try {
+        const r = await campaignService.preview({ bodyHtml: s.bodyHtml, previewText: s.previewText || null, triggerKind: form.value.triggerKind })
+        previewHtml.value = (r.data as any).data.html
+    } catch (err: any) {
+        previewError.value = err.response?.data?.error || 'Could not build the preview. Close this and try again.'
+    } finally {
+        previewLoading.value = false
+    }
+}
 
 const reportOpen = ref(false)
 const reportTarget = ref<AutomationListItem | null>(null)
@@ -541,7 +602,7 @@ function emptyForm(): EditorForm {
         stopWhenUsedUp: true,
         sendWindowStart: null,
         sendWindowEnd: null,
-        steps: [{ anchor: 'purchase', days: 2, direction: 'after', sendOn: '', subject: '', bodyHtml: '' }],
+        steps: [{ previewText: '', anchor: 'purchase', days: 2, direction: 'after', sendOn: '', subject: '', bodyHtml: '' }],
     }
 }
 
@@ -632,6 +693,7 @@ async function openEdit(a: AutomationListItem) {
                 subject: s.subject,
                 bodyHtml: s.bodyHtml,
                 bodyText: s.bodyText,
+                previewText: s.previewText ?? '',
             })),
         }
         eventScope.value = d.eventTypeId ? 'event_type' : 'event'
@@ -652,6 +714,7 @@ function addStep() {
         sendOn: '',
         subject: '',
         bodyHtml: '',
+        previewText: '',
     })
 }
 
@@ -674,6 +737,7 @@ function toPayload(): UpsertAutomationRequest {
             subject: s.subject,
             bodyHtml: s.bodyHtml,
             bodyText: s.bodyText ?? null,
+            previewText: s.previewText?.trim() ? s.previewText.trim() : null,
         })),
     }
 }
@@ -849,6 +913,24 @@ onMounted(load)
 </script>
 
 <style scoped>
+.email-preview-frame {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    height: 600px;
+    overflow: hidden;
+}
+.email-preview-frame.phone {
+    width: 390px;
+    max-width: 100%;
+    margin: 0 auto;
+}
+.email-preview-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #f3f4f6;
+}
 .merge-row {
     display: flex;
     align-items: baseline;

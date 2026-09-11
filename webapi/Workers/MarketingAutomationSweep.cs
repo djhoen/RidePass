@@ -67,6 +67,7 @@ namespace webapi.Workers
             var ledger = sp.GetRequiredService<ITenantLedgerRepository>();
             var config = sp.GetRequiredService<IConfiguration>();
             var gate = sp.GetRequiredService<Services.Delivery.IOutboundDeliveryGate>();
+            var brandings = sp.GetRequiredService<ITenantBrandingRepository>();
 
             if (!emailer.IsConfigured) return;   // ships dark until SMTP is set
 
@@ -92,7 +93,7 @@ namespace webapi.Workers
                         continue;
                     }
 
-                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, gate, rootDomain, tickStart, ct);
+                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, gate, brandings, rootDomain, tickStart, ct);
                     if (sent > 0)
                     {
                         await Bill(repo, ledger, a, sent, tickStart);
@@ -109,12 +110,13 @@ namespace webapi.Workers
         private async Task<int> RunAutomation(
             MarketingAutomation a, Tenant tenant, IMarketingAutomationRepository repo,
             ISmtpEmailer emailer, IEmailLinkTokens tokens, Services.Delivery.IOutboundDeliveryGate gate,
-            string rootDomain, DateTime tickStart, CancellationToken ct)
+            ITenantBrandingRepository brandings, string rootDomain, DateTime tickStart, CancellationToken ct)
         {
             var steps = await repo.ListSteps(a.Id, a.TenantId);
             if (steps.Count == 0) return 0;
 
             var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
+            var brand = EmailBranding.From(tenant, await brandings.GetByTenantId(a.TenantId), baseUrl);
             // Fixed-date steps compare against the track's calendar, not UTC's.
             var tenantToday = SendWindow.ToLocal(tickStart, tenant.Timezone).Date;
             var sentCount = 0;
@@ -164,7 +166,7 @@ namespace webapi.Workers
                     var ok = false;
                     try
                     {
-                        ok = await Send(a, step, subject, tenant, emailer, tokens, baseUrl);
+                        ok = await Send(a, step, subject, tenant, brand, emailer, tokens, baseUrl);
                     }
                     catch (Exception ex)
                     {
@@ -185,11 +187,13 @@ namespace webapi.Workers
 
         private static async Task<bool> Send(
             MarketingAutomation a, MarketingAutomationStep step, AutomationSubject subject,
-            Tenant tenant, ISmtpEmailer emailer, IEmailLinkTokens tokens, string baseUrl)
+            Tenant tenant, EmailBranding brand, ISmtpEmailer emailer, IEmailLinkTokens tokens, string baseUrl)
         {
             var values = AutomationMergeFields.For(subject, tenant.DisplayName, baseUrl, tenant.Timezone);
             var subjectLine = AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
             var body = AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true);
+            var preview = string.IsNullOrWhiteSpace(step.PreviewText) ? null
+                : AutomationMergeFields.Render(step.PreviewText, values, htmlEncode: false);
 
             // Same compliance furniture as a broadcast campaign: this is marketing mail and the
             // law does not care that it was automated.
@@ -201,9 +205,9 @@ namespace webapi.Workers
                 ["X-SMTPAPI"] = System.Text.Json.JsonSerializer.Serialize(
                     new { unique_args = new { tenant_id = a.TenantId } }),
             };
-            // Editor HTML -> email HTML: absolute image URLs, capped image width, 600px column.
-            var html = EmailHtml.Wrap(EmailHtml.PrepareBody(body, baseUrl)
-                + UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
+            // Editor HTML -> the branded email: preheader, header, body, footer, unsubscribe.
+            var html = EmailHtml.Compose(body, preview, brand,
+                UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
 
             return await emailer.Send(subject.Email, subjectLine, html, headers, TenantEmailIdentity.For(tenant));
         }

@@ -16,13 +16,23 @@ const sanitized = computed(() => {
             'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
             'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'hr', 'a', 'img',
         ],
-        ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'title'],
+        ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'title', 'class'],
         ALLOW_DATA_ATTR: false,
     })
 })
 </script>
 
 <style scoped>
+.rich-text-view :deep(a.rp-button) {
+    display: inline-block;
+    padding: 10px 20px;
+    margin: 12px 0;
+    border-radius: 6px;
+    background: rgb(var(--v-theme-primary));
+    color: #fff !important;
+    font-weight: 600;
+    text-decoration: none;
+}
 .rich-text-view :deep(p) { margin: 0 0 0.6em 0; }
 .rich-text-view :deep(h1) { font-size: 1.6em; margin: 0.4em 0 0.3em; }
 .rich-text-view :deep(h2) { font-size: 1.35em; margin: 0.4em 0 0.3em; }

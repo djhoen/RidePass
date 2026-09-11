@@ -40,6 +40,7 @@ export interface CampaignListItem {
 export interface CampaignDetail extends CampaignListItem {
     bodyHtml: string
     bodyText: string | null
+    previewText: string | null
 }
 
 export interface SendCampaignResponse {
@@ -54,6 +55,11 @@ export class CampaignService {
 
     constructor() {
         this.apiUrl = import.meta.env.VITE_API_ENDPOINT ?? ''
+    }
+
+    /** The email exactly as it would be sent, for the phone/desktop preview. */
+    preview(req: { bodyHtml: string; previewText: string | null; triggerKind?: string | null }) {
+        return axios.post<{ data: { html: string } }>(`${this.apiUrl}/Campaign/Preview`, req)
     }
 
     /** Inline image for a campaign or automation body; returns the URL the editor inserts. */

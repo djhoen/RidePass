@@ -113,10 +113,27 @@
                     </div>
                     <v-text-field v-model="composeForm.subject" label="Subject" density="compact"
                         :readonly="composeReadonly"></v-text-field>
-                    <div class="text-caption text-medium-emphasis mb-1">Body</div>
-                    <RichTextEditor v-if="!composeReadonly" v-model="composeForm.bodyHtml" :upload-image="uploadInlineImage" />
-                    <div v-else class="rendered-body">
-                        <RichTextView :html="composeForm.bodyHtml" />
+                    <v-text-field v-model="composeForm.previewText" label="Preview text (optional)" density="compact" class="mt-4"
+                        :readonly="composeReadonly" hint="The snippet inboxes show under the subject line" persistent-hint></v-text-field>
+                    <div class="d-flex align-center mt-4 mb-1">
+                        <span class="text-caption text-medium-emphasis">Body</span>
+                        <v-spacer></v-spacer>
+                        <v-btn-toggle v-model="composeView" mandatory density="compact" variant="outlined" divided>
+                            <v-btn value="edit" size="small">Edit</v-btn>
+                            <v-btn value="phone" size="small" prepend-icon="mdi-cellphone">Phone</v-btn>
+                            <v-btn value="desktop" size="small" prepend-icon="mdi-monitor">Desktop</v-btn>
+                        </v-btn-toggle>
+                    </div>
+                    <template v-if="composeView === 'edit'">
+                        <RichTextEditor v-if="!composeReadonly" v-model="composeForm.bodyHtml" :upload-image="uploadInlineImage" email-buttons />
+                        <div v-else class="rendered-body">
+                            <RichTextView :html="composeForm.bodyHtml" />
+                        </div>
+                    </template>
+                    <div v-else class="email-preview-frame" :class="{ phone: composeView === 'phone' }">
+                        <div v-if="previewLoading" class="text-center py-8"><v-progress-circular indeterminate size="24" /></div>
+                        <div v-else-if="previewError" class="text-error text-body-2 pa-4">{{ previewError }}</div>
+                        <iframe v-else :srcdoc="previewHtml" title="Email preview" sandbox=""></iframe>
                     </div>
                     <v-text-field v-if="!composeReadonly" v-model="scheduleLocal" type="datetime-local"
                         label="Schedule for (optional)" density="compact" class="mt-4"
@@ -165,7 +182,25 @@ const activeSubscriberCount = ref<number | null>(null)
 const composeOpen = ref(false)
 const composeId = ref<string | null>(null)
 const composeReadonly = ref(false)
-const composeForm = ref({ subject: '', bodyHtml: '' })
+const composeForm = ref({ subject: '', bodyHtml: '', previewText: '' as string | null })
+// Edit / phone / desktop. The preview is the real send-time HTML from the API, not a guess.
+const composeView = ref<'edit' | 'phone' | 'desktop'>('edit')
+const previewHtml = ref('')
+const previewLoading = ref(false)
+const previewError = ref('')
+watch(composeView, async (v) => {
+    if (v === 'edit') return
+    previewLoading.value = true
+    previewError.value = ''
+    try {
+        const r = await campaignService.preview({ bodyHtml: composeForm.value.bodyHtml, previewText: composeForm.value.previewText })
+        previewHtml.value = (r.data as any).data.html
+    } catch (err: any) {
+        previewError.value = err.response?.data?.error || 'Could not build the preview. Switch back to Edit and try again.'
+    } finally {
+        previewLoading.value = false
+    }
+})
 
 // --- Audience ------------------------------------------------------------------------
 const audienceKindItems: { title: string; value: CampaignAudienceKind }[] = [
@@ -294,7 +329,7 @@ async function openCompose(id: string | null) {
         try {
             const r = await campaignService.get(id)
             const d: any = (r.data as any).data
-            composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml }
+            composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml, previewText: d.previewText ?? '' }
             composeReadonly.value = d.status !== 'draft'
             applyAudience(d.audienceKind, d.audienceConfig)
         } catch (err: any) {
@@ -302,9 +337,10 @@ async function openCompose(id: string | null) {
             return
         }
     } else {
-        composeForm.value = { subject: '', bodyHtml: '' }
+        composeForm.value = { subject: '', bodyHtml: '', previewText: '' }
         applyAudience('subscribers', null)
     }
+    composeView.value = 'edit'
     composeOpen.value = true
     loadAudienceOptions()
     refreshAudienceCount()
@@ -466,6 +502,24 @@ function flash(text: string, color: 'success' | 'error') {
 </script>
 
 <style scoped>
+.email-preview-frame {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    height: 560px;
+    overflow: hidden;
+}
+.email-preview-frame.phone {
+    width: 390px;
+    max-width: 100%;
+    margin: 0 auto;
+}
+.email-preview-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #f3f4f6;
+}
 .rendered-body {
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 4px;

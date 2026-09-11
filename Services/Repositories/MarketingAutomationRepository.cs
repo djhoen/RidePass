@@ -95,7 +95,7 @@ namespace Services.Repositories
             const string sql = @"
                 SELECT s.id AS Id, s.automation_id AS AutomationId, s.step_order AS StepOrder,
                        s.delay_days AS DelayDays, s.anchor AS Anchor, s.offset_days AS OffsetDays,
-                       s.send_on AS SendOn, s.subject AS Subject,
+                       s.send_on AS SendOn, s.subject AS Subject, s.preview_text AS PreviewText,
                        s.body_html AS BodyHtml, s.body_text AS BodyText, s.created_at AS CreatedAt
                 FROM marketing_automation_step s
                 JOIN marketing_automation a ON a.id = s.automation_id AND a.tenant_id = @tenantId
@@ -126,8 +126,8 @@ namespace Services.Repositories
             {
                 statements.Add((@"
                     INSERT INTO marketing_automation_step
-                        (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text)
-                    VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText)",
+                        (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text, preview_text)
+                    VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText, @previewText)",
                     new
                     {
                         automationId,
@@ -141,6 +141,7 @@ namespace Services.Repositories
                         subject = s.Subject,
                         bodyHtml = s.BodyHtml,
                         bodyText = s.BodyText,
+                        previewText = s.PreviewText,
                     }));
             }
             await _db.ExecuteBatch(statements);

@@ -57,6 +57,7 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string Subject { get; set; } = string.Empty;
         public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
+        public string? PreviewText { get; set; }
         // Reporting: how this email is doing.
         public int Sent { get; set; }
         public int Failed { get; set; }
@@ -111,6 +112,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         [Required, StringLength(200, MinimumLength = 1)] public string Subject { get; set; } = string.Empty;
         [Required, MinLength(1)] public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
+        /// <summary>Inbox snippet under the subject line; merge fields apply. Optional.</summary>
+        public string? PreviewText { get; set; }
     }
 
     /// <summary>

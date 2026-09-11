@@ -24,6 +24,7 @@ namespace webapi.Controllers
         private readonly IMarketingAutomationRepository _automations;
         private readonly ISeasonPassRepository _passes;
         private readonly ICampaignAudienceRepository _audiences;
+        private readonly ITenantBrandingRepository _brandings;
         private readonly ISmtpEmailer _emailer;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
@@ -33,6 +34,7 @@ namespace webapi.Controllers
             IMarketingAutomationRepository automations,
             ISeasonPassRepository passes,
             ICampaignAudienceRepository audiences,
+            ITenantBrandingRepository brandings,
             ISmtpEmailer emailer,
             ITenantContext tenantContext,
             IConfiguration config,
@@ -41,6 +43,7 @@ namespace webapi.Controllers
             _automations = automations;
             _passes = passes;
             _audiences = audiences;
+            _brandings = brandings;
             _emailer = emailer;
             _tenantContext = tenantContext;
             _config = config;
@@ -321,9 +324,12 @@ namespace webapi.Controllers
                     : $"For this rider it would send on {wouldSendOn}.";
 
             var subject = "[TEST] " + AutomationMergeFields.Render(step.Subject, values, htmlEncode: false);
-            var html = EmailHtml.Wrap(
-                EmailHtml.PrepareBody(AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true), baseUrl)
-                + $@"<hr style=""border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px"">
+            var brand = EmailBranding.From(_tenantContext.Tenant!, await _brandings.GetByTenantId(_tenantContext.TenantId), baseUrl);
+            var previewText = string.IsNullOrWhiteSpace(step.PreviewText) ? null
+                : AutomationMergeFields.Render(step.PreviewText, values, htmlEncode: false);
+            var html = EmailHtml.Compose(
+                AutomationMergeFields.Render(step.BodyHtml, values, htmlEncode: true), previewText, brand,
+                $@"<hr style=""border:none;border-top:1px solid #e5e7eb;margin:16px 0 8px"">
 <p style=""font-size:12px;color:#9ca3af"">Test send from {System.Net.WebUtility.HtmlEncode(trackName)}.
 Merge fields were filled in from {(sample is null ? "sample data (nothing sold yet)" : "a real purchase")}. {System.Net.WebUtility.HtmlEncode(timingNote)}</p>");
 
@@ -476,6 +482,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                     Subject = s.Subject.Trim(),
                     BodyHtml = s.BodyHtml,
                     BodyText = s.BodyText,
+                    PreviewText = string.IsNullOrWhiteSpace(s.PreviewText) ? null : s.PreviewText.Trim(),
                 });
             }
 
@@ -537,6 +544,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             Subject = s.Subject,
             BodyHtml = s.BodyHtml,
             BodyText = s.BodyText,
+            PreviewText = s.PreviewText,
             Sent = st?.Sent ?? 0,
             Failed = st?.Failed ?? 0,
             Skipped = st?.Skipped ?? 0,

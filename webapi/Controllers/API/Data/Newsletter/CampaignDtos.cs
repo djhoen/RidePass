@@ -22,6 +22,7 @@ namespace webapi.Controllers.API.Data.Newsletter
     {
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
+        public string? PreviewText { get; set; }
     }
 
     public class UpsertCampaignRequest
@@ -29,6 +30,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         [Required] public string Subject { get; set; } = null!;
         [Required] public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
+        /// <summary>Inbox snippet under the subject line. Optional.</summary>
+        public string? PreviewText { get; set; }
         // Omitted = newsletter subscribers (the original behaviour).
         public string? AudienceKind { get; set; }
         public CampaignAudienceConfigDto? AudienceConfig { get; set; }

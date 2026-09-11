@@ -7,6 +7,8 @@ namespace Services.Repositories.Data.NewsletterData
         public string Subject { get; set; } = null!;
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
+        /// <summary>Inbox snippet under the subject; null lets the inbox pick the first words.</summary>
+        public string? PreviewText { get; set; }
         public string Status { get; set; } = "draft";
         public DateTime? ScheduledFor { get; set; }
         public DateTime? SentAt { get; set; }
