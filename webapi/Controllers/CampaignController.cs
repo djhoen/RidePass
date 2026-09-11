@@ -21,6 +21,7 @@ namespace webapi.Controllers
         private readonly ITenantBrandingRepository _brandings;
         private readonly IConfiguration _config;
         private readonly IEmailEngagementRepository _engagement;
+        private readonly IMarketingReportRepository _reports;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
         private readonly ISmsSender _sms;
@@ -37,6 +38,7 @@ namespace webapi.Controllers
             ITenantBrandingRepository brandings,
             IConfiguration config,
             IEmailEngagementRepository engagement,
+            IMarketingReportRepository reports,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
             ISmsSender sms,
@@ -54,6 +56,7 @@ namespace webapi.Controllers
             _brandings = brandings;
             _config = config;
             _engagement = engagement;
+            _reports = reports;
             _suppression = suppression;
             _emailer = emailer;
             _scheduledTasks = scheduledTasks;
@@ -69,6 +72,7 @@ namespace webapi.Controllers
             var labels = new Dictionary<string, string>();
             var engagement = await _engagement.GetCampaignStats(_tenantContext.TenantId);
             var texts = await _campaigns.CountSmsSentByCampaign(_tenantContext.TenantId);
+            var conversions = await _reports.GetCampaignConversions(_tenantContext.TenantId, DefaultWindowDays);
             var items = new List<CampaignListItem>();
             foreach (var c in rows)
             {
@@ -80,10 +84,71 @@ namespace webapi.Controllers
                 }
                 var item = ToListItem(c, label, engagement.GetValueOrDefault(c.Id));
                 item.TextCount = texts.GetValueOrDefault(c.Id);
+                if (conversions.TryGetValue(c.Id, out var conv))
+                {
+                    item.Conversions = conv.Conversions;
+                    item.RevenueCents = conv.RevenueCents;
+                }
                 items.Add(item);
             }
             return new ApiResponses().OkResult(items);
         }
+
+        /// <summary>A purchase within this many days of the send counts as a conversion.</summary>
+        private const int DefaultWindowDays = 7;
+        private static int ClampWindow(int days) => Math.Clamp(days, 1, 90);
+
+        /// <summary>
+        /// The report a track reads the morning after: delivered, opened, clicked, bought, revenue,
+        /// and which links did the work. Conversions are purchases by recipients within the
+        /// window after their send; the caveat every platform shares is that someone who would
+        /// have bought anyway still counts.
+        /// </summary>
+        [HttpGet("{id:guid}/Report")]
+        public async Task<IActionResult> Report(Guid id, [FromQuery] int windowDays = DefaultWindowDays)
+        {
+            var c = await _campaigns.GetById(id, _tenantContext.TenantId);
+            if (c is null) return new ApiResponses().NotFoundResult("Campaign not found.");
+            var days = ClampWindow(windowDays);
+            var t = await _reports.GetCampaignTotals(c.Id, _tenantContext.TenantId, days);
+            var urls = await _engagement.GetCampaignClickUrls(c.Id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult(new CampaignReportResponse
+            {
+                WindowDays = days,
+                Delivered = t.Delivered, Emails = t.Emails, Texts = t.Texts, Skipped = t.Skipped, Failed = t.Failed,
+                People = t.People, UniqueOpens = t.UniqueOpens, UniqueClicks = t.UniqueClicks,
+                Conversions = t.Conversions, ClickConversions = t.ClickConversions, RevenueCents = t.RevenueCents,
+                ClickUrls = urls.Select(u => new CampaignClickUrlItem { Url = u.Url, UniqueClickers = u.UniqueClickers, TotalClicks = u.TotalClicks }).ToList(),
+            });
+        }
+
+        /// <summary>Who got it and what they did: searchable, filterable, paged.</summary>
+        [HttpGet("{id:guid}/Recipients")]
+        public async Task<IActionResult> Recipients(Guid id, [FromQuery] string? search, [FromQuery] string? filter,
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] int windowDays = DefaultWindowDays)
+        {
+            var c = await _campaigns.GetById(id, _tenantContext.TenantId);
+            if (c is null) return new ApiResponses().NotFoundResult("Campaign not found.");
+            var f = (filter ?? "all").Trim().ToLowerInvariant();
+            if (f is not ("all" or "opened" or "clicked" or "bought" or "skipped")) f = "all";
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 500);
+            var rows = await _reports.ListCampaignRecipients(c.Id, _tenantContext.TenantId, ClampWindow(windowDays),
+                search, f, (page - 1) * pageSize, pageSize);
+            return new ApiResponses().OkResult(new CampaignRecipientsResponse
+            {
+                Page = page, PageSize = pageSize,
+                Total = rows.Count == 0 ? 0 : rows[0].Total,
+                Items = rows.Select(r => new CampaignRecipientItem
+                {
+                    Id = r.Id, Email = r.Email, Name = r.Name, Channel = r.Channel, Status = r.Status, Reason = r.Error,
+                    SentAtUtc = Utc(r.SentAt), OpenedAtUtc = Utc(r.FirstOpenAt), ClickedAtUtc = Utc(r.FirstClickAt),
+                    BoughtAtUtc = Utc(r.FirstBuyAt), RevenueCents = r.RevenueCents ?? 0,
+                }).ToList(),
+            });
+        }
+
+        private static DateTime? Utc(DateTime? d) => d.HasValue ? DateTime.SpecifyKind(d.Value, DateTimeKind.Utc) : null;
 
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> Get(Guid id)

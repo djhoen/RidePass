@@ -112,6 +112,7 @@ builder.Services.AddScoped<IEmailCampaignRepository, EmailCampaignRepository>();
 builder.Services.AddScoped<ICampaignAudienceRepository, CampaignAudienceRepository>();
 builder.Services.AddScoped<IAudienceRepository, AudienceRepository>();
 builder.Services.AddScoped<IEmailEngagementRepository, EmailEngagementRepository>();
+builder.Services.AddScoped<IMarketingReportRepository, MarketingReportRepository>();
 builder.Services.AddScoped<IEmailTemplateRepository, EmailTemplateRepository>();
 builder.Services.AddScoped<IEmailSuppressionRepository, EmailSuppressionRepository>();
 builder.Services.AddScoped<IMarketingAutomationRepository, MarketingAutomationRepository>();

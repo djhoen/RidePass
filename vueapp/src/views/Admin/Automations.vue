@@ -414,6 +414,7 @@
                                     <th class="text-right">Failed</th>
                                     <th class="text-right">Opens</th>
                                     <th class="text-right">Clicks</th>
+                                    <th class="text-right">Bought</th>
                                     <th>Last sent</th>
                                 </tr>
                             </thead>
@@ -456,6 +457,11 @@
                                         </v-tooltip>
                                     </td>
                                     <td class="text-right">{{ s.uniqueClicks }}</td>
+                                    <td class="text-right">
+                                        <v-tooltip :text="`Bought a ticket or a pass within a week of this email: ${money(s.revenueCents)} in sales`" location="top">
+                                            <template #activator="{ props }"><span v-bind="props">{{ s.conversions }}</span></template>
+                                        </v-tooltip>
+                                    </td>
                                     <td class="text-no-wrap">{{ s.lastSentAtUtc ? formatWhen(s.lastSentAtUtc) : '-' }}</td>
                                 </tr>
                             </tbody>

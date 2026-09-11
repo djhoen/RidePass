@@ -22,6 +22,7 @@
                         <th style="width: 140px">Recipients</th>
                         <th style="width: 110px">Opens</th>
                         <th style="width: 110px">Clicks</th>
+                        <th style="width: 120px">Bought</th>
                         <th style="width: 180px">Sent / Scheduled</th>
                         <th style="width: 160px">Created</th>
                         <th style="width: 260px" class="text-right"></th>
@@ -51,6 +52,14 @@
                         </td>
                         <td>
                             <span v-if="c.status === 'sent'">{{ c.uniqueClicks }} <span class="text-caption text-medium-emphasis">{{ pct(c.uniqueClicks, c.recipientCount) }}</span></span>
+                            <span v-else class="text-medium-emphasis">-</span>
+                        </td>
+                        <td>
+                            <v-tooltip v-if="c.status === 'sent'" :text="`Bought a ticket or a pass within a week of the send: ${money(c.revenueCents)} in sales`" location="top">
+                                <template #activator="{ props }">
+                                    <span v-bind="props">{{ c.conversions }} <span class="text-caption text-medium-emphasis">{{ pct(c.conversions, c.recipientCount) }}</span></span>
+                                </template>
+                            </v-tooltip>
                             <span v-else class="text-medium-emphasis">-</span>
                         </td>
                         <td>
@@ -86,7 +95,7 @@
                         </td>
                     </tr>
                     <tr v-if="!loading && campaigns.length === 0">
-                        <td colspan="9" class="text-center text-medium-emphasis py-8">
+                        <td colspan="10" class="text-center text-medium-emphasis py-8">
                             No campaigns yet. Compose one to get started.
                         </td>
                     </tr>
@@ -103,6 +112,62 @@
                     <v-btn icon="mdi-close" variant="text" size="small" @click="composeOpen = false"></v-btn>
                 </v-card-title>
                 <v-card-text>
+                    <!-- Sent campaigns open on their report: the numbers, the links, and who did what. -->
+                    <template v-if="composeReadonly && report">
+                        <div class="d-flex flex-wrap ga-3 mb-2">
+                            <v-card v-for="t in reportTiles" :key="t.label" variant="tonal" class="pa-3 flex-grow-1" min-width="120">
+                                <div class="text-h6">{{ t.value }}</div>
+                                <div class="text-caption text-medium-emphasis">{{ t.label }}</div>
+                            </v-card>
+                        </div>
+                        <div class="text-caption text-medium-emphasis mb-4">
+                            Bought = a ticket or pass purchase by a recipient within {{ report.windowDays }} days of the send; {{ report.clickConversions }} of them clicked the email first.
+                            Opens include Apple Mail's automatic ones, so clicks are the honest engagement number.
+                        </div>
+                        <div class="d-flex flex-wrap align-center ga-2 mb-2">
+                            <v-btn-toggle v-model="recipientFilter" mandatory density="compact" variant="outlined" divided @update:model-value="loadRecipients(1)">
+                                <v-btn value="all" size="small">All</v-btn>
+                                <v-btn value="opened" size="small">Opened</v-btn>
+                                <v-btn value="clicked" size="small">Clicked</v-btn>
+                                <v-btn value="bought" size="small">Bought</v-btn>
+                                <v-btn value="skipped" size="small">Skipped</v-btn>
+                            </v-btn-toggle>
+                            <v-text-field v-model="recipientSearch" density="compact" hide-details clearable placeholder="Search name or email"
+                                prepend-inner-icon="mdi-magnify" style="max-width: 280px" @keyup.enter="loadRecipients(1)" @click:clear="loadRecipients(1)"></v-text-field>
+                            <v-spacer></v-spacer>
+                            <span class="text-caption text-medium-emphasis">{{ recipientsTotal }} {{ recipientsTotal === 1 ? 'person' : 'people' }}</span>
+                            <v-btn size="small" variant="text" prepend-icon="mdi-download" :loading="csvLoading" @click="downloadCsv">CSV</v-btn>
+                        </div>
+                        <v-table density="compact" class="mb-2">
+                            <thead>
+                                <tr><th>Who</th><th>Via</th><th>Status</th><th>Opened</th><th>Clicked</th><th>Bought</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!recipientsLoading && recipients.length === 0"><td colspan="6" class="text-center text-medium-emphasis py-4">Nobody matches.</td></tr>
+                                <tr v-for="r in recipients" :key="r.id">
+                                    <td><div>{{ r.name || r.email }}</div><div v-if="r.name" class="text-caption text-medium-emphasis">{{ r.email }}</div></td>
+                                    <td>{{ r.channel === 'sms' ? 'Text' : 'Email' }}</td>
+                                    <td>
+                                        <v-tooltip v-if="r.reason" :text="r.reason" location="top">
+                                            <template #activator="{ props }"><span v-bind="props" class="text-decoration-underline">{{ r.status }}</span></template>
+                                        </v-tooltip>
+                                        <span v-else>{{ r.status }}</span>
+                                    </td>
+                                    <td>{{ r.openedAtUtc ? formatDate(r.openedAtUtc) : '-' }}</td>
+                                    <td>{{ r.clickedAtUtc ? formatDate(r.clickedAtUtc) : '-' }}</td>
+                                    <td>
+                                        <span v-if="r.boughtAtUtc">{{ formatDate(r.boughtAtUtc) }} <span class="text-caption text-medium-emphasis">{{ money(r.revenueCents) }}</span></span>
+                                        <span v-else>-</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </v-table>
+                        <div v-if="recipientsTotal > recipientPageSize" class="d-flex justify-center mb-4">
+                            <v-pagination :model-value="recipientPage" :length="Math.ceil(recipientsTotal / recipientPageSize)" density="compact"
+                                :total-visible="7" @update:model-value="loadRecipients"></v-pagination>
+                        </div>
+                        <v-divider class="mb-4"></v-divider>
+                    </template>
                     <!-- Audience: a saved audience from the Audiences tab. It is resolved again at
                          send time, so the count shown here is a preview, not a snapshot. -->
                     <v-select v-model="audienceIds" :items="audienceItems" item-title="title" item-value="value"
@@ -229,7 +294,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { useRoute } from 'vue-router'
-import { CampaignService, smsSegments, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceCount, type MessageChannel } from '@/services/CampaignService'
+import { CampaignService, smsSegments, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceCount, type MessageChannel, type CampaignReport, type CampaignRecipient, type CampaignRecipientFilter } from '@/services/CampaignService'
 import { AudienceService, type AudienceItem } from '@/services/AudienceService'
 import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
@@ -260,6 +325,93 @@ function smsCounter(text: string | null): string {
 // Edit / phone / desktop. The preview is the real send-time HTML from the API, not a guess.
 const composeView = ref<'edit' | 'phone' | 'desktop'>('edit')
 const viewClickUrls = ref<{ url: string; uniqueClickers: number; totalClicks: number }[]>([])
+
+// The report shown when a sent campaign is opened.
+const report = ref<CampaignReport | null>(null)
+const recipients = ref<CampaignRecipient[]>([])
+const recipientsTotal = ref(0)
+const recipientsLoading = ref(false)
+const recipientFilter = ref<CampaignRecipientFilter>('all')
+const recipientSearch = ref('')
+const recipientPage = ref(1)
+const recipientPageSize = 50
+const csvLoading = ref(false)
+const reportTiles = computed(() => {
+    const r = report.value
+    if (!r) return []
+    const rate = (n: number) => r.people > 0 ? ` (${Math.round((n / r.people) * 100)}%)` : ''
+    return [
+        { label: r.texts ? `Delivered (${r.emails} emails, ${r.texts} texts)` : 'Delivered', value: String(r.delivered) },
+        { label: 'Opened', value: `${r.uniqueOpens}${rate(r.uniqueOpens)}` },
+        { label: 'Clicked', value: `${r.uniqueClicks}${rate(r.uniqueClicks)}` },
+        { label: 'Bought', value: `${r.conversions}${rate(r.conversions)}` },
+        { label: 'Sales', value: money(r.revenueCents) },
+    ]
+})
+function money(cents: number) { return `$${((cents ?? 0) / 100).toFixed(2)}` }
+
+async function loadReport(id: string) {
+    report.value = null
+    recipients.value = []
+    recipientsTotal.value = 0
+    recipientFilter.value = 'all'
+    recipientSearch.value = ''
+    try {
+        const { data } = await campaignService.report(id)
+        report.value = data.data
+        await loadRecipients(1)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load the campaign report. Close and reopen the campaign to retry.', 'error')
+    }
+}
+async function loadRecipients(page: number) {
+    if (!composeId.value) return
+    recipientsLoading.value = true
+    recipientPage.value = page
+    try {
+        const { data } = await campaignService.recipients(composeId.value, {
+            search: recipientSearch.value.trim() || undefined, filter: recipientFilter.value, page, pageSize: recipientPageSize,
+        })
+        recipients.value = data.data.items
+        recipientsTotal.value = data.data.total
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load the recipient list. Try the filter again.', 'error')
+    } finally {
+        recipientsLoading.value = false
+    }
+}
+async function downloadCsv() {
+    if (!composeId.value) return
+    csvLoading.value = true
+    try {
+        const rows: CampaignRecipient[] = []
+        for (let page = 1; page <= 200; page++) {
+            const { data } = await campaignService.recipients(composeId.value, {
+                search: recipientSearch.value.trim() || undefined, filter: recipientFilter.value, page, pageSize: 500,
+            })
+            rows.push(...data.data.items)
+            if (rows.length >= data.data.total || data.data.items.length === 0) break
+        }
+        const q = (v: string | number | null | undefined) => `"${String(v ?? '').replace(/"/g, '""')}"`
+        const lines = [['Name', 'Email', 'Via', 'Status', 'Reason', 'Sent', 'Opened', 'Clicked', 'Bought', 'Sales'].map(q).join(',')]
+        for (const r of rows) {
+            lines.push([r.name, r.email, r.channel === 'sms' ? 'Text' : 'Email', r.status, r.reason,
+                r.sentAtUtc ? formatDate(r.sentAtUtc) : '', r.openedAtUtc ? formatDate(r.openedAtUtc) : '',
+                r.clickedAtUtc ? formatDate(r.clickedAtUtc) : '', r.boughtAtUtc ? formatDate(r.boughtAtUtc) : '',
+                r.boughtAtUtc ? (r.revenueCents / 100).toFixed(2) : ''].map(q).join(','))
+        }
+        const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `${(composeForm.value.subject || 'campaign').replace(/[^\w.-]+/g, '_')}-recipients.csv`
+        a.click()
+        URL.revokeObjectURL(a.href)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not build the CSV. Try again.', 'error')
+    } finally {
+        csvLoading.value = false
+    }
+}
 
 // --- Templates ------------------------------------------------------------------------
 const templateService = new EmailTemplateService()
@@ -453,6 +605,8 @@ async function openCompose(id: string | null) {
             viewClickUrls.value = d.clickUrls ?? []
             composeReadonly.value = d.status !== 'draft'
             applyAudience(d.audienceKind, d.audienceConfig, d.audienceLabel)
+            if (d.status === 'sent' || d.status === 'sending') loadReport(id)
+            else report.value = null
         } catch (err: any) {
             flash(err.response?.data?.error || 'Failed to load campaign.', 'error')
             return
@@ -460,6 +614,7 @@ async function openCompose(id: string | null) {
     } else {
         composeForm.value = { subject: '', bodyHtml: '', previewText: '', channel: 'email', smsBody: '' }
         viewClickUrls.value = []
+        report.value = null
         // Arriving from the Audiences tab ("send a campaign to this audience") preselects it.
         const preselect = typeof route.query.audience === 'string' ? route.query.audience : null
         applyAudience('audience', { audienceIds: preselect ? [preselect] : [] })

@@ -27,6 +27,7 @@ namespace webapi.Controllers
         private readonly IAudienceRepository _savedAudiences;
         private readonly ITenantBrandingRepository _brandings;
         private readonly IEmailEngagementRepository _engagement;
+        private readonly IMarketingReportRepository _reports;
         private readonly ISmtpEmailer _emailer;
         private readonly ISmsSender _sms;
         private readonly ITenantContext _tenantContext;
@@ -40,6 +41,7 @@ namespace webapi.Controllers
             IAudienceRepository savedAudiences,
             ITenantBrandingRepository brandings,
             IEmailEngagementRepository engagement,
+            IMarketingReportRepository reports,
             ISmtpEmailer emailer,
             ISmsSender sms,
             ITenantContext tenantContext,
@@ -53,6 +55,7 @@ namespace webapi.Controllers
             _savedAudiences = savedAudiences;
             _brandings = brandings;
             _engagement = engagement;
+            _reports = reports;
             _emailer = emailer;
             _tenantContext = tenantContext;
             _config = config;
@@ -144,6 +147,7 @@ namespace webapi.Controllers
             var stats = await _automations.GetStats(_tenantContext.TenantId);
             var stepStats = await _automations.GetStepStats(a.Id, _tenantContext.TenantId);
             var engagement = await _engagement.GetAutomationStepStats(a.Id, _tenantContext.TenantId);
+            var purchases = await _reports.GetAutomationStepConversions(a.Id, _tenantContext.TenantId, 7);
             var basic = await ToListItem(a, steps, stats);
 
             return new ApiResponses().OkResult(new AutomationDetail
@@ -171,7 +175,8 @@ namespace webapi.Controllers
                 StopWhenUsedUp = a.StopWhenUsedUp,
                 SendWindowStart = FormatTime(a.SendWindowStart),
                 SendWindowEnd = FormatTime(a.SendWindowEnd),
-                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind, stepStats.GetValueOrDefault(s.Id), engagement.GetValueOrDefault(s.Id))).ToList(),
+                Steps = steps.Select(s => ToStepItem(s, a.TriggerKind, stepStats.GetValueOrDefault(s.Id), engagement.GetValueOrDefault(s.Id),
+                    purchases.GetValueOrDefault(s.Id))).ToList(),
             });
         }
 
@@ -621,7 +626,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
         }
 
         private static AutomationStepItem ToStepItem(MarketingAutomationStep s, string triggerKind,
-            MarketingAutomationStepStats? st = null, EmailEngagementStats? eng = null) => new()
+            MarketingAutomationStepStats? st = null, EmailEngagementStats? eng = null, MarketingConversion? conv = null) => new()
         {
             Id = s.Id,
             StepOrder = s.StepOrder,
@@ -640,6 +645,8 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             Failed = st?.Failed ?? 0,
             Skipped = st?.Skipped ?? 0,
             SmsSent = st?.SmsSent ?? 0,
+            Conversions = conv?.Conversions ?? 0,
+            RevenueCents = conv?.RevenueCents ?? 0,
             LastSentAtUtc = st?.LastSentAt is DateTime d ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null,
             UniqueOpens = eng?.UniqueOpens ?? 0,
             UniqueClicks = eng?.UniqueClicks ?? 0,

@@ -73,6 +73,9 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int Skipped { get; set; }
         /// <summary>Texts delivered, a subset of Sent.</summary>
         public int SmsSent { get; set; }
+        /// <summary>People who bought a ticket or a pass within a week of this email.</summary>
+        public int Conversions { get; set; }
+        public long RevenueCents { get; set; }
         public DateTime? LastSentAtUtc { get; set; }
         public List<AutomationSkipReasonItem> SkipReasons { get; set; } = new();
         public int UniqueOpens { get; set; }

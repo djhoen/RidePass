@@ -56,6 +56,9 @@ export interface AutomationStepItem {
     skipped: number
     /** Texts delivered, a subset of sent. */
     smsSent: number
+    /** People who bought a ticket or a pass within a week of this email. */
+    conversions: number
+    revenueCents: number
     lastSentAtUtc: string | null
     skipReasons: { status: 'skipped' | 'failed'; reason: string; count: number }[]
     uniqueOpens: number

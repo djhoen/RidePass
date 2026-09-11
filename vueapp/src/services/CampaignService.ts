@@ -57,6 +57,9 @@ export interface CampaignListItem {
     uniqueOpens: number
     uniqueClicks: number
     totalClicks: number
+    /** People who bought a ticket or a pass within a week of their send. */
+    conversions: number
+    revenueCents: number
     sentAtUtc: string | null
     scheduledForUtc: string | null
     createdAtUtc: string
@@ -68,6 +71,45 @@ export interface CampaignDetail extends CampaignListItem {
     previewText: string | null
     smsBody: string | null
     clickUrls: { url: string; uniqueClickers: number; totalClicks: number }[]
+}
+
+export interface CampaignReport {
+    windowDays: number
+    delivered: number
+    emails: number
+    texts: number
+    skipped: number
+    failed: number
+    people: number
+    uniqueOpens: number
+    uniqueClicks: number
+    conversions: number
+    clickConversions: number
+    revenueCents: number
+    clickUrls: { url: string; uniqueClickers: number; totalClicks: number }[]
+}
+
+export type CampaignRecipientFilter = 'all' | 'opened' | 'clicked' | 'bought' | 'skipped'
+
+export interface CampaignRecipient {
+    id: string
+    email: string
+    name: string | null
+    channel: 'email' | 'sms'
+    status: 'pending' | 'sent' | 'skipped' | 'failed'
+    reason: string | null
+    sentAtUtc: string | null
+    openedAtUtc: string | null
+    clickedAtUtc: string | null
+    boughtAtUtc: string | null
+    revenueCents: number
+}
+
+export interface CampaignRecipientsPage {
+    items: CampaignRecipient[]
+    total: number
+    page: number
+    pageSize: number
 }
 
 export interface SendCampaignResponse {
@@ -135,6 +177,14 @@ export class CampaignService {
     /** A new draft copied from any campaign: subject, preview text, body, audience. */
     duplicate(id: string) {
         return axios.post<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign/${id}/Duplicate`)
+    }
+
+    report(id: string, windowDays = 7) {
+        return axios.get<{ data: CampaignReport }>(`${this.apiUrl}/Campaign/${id}/Report`, { params: { windowDays } })
+    }
+
+    recipients(id: string, q: { search?: string; filter?: CampaignRecipientFilter; page?: number; pageSize?: number; windowDays?: number }) {
+        return axios.get<{ data: CampaignRecipientsPage }>(`${this.apiUrl}/Campaign/${id}/Recipients`, { params: q })
     }
 
     delete(id: string) {

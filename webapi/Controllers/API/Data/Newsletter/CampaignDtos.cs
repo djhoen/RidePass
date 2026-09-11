@@ -22,6 +22,9 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int UniqueOpens { get; set; }
         public int UniqueClicks { get; set; }
         public int TotalClicks { get; set; }
+        /// <summary>People who bought a ticket or a pass within the attribution window after their send.</summary>
+        public int Conversions { get; set; }
+        public long RevenueCents { get; set; }
         public DateTime? SentAtUtc { get; set; }
         public DateTime? ScheduledForUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
