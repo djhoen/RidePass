@@ -87,7 +87,7 @@ namespace Services.Repositories.Data.NewsletterData
     }
 
     /// <summary>One person resolved from an audience. Email is lower-cased.</summary>
-    public record AudienceRecipient(string Email, string? Name, Guid? UserId);
+    public record AudienceRecipient(string Email, string? Name, Guid? UserId, string? Phone);
 
     /// <summary>How many things point at an audience, so deleting one can refuse plainly.</summary>
     public class AudienceUsage

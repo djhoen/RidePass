@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { MessageChannel } from './CampaignService'
 
 export type AutomationTriggerKind = 'season_pass_purchased' | 'event_ticket_purchased' | 'newsletter_subscribed' | 'audience_joined'
 export type AutomationAnchor = 'purchase' | 'event_start' | 'event_end' | 'pass_expiry' | 'fixed_date'
@@ -24,6 +25,8 @@ export interface AutomationListItem {
     sent: number
     failed: number
     skipped: number
+    /** Texts delivered, a subset of sent. */
+    smsSent: number
     conversions: number
     /** Distinct sends opened / clicked across every step; opens are a ceiling. */
     uniqueOpens: number
@@ -46,9 +49,13 @@ export interface AutomationStepItem {
     bodyHtml: string
     bodyText: string | null
     previewText: string | null
+    channel: MessageChannel
+    smsBody: string | null
     sent: number
     failed: number
     skipped: number
+    /** Texts delivered, a subset of sent. */
+    smsSent: number
     lastSentAtUtc: string | null
     skipReasons: { status: 'skipped' | 'failed'; reason: string; count: number }[]
     uniqueOpens: number
@@ -74,6 +81,8 @@ export interface UpsertAutomationStep {
     bodyHtml: string
     bodyText?: string | null
     previewText?: string | null
+    channel?: MessageChannel
+    smsBody?: string | null
 }
 
 export interface UpsertAutomationRequest {
@@ -127,6 +136,8 @@ export interface AutomationTriggerOptions {
 
 export interface TestSendResponse {
     usedRealSubject: boolean
+    emailSent: boolean
+    smsSent: boolean
     sampleName: string | null
     wouldSendOn: string | null
     wouldSkip: boolean
@@ -195,9 +206,9 @@ export class AutomationService {
         return axios.post(`${this.apiUrl}/Automation/${id}/Activate`, { isActive, newPurchasesOnly })
     }
 
-    testSend(id: string, stepIndex: number, toEmail: string) {
+    testSend(id: string, stepIndex: number, toEmail: string | null, toPhone: string | null = null) {
         return axios.post<{ data: TestSendResponse }>(
-            `${this.apiUrl}/Automation/${id}/TestSend`, { stepIndex, toEmail })
+            `${this.apiUrl}/Automation/${id}/TestSend`, { stepIndex, toEmail, toPhone })
     }
 
     forUpgrades() {

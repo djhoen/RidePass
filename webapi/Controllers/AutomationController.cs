@@ -28,6 +28,7 @@ namespace webapi.Controllers
         private readonly ITenantBrandingRepository _brandings;
         private readonly IEmailEngagementRepository _engagement;
         private readonly ISmtpEmailer _emailer;
+        private readonly ISmsSender _sms;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
         private readonly ILogger<AutomationController> _logger;
@@ -40,10 +41,12 @@ namespace webapi.Controllers
             ITenantBrandingRepository brandings,
             IEmailEngagementRepository engagement,
             ISmtpEmailer emailer,
+            ISmsSender sms,
             ITenantContext tenantContext,
             IConfiguration config,
             ILogger<AutomationController> logger)
         {
+            _sms = sms;
             _automations = automations;
             _passes = passes;
             _audiences = audiences;
@@ -277,11 +280,17 @@ namespace webapi.Controllers
                     return new ApiResponses().BadRequestResult(
                         "Add at least one email before turning this automation on.");
                 }
-                if (!_emailer.IsConfigured)
+                if (steps.Any(s => MessageChannels.IncludesEmail(s.Channel)) && !_emailer.IsConfigured)
                 {
                     return new ApiResponses().BadRequestResult(
                         "Email isn't set up for this site yet, so an automation would never send. " +
                         "Contact support to finish email setup first.");
+                }
+                if (steps.Any(s => MessageChannels.IncludesSms(s.Channel)) && !_sms.IsConfiguredFor(_tenantContext.Tenant!))
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "Texting isn't set up for this track yet, so the text steps would never send. " +
+                        "Set it up under Settings, SMS, or switch those steps to email only.");
                 }
             }
 
@@ -312,10 +321,6 @@ namespace webapi.Controllers
         public async Task<IActionResult> TestSend(Guid id, [FromBody] TestSendRequest request)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            if (!_emailer.IsConfigured)
-            {
-                return new ApiResponses().BadRequestResult("Email isn't set up for this site yet, so a test can't be sent.");
-            }
             var a = await _automations.GetById(id, _tenantContext.TenantId);
             if (a is null) return new ApiResponses().NotFoundResult("Automation not found.");
             var steps = await _automations.ListSteps(a.Id, _tenantContext.TenantId);
@@ -324,6 +329,22 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("That email doesn't exist on this automation.");
             }
             var step = steps[request.StepIndex];
+            var testEmail = MessageChannels.IncludesEmail(step.Channel) && !string.IsNullOrWhiteSpace(request.ToEmail);
+            var testPhone = MessageChannels.IncludesSms(step.Channel) ? TwilioSmsSender.NormalizeE164(request.ToPhone ?? "") : null;
+            if (!testEmail && testPhone is null)
+            {
+                return new ApiResponses().BadRequestResult(MessageChannels.IncludesSms(step.Channel)
+                    ? "Enter the phone number the test text should go to."
+                    : "Enter the address the test email should go to.");
+            }
+            if (testEmail && !_emailer.IsConfigured)
+            {
+                return new ApiResponses().BadRequestResult("Email isn't set up for this site yet, so a test can't be sent.");
+            }
+            if (testPhone is not null && !_sms.IsConfiguredFor(_tenantContext.Tenant!))
+            {
+                return new ApiResponses().BadRequestResult("Texting isn't set up for this track yet (Settings, SMS), so a test text can't be sent.");
+            }
 
             var baseUrl = TenantBaseUrl();
             var trackName = _tenantContext.Tenant?.DisplayName ?? "the track";
@@ -352,7 +373,7 @@ namespace webapi.Controllers
 <p style=""font-size:12px;color:#9ca3af"">Test send from {System.Net.WebUtility.HtmlEncode(trackName)}.
 Merge fields were filled in from {(sample is null ? "sample data (nothing sold yet)" : "a real purchase")}. {System.Net.WebUtility.HtmlEncode(timingNote)}</p>");
 
-            var ok = await _emailer.Send(request.ToEmail, subject, html, null,
+            var ok = !testEmail || await _emailer.Send(request.ToEmail!, subject, html, null,
                 TenantEmailIdentity.For(_tenantContext.Tenant));
             if (!ok)
             {
@@ -360,9 +381,22 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                 return new ApiResponses().BadRequestResult(
                     "The test email could not be sent. The email service rejected it; check the address and try again.");
             }
+            var smsOk = false;
+            if (testPhone is not null)
+            {
+                var text = "[TEST] " + SmsText.Finish(AutomationMergeFields.Render(step.SmsBody ?? "", values, htmlEncode: false));
+                smsOk = await _sms.Send(_tenantContext.Tenant!, testPhone, text);
+                if (!smsOk)
+                {
+                    return new ApiResponses().BadRequestResult(
+                        "The test text could not be sent. Check the number and that texting is set up, then try again.");
+                }
+            }
             return new ApiResponses().OkResult(new TestSendResponse
             {
                 UsedRealSubject = sample is not null,
+                EmailSent = testEmail,
+                SmsSent = smsOk,
                 SampleName = sample?.ProductName,
                 WouldSendOn = wouldSendOn,
                 WouldSkip = wouldSkip,
@@ -502,6 +536,17 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                     return (kind, config, steps, $"Email {n} is set to send at the same time as an earlier one. Give each email its own timing.");
                 }
 
+                var channel = MessageChannels.Normalize(s.Channel);
+                if (MessageChannels.IncludesEmail(channel) && (string.IsNullOrWhiteSpace(s.BodyHtml) || s.BodyHtml.Trim() == "<p></p>"))
+                {
+                    return (kind, config, steps, "Every email needs a message, or switch that step to text only.");
+                }
+                if (MessageChannels.IncludesSms(channel))
+                {
+                    if (string.IsNullOrWhiteSpace(s.SmsBody)) return (kind, config, steps, "Every text step needs its text message.");
+                    if (s.SmsBody.Trim().Length > SmsText.MaxAuthoredLength)
+                        return (kind, config, steps, $"Keep each text message under {SmsText.MaxAuthoredLength} characters.");
+                }
                 steps.Add(new MarketingAutomationStep
                 {
                     Id = s.Id ?? Guid.Empty,
@@ -510,9 +555,11 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                     DelayDays = anchor == AutomationTriggers.Anchors.Purchase ? Math.Max(0, offset) : 0,
                     SendOn = sendOn,
                     Subject = s.Subject.Trim(),
-                    BodyHtml = s.BodyHtml,
+                    BodyHtml = s.BodyHtml ?? string.Empty,
                     BodyText = s.BodyText,
                     PreviewText = string.IsNullOrWhiteSpace(s.PreviewText) ? null : s.PreviewText.Trim(),
+                    Channel = channel,
+                    SmsBody = string.IsNullOrWhiteSpace(s.SmsBody) ? null : s.SmsBody.Trim(),
                 });
             }
 
@@ -564,6 +611,7 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
                 Sent = st?.Sent ?? 0,
                 Failed = st?.Failed ?? 0,
                 Skipped = st?.Skipped ?? 0,
+                SmsSent = st?.SmsSent ?? 0,
                 Conversions = st?.Conversions ?? 0,
                 UniqueOpens = eng?.UniqueOpens ?? 0,
                 UniqueClicks = eng?.UniqueClicks ?? 0,
@@ -586,9 +634,12 @@ Merge fields were filled in from {(sample is null ? "sample data (nothing sold y
             BodyHtml = s.BodyHtml,
             BodyText = s.BodyText,
             PreviewText = s.PreviewText,
+            Channel = s.Channel,
+            SmsBody = s.SmsBody,
             Sent = st?.Sent ?? 0,
             Failed = st?.Failed ?? 0,
             Skipped = st?.Skipped ?? 0,
+            SmsSent = st?.SmsSent ?? 0,
             LastSentAtUtc = st?.LastSentAt is DateTime d ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null,
             UniqueOpens = eng?.UniqueOpens ?? 0,
             UniqueClicks = eng?.UniqueClicks ?? 0,

@@ -25,7 +25,7 @@ namespace Services.Repositories
                 {
                     const string sql = @"
                         SELECT DISTINCT ON (lower(email))
-                               lower(email) AS Email, name AS Name, id AS SubscriberId
+                               lower(email) AS Email, name AS Name, id AS SubscriberId, NULL::text AS Phone
                         FROM newsletter_subscriber
                         WHERE tenant_id = @tenantId AND unsubscribed_at IS NULL
                         ORDER BY lower(email), subscribed_at DESC";
@@ -38,7 +38,7 @@ namespace Services.Repositories
                     // 'redeemed' is a paid ticket that was scanned at the gate; still a purchaser.
                     const string sql = @"
                         SELECT DISTINCT ON (lower(p.purchaser_email))
-                               lower(p.purchaser_email) AS Email, p.purchaser_name AS Name, NULL::uuid AS SubscriberId
+                               lower(p.purchaser_email) AS Email, p.purchaser_name AS Name, NULL::uuid AS SubscriberId, NULL::text AS Phone
                         FROM event_ticket_purchase p
                         JOIN event_ticket_tier t ON t.id = p.tier_id
                         JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
@@ -54,7 +54,7 @@ namespace Services.Repositories
                     if (config.EventTypeId is null) return new List<CampaignAudienceRecipient>();
                     const string sql = @"
                         SELECT DISTINCT ON (lower(p.purchaser_email))
-                               lower(p.purchaser_email) AS Email, p.purchaser_name AS Name, NULL::uuid AS SubscriberId
+                               lower(p.purchaser_email) AS Email, p.purchaser_name AS Name, NULL::uuid AS SubscriberId, NULL::text AS Phone
                         FROM event_ticket_purchase p
                         JOIN event_ticket_tier t ON t.id = p.tier_id
                         JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
@@ -73,7 +73,7 @@ namespace Services.Repositories
                     if (config.PassProductId is null) return new List<CampaignAudienceRecipient>();
                     const string sql = @"
                         SELECT DISTINCT ON (lower(purchaser_email))
-                               lower(purchaser_email) AS Email, purchaser_name AS Name, NULL::uuid AS SubscriberId
+                               lower(purchaser_email) AS Email, purchaser_name AS Name, NULL::uuid AS SubscriberId, NULL::text AS Phone
                         FROM season_pass_purchase
                         WHERE tenant_id = @tenantId
                           AND product_id = @productId
@@ -89,7 +89,7 @@ namespace Services.Repositories
                     var audience = await _savedAudiences.GetById(config.AudienceId.Value, tenantId);
                     if (audience is null) return new List<CampaignAudienceRecipient>();
                     var people = await _savedAudiences.Evaluate(tenantId, AudienceDefinition.Parse(audience.Definition));
-                    return people.Select(p => new CampaignAudienceRecipient(p.Email, p.Name, null)).ToList();
+                    return people.Select(p => new CampaignAudienceRecipient(p.Email, p.Name, null, p.Phone)).ToList();
                 }
                 default:
                     return new List<CampaignAudienceRecipient>();

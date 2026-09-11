@@ -29,10 +29,18 @@
                 </thead>
                 <tbody>
                     <tr v-for="c in campaigns" :key="c.id">
-                        <td>{{ c.subject }}</td>
+                        <td>
+                            {{ c.subject }}
+                            <v-chip v-if="c.channel !== 'email'" size="x-small" variant="tonal" class="ml-1">
+                                {{ c.channel === 'sms' ? 'Text' : 'Email + text' }}
+                            </v-chip>
+                        </td>
                         <td class="text-medium-emphasis">{{ c.audienceLabel }}</td>
                         <td><v-chip size="small" :color="statusColor(c.status)">{{ c.status }}</v-chip></td>
-                        <td>{{ c.recipientCount }}</td>
+                        <td>
+                            {{ c.recipientCount }}
+                            <span v-if="c.textCount" class="text-caption text-medium-emphasis">({{ c.textCount }} text{{ c.textCount === 1 ? '' : 's' }})</span>
+                        </td>
                         <td>
                             <v-tooltip v-if="c.status === 'sent'" text="Distinct people who opened. Includes automatic opens from Apple Mail, so treat as a ceiling." location="top">
                                 <template #activator="{ props }">
@@ -106,15 +114,33 @@
                         <span v-else-if="audienceCountError" class="text-error">{{ audienceCountError }}</span>
                         <span v-else-if="audienceCount" class="text-success">
                             {{ audienceCount.recipients }} recipient{{ audienceCount.recipients === 1 ? '' : 's' }}: {{ audienceCount.label }}<template
-                                v-if="audienceCount.suppressed"> ({{ audienceCount.suppressed }} on the suppression list will be skipped)</template>
+                                v-if="audienceCount.suppressed"> ({{ audienceCount.suppressed }} on the suppression list will be skipped)</template><template
+                                v-if="composeForm.channel !== 'email'"> · {{ audienceCount.phones }} can be texted</template>
                         </span>
                         <span v-else class="text-medium-emphasis">Pick an audience to see how many people it reaches.</span>
                     </div>
-                    <v-select v-if="!composeReadonly && templates.length" v-model="templatePick" :items="templates"
+                    <!-- How it goes out. A text needs a phone on the rider's account; the count above says how many have one. -->
+                    <div class="d-flex align-center flex-wrap ga-3 mb-4">
+                        <span class="text-caption text-medium-emphasis">Send as</span>
+                        <v-btn-toggle v-model="composeForm.channel" mandatory density="compact" variant="outlined" divided
+                            :disabled="composeReadonly">
+                            <v-btn value="email" size="small" prepend-icon="mdi-email-outline">Email</v-btn>
+                            <v-btn value="sms" size="small" prepend-icon="mdi-message-text-outline">Text</v-btn>
+                            <v-btn value="both" size="small">Both</v-btn>
+                        </v-btn-toggle>
+                    </div>
+                    <v-select v-if="!composeReadonly && templates.length && composeForm.channel !== 'sms'" v-model="templatePick" :items="templates"
                         item-title="name" item-value="id" label="Start from a saved template" density="compact" clearable
                         class="mb-2" @update:model-value="applyTemplate"></v-select>
-                    <v-text-field v-model="composeForm.subject" label="Subject" density="compact"
-                        :readonly="composeReadonly"></v-text-field>
+                    <v-text-field v-model="composeForm.subject" :label="composeForm.channel === 'sms' ? 'Name (only you see this)' : 'Subject'"
+                        density="compact" :readonly="composeReadonly"></v-text-field>
+                    <template v-if="composeForm.channel !== 'email'">
+                        <v-textarea v-model="composeForm.smsBody" label="Text message" density="compact" class="mt-4" rows="3" auto-grow
+                            :readonly="composeReadonly" :counter="1000" :maxlength="1000"
+                            :hint="'Merge fields work here too. ' + smsCounter(composeForm.smsBody) + ' \'Reply STOP to opt out\' is added automatically.'"
+                            persistent-hint></v-textarea>
+                    </template>
+                    <template v-if="composeForm.channel !== 'sms'">
                     <v-text-field v-model="composeForm.previewText" label="Preview text (optional)" density="compact" class="mt-4"
                         :readonly="composeReadonly" hint="The snippet inboxes show under the subject line" persistent-hint></v-text-field>
                     <div class="d-flex align-center mt-4 mb-1">
@@ -152,6 +178,7 @@
                             </tr>
                         </tbody>
                     </v-table>
+                    </template>
                     <v-text-field v-if="!composeReadonly" v-model="scheduleLocal" type="datetime-local"
                         label="Schedule for (optional)" density="compact" class="mt-4"
                         hint="Leave blank to send now. Time is in your track's timezone." persistent-hint
@@ -201,7 +228,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { useRoute } from 'vue-router'
-import { CampaignService, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceCount } from '@/services/CampaignService'
+import { CampaignService, smsSegments, type CampaignListItem , type CampaignAudienceKind, type CampaignAudienceConfig, type CampaignAudienceCount, type MessageChannel } from '@/services/CampaignService'
 import { AudienceService, type AudienceItem } from '@/services/AudienceService'
 import { NewsletterService } from '@/services/NewsletterService'
 import RichTextEditor from '@/components/RichTextEditor.vue'
@@ -223,7 +250,12 @@ const activeSubscriberCount = ref<number | null>(null)
 const composeOpen = ref(false)
 const composeId = ref<string | null>(null)
 const composeReadonly = ref(false)
-const composeForm = ref({ subject: '', bodyHtml: '', previewText: '' as string | null })
+const composeForm = ref({ subject: '', bodyHtml: '', previewText: '' as string | null, channel: 'email' as MessageChannel, smsBody: '' as string | null })
+
+function smsCounter(text: string | null): string {
+    const { chars, segments } = smsSegments(text ?? '')
+    return chars === 0 ? '' : `${chars} characters, ${segments} segment${segments === 1 ? '' : 's'}.`
+}
 // Edit / phone / desktop. The preview is the real send-time HTML from the API, not a guess.
 const composeView = ref<'edit' | 'phone' | 'desktop'>('edit')
 const viewClickUrls = ref<{ url: string; uniqueClickers: number; totalClicks: number }[]>([])
@@ -260,6 +292,7 @@ async function applyTemplate(id: string | null) {
         confirmText: 'Replace',
     })) { templatePick.value = null; return }
     composeForm.value = {
+        ...composeForm.value,
         subject: t.subject ?? composeForm.value.subject,
         previewText: t.previewText ?? composeForm.value.previewText,
         bodyHtml: t.bodyHtml,
@@ -410,7 +443,7 @@ async function openCompose(id: string | null) {
         try {
             const r = await campaignService.get(id)
             const d: any = (r.data as any).data
-            composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml, previewText: d.previewText ?? '' }
+            composeForm.value = { subject: d.subject, bodyHtml: d.bodyHtml, previewText: d.previewText ?? '', channel: d.channel ?? 'email', smsBody: d.smsBody ?? '' }
             viewClickUrls.value = d.clickUrls ?? []
             composeReadonly.value = d.status !== 'draft'
             applyAudience(d.audienceKind, d.audienceConfig, d.audienceLabel)
@@ -419,7 +452,7 @@ async function openCompose(id: string | null) {
             return
         }
     } else {
-        composeForm.value = { subject: '', bodyHtml: '', previewText: '' }
+        composeForm.value = { subject: '', bodyHtml: '', previewText: '', channel: 'email', smsBody: '' }
         viewClickUrls.value = []
         // Arriving from the Audiences tab ("send a campaign to this audience") preselects it.
         const preselect = typeof route.query.audience === 'string' ? route.query.audience : null
@@ -466,7 +499,7 @@ async function saveAndSend() {
     const isScheduling = scheduledForUtc !== null
     if (!await confirm({
         title: isScheduling ? 'Schedule campaign?' : 'Send campaign?',
-        message: buildSendConfirm(composeForm.value.subject, scheduledForUtc),
+        message: buildSendConfirm(composeForm.value.subject, scheduledForUtc, null, composeForm.value.channel),
         confirmText: isScheduling ? 'Schedule' : 'Send',
     })) return
     sending.value = true
@@ -500,7 +533,7 @@ async function sendCampaign(c: CampaignListItem) {
         flash(err.response?.data?.error || 'Could not count this campaign\'s audience; open it and check the audience before sending.', 'error')
         return
     }
-    if (!await confirm({ title: 'Send campaign?', message: buildSendConfirm(c.subject, null, count), confirmText: 'Send' })) return
+    if (!await confirm({ title: 'Send campaign?', message: buildSendConfirm(c.subject, null, count, c.channel), confirmText: 'Send' })) return
     try {
         const r = await campaignService.send(c.id)
         const notice = (r.data as any).data.sendNotice
@@ -533,14 +566,21 @@ async function deleteCampaign(c: CampaignListItem) {
     }
 }
 
-function buildSendConfirm(subject: string, scheduledForUtc?: string | null, count?: CampaignAudienceCount | null): string {
+function buildSendConfirm(subject: string, scheduledForUtc?: string | null, count?: CampaignAudienceCount | null, channel: MessageChannel = 'email'): string {
     const c = count ?? audienceCount.value
-    const n = c ? Math.max(0, c.recipients - c.suppressed) : (activeSubscriberCount.value ?? 0)
-    const who = c ? `${n} recipient${n === 1 ? '' : 's'} (${c.label})` : `${n} active subscribers`
+    const emails = channel === 'sms' ? 0 : (c ? Math.max(0, c.recipients - c.suppressed) : (activeSubscriberCount.value ?? 0))
+    const texts = channel === 'email' ? 0 : (c?.phones ?? 0)
+    const parts: string[] = []
+    if (channel !== 'sms') parts.push(`${emails} email${emails === 1 ? '' : 's'}`)
+    if (channel !== 'email') parts.push(`${texts} text${texts === 1 ? '' : 's'}`)
+    const who = `${parts.join(' and ')}${c ? ` (${c.label})` : ''}`
     const lead = scheduledForUtc
-        ? `Schedule "${subject}" for ${formatDate(scheduledForUtc)} to ${who}?`
-        : `Send "${subject}" to ${who}?`
-    return `${lead}\n\nEstimated cost: ${formatEmailCost(n)} (${n} emails this send)`
+        ? `Schedule "${subject}" for ${formatDate(scheduledForUtc)}: ${who}?`
+        : `Send "${subject}": ${who}?`
+    const cost: string[] = []
+    if (channel !== 'sms') cost.push(`${formatEmailCost(emails)} for ${emails} emails`)
+    if (channel !== 'email') cost.push(`texts are billed per message segment at your SMS rate`)
+    return `${lead}\n\nEstimated cost: ${cost.join('; ')}`
 }
 
 async function cancelSchedule(c: CampaignListItem) {
@@ -571,8 +611,11 @@ function validate(): boolean {
     if (!composeForm.value.subject.trim()) {
         flash('Subject is required.', 'error'); return false
     }
-    if (!composeForm.value.bodyHtml.trim() || composeForm.value.bodyHtml === '<p></p>') {
-        flash('Body is required.', 'error'); return false
+    if (composeForm.value.channel !== 'sms' && (!composeForm.value.bodyHtml.trim() || composeForm.value.bodyHtml === '<p></p>')) {
+        flash('Write the email body, or switch the campaign to text only.', 'error'); return false
+    }
+    if (composeForm.value.channel !== 'email' && !(composeForm.value.smsBody ?? '').trim()) {
+        flash('Write the text message, or switch the campaign to email only.', 'error'); return false
     }
     return true
 }

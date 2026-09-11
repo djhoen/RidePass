@@ -9,5 +9,7 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int Recipients { get; set; }
         // Of those, how many are currently on the suppression / marketing opt-out list and will be skipped.
         public int Suppressed { get; set; }
+        /// <summary>Recipients with a usable phone on their account who have not replied STOP: the reach of a text.</summary>
+        public int Phones { get; set; }
     }
 }

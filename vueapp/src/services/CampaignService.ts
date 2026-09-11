@@ -1,6 +1,18 @@
 import axios from 'axios'
 
 export type CampaignAudienceKind = 'subscribers' | 'event' | 'event_type' | 'pass_product' | 'audience'
+/** How a campaign or an automation step goes out. */
+export type MessageChannel = 'email' | 'sms' | 'both'
+
+/** Twilio segments: GSM-7 text packs 160 per segment (153 when split), anything else 70 (67). */
+export function smsSegments(text: string): { chars: number; segments: number } {
+    const chars = text.length
+    if (chars === 0) return { chars: 0, segments: 0 }
+    const gsm = /^[\x00-\x7F€£¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉÄÖÑÜ§¿äöñüà^{}\\[~\]|]*$/.test(text)
+    const single = gsm ? 160 : 70
+    const multi = gsm ? 153 : 67
+    return { chars, segments: chars <= single ? 1 : Math.ceil(chars / multi) }
+}
 
 /** Target of a non-subscriber audience. Only the field the kind needs is set. */
 export interface CampaignAudienceConfig {
@@ -24,6 +36,8 @@ export interface CampaignAudienceCount {
     label: string
     recipients: number
     suppressed: number
+    /** Recipients with a usable phone who have not replied STOP: the reach of a text. */
+    phones: number
 }
 
 export interface CampaignListItem {
@@ -34,6 +48,9 @@ export interface CampaignListItem {
     audienceKind: CampaignAudienceKind
     audienceLabel: string
     audienceConfig: CampaignAudienceConfig
+    channel: MessageChannel
+    /** Texts delivered, a subset of recipientCount. */
+    textCount: number
     /** Distinct openers / clickers from SendGrid events. Opens include Apple Mail's automatic ones. */
     uniqueOpens: number
     uniqueClicks: number
@@ -47,6 +64,7 @@ export interface CampaignDetail extends CampaignListItem {
     bodyHtml: string
     bodyText: string | null
     previewText: string | null
+    smsBody: string | null
     clickUrls: { url: string; uniqueClickers: number; totalClicks: number }[]
 }
 
@@ -101,11 +119,11 @@ export class CampaignService {
         return axios.get<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign/${id}`)
     }
 
-    create(req: { subject: string; bodyHtml: string; bodyText?: string | null }) {
+    create(req: { subject: string; bodyHtml: string; bodyText?: string | null; channel?: MessageChannel; smsBody?: string | null }) {
         return axios.post<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign`, req)
     }
 
-    update(id: string, req: { subject: string; bodyHtml: string; bodyText?: string | null }) {
+    update(id: string, req: { subject: string; bodyHtml: string; bodyText?: string | null; channel?: MessageChannel; smsBody?: string | null }) {
         return axios.put<{ data: CampaignDetail }>(`${this.apiUrl}/Campaign/${id}`, req)
     }
 

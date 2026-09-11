@@ -107,6 +107,7 @@ namespace webapi.Controllers
             {
                 Count = people.Count,
                 Suppressed = people.Count(r => blocklist.Contains(r.Email)),
+                WithPhone = people.Count(r => Services.Helpers.TwilioSmsSender.NormalizeE164(r.Phone ?? "") is not null),
                 Summary = Summarize(def, await NameLookup()),
                 Sample = people.Take(5).Select(r => new AudiencePreviewPerson { Email = r.Email, Name = r.Name }).ToList(),
             });

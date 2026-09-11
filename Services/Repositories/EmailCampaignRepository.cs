@@ -8,7 +8,7 @@ namespace Services.Repositories
     {
         private const string CampaignColumns = @"
             id, tenant_id AS TenantId, subject, body_html AS BodyHtml, body_text AS BodyText,
-            preview_text AS PreviewText,
+            preview_text AS PreviewText, channel AS Channel, sms_body AS SmsBody,
             status, scheduled_for AS ScheduledFor, sent_at AS SentAt,
             recipient_count AS RecipientCount,
             audience_kind AS AudienceKind, audience_config::text AS AudienceConfig,
@@ -45,10 +45,10 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO email_campaign
-                    (tenant_id, subject, body_html, body_text, preview_text, status,
+                    (tenant_id, subject, body_html, body_text, preview_text, channel, sms_body, status,
                      scheduled_for, created_by_user_id, audience_kind, audience_config)
                 VALUES
-                    (@TenantId, @Subject, @BodyHtml, @BodyText, @PreviewText, @Status,
+                    (@TenantId, @Subject, @BodyHtml, @BodyText, @PreviewText, @Channel, @SmsBody, @Status,
                      @ScheduledFor, @CreatedByUserId, @AudienceKind, @AudienceConfig::jsonb)
                 RETURNING id";
             var r = await _db.Query<Guid>(sql, c);
@@ -63,6 +63,8 @@ namespace Services.Repositories
                     body_html = @BodyHtml,
                     body_text = @BodyText,
                     preview_text = @PreviewText,
+                    channel = @Channel,
+                    sms_body = @SmsBody,
                     audience_kind = @AudienceKind,
                     audience_config = @AudienceConfig::jsonb,
                     status = @Status,
@@ -113,9 +115,9 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO email_campaign_send
-                    (campaign_id, subscriber_id, email, name, status)
-                VALUES (@CampaignId, @SubscriberId, @Email, @Name, @Status)
-                ON CONFLICT (campaign_id, email) DO NOTHING";
+                    (campaign_id, subscriber_id, email, name, status, channel, phone)
+                VALUES (@CampaignId, @SubscriberId, @Email, @Name, @Status, @Channel, @Phone)
+                ON CONFLICT (campaign_id, email, channel) DO NOTHING";
             foreach (var s in sends)
             {
                 s.CampaignId = campaignId;
@@ -127,7 +129,7 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT id, campaign_id AS CampaignId, subscriber_id AS SubscriberId,
-                       email, name, sent_at AS SentAt, status, error
+                       email, name, sent_at AS SentAt, status, error, channel AS Channel, phone AS Phone
                 FROM email_campaign_send
                 WHERE campaign_id = @campaignId
                 ORDER BY id";
@@ -156,10 +158,23 @@ namespace Services.Repositories
                 JOIN email_campaign c ON c.id = s.campaign_id
                 WHERE c.tenant_id = @tenantId
                   AND s.status = 'sent'
+                  AND s.channel = 'email'
                   AND s.sent_at >= @fromUtc
                   AND s.campaign_id <> @excludeCampaignId";
             var r = await _db.Query<int>(sql, new { tenantId, fromUtc, excludeCampaignId });
             return r.FirstOrDefault();
+        }
+
+        public async Task<Dictionary<Guid, int>> CountSmsSentByCampaign(Guid tenantId)
+        {
+            const string sql = @"
+                SELECT s.campaign_id AS Key, COUNT(*)::int AS Value
+                FROM email_campaign_send s
+                JOIN email_campaign c ON c.id = s.campaign_id
+                WHERE c.tenant_id = @tenantId AND s.status = 'sent' AND s.channel = 'sms'
+                GROUP BY s.campaign_id";
+            var rows = await _db.Query<(Guid Key, int Value)>(sql, new { tenantId });
+            return rows.ToDictionary(r => r.Key, r => r.Value);
         }
     }
 }

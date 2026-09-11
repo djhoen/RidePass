@@ -45,6 +45,9 @@ namespace Services.Repositories.Data.NewsletterData
         public string? BodyText { get; set; }
         /// <summary>Inbox snippet under the subject; merge fields apply.</summary>
         public string? PreviewText { get; set; }
+        /// <summary>'email' | 'sms' | 'both' (Services.Email.MessageChannels).</summary>
+        public string Channel { get; set; } = "email";
+        public string? SmsBody { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 
@@ -62,6 +65,9 @@ namespace Services.Repositories.Data.NewsletterData
         public string SubjectKind { get; set; } = null!;
         public Guid SubjectId { get; set; }
         public string Email { get; set; } = null!;
+        /// <summary>'email' or 'sms'.</summary>
+        public string Channel { get; set; } = "email";
+        public string? Phone { get; set; }
         public string Status { get; set; } = "sent";
         public string? SkipReason { get; set; }
         public DateTime SentAt { get; set; }
@@ -79,6 +85,8 @@ namespace Services.Repositories.Data.NewsletterData
         /// justifies the spend, and the reason the send log stores the purchase id.
         /// </summary>
         public int Conversions { get; set; }
+        /// <summary>Texts delivered, a subset of Sent.</summary>
+        public int SmsSent { get; set; }
     }
 
     /// <summary>Per-step rollup: how each email in a sequence is doing, with the skip reasons.</summary>
@@ -90,6 +98,7 @@ namespace Services.Repositories.Data.NewsletterData
         public int Failed { get; set; }
         public int Skipped { get; set; }
         public DateTime? LastSentAt { get; set; }
+        public int SmsSent { get; set; }
         public List<MarketingAutomationSkipReason> SkipReasons { get; set; } = new();
     }
 
@@ -113,6 +122,8 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid SubjectId { get; set; }
         public Guid TenantId { get; set; }
         public string Email { get; set; } = null!;
+        /// <summary>The rider's phone from their account, if any; texts go here.</summary>
+        public string? Phone { get; set; }
         public string? HolderName { get; set; }
         /// <summary>The pass product name, or the event title.</summary>
         public string ProductName { get; set; } = null!;

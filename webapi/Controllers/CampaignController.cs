@@ -23,6 +23,8 @@ namespace webapi.Controllers
         private readonly IEmailEngagementRepository _engagement;
         private readonly IEmailSuppressionRepository _suppression;
         private readonly ISmtpEmailer _emailer;
+        private readonly ISmsSender _sms;
+        private readonly ITenantSmsOptOutRepository _smsOptOuts;
         private readonly IScheduledTaskRepository _scheduledTasks;
         private readonly ITenantContext _tenantContext;
         private readonly ILogger<CampaignController> _logger;
@@ -37,10 +39,14 @@ namespace webapi.Controllers
             IEmailEngagementRepository engagement,
             IEmailSuppressionRepository suppression,
             ISmtpEmailer emailer,
+            ISmsSender sms,
+            ITenantSmsOptOutRepository smsOptOuts,
             IScheduledTaskRepository scheduledTasks,
             ITenantContext tenantContext,
             ILogger<CampaignController> logger)
         {
+            _sms = sms;
+            _smsOptOuts = smsOptOuts;
             _campaigns = campaigns;
             _subscribers = subscribers;
             _audiences = audiences;
@@ -62,6 +68,7 @@ namespace webapi.Controllers
             // One label lookup per distinct audience, not per row.
             var labels = new Dictionary<string, string>();
             var engagement = await _engagement.GetCampaignStats(_tenantContext.TenantId);
+            var texts = await _campaigns.CountSmsSentByCampaign(_tenantContext.TenantId);
             var items = new List<CampaignListItem>();
             foreach (var c in rows)
             {
@@ -71,7 +78,9 @@ namespace webapi.Controllers
                     label = await LabelFor(c);
                     labels[key] = label;
                 }
-                items.Add(ToListItem(c, label, engagement.GetValueOrDefault(c.Id)));
+                var item = ToListItem(c, label, engagement.GetValueOrDefault(c.Id));
+                item.TextCount = texts.GetValueOrDefault(c.Id);
+                items.Add(item);
             }
             return new ApiResponses().OkResult(items);
         }
@@ -185,9 +194,12 @@ namespace webapi.Controllers
             var recipients = await _audiences.ListRecipients(_tenantContext.TenantId, resolved.Kind, resolved.Config);
             var blocklist = await _suppression.ListMarketingBlocklist(_tenantContext.TenantId);
             var suppressed = recipients.Count(r => blocklist.Contains(r.Email));
+            var optedOut = await SmsOptOutSet();
+            var phones = recipients.Select(r => TwilioSmsSender.NormalizeE164(r.Phone ?? ""))
+                .Count(p => p is not null && !optedOut.Contains(p));
             return new ApiResponses().OkResult(new CampaignAudienceCountResponse
             {
-                Kind = resolved.Kind, Label = resolved.Label, Recipients = recipients.Count, Suppressed = suppressed,
+                Kind = resolved.Kind, Label = resolved.Label, Recipients = recipients.Count, Suppressed = suppressed, Phones = phones,
             });
         }
 
@@ -201,13 +213,17 @@ namespace webapi.Controllers
             var audience = await ResolveAudience(request.AudienceKind, request.AudienceConfig);
             if (audience.Error is not null) return new ApiResponses().BadRequestResult(audience.Error);
 
+            var channelError = ValidateChannel(request);
+            if (channelError is not null) return new ApiResponses().BadRequestResult(channelError);
             var c = new EmailCampaign
             {
                 TenantId = _tenantContext.TenantId,
                 Subject = request.Subject.Trim(),
-                BodyHtml = request.BodyHtml,
+                BodyHtml = request.BodyHtml ?? string.Empty,
                 BodyText = request.BodyText,
                 PreviewText = Trim(request.PreviewText),
+                Channel = Services.Email.MessageChannels.Normalize(request.Channel),
+                SmsBody = Trim(request.SmsBody),
                 Status = "draft",
                 CreatedByUserId = userId,
                 AudienceKind = audience.Kind,
@@ -231,8 +247,12 @@ namespace webapi.Controllers
             }
             var audience = await ResolveAudience(request.AudienceKind, request.AudienceConfig);
             if (audience.Error is not null) return new ApiResponses().BadRequestResult(audience.Error);
+            var channelError = ValidateChannel(request);
+            if (channelError is not null) return new ApiResponses().BadRequestResult(channelError);
 
             existing.Subject = request.Subject.Trim();
+            existing.Channel = Services.Email.MessageChannels.Normalize(request.Channel);
+            existing.SmsBody = Trim(request.SmsBody);
             existing.BodyHtml = request.BodyHtml;
             existing.BodyText = request.BodyText;
             existing.PreviewText = Trim(request.PreviewText);
@@ -266,6 +286,8 @@ namespace webapi.Controllers
                 BodyHtml = source.BodyHtml,
                 BodyText = source.BodyText,
                 PreviewText = source.PreviewText,
+                Channel = source.Channel,
+                SmsBody = source.SmsBody,
                 Status = "draft",
                 CreatedByUserId = userId,
                 AudienceKind = source.AudienceKind,
@@ -301,12 +323,6 @@ namespace webapi.Controllers
         [HttpPost("{id:guid}/Send")]
         public async Task<IActionResult> Send(Guid id, [FromQuery] DateTime? scheduledForUtc)
         {
-            if (!_emailer.IsConfigured)
-            {
-                return new ApiResponses().BadRequestResult(
-                    "Email isn't configured yet. Set up the SMTP / SES credentials before sending campaigns.");
-            }
-
             var campaign = await _campaigns.GetById(id, _tenantContext.TenantId);
             if (campaign is null)
             {
@@ -315,6 +331,22 @@ namespace webapi.Controllers
             if (campaign.Status != "draft")
             {
                 return new ApiResponses().BadRequestResult($"Cannot send a campaign with status '{campaign.Status}'.");
+            }
+            var wantsEmail = Services.Email.MessageChannels.IncludesEmail(campaign.Channel);
+            var wantsSms = Services.Email.MessageChannels.IncludesSms(campaign.Channel);
+            if (wantsEmail && !_emailer.IsConfigured)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Email isn't configured yet. Set up the SMTP / SES credentials before sending campaigns.");
+            }
+            if (wantsSms && !_sms.IsConfiguredFor(_tenantContext.Tenant!))
+            {
+                return new ApiResponses().BadRequestResult(
+                    "Texting isn't set up for this track yet. Set it up under Settings, SMS, or switch this campaign to email only.");
+            }
+            if (wantsSms && string.IsNullOrWhiteSpace(campaign.SmsBody))
+            {
+                return new ApiResponses().BadRequestResult("Write the text message before sending.");
             }
 
             // Resolve the audience NOW (send time), not when the draft was written, so a camp
@@ -337,11 +369,22 @@ namespace webapi.Controllers
             // re-checks at send time too, in case someone opts out between now and delivery.
             var blocklist = await _suppression.ListMarketingBlocklist(_tenantContext.TenantId);
             var beforeCount = recipients.Count;
-            recipients = recipients.Where(r => !blocklist.Contains(r.Email)).ToList();
-            var suppressedCount = beforeCount - recipients.Count;
-            if (recipients.Count == 0)
+            var emailRecipients = wantsEmail ? recipients.Where(r => !blocklist.Contains(r.Email)).ToList() : new List<CampaignAudienceRecipient>();
+            var suppressedCount = wantsEmail ? beforeCount - emailRecipients.Count : 0;
+
+            // Texts: whoever has a usable phone on their account and has not replied STOP.
+            var optedOut = wantsSms ? await SmsOptOutSet() : new HashSet<string>();
+            var textRecipients = wantsSms
+                ? recipients.Select(r => (Recipient: r, Phone: TwilioSmsSender.NormalizeE164(r.Phone ?? "")))
+                    .Where(x => x.Phone is not null && !optedOut.Contains(x.Phone!))
+                    .ToList()
+                : new List<(CampaignAudienceRecipient Recipient, string? Phone)>();
+
+            if (emailRecipients.Count == 0 && textRecipients.Count == 0)
             {
-                return new ApiResponses().BadRequestResult("Everyone in this audience is on the suppression list; nothing to send.");
+                return new ApiResponses().BadRequestResult(wantsEmail
+                    ? "Everyone in this audience is on the suppression list; nothing to send."
+                    : "Nobody in this audience has a phone number on file; nothing to text.");
             }
 
             // A future time (60s grace for clock skew) schedules; otherwise send now. The
@@ -350,13 +393,21 @@ namespace webapi.Controllers
             var runAt = scheduledForUtc?.ToUniversalTime();
             var isScheduled = runAt.HasValue && runAt.Value > DateTime.UtcNow.AddSeconds(60);
 
-            await _campaigns.CreateSendRows(id, recipients.Select(r => new EmailCampaignSend
+            var rows = emailRecipients.Select(r => new EmailCampaignSend
             {
-                SubscriberId = r.SubscriberId,
-                Email = r.Email,
-                Name = r.Name,
-                Status = "pending",
-            }));
+                SubscriberId = r.SubscriberId, Email = r.Email, Name = r.Name, Status = "pending",
+                Channel = Services.Email.MessageChannels.Email,
+            }).Concat(textRecipients.Select(x => new EmailCampaignSend
+            {
+                SubscriberId = x.Recipient.SubscriberId, Email = x.Recipient.Email, Name = x.Recipient.Name, Status = "pending",
+                Channel = Services.Email.MessageChannels.Sms, Phone = x.Phone,
+            })).ToList();
+            await _campaigns.CreateSendRows(id, rows);
+            var recipientCount = rows.Count;
+            var reach = wantsEmail && wantsSms
+                ? $"{emailRecipients.Count} email{(emailRecipients.Count == 1 ? "" : "s")} and {textRecipients.Count} text{(textRecipients.Count == 1 ? "" : "s")}"
+                : wantsSms ? $"{textRecipients.Count} text{(textRecipients.Count == 1 ? "" : "s")}"
+                : $"{emailRecipients.Count} email{(emailRecipients.Count == 1 ? "" : "s")}";
             if (isScheduled) await _campaigns.MarkScheduled(id, runAt!.Value);
             else await _campaigns.MarkSending(id);
 
@@ -371,11 +422,11 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new SendCampaignResponse
             {
                 CampaignId = id,
-                RecipientCount = recipients.Count,
+                RecipientCount = recipientCount,
                 Status = isScheduled ? "scheduled" : "sending",
                 SendNotice = isScheduled
-                    ? $"Scheduled for {runAt!.Value:yyyy-MM-dd HH:mm} UTC, {recipients.Count} recipient{(recipients.Count == 1 ? "" : "s")}{suppressedNote}."
-                    : $"Sending to {recipients.Count} recipient{(recipients.Count == 1 ? "" : "s")} ({audienceLabel}) in the background{suppressedNote}.",
+                    ? $"Scheduled for {runAt!.Value:yyyy-MM-dd HH:mm} UTC: {reach}{suppressedNote}."
+                    : $"Sending {reach} ({audienceLabel}) in the background{suppressedNote}.",
             });
         }
 
@@ -460,6 +511,32 @@ namespace webapi.Controllers
             return (kind, config, label, null);
         }
 
+        /// <summary>A text needs a message; an email needs a body. Both need their half.</summary>
+        private static string? ValidateChannel(UpsertCampaignRequest request)
+        {
+            var channel = Services.Email.MessageChannels.Normalize(request.Channel);
+            if (Services.Email.MessageChannels.IncludesEmail(channel)
+                && (string.IsNullOrWhiteSpace(request.BodyHtml) || request.BodyHtml.Trim() == "<p></p>"))
+            {
+                return "Write the email body, or switch the campaign to text only.";
+            }
+            if (Services.Email.MessageChannels.IncludesSms(channel))
+            {
+                if (string.IsNullOrWhiteSpace(request.SmsBody)) return "Write the text message, or switch the campaign to email only.";
+                if (request.SmsBody.Trim().Length > Services.Email.SmsText.MaxAuthoredLength)
+                    return $"Keep the text message under {Services.Email.SmsText.MaxAuthoredLength} characters.";
+            }
+            return null;
+        }
+
+        /// <summary>Phones that replied STOP, normalized, for filtering a whole audience at once.</summary>
+        private async Task<HashSet<string>> SmsOptOutSet()
+        {
+            var rows = await _smsOptOuts.ListForTenant(_tenantContext.TenantId, 100000);
+            return rows.Select(o => TwilioSmsSender.NormalizeE164(o.Phone ?? "")).Where(p => p is not null)
+                .Select(p => p!).ToHashSet();
+        }
+
         private async Task<string> LabelFor(EmailCampaign c)
             => await _audiences.DescribeAudience(_tenantContext.TenantId, c.AudienceKind, CampaignAudienceConfig.Parse(c.AudienceConfig))
                ?? "Audience no longer exists";
@@ -485,6 +562,7 @@ namespace webapi.Controllers
             AudienceKind = c.AudienceKind,
             AudienceLabel = audienceLabel,
             AudienceConfig = ToConfigDto(c),
+            Channel = c.Channel,
             UniqueOpens = eng?.UniqueOpens ?? 0,
             UniqueClicks = eng?.UniqueClicks ?? 0,
             TotalClicks = eng?.TotalClicks ?? 0,
@@ -498,6 +576,8 @@ namespace webapi.Controllers
             Id = c.Id,
             Subject = c.Subject,
             Status = c.Status,
+            Channel = c.Channel,
+            SmsBody = c.SmsBody,
             RecipientCount = c.RecipientCount,
             AudienceKind = c.AudienceKind,
             AudienceLabel = audienceLabel,

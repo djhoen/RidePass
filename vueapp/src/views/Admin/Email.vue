@@ -2,12 +2,12 @@
     <div>
         <v-container fluid class="pb-0">
             <div class="d-flex align-center flex-wrap ga-3 mb-2">
-                <h1 class="text-h5">Email</h1>
+                <h1 class="text-h5">Campaigns</h1>
             </div>
             <p class="text-body-2 text-medium-emphasis mb-3">
-                Send once goes to an audience on a date you pick. Send automatically keeps running: each
-                rider gets the email at their own moment, timed off their purchase, the event, or the day
-                they join an audience. Audiences are the saved, live-updating lists both of them send to.
+                Send once goes to an audience on a date you pick, by email, text, or both. Send automatically
+                keeps running: each rider gets the message at their own moment, timed off their purchase, the
+                event, or the day they join an audience. Audiences are the saved, live-updating lists both send to.
             </p>
             <!-- Page-level tabs, routed so each half keeps its own URL and deep links still work. -->
             <v-tabs color="primary" density="comfortable">

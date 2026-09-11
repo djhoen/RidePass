@@ -20,5 +20,7 @@ namespace Services.Repositories.Interfaces
         // Count of emails this tenant has SENT since `fromUtc`, excluding one campaign
         // (used to apply cumulative monthly pricing tiers to a fresh send).
         Task<int> CountSentEmailsInMonth(Guid tenantId, DateTime fromUtc, Guid excludeCampaignId);
+        /// <summary>Texts delivered per campaign, for the list.</summary>
+        Task<Dictionary<Guid, int>> CountSmsSentByCampaign(Guid tenantId);
     }
 }

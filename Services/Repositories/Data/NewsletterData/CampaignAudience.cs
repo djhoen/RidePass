@@ -47,7 +47,7 @@ namespace Services.Repositories.Data.NewsletterData
     }
 
     /// <summary>One recipient resolved from an audience. SubscriberId is set only for the newsletter list.</summary>
-    public record CampaignAudienceRecipient(string Email, string? Name, Guid? SubscriberId);
+    public record CampaignAudienceRecipient(string Email, string? Name, Guid? SubscriberId, string? Phone);
 
     public class CampaignAudienceEventOption
     {

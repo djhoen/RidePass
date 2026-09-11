@@ -80,10 +80,10 @@ namespace Services.Email
                     WHERE p.email IS NOT NULL AND p.email <> ''
                     ORDER BY p.email, (p.user_id IS NULL), (NULLIF(p.name, '') IS NULL)
                 )
-                SELECT ps.email AS Email, ps.name AS Name, ps.user_id AS UserId
+                SELECT ps.email AS Email, ps.name AS Name, ps.user_id AS UserId, u.phone AS Phone
                 FROM person ps
                 LEFT JOIN LATERAL (
-                    SELECT u.postal_code, u.state, u.city
+                    SELECT u.postal_code, u.state, u.city, u.phone
                     FROM users u
                     WHERE lower(u.email) = ps.email AND (u.tenant_id = @tenantId OR u.tenant_id IS NULL)
                     ORDER BY (u.tenant_id = @tenantId) DESC, u.created_at DESC

@@ -96,7 +96,8 @@ namespace Services.Repositories
                 SELECT s.id AS Id, s.automation_id AS AutomationId, s.step_order AS StepOrder,
                        s.delay_days AS DelayDays, s.anchor AS Anchor, s.offset_days AS OffsetDays,
                        s.send_on AS SendOn, s.subject AS Subject, s.preview_text AS PreviewText,
-                       s.body_html AS BodyHtml, s.body_text AS BodyText, s.created_at AS CreatedAt
+                       s.body_html AS BodyHtml, s.body_text AS BodyText, s.created_at AS CreatedAt,
+                       s.channel AS Channel, s.sms_body AS SmsBody
                 FROM marketing_automation_step s
                 JOIN marketing_automation a ON a.id = s.automation_id AND a.tenant_id = @tenantId
                 WHERE s.automation_id = @automationId
@@ -155,6 +156,8 @@ namespace Services.Repositories
                     bodyHtml = s.BodyHtml,
                     bodyText = s.BodyText,
                     previewText = s.PreviewText,
+                    channel = s.Channel,
+                    smsBody = s.SmsBody,
                 };
                 if (update)
                 {
@@ -162,15 +165,16 @@ namespace Services.Repositories
                         UPDATE marketing_automation_step
                         SET step_order = @stepOrder, delay_days = @delayDays, anchor = @anchor, offset_days = @offsetDays,
                             send_on = CAST(@sendOn AS date), subject = @subject, body_html = @bodyHtml,
-                            body_text = @bodyText, preview_text = @previewText
+                            body_text = @bodyText, preview_text = @previewText,
+                            channel = @channel, sms_body = @smsBody
                         WHERE id = @id AND automation_id = @automationId", p));
                 }
                 else
                 {
                     statements.Add((@"
                         INSERT INTO marketing_automation_step
-                            (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text, preview_text)
-                        VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText, @previewText)", p));
+                            (automation_id, step_order, delay_days, anchor, offset_days, send_on, subject, body_html, body_text, preview_text, channel, sms_body)
+                        VALUES (@automationId, @stepOrder, @delayDays, @anchor, @offsetDays, CAST(@sendOn AS date), @subject, @bodyHtml, @bodyText, @previewText, @channel, @smsBody)", p));
                 }
             }
             await _db.ExecuteBatch(statements);
@@ -186,6 +190,7 @@ namespace Services.Repositories
                        COUNT(*) FILTER (WHERE s.status = 'sent')::int           AS Sent,
                        COUNT(*) FILTER (WHERE s.status = 'failed')::int         AS Failed,
                        COUNT(*) FILTER (WHERE s.status = 'skipped')::int        AS Skipped,
+                       COUNT(*) FILTER (WHERE s.status = 'sent' AND s.channel = 'sms')::int AS SmsSent,
                        COUNT(DISTINCT up.upgraded_from_purchase_id)::int        AS Conversions
                 FROM marketing_automation_send s
                 LEFT JOIN season_pass_purchase up
@@ -208,6 +213,7 @@ namespace Services.Repositories
                        COUNT(*) FILTER (WHERE s.status = 'sent')::int    AS Sent,
                        COUNT(*) FILTER (WHERE s.status = 'failed')::int  AS Failed,
                        COUNT(*) FILTER (WHERE s.status = 'skipped')::int AS Skipped,
+                       COUNT(*) FILTER (WHERE s.status = 'sent' AND s.channel = 'sms')::int AS SmsSent,
                        MAX(s.sent_at) FILTER (WHERE s.status = 'sent')   AS LastSentAt
                 FROM marketing_automation_send s
                 WHERE s.tenant_id = @tenantId AND s.automation_id = @automationId
@@ -288,6 +294,7 @@ namespace Services.Repositories
                        sp.id                AS SubjectId,
                        sp.tenant_id         AS TenantId,
                        sp.purchaser_email   AS Email,
+                       usr.phone            AS Phone,
                        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sp.holder_first_name, sp.holder_last_name)), ''),
                                 sp.purchaser_name)                AS HolderName,
                        pr.name              AS ProductName,
@@ -299,6 +306,7 @@ namespace Services.Repositories
                        {SKIP}               AS DueBeforePurchase
                 FROM season_pass_purchase sp
                 JOIN season_pass_product pr ON pr.id = sp.product_id
+                LEFT JOIN users usr ON usr.id = sp.purchaser_user_id
                 -- Cheapest live upgrade off this pass, for the merge fields. LEFT so an automation
                 -- can still send when no upgrade is configured; the price token renders empty.
                 LEFT JOIN LATERAL (
@@ -343,6 +351,7 @@ namespace Services.Repositories
                        p.id                 AS SubjectId,
                        p.tenant_id          AS TenantId,
                        p.purchaser_email    AS Email,
+                       usr.phone            AS Phone,
                        p.purchaser_name     AS HolderName,
                        e.title              AS ProductName,
                        p.created_at         AS PurchasedAtUtc,
@@ -355,7 +364,8 @@ namespace Services.Repositories
                        {SKIP}               AS DueBeforePurchase
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id
-                JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id";
+                JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
+                LEFT JOIN users usr ON usr.id = p.purchaser_user_id";
 
         /// <summary>
         /// Eligibility for event-ticket subjects. 'redeemed' is a paid ticket that was scanned at
@@ -382,11 +392,18 @@ namespace Services.Repositories
                        ns.id                AS SubjectId,
                        ns.tenant_id         AS TenantId,
                        ns.email             AS Email,
+                       usr.phone            AS Phone,
                        ns.name              AS HolderName,
                        'Newsletter'         AS ProductName,
                        ns.subscribed_at     AS PurchasedAtUtc,
                        {SKIP}               AS DueBeforePurchase
-                FROM newsletter_subscriber ns";
+                FROM newsletter_subscriber ns
+                LEFT JOIN LATERAL (
+                    SELECT u.phone FROM users u
+                    WHERE lower(u.email) = lower(ns.email) AND (u.tenant_id = ns.tenant_id OR u.tenant_id IS NULL)
+                    ORDER BY (u.tenant_id = ns.tenant_id) DESC, u.created_at DESC
+                    LIMIT 1
+                ) usr ON TRUE";
 
         /// <summary>Eligibility for newsletter subjects: still subscribed and not suppressed.</summary>
         private const string NewsletterEligible = @"
@@ -409,12 +426,20 @@ namespace Services.Repositories
                        am.id                AS SubjectId,
                        am.tenant_id         AS TenantId,
                        am.email             AS Email,
+                       usr.phone            AS Phone,
                        am.name              AS HolderName,
                        au.name              AS ProductName,
                        am.joined_at         AS PurchasedAtUtc,
                        {SKIP}               AS DueBeforePurchase
                 FROM audience_member am
-                JOIN audience au ON au.id = am.audience_id AND au.tenant_id = am.tenant_id";
+                JOIN audience au ON au.id = am.audience_id AND au.tenant_id = am.tenant_id
+                LEFT JOIN LATERAL (
+                    SELECT u.phone FROM users u
+                    WHERE (am.user_id IS NOT NULL AND u.id = am.user_id)
+                       OR (am.user_id IS NULL AND lower(u.email) = am.email AND (u.tenant_id = am.tenant_id OR u.tenant_id IS NULL))
+                    ORDER BY u.created_at DESC
+                    LIMIT 1
+                ) usr ON TRUE";
 
         private const string AudienceEligible = @"
             am.tenant_id = @tenantId
@@ -520,10 +545,10 @@ namespace Services.Repositories
             // of them the sender. The loser gets null and must not send.
             const string sql = @"
                 INSERT INTO marketing_automation_send
-                    (tenant_id, automation_id, step_id, subject_kind, subject_id, email, status, skip_reason)
+                    (tenant_id, automation_id, step_id, subject_kind, subject_id, email, status, skip_reason, channel, phone)
                 VALUES
-                    (@TenantId, @AutomationId, @StepId, @SubjectKind, @SubjectId, @Email, @Status, @SkipReason)
-                ON CONFLICT (step_id, subject_kind, subject_id) DO NOTHING
+                    (@TenantId, @AutomationId, @StepId, @SubjectKind, @SubjectId, @Email, @Status, @SkipReason, @Channel, @Phone)
+                ON CONFLICT (step_id, subject_kind, subject_id, channel) DO NOTHING
                 RETURNING id";
             var rows = await _db.Query<Guid>(sql, send);
             return rows.Cast<Guid?>().FirstOrDefault();
@@ -549,10 +574,11 @@ namespace Services.Repositories
                 SELECT (
                     SELECT COUNT(*) FROM email_campaign_send cs
                     JOIN email_campaign c ON c.id = cs.campaign_id
-                    WHERE c.tenant_id = @tenantId AND cs.status = 'sent' AND cs.sent_at >= @monthStartUtc
+                    WHERE c.tenant_id = @tenantId AND cs.status = 'sent' AND cs.channel = 'email'
+                      AND cs.sent_at >= @monthStartUtc
                 ) + (
                     SELECT COUNT(*) FROM marketing_automation_send ms
-                    WHERE ms.tenant_id = @tenantId AND ms.status = 'sent'
+                    WHERE ms.tenant_id = @tenantId AND ms.status = 'sent' AND ms.channel = 'email'
                       AND ms.sent_at >= @monthStartUtc
                 )";
             return (await _db.Query<int>(sql, new { tenantId, monthStartUtc })).First();

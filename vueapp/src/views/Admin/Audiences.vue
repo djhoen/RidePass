@@ -175,7 +175,8 @@
                         <template v-else-if="preview">
                             <div class="text-success">
                                 {{ preview.count }} {{ preview.count === 1 ? 'person' : 'people' }} right now: {{ preview.summary }}<template
-                                    v-if="preview.suppressed"> ({{ preview.suppressed }} on the suppression list will be skipped)</template>
+                                    v-if="preview.suppressed"> ({{ preview.suppressed }} on the suppression list will be skipped)</template><template
+                                    v-if="preview.count"> · {{ preview.withPhone }} with a phone for texts</template>
                             </div>
                             <div v-if="preview.sample.length" class="text-medium-emphasis mt-1">
                                 For example: {{ preview.sample.map(p => p.name ? `${p.name} (${p.email})` : p.email).join(', ') }}

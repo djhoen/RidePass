@@ -48,6 +48,7 @@
                         </td>
                         <td class="text-right">
                             {{ a.sent }}
+                            <span v-if="a.smsSent" class="text-caption text-medium-emphasis">({{ a.smsSent }} texts)</span>
                             <v-tooltip v-if="a.failed > 0" text="Emails that could not be delivered">
                                 <template #activator="{ props }">
                                     <span v-bind="props" class="text-error text-caption ml-1">
@@ -198,18 +199,32 @@
                                 <div v-else-if="s.anchor !== 'purchase' && s.anchor !== 'fixed_date'" class="text-caption text-medium-emphasis mt-1">
                                     Riders who buy after this time are skipped, not emailed late.
                                 </div>
-                                <v-select v-if="templates.length" :items="templates" item-title="name" item-value="id"
+                                <!-- How this step goes out. Texts need a phone on the rider's account. -->
+                                <div class="d-flex align-center flex-wrap ga-3 mt-4">
+                                    <span class="text-caption text-medium-emphasis">Send as</span>
+                                    <v-btn-toggle v-model="s.channel" mandatory density="compact" variant="outlined" divided>
+                                        <v-btn value="email" size="small" prepend-icon="mdi-email-outline">Email</v-btn>
+                                        <v-btn value="sms" size="small" prepend-icon="mdi-message-text-outline">Text</v-btn>
+                                        <v-btn value="both" size="small">Both</v-btn>
+                                    </v-btn-toggle>
+                                </div>
+                                <v-select v-if="templates.length && s.channel !== 'sms'" :items="templates" item-title="name" item-value="id"
                                     label="Insert a saved template" density="compact" class="mt-4" clearable hide-details
                                     :model-value="null" @update:model-value="(id: string | null) => applyTemplateToStep(s, id)" />
-                                <v-text-field v-model="s.subject" label="Subject line" density="compact" class="mt-4" />
-                                <v-text-field v-model="s.previewText" label="Preview text (optional)" density="compact" class="mt-4"
+                                <v-text-field v-model="s.subject" :label="s.channel === 'sms' ? 'Name (only you see this)' : 'Subject line'"
+                                    density="compact" class="mt-4" />
+                                <v-textarea v-if="s.channel !== 'email'" v-model="s.smsBody" label="Text message" density="compact" class="mt-4"
+                                    rows="3" auto-grow :counter="1000" :maxlength="1000"
+                                    :hint="'Merge fields work here too. ' + smsCounter(s.smsBody) + ' \'Reply STOP to opt out\' is added automatically.'"
+                                    persistent-hint />
+                                <v-text-field v-if="s.channel !== 'sms'" v-model="s.previewText" label="Preview text (optional)" density="compact" class="mt-4"
                                     hint="The snippet inboxes show under the subject line; merge fields work here too" persistent-hint />
-                                <div class="d-flex align-center mt-4 mb-1">
+                                <div v-if="s.channel !== 'sms'" class="d-flex align-center mt-4 mb-1">
                                     <span class="text-caption text-medium-emphasis">Message</span>
                                     <v-spacer />
                                     <v-btn size="small" variant="text" prepend-icon="mdi-cellphone" @click="openPreview(s)">Preview</v-btn>
                                 </div>
-                                <RichTextEditor v-model="s.bodyHtml" :upload-image="uploadInlineImage" email-buttons />
+                                <RichTextEditor v-if="s.channel !== 'sms'" v-model="s.bodyHtml" :upload-image="uploadInlineImage" email-buttons />
                             </v-card>
                             <v-btn variant="text" prepend-icon="mdi-plus" @click="addStep">Add another email</v-btn>
 
@@ -409,7 +424,10 @@
                                         <div class="text-caption text-medium-emphasis">{{ s.subject }}</div>
                                     </td>
                                     <td>{{ s.label }}</td>
-                                    <td class="text-right">{{ s.sent }}</td>
+                                    <td class="text-right">
+                                        {{ s.sent }}
+                                        <span v-if="s.smsSent" class="text-caption text-medium-emphasis">({{ s.smsSent }} texts)</span>
+                                    </td>
                                     <td class="text-right">
                                         <v-tooltip v-if="s.skipped > 0" location="top">
                                             <template #activator="{ props }">
@@ -472,7 +490,9 @@
                         We'll fill the merge fields from a real purchase and tell you the date this
                         email would have gone out for that rider.
                     </p>
-                    <v-text-field v-model="testEmail" type="email" label="Send to" density="compact" />
+                    <v-text-field v-model="testEmail" type="email" label="Email to" density="compact" />
+                    <v-text-field v-model="testPhone" type="tel" label="Text to (for text steps)" density="compact" class="mt-4"
+                        hint="Used when the email you pick includes a text" persistent-hint />
                     <v-select v-if="(testTarget?.stepCount ?? 0) > 1" v-model="testStepIndex"
                         :items="testStepOptions" label="Which email" density="compact" class="mt-4" />
                 </v-card-text>
@@ -496,6 +516,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { CampaignService } from '@/services/CampaignService'
 import { EmailTemplateService, type EmailTemplateItem } from '@/services/EmailTemplateService'
 import { branding } from '@/stores/branding'
+import { smsSegments, type MessageChannel } from '@/services/CampaignService'
 import {
     AutomationService,
     type AutomationAnchor,
@@ -540,6 +561,8 @@ const tz = () => branding.timezone || 'UTC'
 // than a signed offset, so the sign lives in `direction` until save.
 interface StepForm {
     id?: string | null
+    channel: MessageChannel
+    smsBody: string
     previewText: string
     anchor: AutomationAnchor
     days: number
@@ -625,6 +648,7 @@ const reportError = ref('')
 const testOpen = ref(false)
 const testTarget = ref<AutomationListItem | null>(null)
 const testEmail = ref('')
+const testPhone = ref('')
 const testStepIndex = ref(0)
 const testing = ref(false)
 const testError = ref('')
@@ -671,7 +695,7 @@ function emptyForm(): EditorForm {
         stopWhenUsedUp: true,
         sendWindowStart: null,
         sendWindowEnd: null,
-        steps: [{ previewText: '', anchor: 'purchase', days: 2, direction: 'after', sendOn: '', subject: '', bodyHtml: '' }],
+        steps: [{ previewText: '', anchor: 'purchase', days: 2, direction: 'after', sendOn: '', subject: '', bodyHtml: '', channel: 'email', smsBody: '' }],
     }
 }
 
@@ -704,6 +728,11 @@ function onTriggerChanged() {
 }
 
 function money(cents: number) { return `$${(cents / 100).toFixed(2)}` }
+
+function smsCounter(text: string | null): string {
+    const { chars, segments } = smsSegments(text ?? '')
+    return chars === 0 ? '' : `${chars} characters, ${segments} segment${segments === 1 ? '' : 's'}.`
+}
 
 // Built here rather than inline: a literal "{{" inside a template interpolation is a parse error.
 function tokenText(token: string) { return `{${'{'}${token}}${'}'}` }
@@ -769,6 +798,8 @@ async function openEdit(a: AutomationListItem) {
                 bodyHtml: s.bodyHtml,
                 bodyText: s.bodyText,
                 previewText: s.previewText ?? '',
+                channel: s.channel ?? 'email',
+                smsBody: s.smsBody ?? '',
             })),
         }
         eventScope.value = d.eventTypeId ? 'event_type' : 'event'
@@ -790,6 +821,8 @@ function addStep() {
         subject: '',
         bodyHtml: '',
         previewText: '',
+        channel: last?.channel ?? 'email',
+        smsBody: '',
     })
 }
 
@@ -815,6 +848,8 @@ function toPayload(): UpsertAutomationRequest {
             bodyHtml: s.bodyHtml,
             bodyText: s.bodyText ?? null,
             previewText: s.previewText?.trim() ? s.previewText.trim() : null,
+            channel: s.channel,
+            smsBody: s.channel === 'email' ? null : (s.smsBody?.trim() || null),
         })),
     }
 }
@@ -827,8 +862,16 @@ async function save() {
         if (eventScope.value === 'event_type' && !form.value.eventTypeId) { editorError.value = 'Pick the event type.'; return }
     }
     if (form.value.triggerKind === 'audience_joined' && !form.value.audienceId) { editorError.value = 'Pick the audience.'; return }
-    if (form.value.steps.some(s => !s.subject.trim() || !s.bodyHtml.trim())) {
-        editorError.value = 'Every email needs a subject line and a message.'
+    if (form.value.steps.some(s => !s.subject.trim())) {
+        editorError.value = 'Every email needs a subject line (for a text-only step it is the name you see in reports).'
+        return
+    }
+    if (form.value.steps.some(s => s.channel !== 'sms' && (!s.bodyHtml.trim() || s.bodyHtml === '<p></p>'))) {
+        editorError.value = 'Every email needs a message, or switch that step to text only.'
+        return
+    }
+    if (form.value.steps.some(s => s.channel !== 'email' && !s.smsBody.trim())) {
+        editorError.value = 'Every text step needs its text message.'
         return
     }
     if (form.value.steps.some(s => s.anchor === 'fixed_date' && !s.sendOn)) {
@@ -960,18 +1003,24 @@ function openTest(a: AutomationListItem) {
 
 async function sendTest() {
     if (!testTarget.value) return
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail.value.trim())) {
+    const email = testEmail.value.trim()
+    const phone = testPhone.value.trim()
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         testError.value = 'Enter a valid email address.'
+        return
+    }
+    if (!email && !phone) {
+        testError.value = 'Enter an email address, a phone number, or both.'
         return
     }
     testing.value = true
     testError.value = ''
     try {
         const { data } = await service.testSend(
-            testTarget.value.id, testStepIndex.value, testEmail.value.trim())
+            testTarget.value.id, testStepIndex.value, email || null, phone || null)
         const r = data.data
         testOpen.value = false
-        const to = testEmail.value.trim()
+        const to = [r.emailSent ? email : '', r.smsSent ? phone : ''].filter(Boolean).join(' and ')
         if (!r.usedRealSubject) {
             flash(`Test sent to ${to}. Nothing has sold yet, so it used sample details.`)
         } else if (r.wouldSkip) {

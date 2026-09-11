@@ -43,6 +43,8 @@ export interface AudienceItem {
 export interface AudiencePreview {
     count: number
     suppressed: number
+    /** How many have a phone on their account (the reach of a text). */
+    withPhone: number
     summary: string
     sample: { email: string; name: string | null }[]
 }

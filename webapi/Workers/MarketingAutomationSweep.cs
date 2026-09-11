@@ -69,6 +69,8 @@ namespace webapi.Workers
             var gate = sp.GetRequiredService<Services.Delivery.IOutboundDeliveryGate>();
             var brandings = sp.GetRequiredService<ITenantBrandingRepository>();
             var savedAudiences = sp.GetRequiredService<IAudienceRepository>();
+            var sms = sp.GetRequiredService<ISmsSender>();
+            var smsOptOuts = sp.GetRequiredService<ITenantSmsOptOutRepository>();
 
             // Audiences are live lists; this tick is what keeps audience_member (the list page's
             // counts and the "joins an audience" trigger) within an hour of the truth.
@@ -112,7 +114,7 @@ namespace webapi.Workers
                         continue;
                     }
 
-                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, gate, brandings, rootDomain, tickStart, ct);
+                    var sent = await RunAutomation(a, tenant, repo, emailer, tokens, gate, brandings, rootDomain, tickStart, ct, sms, smsOptOuts);
                     if (sent > 0)
                     {
                         await Bill(repo, ledger, a, sent, tickStart);
@@ -129,10 +131,12 @@ namespace webapi.Workers
         private async Task<int> RunAutomation(
             MarketingAutomation a, Tenant tenant, IMarketingAutomationRepository repo,
             ISmtpEmailer emailer, IEmailLinkTokens tokens, Services.Delivery.IOutboundDeliveryGate gate,
-            ITenantBrandingRepository brandings, string rootDomain, DateTime tickStart, CancellationToken ct)
+            ITenantBrandingRepository brandings, string rootDomain, DateTime tickStart, CancellationToken ct,
+            ISmsSender sms, ITenantSmsOptOutRepository smsOptOuts)
         {
             var steps = await repo.ListSteps(a.Id, a.TenantId);
             if (steps.Count == 0) return 0;
+            var smsReady = sms.IsConfiguredFor(tenant);
 
             var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
             var brand = EmailBranding.From(tenant, await brandings.GetByTenantId(a.TenantId), baseUrl);
@@ -157,6 +161,16 @@ namespace webapi.Workers
                 {
                     if (ct.IsCancellationRequested) return sentCount;
 
+                    // The text half of a step, when it has one. Its own send row (channel 'sms'),
+                    // its own skip reasons; billed by Twilio's webhook, not the email tier.
+                    if (MessageChannels.IncludesSms(step.Channel))
+                    {
+                        await SendTextStep(a, step, subject, tenant, repo, gate, sms, smsOptOuts, smsReady, baseUrl);
+                    }
+                    // Text-only step: the sms row above is the claim; the "already handled" read
+                    // is channel-agnostic, so the subject is not listed again next tick.
+                    if (!MessageChannels.IncludesEmail(step.Channel)) continue;
+
                     // Claim BEFORE sending. Two workers can both see this subject as due; the
                     // unique index makes exactly one of them the sender. A subject that bought
                     // after this step's send time is claimed as a skip so it is never revisited.
@@ -168,6 +182,7 @@ namespace webapi.Workers
                         SubjectKind = subject.SubjectKind,
                         SubjectId = subject.SubjectId,
                         Email = subject.Email,
+                        Channel = MessageChannels.Email,
                         Status = subject.DueBeforePurchase ? "skipped" : "sent",
                         SkipReason = subject.DueBeforePurchase ? SkipBoughtAfterSendTime : null,
                     });
@@ -202,6 +217,47 @@ namespace webapi.Workers
                 }
             }
             return sentCount;
+        }
+
+        /// <summary>
+        /// One text for one subject of one step. Claims a channel-'sms' send row first (the same
+        /// race rule as email), then re-checks phone, setup, STOP, and the gate, recording why
+        /// when it does not go.
+        /// </summary>
+        private async Task SendTextStep(
+            MarketingAutomation a, MarketingAutomationStep step, AutomationSubject subject, Tenant tenant,
+            IMarketingAutomationRepository repo, Services.Delivery.IOutboundDeliveryGate gate,
+            ISmsSender sms, ITenantSmsOptOutRepository smsOptOuts, bool smsReady, string baseUrl)
+        {
+            var phone = TwilioSmsSender.NormalizeE164(subject.Phone ?? "");
+            string? skip = null;
+            if (subject.DueBeforePurchase) skip = SkipBoughtAfterSendTime;
+            else if (phone is null) skip = "No usable phone number";
+            else if (!smsReady) skip = "Texting is not set up for this track";
+            else if (await smsOptOuts.IsOptedOut(a.TenantId, phone)) skip = "Recipient replied STOP";
+            else skip = await gate.BlockReason(Services.Delivery.DeliveryChannel.Sms, phone);
+
+            var sendId = await repo.RecordSend(new MarketingAutomationSend
+            {
+                TenantId = a.TenantId, AutomationId = a.Id, StepId = step.Id,
+                SubjectKind = subject.SubjectKind, SubjectId = subject.SubjectId, Email = subject.Email,
+                Channel = MessageChannels.Sms, Phone = phone,
+                Status = skip is null ? "sent" : "skipped", SkipReason = skip,
+            });
+            if (sendId is null || skip is not null) return;
+
+            var ok = false;
+            try
+            {
+                var values = AutomationMergeFields.For(subject, tenant.DisplayName, baseUrl, tenant.Timezone);
+                var body = SmsText.Finish(AutomationMergeFields.Render(step.SmsBody ?? "", values, htmlEncode: false));
+                ok = await sms.Send(tenant, phone!, body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Automation {Id} text to {Phone} threw", a.Id, phone);
+            }
+            if (!ok) await repo.MarkSendFailed(sendId.Value, a.TenantId, "SMS send failed");
         }
 
         private static async Task<bool> Send(

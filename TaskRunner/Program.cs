@@ -170,7 +170,8 @@ var handlers = new IScheduledTaskHandler[]
         NullLogger<SendRiderMessageHandler>.Instance),
     new SendCampaignHandler(campaignRepo, emailer, suppressionRepo, emailLinkTokens,
         tenantRepo, ledgerRepo, configuration,
-        new ConsoleLogger<SendCampaignHandler>(), deliveryGate, new TenantBrandingRepository(dbHelper)),
+        new ConsoleLogger<SendCampaignHandler>(), deliveryGate, new TenantBrandingRepository(dbHelper),
+        sms, smsOptOutRepo),
 };
 var dispatcher = new ScheduledTaskDispatcher(scheduledTaskRepo, handlers,
     NullLogger<ScheduledTaskDispatcher>.Instance);

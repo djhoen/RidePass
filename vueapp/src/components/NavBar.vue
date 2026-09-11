@@ -398,7 +398,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/Blog',        icon: 'mdi-post',              title: 'Blog',        perm: Perm.BlogManage, feature: 'blogEnabled' },
             { to: '/Admin/Coupons',     icon: 'mdi-tag-outline',       title: 'Coupons',     perm: Perm.CampaignsManage },
             { to: '/Admin/Subscribers', icon: 'mdi-email-multiple',    title: 'Subscribers', perm: Perm.CampaignsManage },
-            { to: '/Admin/Email',       icon: 'mdi-email-newsletter',  title: 'Email',       perm: Perm.CampaignsManage },
+            { to: '/Admin/Email',       icon: 'mdi-bullhorn-outline',  title: 'Campaigns',   perm: Perm.CampaignsManage },
             { to: '/Admin/Suppression', icon: 'mdi-email-off',         title: 'Suppression', perm: Perm.CampaignsManage },
             { to: '/Admin/Surveys',     icon: 'mdi-poll',              title: 'Surveys',     perm: Perm.CampaignsManage },
             { to: '/Admin/Settings/Sms', icon: 'mdi-cellphone-message', title: 'SMS',        perm: Perm.SettingsManage },

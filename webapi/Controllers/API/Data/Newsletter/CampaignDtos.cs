@@ -13,6 +13,10 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string AudienceKind { get; set; } = "subscribers";
         public string AudienceLabel { get; set; } = string.Empty;
         public CampaignAudienceConfigDto AudienceConfig { get; set; } = new();
+        /// <summary>'email' | 'sms' | 'both'.</summary>
+        public string Channel { get; set; } = "email";
+        /// <summary>Texts delivered (a subset of RecipientCount).</summary>
+        public int TextCount { get; set; }
         // Engagement from SendGrid events: distinct people. Opens are inflated by Apple Mail's
         // privacy proxy, so clicks are the honest number; both are shown.
         public int UniqueOpens { get; set; }
@@ -28,16 +32,22 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string BodyHtml { get; set; } = null!;
         public string? BodyText { get; set; }
         public string? PreviewText { get; set; }
+        public string? SmsBody { get; set; }
         public List<CampaignClickUrlItem> ClickUrls { get; set; } = new();
     }
 
     public class UpsertCampaignRequest
     {
         [Required] public string Subject { get; set; } = null!;
-        [Required] public string BodyHtml { get; set; } = null!;
+        /// <summary>Required when the channel includes email.</summary>
+        public string? BodyHtml { get; set; }
         public string? BodyText { get; set; }
         /// <summary>Inbox snippet under the subject line. Optional.</summary>
         public string? PreviewText { get; set; }
+        /// <summary>'email' (default) | 'sms' | 'both'.</summary>
+        public string? Channel { get; set; }
+        /// <summary>Required when the channel includes sms. Merge fields allowed.</summary>
+        public string? SmsBody { get; set; }
         // Omitted = newsletter subscribers (the original behaviour).
         public string? AudienceKind { get; set; }
         public CampaignAudienceConfigDto? AudienceConfig { get; set; }

@@ -9,6 +9,10 @@ namespace Services.Repositories.Data.NewsletterData
         public string? BodyText { get; set; }
         /// <summary>Inbox snippet under the subject; null lets the inbox pick the first words.</summary>
         public string? PreviewText { get; set; }
+        /// <summary>'email' | 'sms' | 'both' (Services.Email.MessageChannels).</summary>
+        public string Channel { get; set; } = "email";
+        /// <summary>The text message, merge fields allowed; opt-out language is added at send time.</summary>
+        public string? SmsBody { get; set; }
         public string Status { get; set; } = "draft";
         public DateTime? ScheduledFor { get; set; }
         public DateTime? SentAt { get; set; }
@@ -29,6 +33,10 @@ namespace Services.Repositories.Data.NewsletterData
         public Guid? SubscriberId { get; set; }
         public string Email { get; set; } = null!;
         public string? Name { get; set; }
+        /// <summary>'email' or 'sms': what this row delivers.</summary>
+        public string Channel { get; set; } = "email";
+        /// <summary>E.164 destination for an sms row.</summary>
+        public string? Phone { get; set; }
         public DateTime? SentAt { get; set; }
         public string Status { get; set; } = "pending";
         public string? Error { get; set; }

@@ -36,6 +36,8 @@ namespace Services.Scheduling.Handlers
         private readonly ILogger<SendCampaignHandler> _logger;
         private readonly Services.Delivery.IOutboundDeliveryGate? _gate;
         private readonly ITenantBrandingRepository? _brandings;
+        private readonly ISmsSender? _sms;
+        private readonly ITenantSmsOptOutRepository? _smsOptOuts;
 
         public SendCampaignHandler(
             IEmailCampaignRepository campaigns,
@@ -47,10 +49,14 @@ namespace Services.Scheduling.Handlers
             IConfiguration config,
             ILogger<SendCampaignHandler> logger,
             Services.Delivery.IOutboundDeliveryGate? gate = null,
-            ITenantBrandingRepository? brandings = null)
+            ITenantBrandingRepository? brandings = null,
+            ISmsSender? sms = null,
+            ITenantSmsOptOutRepository? smsOptOuts = null)
         {
             _gate = gate;
             _brandings = brandings;
+            _sms = sms;
+            _smsOptOuts = smsOptOuts;
             _campaigns = campaigns;
             _emailer = emailer;
             _suppression = suppression;
@@ -76,14 +82,16 @@ namespace Services.Scheduling.Handlers
             if (payload is null || payload.CampaignId == Guid.Empty)
                 return ScheduledTaskOutcome.Fail("Empty payload");
 
-            if (!_emailer.IsConfigured)
-                return ScheduledTaskOutcome.Fail("Email isn't configured (SMTP settings missing).");
-
             var tenant = await _tenants.GetById(task.TenantId);
             if (tenant is null) return ScheduledTaskOutcome.Fail("Tenant not found.");
 
             var campaign = await _campaigns.GetById(payload.CampaignId, task.TenantId);
             if (campaign is null) return ScheduledTaskOutcome.Fail("Campaign not found.");
+
+            // A text-only campaign does not need SMTP; an email one does.
+            if (Services.Email.MessageChannels.IncludesEmail(campaign.Channel) && !_emailer.IsConfigured)
+                return ScheduledTaskOutcome.Fail("Email isn't configured (SMTP settings missing).");
+            var smsReady = _sms is not null && _sms.IsConfiguredFor(tenant);
 
             var rootDomain = _config["Tenant:RootDomain"] ?? "ridepass.io";
             var baseUrl = $"https://{tenant.Subdomain}.{rootDomain}";
@@ -101,6 +109,17 @@ namespace Services.Scheduling.Handlers
             {
                 ct.ThrowIfCancellationRequested();
                 if (s.Status != "pending") continue;   // retry-safe: never re-send a done row
+
+                // The rider's own details go into both the email and the text.
+                var values = RecipientValues(s.Name, tenant.DisplayName);
+
+                if (s.Channel == Services.Email.MessageChannels.Sms)
+                {
+                    var outcome = await SendText(tenant, campaign, s, values, smsReady);
+                    if (outcome == "sent") sent++; else if (outcome == "failed") failed++; else skipped++;
+                    continue;
+                }
+
                 if (blocklist.Contains(s.Email))
                 {
                     // Opt-out/bounce landed between enqueue and send. Use 'skipped' (a valid status);
@@ -133,27 +152,87 @@ namespace Services.Scheduling.Handlers
                     ["X-SMTPAPI"] = Services.Email.EmailHtml.SmtpApiHeader(task.TenantId, "campaign_send_id", s.Id),
                 };
                 // Editor HTML -> the branded email: preheader, header, body, footer, unsubscribe.
-                var html = Services.Email.EmailHtml.Compose(campaign.BodyHtml, campaign.PreviewText, brand,
+                // Merge fields ({{first_name}}, {{track_name}}) are filled per recipient here, the
+                // same way the automation sweep does it.
+                var bodyHtml = Services.Email.AutomationMergeFields.Render(campaign.BodyHtml, values, htmlEncode: true);
+                var subjectLine = Services.Email.AutomationMergeFields.Render(campaign.Subject, values, htmlEncode: false);
+                var previewText = string.IsNullOrWhiteSpace(campaign.PreviewText) ? null
+                    : Services.Email.AutomationMergeFields.Render(campaign.PreviewText, values, htmlEncode: false);
+                var html = Services.Email.EmailHtml.Compose(bodyHtml, previewText, brand,
                     UnsubscribeFooter($"{baseUrl}/EmailUnsubscribe?token={enc}", tenant.DisplayName));
 
-                var ok = await _emailer.Send(s.Email, campaign.Subject, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
+                var ok = await _emailer.Send(s.Email, subjectLine, html, headers, Services.Email.TenantEmailIdentity.For(tenant));
                 await _campaigns.UpdateSendStatus(s.Id, ok ? "sent" : "failed", ok ? null : "SMTP send failed");
                 s.Status = ok ? "sent" : "failed";
                 if (ok) sent++; else failed++;
             }
 
             // Total delivered across all runs (sends loaded fresh each run reflects prior
-            // runs' 'sent' rows), so MarkSent + billing are correct under retry.
+            // runs' 'sent' rows), so MarkSent + billing are correct under retry. Texts are
+            // billed from Twilio's own price via the status webhook, so only emails go to the
+            // email tier here.
             var totalSent = sends.Count(s => s.Status == "sent");
+            var emailsSent = sends.Count(s => s.Status == "sent" && s.Channel == Services.Email.MessageChannels.Email);
             await _campaigns.MarkSent(payload.CampaignId, totalSent);
 
-            await BillSend(task.TenantId, payload.CampaignId, totalSent);
+            await BillSend(task.TenantId, payload.CampaignId, emailsSent);
 
             var summary = $"Sent {sent}"
                 + (failed > 0 ? $", {failed} failed" : "")
                 + (skipped > 0 ? $", {skipped} suppressed" : "");
             _logger.LogInformation("Campaign {CampaignId}: {Summary}", payload.CampaignId, summary);
             return ScheduledTaskOutcome.Ok(summary);
+        }
+
+        /// <summary>One text to one rider: opt-out and gate re-checked at delivery, reason recorded.</summary>
+        private async Task<string> SendText(Services.Repositories.Data.TenantData.Tenant tenant,
+            Services.Repositories.Data.NewsletterData.EmailCampaign campaign,
+            Services.Repositories.Data.NewsletterData.EmailCampaignSend s,
+            IReadOnlyDictionary<string, string> values, bool smsReady)
+        {
+            var phone = TwilioSmsSender.NormalizeE164(s.Phone ?? "");
+            if (phone is null)
+            {
+                await _campaigns.UpdateSendStatus(s.Id, "skipped", "No usable phone number");
+                s.Status = "skipped";
+                return "skipped";
+            }
+            if (!smsReady)
+            {
+                await _campaigns.UpdateSendStatus(s.Id, "skipped", "Texting is not set up for this track");
+                s.Status = "skipped";
+                return "skipped";
+            }
+            if (_smsOptOuts is not null && await _smsOptOuts.IsOptedOut(tenant.Id, phone))
+            {
+                await _campaigns.UpdateSendStatus(s.Id, "skipped", "Recipient replied STOP");
+                s.Status = "skipped";
+                return "skipped";
+            }
+            var gateReason = _gate is null ? null : await _gate.BlockReason(Services.Delivery.DeliveryChannel.Sms, phone);
+            if (gateReason is not null)
+            {
+                await _campaigns.UpdateSendStatus(s.Id, "skipped", gateReason);
+                s.Status = "skipped";
+                return "skipped";
+            }
+            var body = Services.Email.SmsText.Finish(
+                Services.Email.AutomationMergeFields.Render(campaign.SmsBody ?? "", values, htmlEncode: false));
+            var ok = await _sms!.Send(tenant, phone, body);
+            await _campaigns.UpdateSendStatus(s.Id, ok ? "sent" : "failed", ok ? null : "SMS send failed");
+            s.Status = ok ? "sent" : "failed";
+            return s.Status;
+        }
+
+        private static Dictionary<string, string> RecipientValues(string? name, string trackName)
+        {
+            var first = (name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["first_name"] = string.IsNullOrWhiteSpace(first) ? "there" : first,
+                ["holder_name"] = name ?? "",
+                ["track_name"] = trackName,
+            };
         }
 
         // Deduct the send from the tenant's payout: a negative ledger entry, no separate Stripe

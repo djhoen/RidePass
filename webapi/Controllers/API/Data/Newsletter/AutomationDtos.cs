@@ -27,6 +27,8 @@ namespace webapi.Controllers.API.Data.Newsletter
         public int Sent { get; set; }
         public int Failed { get; set; }
         public int Skipped { get; set; }
+        /// <summary>Texts delivered, a subset of Sent.</summary>
+        public int SmsSent { get; set; }
         public int Conversions { get; set; }
         /// <summary>Distinct sends opened / clicked across every step. Opens are a ceiling (Apple Mail pre-fetch).</summary>
         public int UniqueOpens { get; set; }
@@ -63,10 +65,14 @@ namespace webapi.Controllers.API.Data.Newsletter
         public string BodyHtml { get; set; } = string.Empty;
         public string? BodyText { get; set; }
         public string? PreviewText { get; set; }
+        public string Channel { get; set; } = "email";
+        public string? SmsBody { get; set; }
         // Reporting: how this email is doing.
         public int Sent { get; set; }
         public int Failed { get; set; }
         public int Skipped { get; set; }
+        /// <summary>Texts delivered, a subset of Sent.</summary>
+        public int SmsSent { get; set; }
         public DateTime? LastSentAtUtc { get; set; }
         public List<AutomationSkipReasonItem> SkipReasons { get; set; } = new();
         public int UniqueOpens { get; set; }
@@ -121,8 +127,13 @@ namespace webapi.Controllers.API.Data.Newsletter
         /// <summary>yyyy-MM-dd, required for the fixed_date anchor.</summary>
         public string? SendOn { get; set; }
         [Required, StringLength(200, MinimumLength = 1)] public string Subject { get; set; } = string.Empty;
-        [Required, MinLength(1)] public string BodyHtml { get; set; } = string.Empty;
+        /// <summary>Required when the channel includes email.</summary>
+        public string? BodyHtml { get; set; }
         public string? BodyText { get; set; }
+        /// <summary>'email' (default) | 'sms' | 'both'.</summary>
+        public string? Channel { get; set; }
+        /// <summary>Required when the channel includes sms. Merge fields allowed.</summary>
+        public string? SmsBody { get; set; }
         /// <summary>Inbox snippet under the subject line; merge fields apply. Optional.</summary>
         public string? PreviewText { get; set; }
     }
@@ -154,13 +165,17 @@ namespace webapi.Controllers.API.Data.Newsletter
     public class TestSendRequest
     {
         [Range(0, 100)] public int StepIndex { get; set; }
-        [Required, EmailAddress] public string ToEmail { get; set; } = string.Empty;
+        [EmailAddress] public string? ToEmail { get; set; }
+        /// <summary>Where the text half of the step goes, when it has one.</summary>
+        public string? ToPhone { get; set; }
     }
 
     public class TestSendResponse
     {
         /// <summary>Merge values came from a real purchase rather than placeholders.</summary>
         public bool UsedRealSubject { get; set; }
+        public bool EmailSent { get; set; }
+        public bool SmsSent { get; set; }
         /// <summary>The pass or event the sample came from, so "no upgrade price" can be told
         /// apart from a template bug.</summary>
         public string? SampleName { get; set; }
