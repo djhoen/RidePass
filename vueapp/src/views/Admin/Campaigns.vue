@@ -104,16 +104,24 @@
         </v-card>
 
         <!-- Compose / view dialog -->
-        <v-dialog v-model="composeOpen" max-width="900" persistent>
-            <v-card>
-                <v-card-title class="d-flex align-center">
+        <v-dialog v-model="composeOpen" fullscreen persistent transition="dialog-bottom-transition">
+            <v-card class="d-flex flex-column" style="height: 100%">
+                <v-card-title class="d-flex align-center" style="flex: 0 0 auto">
                     <span>{{ composeTitle }}</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="composeOpen = false"></v-btn>
                 </v-card-title>
-                <v-card-text>
-                    <!-- Sent campaigns open on their report: the numbers, the links, and who did what. -->
-                    <template v-if="composeReadonly && report">
+                <!-- A sent campaign has two halves: how it did, and what it said. -->
+                <v-tabs v-if="composeReadonly" v-model="detailTab" color="primary" density="comfortable" style="flex: 0 0 auto">
+                    <v-tab value="results" prepend-icon="mdi-chart-box-outline">Results</v-tab>
+                    <v-tab value="message" prepend-icon="mdi-email-outline">Message</v-tab>
+                </v-tabs>
+                <v-divider style="flex: 0 0 auto"></v-divider>
+                <v-card-text style="flex: 1 1 auto; overflow-y: auto; min-height: 0">
+                    <!-- Results: the numbers, who did what, and which links did the work. -->
+                    <template v-if="composeReadonly && detailTab === 'results'">
+                    <div v-if="!report" class="text-center py-8"><v-progress-circular indeterminate size="24" /></div>
+                    <template v-else>
                         <div class="d-flex flex-wrap ga-3 mb-2">
                             <v-card v-for="t in reportTiles" :key="t.label" variant="tonal" class="pa-3 flex-grow-1" min-width="120">
                                 <div class="text-h6">{{ t.value }}</div>
@@ -166,8 +174,23 @@
                             <v-pagination :model-value="recipientPage" :length="Math.ceil(recipientsTotal / recipientPageSize)" density="compact"
                                 :total-visible="7" @update:model-value="loadRecipients"></v-pagination>
                         </div>
-                        <v-divider class="mb-4"></v-divider>
+                        <div v-if="viewClickUrls.length" class="text-subtitle-2 mt-4">Links clicked</div>
+                    <!-- Sent campaigns: which links people clicked, distinct people first. -->
+                    <v-table v-if="composeReadonly && viewClickUrls.length" density="compact" class="mt-4">
+                        <thead>
+                            <tr><th>Link clicked</th><th class="text-right">People</th><th class="text-right">Clicks</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="u in viewClickUrls" :key="u.url">
+                                <td class="text-truncate" style="max-width: 520px"><a :href="u.url" target="_blank" rel="noopener">{{ u.url }}</a></td>
+                                <td class="text-right">{{ u.uniqueClickers }}</td>
+                                <td class="text-right">{{ u.totalClicks }}</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
                     </template>
+                    </template>
+                    <template v-if="!composeReadonly || detailTab === 'message'">
                     <!-- Audience: a saved audience from the Audiences tab. It is resolved again at
                          send time, so the count shown here is a preview, not a snapshot. -->
                     <v-select v-model="audienceIds" :items="audienceItems" item-title="title" item-value="value"
@@ -215,7 +238,7 @@
                             @click="openSaveTemplate">Save as template</v-btn>
                         <v-spacer></v-spacer>
                         <v-btn-toggle v-model="composeView" mandatory density="compact" variant="outlined" divided>
-                            <v-btn value="edit" size="small">Edit</v-btn>
+                            <v-btn value="edit" size="small">{{ composeReadonly ? 'Message' : 'Edit' }}</v-btn>
                             <v-btn value="phone" size="small" prepend-icon="mdi-cellphone">Phone</v-btn>
                             <v-btn value="desktop" size="small" prepend-icon="mdi-monitor">Desktop</v-btn>
                         </v-btn-toggle>
@@ -231,29 +254,18 @@
                         <div v-else-if="previewError" class="text-error text-body-2 pa-4">{{ previewError }}</div>
                         <iframe v-else :srcdoc="previewHtml" title="Email preview" sandbox=""></iframe>
                     </div>
-                    <!-- Sent campaigns: which links people clicked, distinct people first. -->
-                    <v-table v-if="composeReadonly && viewClickUrls.length" density="compact" class="mt-4">
-                        <thead>
-                            <tr><th>Link clicked</th><th class="text-right">People</th><th class="text-right">Clicks</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="u in viewClickUrls" :key="u.url">
-                                <td class="text-truncate" style="max-width: 520px"><a :href="u.url" target="_blank" rel="noopener">{{ u.url }}</a></td>
-                                <td class="text-right">{{ u.uniqueClickers }}</td>
-                                <td class="text-right">{{ u.totalClicks }}</td>
-                            </tr>
-                        </tbody>
-                    </v-table>
                     </template>
                     <v-text-field v-if="!composeReadonly" v-model="scheduleLocal" type="datetime-local"
                         label="Schedule for (optional)" density="compact" class="mt-4"
                         hint="Leave blank to send now. Time is in your track's timezone." persistent-hint
                         prepend-inner-icon="mdi-clock-outline"></v-text-field>
-                    <p class="text-caption text-medium-emphasis mt-3">
+                    <p v-if="!composeReadonly" class="text-caption text-medium-emphasis mt-3">
                         An unsubscribe link and a short footer are added automatically when campaigns are delivered.
                     </p>
+                    </template>
                 </v-card-text>
-                <v-card-actions>
+                <v-card-actions style="flex: 0 0 auto">
+                    <v-btn v-if="composeId" variant="text" prepend-icon="mdi-content-copy" @click="duplicateFromDialog">Duplicate</v-btn>
                     <v-spacer></v-spacer>
                     <v-btn :disabled="saving" @click="composeOpen = false">{{ composeReadonly ? 'Close' : 'Cancel' }}</v-btn>
                     <v-btn v-if="!composeReadonly" :loading="saving" color="primary" @click="saveDraft">Save Draft</v-btn>
@@ -324,6 +336,8 @@ function smsCounter(text: string | null): string {
 }
 // Edit / phone / desktop. The preview is the real send-time HTML from the API, not a guess.
 const composeView = ref<'edit' | 'phone' | 'desktop'>('edit')
+// Sent campaigns open on Results; anything still editable has only the message.
+const detailTab = ref<'results' | 'message'>('results')
 const viewClickUrls = ref<{ url: string; uniqueClickers: number; totalClicks: number }[]>([])
 
 // The report shown when a sent campaign is opened.
@@ -605,8 +619,8 @@ async function openCompose(id: string | null) {
             viewClickUrls.value = d.clickUrls ?? []
             composeReadonly.value = d.status !== 'draft'
             applyAudience(d.audienceKind, d.audienceConfig, d.audienceLabel)
-            if (d.status === 'sent' || d.status === 'sending') loadReport(id)
-            else report.value = null
+            if (d.status === 'sent' || d.status === 'sending') { detailTab.value = 'results'; loadReport(id) }
+            else { detailTab.value = 'message'; report.value = null }
         } catch (err: any) {
             flash(err.response?.data?.error || 'Failed to load campaign.', 'error')
             return
@@ -703,6 +717,13 @@ async function sendCampaign(c: CampaignListItem) {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Send failed.', 'error')
     }
+}
+
+async function duplicateFromDialog() {
+    if (!composeId.value) return
+    const source = { id: composeId.value, subject: composeForm.value.subject } as CampaignListItem
+    composeOpen.value = false
+    await duplicateCampaign(source)
 }
 
 async function duplicateCampaign(c: CampaignListItem) {
@@ -808,7 +829,7 @@ function flash(text: string, color: 'success' | 'error') {
     background: #f3f4f6;
     border: 1px solid #e5e7eb;
     border-radius: 6px;
-    height: 560px;
+    height: min(72vh, 960px);
     overflow: hidden;
 }
 .email-preview-frame.phone {
