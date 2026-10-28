@@ -20,6 +20,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build the SPA here on the runner (lots of RAM) rather than on the 1GB production
+      # droplet, where the Vite build OOMs (10/27 deploy: "Aborted (core dumped)" after the
+      # build had already emptied dist, leaving server.js unable to start). Same approach as
+      # the stage workflow. The compiled dist is shipped to the droplet below.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build SPA on the runner
+        working-directory: vueapp
+        run: |
+          npm install --no-fund --no-audit
+          npm run build
+          test -f dist/index.html
+
       - name: Set up SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -53,13 +69,21 @@ jobs:
             du -sh "$DEPLOY_PATH"
           '
 
-      - name: Build vueapp
+      - name: Upload SPA build to droplet
         run: |
-          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+          # The transfer step recreated vueapp/ without dist (it's excluded from the tar),
+          # so ship the runner-built dist into place. server.js serves vueapp/dist.
+          scp -i ~/.ssh/deploy_key -r vueapp/dist "$DEPLOY_USER@$DEPLOY_HOST:/var/www/production/vueapp/"
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'test -f /var/www/production/vueapp/dist/index.html'
+
+      - name: Install SPA server runtime deps
+        run: |
+          # server.js needs express at runtime (the SPA itself is bundled into dist).
+          # Production-only install, not a build, so it won't OOM the 1GB box.
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$DEPLOY_USER@$DEPLOY_HOST" '
             set -e
             cd /var/www/production/vueapp
-            npm install --no-fund --no-audit --silent
-            npm run build 2>&1 | tail -3
+            npm install --omit=dev --no-fund --no-audit
           '
 
       - name: Publish .NET projects
