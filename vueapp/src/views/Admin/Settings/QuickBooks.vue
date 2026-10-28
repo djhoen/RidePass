@@ -2,14 +2,16 @@
     <v-container>
         <h1 class="text-h4 mb-2">QuickBooks</h1>
         <p class="text-body-2 text-medium-emphasis mb-6">
-            Sync your RidePass sales into QuickBooks Online. Once a night we post one summarised
-            journal entry per day into your company: revenue by category, sales tax and tips as
-            liabilities, and processing fees as expenses. Nothing is posted twice, and only days that
-            have fully ended in your track's timezone are sent.
+            Send your RidePass sales into QuickBooks Online or QuickBooks Desktop as one summarised
+            journal entry per day: revenue by category, sales tax and tips as liabilities, and
+            processing fees as expenses. Nothing is sent twice, and only days that have fully ended in
+            your track's timezone are included.
         </p>
 
-        <v-alert v-if="!loading && !status.isConfigured" type="warning" variant="tonal" density="comfortable" class="mb-6">
-            QuickBooks isn't set up on this RidePass deployment yet. Contact support to enable it.
+        <v-alert v-if="!loading && !status.isConfigured && status.edition !== 'desktop'" type="warning" variant="tonal"
+            density="comfortable" class="mb-6">
+            QuickBooks Online isn't set up on this RidePass deployment yet. Contact support to enable it.
+            QuickBooks Desktop works without it.
         </v-alert>
 
         <v-tabs v-model="tab" color="primary" class="mb-4">
@@ -33,19 +35,196 @@
                             <span class="text-body-2">Loading QuickBooks status…</span>
                         </div>
 
-                        <div v-else-if="!status.isConnected" class="d-flex flex-column ga-3">
+                        <div v-else-if="!status.isConnected" class="d-flex flex-column ga-4">
                             <div class="d-flex align-center ga-2">
                                 <v-icon color="grey">mdi-link-off</v-icon>
-                                <span>No QuickBooks company connected.</span>
+                                <span>Not set up yet. Which QuickBooks does your bookkeeper use?</span>
                             </div>
+                            <v-row>
+                                <v-col cols="12" md="6">
+                                    <v-card variant="outlined" class="pa-4 h-100 d-flex flex-column">
+                                        <div class="text-subtitle-1 font-weight-medium">QuickBooks Online</div>
+                                        <p class="text-body-2 text-medium-emphasis mt-1 mb-4 flex-grow-1">
+                                            You sign in at qbo.intuit.com. We connect to your company and post each
+                                            closed day automatically every night.
+                                        </p>
+                                        <div>
+                                            <v-btn color="primary" :disabled="!status.isConfigured" :loading="connectLoading"
+                                                @click="connect">
+                                                Connect QuickBooks Online
+                                            </v-btn>
+                                        </div>
+                                    </v-card>
+                                </v-col>
+                                <v-col cols="12" md="6">
+                                    <v-card variant="outlined" class="pa-4 h-100 d-flex flex-column">
+                                        <div class="text-subtitle-1 font-weight-medium">QuickBooks Desktop</div>
+                                        <p class="text-body-2 text-medium-emphasis mt-1 mb-4 flex-grow-1">
+                                            QuickBooks Pro, Premier or Enterprise installed on a computer. You download
+                                            a file of closed days whenever you like and import it into QuickBooks.
+                                        </p>
+                                        <v-text-field v-model="desktopStartDate" type="date" density="compact"
+                                            variant="outlined" label="First day to send"
+                                            hint="Sales before this day are never sent. Usually your go-live day."
+                                            persistent-hint class="mb-4" />
+                                        <div>
+                                            <v-btn color="primary" :loading="desktopSetupLoading" @click="setupDesktop">
+                                                Use QuickBooks Desktop
+                                            </v-btn>
+                                        </div>
+                                    </v-card>
+                                </v-col>
+                            </v-row>
+                        </div>
+
+                        <!-- ── QuickBooks Desktop ───────────────────────────────── -->
+                        <div v-else-if="isDesktop" class="d-flex flex-column ga-5">
+                            <div class="d-flex align-center ga-2 flex-wrap">
+                                <v-icon :color="desktopReady ? 'success' : 'warning'">
+                                    {{ desktopReady ? 'mdi-check-circle' : 'mdi-alert-circle-outline' }}
+                                </v-icon>
+                                <strong>QuickBooks Desktop</strong>
+                                <span v-if="status.companyProduct" class="text-caption text-medium-emphasis">
+                                    ({{ status.companyProduct }})
+                                </span>
+                                <v-chip :color="desktopReady ? 'success' : 'warning'" size="small">
+                                    {{ desktopReady ? 'Ready to export' : 'Setup incomplete' }}
+                                </v-chip>
+                            </div>
+
                             <div>
-                                <v-btn color="primary" :disabled="!status.isConfigured" :loading="connectLoading"
-                                    @click="connect">
-                                    Connect QuickBooks
+                                <div class="text-subtitle-2 mb-1">1. Upload your Chart of Accounts and Class List</div>
+                                <p class="text-body-2 text-medium-emphasis mb-3">
+                                    In QuickBooks Desktop choose <strong>File &rarr; Utilities &rarr; Export &rarr; Lists to
+                                    IIF Files</strong>, tick <strong>Chart of Accounts</strong> and <strong>Class List</strong>,
+                                    save, and upload that file here. We only ever post to accounts and classes from this
+                                    list, so the import can't create stray ones. Upload again whenever you add accounts.
+                                </p>
+                                <div class="d-flex align-center ga-3 flex-wrap">
+                                    <v-file-input v-model="listFile" accept=".iif,.IIF" density="compact" variant="outlined"
+                                        label="Lists .IIF file" prepend-icon="" prepend-inner-icon="mdi-paperclip"
+                                        hide-details style="max-width: 360px" />
+                                    <v-btn color="primary" variant="tonal" :disabled="!selectedListFile"
+                                        :loading="uploadLoading" @click="uploadLists">
+                                        Upload
+                                    </v-btn>
+                                </div>
+                                <div class="text-caption text-medium-emphasis mt-2">
+                                    <template v-if="status.listsUploadedAtUtc">
+                                        {{ status.accountCount }} {{ status.accountCount === 1 ? 'account' : 'accounts' }},
+                                        {{ status.classCount }} {{ status.classCount === 1 ? 'class' : 'classes' }}.
+                                        Last uploaded {{ formatDateTime(status.listsUploadedAtUtc) }}.
+                                    </template>
+                                    <template v-else>Nothing uploaded yet.</template>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="text-subtitle-2 mb-1">2. Map your accounts</div>
+                                <p class="text-body-2 text-medium-emphasis mb-0">
+                                    <template v-if="status.mappingComplete">
+                                        Every account is mapped. Optional: tag revenue with classes in the Profit centers tab.
+                                    </template>
+                                    <template v-else>
+                                        {{ status.unmappedKeys.length }}
+                                        {{ status.unmappedKeys.length === 1 ? 'account still needs' : 'accounts still need' }}
+                                        mapping in the Chart of accounts tab before you can export.
+                                    </template>
+                                </p>
+                            </div>
+
+                            <div>
+                                <div class="text-subtitle-2 mb-1">3. Export and import</div>
+                                <p class="text-body-2 text-medium-emphasis mb-3">
+                                    Each file holds every closed day since your last export, one journal entry per day
+                                    (numbered RP-yyyymmdd). In QuickBooks Desktop choose <strong>File &rarr; Utilities
+                                    &rarr; Import &rarr; IIF Files</strong>. Import each file once: QuickBooks doesn't
+                                    check for duplicates, so importing the same file twice doubles those days.
+                                </p>
+                                <div class="d-flex align-center ga-3 flex-wrap">
+                                    <v-btn color="primary" :loading="exportLoading" :disabled="!desktopReady" @click="exportDesktop">
+                                        Create export file
+                                    </v-btn>
+                                    <span class="text-caption text-medium-emphasis">
+                                        Sending sales from {{ formatDate(status.syncStartDate) }}.
+                                        <template v-if="status.lastSyncedDate">
+                                            Exported through {{ formatDate(status.lastSyncedDate) }}.
+                                        </template>
+                                    </span>
+                                </div>
+                                <div v-if="!status.hasExported" class="d-flex align-center ga-3 flex-wrap mt-3">
+                                    <v-text-field v-model="desktopStartDate" type="date" density="compact" variant="outlined"
+                                        label="First day to send" hide-details style="max-width: 220px" />
+                                    <v-btn variant="text" :loading="startDateLoading"
+                                        :disabled="!desktopStartDate || desktopStartDate === status.syncStartDate"
+                                        @click="saveStartDate">
+                                        Change start date
+                                    </v-btn>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="text-subtitle-2 mb-2">Export files</div>
+                                <v-alert v-if="batchesError" type="error" variant="tonal" density="compact" class="mb-3">
+                                    {{ batchesError }}
+                                    <template #append>
+                                        <v-btn size="small" variant="text" @click="loadBatches">Retry</v-btn>
+                                    </template>
+                                </v-alert>
+                                <div class="table-scroll">
+                                    <v-table density="compact">
+                                        <thead>
+                                            <tr>
+                                                <th class="text-left">Days</th>
+                                                <th class="text-right">Day count</th>
+                                                <th class="text-right">Total</th>
+                                                <th class="text-left">Created</th>
+                                                <th class="text-right">Downloads</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="b in batches" :key="b.id" :class="b.voidedAtUtc ? 'text-medium-emphasis' : ''">
+                                                <td>
+                                                    {{ formatDate(b.fromDate) }}
+                                                    <template v-if="b.toDate !== b.fromDate"> to {{ formatDate(b.toDate) }}</template>
+                                                    <v-chip v-if="b.voidedAtUtc" size="x-small" class="ml-2">Voided</v-chip>
+                                                </td>
+                                                <td class="text-right">{{ b.dayCount }}</td>
+                                                <td class="text-right">{{ formatMoney(b.totalDebitsCents) }}</td>
+                                                <td>{{ formatDateTime(b.createdAt) }}</td>
+                                                <td class="text-right">{{ b.downloadCount }}</td>
+                                                <td class="text-right text-no-wrap">
+                                                    <template v-if="!b.voidedAtUtc">
+                                                        <v-btn size="x-small" variant="text" :loading="downloading === b.id"
+                                                            @click="downloadBatch(b)">
+                                                            Download
+                                                        </v-btn>
+                                                        <v-btn size="x-small" variant="text" color="error" :loading="voiding === b.id"
+                                                            @click="voidBatch(b)">
+                                                            Void
+                                                        </v-btn>
+                                                    </template>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="!batches.length && !batchesError">
+                                                <td colspan="6" class="text-center text-medium-emphasis py-4">
+                                                    No files exported yet.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </v-table>
+                                </div>
+                            </div>
+
+                            <div>
+                                <v-btn variant="text" color="error" :loading="disconnectLoading" @click="removeDesktop">
+                                    Stop using QuickBooks Desktop
                                 </v-btn>
                             </div>
                         </div>
 
+                        <!-- ── QuickBooks Online ────────────────────────────────── -->
                         <div v-else class="d-flex flex-column ga-3">
                             <div class="d-flex align-center ga-2 flex-wrap">
                                 <v-icon :color="statusColor">{{ statusIcon }}</v-icon>
@@ -101,6 +280,11 @@
                             account before we can post, a day whose accounts aren't all mapped is held back
                             rather than booked to the wrong place.
                         </p>
+
+                        <v-alert v-if="isDesktop && !status.accountCount" type="warning" variant="tonal" density="compact" class="mb-4">
+                            Upload your Chart of Accounts from QuickBooks Desktop on the Connection tab first; these
+                            dropdowns list only accounts from that file.
+                        </v-alert>
 
                         <v-alert v-if="!status.mappingComplete" type="info" variant="tonal" density="compact" class="mb-4">
                             {{ status.unmappedKeys.length }}
@@ -183,6 +367,21 @@
                         </div>
 
                         <template v-else>
+                            <!-- Desktop keeps its class preference inside the company file, which we can't
+                                 read, so say where the switch is up front. -->
+                            <template v-if="isDesktop && !classesError">
+                                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                                    Class tracking has to be on in QuickBooks Desktop: <strong>Edit &rarr; Preferences
+                                    &rarr; Accounting &rarr; Company Preferences &rarr; Use class tracking for
+                                    transactions</strong>.
+                                </v-alert>
+                                <v-alert v-if="!classSettings.classes.length" type="info" variant="tonal"
+                                    density="compact" class="mb-4">
+                                    No classes uploaded yet. Include the Class List when you export your lists from
+                                    QuickBooks Desktop, then upload the file on the Connection tab.
+                                </v-alert>
+                            </template>
+
                             <v-alert v-if="classesError" type="error" variant="tonal" density="compact" class="mb-4">
                                 {{ classesError }}
                                 <template #append>
@@ -212,7 +411,7 @@
                                     real split.
                                 </v-alert>
 
-                                <v-alert v-if="!classSettings.classes.length" type="info" variant="tonal"
+                                <v-alert v-if="!classSettings.classes.length && !isDesktop" type="info" variant="tonal"
                                     density="compact" class="mb-4">
                                     Your QuickBooks company has class tracking on but no classes created yet. Add
                                     one per profit center in QuickBooks, then reload this page.
@@ -236,8 +435,14 @@
                                 </p>
 
                                 <p class="text-caption text-medium-emphasis mt-4">
-                                    Days already posted keep the classes they were posted with. To re-tag one,
-                                    delete its journal entry in QuickBooks and retry the day from Sync history.
+                                    <template v-if="isDesktop">
+                                        Files already exported keep the classes they were built with. To re-tag them,
+                                        delete those journal entries in QuickBooks Desktop, void the file, and export again.
+                                    </template>
+                                    <template v-else>
+                                        Days already posted keep the classes they were posted with. To re-tag one,
+                                        delete its journal entry in QuickBooks and retry the day from Sync history.
+                                    </template>
                                 </p>
 
                                 <div class="d-flex ga-2 mt-6">
@@ -272,7 +477,7 @@
                                     <tr v-for="row in syncLog" :key="row.businessDate">
                                         <td>{{ formatDate(row.businessDate) }}</td>
                                         <td>
-                                            <v-chip :color="rowColor(row.status)" size="x-small">{{ rowLabel(row.status) }}</v-chip>
+                                            <v-chip :color="rowColor(row.status)" size="x-small">{{ rowLabel(row) }}</v-chip>
                                             <div v-if="row.lastError" class="text-caption text-error mt-1">{{ row.lastError }}</div>
                                         </td>
                                         <td class="text-right">{{ row.entryCount }}</td>
@@ -282,7 +487,7 @@
                                             <span v-else class="text-medium-emphasis text-caption">, </span>
                                         </td>
                                         <td class="text-right">
-                                            <v-btn v-if="row.status === 'failed'" size="x-small" variant="text"
+                                            <v-btn v-if="row.status === 'failed' && !isDesktop" size="x-small" variant="text"
                                                 :loading="resyncing === row.businessDate" @click="resync(row.businessDate)">
                                                 Retry
                                             </v-btn>
@@ -290,7 +495,8 @@
                                     </tr>
                                     <tr v-if="!syncLog.length && !loading">
                                         <td colspan="6" class="text-center text-medium-emphasis py-4">
-                                            Nothing posted yet. The first sync runs tonight, or use "Sync now".
+                                            <template v-if="isDesktop">Nothing exported yet. Create an export file on the Connection tab.</template>
+                                            <template v-else>Nothing posted yet. The first sync runs tonight, or use "Sync now".</template>
                                         </td>
                                     </tr>
                                 </tbody>
@@ -310,7 +516,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow, type QboClassSettings, type QboClassMapping } from '../../../services/QuickBooksService'
+import { QuickBooksService, type QuickBooksStatus, type QboAccount, type QboMapping, type QboSyncLogRow, type QboClassSettings, type QboClassMapping, type QbdExportBatch } from '../../../services/QuickBooksService'
 import { useTheme } from 'vuetify'
 import { ProfitCenterService, type ProfitCenter } from '../../../services/ProfitCenterService'
 import { seriesColor } from '../../../helpers/profitCenterColor'
@@ -338,10 +544,30 @@ const accountsError = ref('')
 const syncEnabled = ref(false)
 
 const status = ref<QuickBooksStatus>({
-    isConfigured: false, isConnected: false, status: null, realmId: null, companyName: null,
+    isConfigured: false, edition: null, isConnected: false, status: null, realmId: null, companyName: null,
     syncEnabled: false, syncStartDate: null, lastSyncedDate: null, lastSyncAtUtc: null,
     lastSyncError: null, connectedAtUtc: null, mappingComplete: false, unmappedKeys: [],
+    listsUploadedAtUtc: null, companyProduct: null, accountCount: 0, classCount: 0, hasExported: false,
 })
+
+// ── QuickBooks Desktop ──────────────────────────────────────────────────────────
+const isDesktop = computed(() => status.value.edition === 'desktop')
+// Exporting needs both halves: the track's own account list (so every line names a real account)
+// and a complete mapping. The server enforces both; this only stops a doomed click.
+const desktopReady = computed(() => isDesktop.value && status.value.accountCount > 0 && status.value.mappingComplete)
+// yyyy-MM-dd from the date input. Blank on first setup means "today at the track", resolved server-side.
+const desktopStartDate = ref('')
+const desktopSetupLoading = ref(false)
+const startDateLoading = ref(false)
+const uploadLoading = ref(false)
+const exportLoading = ref(false)
+const listFile = ref<File | File[] | null>(null)
+const selectedListFile = computed<File | null>(() =>
+    Array.isArray(listFile.value) ? (listFile.value[0] ?? null) : listFile.value)
+const batches = ref<QbdExportBatch[]>([])
+const batchesError = ref('')
+const downloading = ref<string | null>(null)
+const voiding = ref<string | null>(null)
 const accounts = ref<QboAccount[]>([])
 const mappings = ref<QboMapping[]>([])
 const syncLog = ref<QboSyncLogRow[]>([])
@@ -423,8 +649,26 @@ const statusLabel = computed(() => {
 function rowColor(s: string) {
     return s === 'success' ? 'success' : s === 'failed' ? 'error' : 'grey'
 }
-function rowLabel(s: string) {
-    return s === 'success' ? 'Posted' : s === 'failed' ? 'Failed' : 'No activity'
+function rowLabel(row: QboSyncLogRow) {
+    if (row.status === 'success') return row.exportBatchId ? 'Exported' : 'Posted'
+    return row.status === 'failed' ? 'Failed' : 'No activity'
+}
+
+function formatDateTime(utc: string | null) {
+    if (!utc) return ''
+    return new Date(utc).toLocaleString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+/**
+ * A blob download that fails carries its JSON error as a Blob, so the usual
+ * err.response.data.error is undefined; read it out before falling back.
+ */
+async function blobErrText(err: any, fallback: string): Promise<string> {
+    const data = err?.response?.data
+    if (data instanceof Blob) {
+        try { return JSON.parse(await data.text())?.error || fallback } catch { return fallback }
+    }
+    return errText(err, fallback)
 }
 
 function formatDate(d: string | null) {
@@ -522,7 +766,12 @@ async function load() {
         syncEnabled.value = status.value.syncEnabled
 
         if (status.value.isConnected) {
-            await Promise.all([loadMappings(), loadSyncLog(), loadAccounts(), loadProfitCenters()])
+            const loads = [loadMappings(), loadSyncLog(), loadAccounts(), loadProfitCenters()]
+            if (isDesktop.value) {
+                desktopStartDate.value = status.value.syncStartDate ?? ''
+                loads.push(loadBatches())
+            }
+            await Promise.all(loads)
             initCenterAccounts()
         }
     } catch (err: any) {
@@ -691,6 +940,183 @@ async function resync(businessDate: string) {
         await loadSyncLog()
     } finally {
         resyncing.value = null
+    }
+}
+
+async function loadBatches() {
+    batchesError.value = ''
+    try {
+        const resp = await service.desktopBatches()
+        batches.value = resp.data.data
+    } catch (err: any) {
+        // Never show "No files exported yet" when the list simply failed to load.
+        batchesError.value = errText(err, 'Could not load your QuickBooks Desktop export files.')
+    }
+}
+
+async function setupDesktop() {
+    desktopSetupLoading.value = true
+    try {
+        await service.desktopSetup(desktopStartDate.value || null)
+        toast('Switched to QuickBooks Desktop. Next, upload your Chart of Accounts and Class List.')
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not switch this track to QuickBooks Desktop. Please try again.'), 'error')
+    } finally {
+        desktopSetupLoading.value = false
+    }
+}
+
+async function saveStartDate() {
+    if (!desktopStartDate.value) return
+    startDateLoading.value = true
+    try {
+        await service.desktopSetStartDate(desktopStartDate.value)
+        toast(`Exports now start ${formatDate(desktopStartDate.value)}.`)
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not change the start date.'), 'error')
+    } finally {
+        startDateLoading.value = false
+    }
+}
+
+async function uploadLists() {
+    const file = selectedListFile.value
+    if (!file) return
+    uploadLoading.value = true
+    try {
+        const resp = await service.desktopUploadLists(file)
+        const r = resp.data.data
+        const parts: string[] = []
+        if (r.accountCount !== null) parts.push(`${r.accountCount} ${r.accountCount === 1 ? 'account' : 'accounts'}`)
+        if (r.classCount !== null) parts.push(`${r.classCount} ${r.classCount === 1 ? 'class' : 'classes'}`)
+        listFile.value = null
+        if (r.missingMappedNames.length) {
+            toast(`Uploaded ${parts.join(' and ')}. These mapped names are no longer in your lists and need re-mapping: `
+                + r.missingMappedNames.join(', '), 'error')
+        } else {
+            toast(`Uploaded ${parts.join(' and ')}.`)
+        }
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not read that file. Export your lists from QuickBooks Desktop as an .IIF file and try again.'), 'error')
+    } finally {
+        uploadLoading.value = false
+    }
+}
+
+async function exportDesktop() {
+    exportLoading.value = true
+    try {
+        const resp = await service.desktopExport()
+        const r = resp.data.data
+        if (!r.batchId) {
+            toast(r.daysWithNoActivity
+                ? `Nothing to import: the new days had no net sales. Everything through ${formatDate(r.lastCompleteDay)} is covered.`
+                : `Nothing new to export. Everything through ${formatDate(r.lastCompleteDay)} is already in a file.`)
+        } else {
+            const range = r.fromDate === r.toDate
+                ? formatDate(r.fromDate)
+                : `${formatDate(r.fromDate)} to ${formatDate(r.toDate)}`
+            try {
+                await downloadBatchById(r.batchId)
+                toast(`Exported ${r.daysInFile} ${r.daysInFile === 1 ? 'day' : 'days'} (${range}).`
+                    + (r.moreRemaining ? ' More days are waiting: export again for the rest.' : ''))
+            } catch (dlErr: any) {
+                // The batch exists and its days are claimed; only the download failed, so point at
+                // the Download button rather than suggesting a fresh export.
+                toast(await blobErrText(dlErr, `The file for ${range} was created but didn't download. Use Download in the Export files list.`), 'error')
+            }
+        }
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not build the QuickBooks Desktop export.'), 'error')
+    } finally {
+        exportLoading.value = false
+    }
+}
+
+async function downloadBatchById(id: string) {
+    const { blob, filename } = await service.desktopDownload(id)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+}
+
+async function downloadBatch(b: QbdExportBatch) {
+    // A second download is the same file. Remind them rather than block: re-downloading to a new
+    // computer is legitimate, importing it twice is the mistake.
+    if (b.downloadCount > 0) {
+        const ok = await confirm({
+            title: 'Download this file again?',
+            message: `This file has been downloaded ${b.downloadCount} ${b.downloadCount === 1 ? 'time' : 'times'}. `
+                + 'If it was already imported into QuickBooks Desktop, importing it again doubles those days.',
+            confirmText: 'Download',
+        })
+        if (!ok) return
+    }
+    downloading.value = b.id
+    try {
+        await downloadBatchById(b.id)
+        await loadBatches()
+    } catch (err: any) {
+        toast(await blobErrText(err, 'Could not download that export file. Please try again.'), 'error')
+    } finally {
+        downloading.value = null
+    }
+}
+
+async function voidBatch(b: QbdExportBatch) {
+    const range = b.fromDate === b.toDate ? formatDate(b.fromDate) : `${formatDate(b.fromDate)} to ${formatDate(b.toDate)}`
+    const ok = await confirm({
+        title: 'Void this export file?',
+        message: 'Only void a file you did NOT import (or whose entries you deleted in QuickBooks Desktop). '
+            + `Its days (${range}) go back into the next export, so if it was imported they would be sent twice.`,
+        confirmText: 'Void file',
+        confirmColor: 'error',
+    })
+    if (!ok) return
+    voiding.value = b.id
+    try {
+        await service.desktopVoid(b.id)
+        toast('File voided. Its days will be in your next export.')
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not void that export file.'), 'error')
+    } finally {
+        voiding.value = null
+    }
+}
+
+async function removeDesktop() {
+    const ok = await confirm({
+        title: 'Stop using QuickBooks Desktop?',
+        message: 'You can then connect QuickBooks Online instead. Files already exported stay in your books, '
+            + 'and days already exported are never sent again by either edition. Your uploaded lists and '
+            + 'mapping are kept in case you come back.',
+        confirmText: 'Stop using Desktop',
+        confirmColor: 'error',
+    })
+    if (!ok) return
+    disconnectLoading.value = true
+    try {
+        await service.desktopRemove()
+        classesLoaded.value = false
+        classSettings.value = { trackingEnabled: true, trackingPerLine: true, classes: [] }
+        classMappings.value = []
+        batches.value = []
+        toast('QuickBooks Desktop switched off.')
+        await load()
+    } catch (err: any) {
+        toast(errText(err, 'Could not switch off QuickBooks Desktop. Please try again.'), 'error')
+    } finally {
+        disconnectLoading.value = false
     }
 }
 

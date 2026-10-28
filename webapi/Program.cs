@@ -131,6 +131,9 @@ builder.Services.AddSingleton<Services.QuickBooks.QuickBooksOptions>();
 builder.Services.AddScoped<Services.QuickBooks.IQuickBooksTokenService, Services.QuickBooks.QuickBooksTokenService>();
 builder.Services.AddScoped<Services.QuickBooks.IQuickBooksApiClient, Services.QuickBooks.QuickBooksApiClient>();
 builder.Services.AddScoped<Services.QuickBooks.IQuickBooksSyncService, Services.QuickBooks.QuickBooksSyncService>();
+// QuickBooks Desktop: no sweep, the track downloads an IIF file from the settings screen.
+builder.Services.AddScoped<IQuickBooksDesktopRepository, QuickBooksDesktopRepository>();
+builder.Services.AddScoped<Services.QuickBooks.Desktop.IQuickBooksDesktopExportService, Services.QuickBooks.Desktop.QuickBooksDesktopExportService>();
 builder.Services.AddScoped<Services.Email.ISesNotificationService, Services.Email.SesNotificationService>();
 builder.Services.AddScoped<Services.Email.ISendGridEventService, Services.Email.SendGridEventService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();

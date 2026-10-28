@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Services.Accounting;
 using Services.Helpers;
 using Services.QuickBooks;
+using Services.QuickBooks.Desktop;
 using Services.Repositories.Data.QuickBooksData;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
@@ -27,6 +28,7 @@ namespace webapi.Controllers
         private readonly ITenantRepository _tenants;
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IProfitCenterRepository _profitCenters;
+        private readonly IQuickBooksDesktopRepository _desktop;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
         private readonly ILogger<QuickBooksController> _logger;
@@ -39,6 +41,7 @@ namespace webapi.Controllers
             ITenantRepository tenants,
             ITenantEventTypeRepository eventTypes,
             IProfitCenterRepository profitCenters,
+            IQuickBooksDesktopRepository desktop,
             ITenantContext tenantContext,
             IConfiguration config,
             ILogger<QuickBooksController> logger)
@@ -50,6 +53,7 @@ namespace webapi.Controllers
             _tenants = tenants;
             _eventTypes = eventTypes;
             _profitCenters = profitCenters;
+            _desktop = desktop;
             _tenantContext = tenantContext;
             _config = config;
             _logger = logger;
@@ -63,10 +67,14 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
+            var desktop = await _desktop.GetSetup(_tenantContext.TenantId);
+            if (desktop is not null) return new ApiResponses().OkResult(await DesktopStatus(desktop));
+
             var conn = await _repo.GetConnection(_tenantContext.TenantId);
             var resp = new QuickBooksStatusResponse
             {
                 IsConfigured = _tokenService.IsConfigured,
+                Edition = conn is null ? null : "online",
                 IsConnected = conn is not null,
                 Status = conn?.Status,
                 RealmId = conn?.RealmId,
@@ -98,17 +106,56 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(resp);
         }
 
+        /// <summary>
+        /// The Desktop shape of the same panel. "Active" is always the status (there's no link that
+        /// can expire); what can be missing is the uploaded lists and the mapping.
+        /// </summary>
+        private async Task<QuickBooksStatusResponse> DesktopStatus(QuickBooksDesktopSetup setup)
+        {
+            var tenantId = _tenantContext.TenantId;
+            var required = await RequiredKeys();
+            var mapped = (await _desktop.ListAccountMappings(tenantId)).Keys.ToHashSet(StringComparer.Ordinal);
+            var unmapped = required.Where(k => !mapped.Contains(k)).ToList();
+            // Newest batches first; the latest live one says how far the books are covered.
+            var batches = await _desktop.ListBatches(tenantId, 50);
+
+            return new QuickBooksStatusResponse
+            {
+                IsConfigured = true,
+                Edition = "desktop",
+                IsConnected = true,
+                Status = "active",
+                CompanyName = setup.CompanyProduct,
+                SyncEnabled = true,
+                SyncStartDate = setup.SyncStartDate,
+                LastSyncedDate = batches.Where(b => b.VoidedAtUtc is null).Select(b => (DateOnly?)b.ToDate).Max(),
+                ConnectedAtUtc = setup.CreatedAt,
+                UnmappedKeys = unmapped,
+                MappingComplete = unmapped.Count == 0,
+                ListsUploadedAtUtc = setup.ListsUploadedAtUtc,
+                CompanyProduct = setup.CompanyProduct,
+                AccountCount = (await _desktop.ListItems(tenantId, "account")).Count,
+                ClassCount = (await _desktop.ListItems(tenantId, "class")).Count,
+                HasExported = batches.Count > 0,
+            };
+        }
+
         // ── OAuth ────────────────────────────────────────────────────────────────────────
 
         [Authorize(Policy = TenantPermissions.Policy.AccountingManage)]
         [HttpPost("Connect")]
-        public IActionResult Connect()
+        public async Task<IActionResult> Connect()
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             if (!_tokenService.IsConfigured)
             {
                 return new ApiResponses().BadRequestResult(
                     "QuickBooks isn't set up on this RidePass deployment yet. Contact support.");
+            }
+            if (await _desktop.GetSetup(_tenantContext.TenantId) is not null)
+            {
+                return new ApiResponses().BadRequestResult(
+                    "This track uses QuickBooks Desktop. Switch off QuickBooks Desktop before connecting QuickBooks Online.");
             }
 
             // Intuit allows only exact, pre-registered redirect URIs (no wildcards), so the callback
@@ -169,6 +216,11 @@ namespace webapi.Controllers
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(realmId))
             {
                 return Redirect($"{settingsUrl}?qboError={Uri.EscapeDataString("QuickBooks did not return an authorization code.")}");
+            }
+
+            if (await _desktop.GetSetup(tenantId) is not null)
+            {
+                return Redirect($"{settingsUrl}?qboError={Uri.EscapeDataString("This track switched to QuickBooks Desktop, so QuickBooks Online was not connected.")}");
             }
 
             var tokens = await _tokenService.ExchangeCodeAsync(code, ct);
@@ -233,6 +285,23 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
+            if (await _desktop.GetSetup(_tenantContext.TenantId) is not null)
+            {
+                // Desktop references accounts by full name, so the name IS the id. Inactive accounts
+                // and the types a summary journal can't post to (AR, AP, non-posting) are left out
+                // of the dropdowns rather than offered and then refused at export.
+                var items = await _desktop.ListItems(_tenantContext.TenantId, "account");
+                return new ApiResponses().OkResult(items
+                    .Where(a => !a.IsHidden && a.AccountType is not null && IifListParser.IsPostable(a.AccountType))
+                    .Select(a => new QboAccountResponse
+                    {
+                        Id = a.FullName,
+                        Name = a.AccountNumber is null ? a.FullName : $"{a.AccountNumber} · {a.FullName}",
+                        AccountType = IifListParser.TypeLabel(a.AccountType!),
+                        Classification = IifListParser.ClassificationFor(a.AccountType!),
+                    }).ToList());
+            }
+
             try
             {
                 var accounts = await _api.ListAccountsAsync(_tenantContext.TenantId, ct);
@@ -257,8 +326,13 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
-            var saved = (await _repo.ListMappings(_tenantContext.TenantId))
-                .ToDictionary(m => m.MappingKey, StringComparer.Ordinal);
+            var saved = await _desktop.GetSetup(_tenantContext.TenantId) is not null
+                ? (await _desktop.ListAccountMappings(_tenantContext.TenantId)).ToDictionary(
+                    kv => kv.Key,
+                    kv => new QboAccountMapping { MappingKey = kv.Key, QboAccountId = kv.Value, QboAccountName = kv.Value },
+                    StringComparer.Ordinal)
+                : (await _repo.ListMappings(_tenantContext.TenantId))
+                    .ToDictionary(m => m.MappingKey, StringComparer.Ordinal);
 
             // Return every slot this tenant actually needs, mapped or not, so the UI renders the
             // full form from one call and can show what's still missing.
@@ -279,6 +353,8 @@ namespace webapi.Controllers
         public async Task<IActionResult> SaveMappings([FromBody] SaveQboMappingsRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            if (await _desktop.GetSetup(_tenantContext.TenantId) is not null) return await SaveDesktopMappings(req);
 
             foreach (var item in req.Mappings ?? new List<QboMappingItem>())
             {
@@ -314,6 +390,25 @@ namespace webapi.Controllers
         public async Task<IActionResult> Classes(CancellationToken ct)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+
+            if (await _desktop.GetSetup(_tenantContext.TenantId) is not null)
+            {
+                // Desktop's class preference lives in the company file, which we can't read; the
+                // uploaded Class List is the evidence. Tracking is reported on so the screen offers
+                // the pickers, and the page tells the track where Desktop's own switch is.
+                var items = await _desktop.ListItems(_tenantContext.TenantId, "class");
+                return new ApiResponses().OkResult(new QboClassSettingsResponse
+                {
+                    TrackingEnabled = true,
+                    TrackingPerLine = true,
+                    Classes = items.Where(c => !c.IsHidden).Select(c => new QboClassResponse
+                    {
+                        Id = c.FullName,
+                        Name = c.FullName,
+                        FullyQualifiedName = c.FullName,
+                    }).ToList(),
+                });
+            }
 
             try
             {
@@ -354,8 +449,13 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
-            var saved = (await _repo.ListClassMappings(_tenantContext.TenantId))
-                .ToDictionary(m => m.BucketKey, StringComparer.Ordinal);
+            var saved = await _desktop.GetSetup(_tenantContext.TenantId) is not null
+                ? (await _desktop.ListClassMappings(_tenantContext.TenantId)).ToDictionary(
+                    kv => kv.Key,
+                    kv => new QboClassMapping { BucketKey = kv.Key, QboClassId = kv.Value, QboClassName = kv.Value },
+                    StringComparer.Ordinal)
+                : (await _repo.ListClassMappings(_tenantContext.TenantId))
+                    .ToDictionary(m => m.BucketKey, StringComparer.Ordinal);
 
             var rows = (await ResolveBuckets()).Select(b => new QboClassMappingResponse
             {
@@ -388,6 +488,8 @@ namespace webapi.Controllers
             var known = (await ResolveBuckets())
                 .Select(b => b.Bucket.Key)
                 .ToHashSet(StringComparer.Ordinal);
+
+            if (await _desktop.GetSetup(_tenantContext.TenantId) is not null) return await SaveDesktopClassMappings(req, known);
 
             foreach (var item in req.Mappings ?? new List<QboClassMappingItem>())
             {
@@ -440,6 +542,9 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
+            if (await _repo.GetConnection(_tenantContext.TenantId) is null)
+                return new ApiResponses().BadRequestResult("QuickBooks Online isn't connected.");
+
             var results = await _sync.SyncTenantAsync(_tenantContext.TenantId, ct);
             var failed = results.FirstOrDefault(r => r.Status == "failed");
             if (failed is not null)
@@ -465,6 +570,11 @@ namespace webapi.Controllers
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
 
+            // Without an Online link this would claim the day and record a failed post against it;
+            // a Desktop track re-sends a day by voiding its export file instead.
+            if (await _repo.GetConnection(_tenantContext.TenantId) is null)
+                return new ApiResponses().BadRequestResult("QuickBooks Online isn't connected.");
+
             var existing = await _repo.GetSyncLog(_tenantContext.TenantId, req.BusinessDate);
             if (existing?.Status == "success")
             {
@@ -479,6 +589,79 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(result.Error ?? "The re-sync failed.");
             }
             return new ApiResponses().OkResult(new { status = result.Status, journalEntryId = result.JournalEntryId });
+        }
+
+        // ── Desktop mapping saves ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Desktop's save validates every name against the uploaded lists, which Online's doesn't
+        /// need to: an IIF import CREATES any account or class it doesn't recognise, so a stale or
+        /// hand-edited name would grow a junk account in the books rather than fail. Checked as a
+        /// whole before anything is written, so a bad row can't leave a half-saved mapping.
+        /// </summary>
+        private async Task<IActionResult> SaveDesktopMappings(SaveQboMappingsRequest req)
+        {
+            var tenantId = _tenantContext.TenantId;
+            var accounts = (await _desktop.ListItems(tenantId, "account")).ToDictionary(a => a.FullName, StringComparer.Ordinal);
+            var items = req.Mappings ?? new List<QboMappingItem>();
+
+            foreach (var item in items)
+            {
+                if (!QboAccountKeys.All.Contains(item.MappingKey, StringComparer.Ordinal))
+                    return new ApiResponses().BadRequestResult($"Unknown account slot \"{item.MappingKey}\".");
+                if (string.IsNullOrWhiteSpace(item.QboAccountId)) continue;
+
+                var label = QboAccountKeys.Label(item.MappingKey);
+                if (!accounts.TryGetValue(item.QboAccountId, out var account))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{item.QboAccountId}\" (for {label}) isn't in the chart of accounts you uploaded. Upload a fresh list from QuickBooks Desktop.");
+                if (account.IsHidden)
+                    return new ApiResponses().BadRequestResult($"\"{account.FullName}\" (for {label}) is inactive in QuickBooks Desktop.");
+                if (account.AccountType is not null && !IifListParser.IsPostable(account.AccountType))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{account.FullName}\" (for {label}) is a {IifListParser.TypeLabel(account.AccountType)} account, which a summary journal entry can't post to.");
+                if (!IifFormat.IsSafeField(account.FullName))
+                    return new ApiResponses().BadRequestResult(
+                        $"\"{account.FullName}\" contains a tab, line break or double quote, which an IIF file can't carry. Rename it in QuickBooks Desktop.");
+            }
+
+            foreach (var item in items)
+            {
+                if (string.IsNullOrWhiteSpace(item.QboAccountId))
+                    await _desktop.DeleteAccountMapping(tenantId, item.MappingKey);
+                else
+                    await _desktop.UpsertAccountMapping(tenantId, item.MappingKey, item.QboAccountId);
+            }
+            return new ApiResponses().OkResult(new { saved = true });
+        }
+
+        private async Task<IActionResult> SaveDesktopClassMappings(SaveQboClassMappingsRequest req, HashSet<string> knownBuckets)
+        {
+            var tenantId = _tenantContext.TenantId;
+            var classes = (await _desktop.ListItems(tenantId, "class")).ToDictionary(c => c.FullName, StringComparer.Ordinal);
+            var items = req.Mappings ?? new List<QboClassMappingItem>();
+
+            foreach (var item in items)
+            {
+                if (item.BucketKey is null || !knownBuckets.Contains(item.BucketKey))
+                    return new ApiResponses().BadRequestResult($"Unknown profit center \"{item.BucketKey}\".");
+                if (string.IsNullOrWhiteSpace(item.QboClassId)) continue;
+                if (!classes.TryGetValue(item.QboClassId, out var c) || c.IsHidden)
+                    return new ApiResponses().BadRequestResult(
+                        $"The class \"{item.QboClassId}\" isn't an active class in the list you uploaded. Upload a fresh list from QuickBooks Desktop.");
+                if (!IifFormat.IsSafeField(c.FullName))
+                    return new ApiResponses().BadRequestResult(
+                        $"The class \"{c.FullName}\" contains a tab, line break or double quote, which an IIF file can't carry. Rename it in QuickBooks Desktop.");
+            }
+
+            foreach (var item in items)
+            {
+                if (string.IsNullOrWhiteSpace(item.QboClassId))
+                    await _desktop.DeleteClassMapping(tenantId, item.BucketKey!);
+                else
+                    await _desktop.UpsertClassMapping(tenantId, item.BucketKey!, item.QboClassId);
+            }
+            return new ApiResponses().OkResult(new { saved = true });
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────

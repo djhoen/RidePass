@@ -149,6 +149,8 @@ export interface EndOfDayCashSection {
 }
 export interface EndOfDayQuickBooksStatus {
     connected: boolean
+    // online | desktop when connected
+    edition?: 'online' | 'desktop' | null
     // not_connected | disabled | pending | success | failed | no_activity
     status: string
     docNumber: string | null

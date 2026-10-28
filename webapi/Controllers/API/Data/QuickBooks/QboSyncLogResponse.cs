@@ -13,5 +13,7 @@ namespace webapi.Controllers.API.Data.QuickBooks
         public int AttemptCount { get; set; }
         public string? LastError { get; set; }
         public DateTime? SyncedAtUtc { get; set; }
+        /// <summary>The QuickBooks Desktop export file that carries this day; null for Online posts.</summary>
+        public Guid? ExportBatchId { get; set; }
     }
 }

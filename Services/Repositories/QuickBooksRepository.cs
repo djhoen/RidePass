@@ -33,7 +33,8 @@ namespace Services.Repositories
             qbo_journal_entry_id AS QboJournalEntryId, qbo_doc_number AS QboDocNumber,
             entry_count AS EntryCount, total_debits_cents AS TotalDebitsCents,
             attempt_count AS AttemptCount, last_error AS LastError,
-            synced_at_utc AS SyncedAtUtc, created_at AS CreatedAt, updated_at AS UpdatedAt";
+            synced_at_utc AS SyncedAtUtc, export_batch_id AS ExportBatchId,
+            created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
 

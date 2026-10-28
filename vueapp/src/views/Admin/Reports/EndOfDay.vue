@@ -443,6 +443,35 @@ const qbo = computed(() => {
             linkText: 'Connect QuickBooks',
         }
     }
+    // Desktop has no nightly post: a closed day waits for the bookkeeper's next export file.
+    if (q.edition === 'desktop') {
+        switch (q.status) {
+            case 'success':
+                return {
+                    icon: 'mdi-check-circle', color: 'success',
+                    text: `Exported for QuickBooks Desktop as ${q.docNumber || 'a journal entry'}.`,
+                    linkText: 'Export files',
+                }
+            case 'no_activity':
+                return {
+                    icon: 'mdi-minus-circle-outline', color: 'grey',
+                    text: 'Nothing to send to QuickBooks: this day had no accounting activity.',
+                    linkText: 'QuickBooks settings',
+                }
+            case 'disabled':
+                return {
+                    icon: 'mdi-pause-circle-outline', color: 'warning',
+                    text: 'This day is before your QuickBooks Desktop start date, so it will not be exported.',
+                    linkText: 'QuickBooks settings',
+                }
+            default:
+                return {
+                    icon: 'mdi-clock-outline', color: 'info',
+                    text: 'Not exported yet. Once this day has closed, it goes in your next QuickBooks Desktop export file.',
+                    linkText: 'Export now',
+                }
+        }
+    }
     switch (q.status) {
         case 'success':
             return {

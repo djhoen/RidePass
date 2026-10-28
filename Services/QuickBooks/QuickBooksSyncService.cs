@@ -207,6 +207,7 @@ namespace Services.QuickBooks
         /// resolves to a class via qbo_class_mapping. Going through ProfitCenterMap rather than
         /// re-deriving the grouping here is what keeps the classes on a posted journal entry
         /// agreeing with the Revenue by Department report; they are the same grouping, read once.
+        /// The Desktop export resolves its classes through the same ClassAssignment helper.
         ///
         /// Returning null on the empty case is not just an optimisation: it means an unconfigured
         /// tenant's draft is byte-identical to the one this posted before classes existed, so this
@@ -222,18 +223,7 @@ namespace Services.QuickBooks
                 await _profitCenters.ListForTenant(tenantId),
                 await _profitCenters.ListAssignments(tenantId));
 
-            var result = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var revenueKey in QboAccountKeys.All.Where(k => k.StartsWith("revenue_", StringComparison.Ordinal)))
-            {
-                // A bucket the tenant left unmapped contributes nothing, so its slots post unclassed
-                // rather than blocking the day. Partial configuration has to keep posting: this is
-                // presentation inside QBO, never a correctness gate on the money.
-                if (classByBucket.TryGetValue(map.ForRevenueKey(revenueKey).Key, out var classId))
-                {
-                    result[revenueKey] = classId;
-                }
-            }
-            return result.Count > 0 ? result : null;
+            return ClassAssignment.ForRevenueSlots(map, classByBucket);
         }
 
         private Task Record(Guid tenantId, DateOnly date, string status, string? jeId, string? docNumber,

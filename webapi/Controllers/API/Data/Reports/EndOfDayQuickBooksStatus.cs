@@ -8,6 +8,8 @@ namespace webapi.Controllers.API.Data.Reports
     {
         /// <summary>The tenant has a QuickBooks connection row.</summary>
         public bool Connected { get; set; }
+        /// <summary>online | desktop, when Connected.</summary>
+        public string? Edition { get; set; }
         /// <summary>not_connected | disabled | pending | success | failed | no_activity</summary>
         public string Status { get; set; } = "not_connected";
         /// <summary>The deterministic RP-yyyyMMdd document number, once posted.</summary>

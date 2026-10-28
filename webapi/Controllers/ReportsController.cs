@@ -31,6 +31,7 @@ namespace webapi.Controllers
         private readonly ITenantTaxRepository _tax;
         private readonly IEndOfDayReportRepository _endOfDay;
         private readonly IQuickBooksRepository _quickBooks;
+        private readonly IQuickBooksDesktopRepository _quickBooksDesktop;
         private readonly IProfitCenterRepository _profitCenters;
 
         public ReportsController(
@@ -49,6 +50,7 @@ namespace webapi.Controllers
             ITenantTaxRepository tax,
             IEndOfDayReportRepository endOfDay,
             IQuickBooksRepository quickBooks,
+            IQuickBooksDesktopRepository quickBooksDesktop,
             IProfitCenterRepository profitCenters,
             Services.Audit.IAuditLogger audit)
         {
@@ -68,6 +70,7 @@ namespace webapi.Controllers
             _tax = tax;
             _endOfDay = endOfDay;
             _quickBooks = quickBooks;
+            _quickBooksDesktop = quickBooksDesktop;
             _profitCenters = profitCenters;
         }
 
@@ -542,8 +545,13 @@ namespace webapi.Controllers
         // the sweep and the QuickBooks settings screen own every write path.
         private async Task<EndOfDayQuickBooksStatus> BuildQuickBooksStatus(Guid tenantId, DateOnly businessDate)
         {
-            var connection = await _quickBooks.GetConnection(tenantId);
-            if (connection is null) return new EndOfDayQuickBooksStatus { Connected = false, Status = "not_connected" };
+            // Desktop has no connection row and no nightly sweep: a closed day simply waits for the
+            // bookkeeper's next export, so "pending" there means "not exported yet".
+            var desktop = await _quickBooksDesktop.GetSetup(tenantId);
+            var connection = desktop is null ? await _quickBooks.GetConnection(tenantId) : null;
+            if (desktop is null && connection is null)
+                return new EndOfDayQuickBooksStatus { Connected = false, Status = "not_connected" };
+            var edition = desktop is null ? "online" : "desktop";
 
             var log = await _quickBooks.GetSyncLog(tenantId, businessDate);
             if (log is not null)
@@ -551,6 +559,7 @@ namespace webapi.Controllers
                 return new EndOfDayQuickBooksStatus
                 {
                     Connected = true,
+                    Edition = edition,
                     Status = log.Status,
                     DocNumber = log.QboDocNumber,
                     JournalEntryId = log.QboJournalEntryId,
@@ -563,12 +572,15 @@ namespace webapi.Controllers
             // No log row yet. Either the sweep has not reached this day, or it never will: sync is
             // switched off, or the date predates the connection's start cursor, which the sweep
             // never walks back past.
-            var willNeverPost = !connection.SyncEnabled || businessDate < connection.SyncStartDate;
+            var willNeverPost = desktop is not null
+                ? businessDate < desktop.SyncStartDate
+                : !connection!.SyncEnabled || businessDate < connection.SyncStartDate;
             return new EndOfDayQuickBooksStatus
             {
                 Connected = true,
+                Edition = edition,
                 Status = willNeverPost ? "disabled" : "pending",
-                LastError = connection.LastSyncError,
+                LastError = connection?.LastSyncError,
             };
         }
 

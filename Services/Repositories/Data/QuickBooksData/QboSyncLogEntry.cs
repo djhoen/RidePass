@@ -22,6 +22,8 @@ namespace Services.Repositories.Data.QuickBooksData
         public int AttemptCount { get; set; }
         public string? LastError { get; set; }
         public DateTime? SyncedAtUtc { get; set; }
+        /// <summary>The QuickBooks Desktop export that carries this day (qbd_export_batch); null for Online posts.</summary>
+        public Guid? ExportBatchId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
