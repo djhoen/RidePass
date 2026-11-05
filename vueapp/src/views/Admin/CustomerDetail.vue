@@ -78,7 +78,7 @@
                     </tbody>
                 </v-table>
             </v-card>
-            <v-card v-else class="mb-4" color="grey-lighten-4">
+            <v-card v-else class="mb-4">
                 <v-card-text class="text-medium-emphasis">No waiver on file.</v-card-text>
             </v-card>
 
@@ -196,7 +196,7 @@
                     <v-btn icon="mdi-close" variant="text" size="small" @click="signatureDialog = false"></v-btn>
                 </v-card-title>
                 <v-card-text class="text-center">
-                    <img v-if="signatureUrl" :src="signatureUrl" alt="Signature" style="max-width: 100%; background: #fff; border: 1px solid #ccc;" />
+                    <img v-if="signatureUrl" :src="signatureUrl" alt="Signature" style="max-width: 100%; background: #fff; border: 1px solid var(--rp-line); border-radius: 10px; padding: 6px;" />
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>

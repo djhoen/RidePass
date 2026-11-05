@@ -1,6 +1,6 @@
 <template>
     <v-card class="h-100 up-card d-flex flex-column">
-        <div class="up-image">
+        <div class="up-image rp-on-photo">
             <v-img v-if="imageUrl" :src="imageUrl" cover class="up-image-bg" />
             <div v-if="item.occursAtUtc" class="up-datebadge">
                 <div class="up-day">{{ formatDay(item.occursAtUtc) }}</div>
@@ -113,8 +113,8 @@ function formatMonth(utc: string): string { return dayjs.utc(utc).local().format
 </script>
 
 <style scoped>
-.up-card { overflow: visible; transition: transform 0.15s ease; }
-.up-card:hover { transform: translateY(-2px); }
+.up-card { overflow: visible; transition: transform 0.15s ease, border-color 0.15s ease; }
+.up-card:hover { transform: translateY(-2px); border-color: var(--rp-line3); }
 
 .up-actions {
     width: 124px;
@@ -122,7 +122,7 @@ function formatMonth(utc: string): string { return dayjs.utc(utc).local().format
 .up-image {
     position: relative;
     height: 92px;
-    background: linear-gradient(135deg, #334155, #64748b);
+    background: linear-gradient(135deg, var(--rp-raise), var(--rp-card2));
     border-top-left-radius: inherit;
     border-top-right-radius: inherit;
 }
@@ -133,22 +133,23 @@ function formatMonth(utc: string): string { return dayjs.utc(utc).local().format
     border-top-left-radius: inherit;
     border-top-right-radius: inherit;
 }
-.up-qr { border-top: 1px solid rgba(0, 0, 0, 0.06); }
+.up-qr { border-top: 1px solid var(--rp-line); }
+/* Date badge rides on the event photo: photo tokens (dark glass, white type) in both modes. */
 .up-datebadge {
     position: absolute;
     top: -6px;
     left: 12px;
-    background: #000;
-    color: #fff;
+    background: rgba(var(--rp-scrim), 0.88);
+    color: var(--rp-photo-ink);
+    border: 1px solid var(--rp-photo-line);
     padding: 6px 10px 5px;
     text-align: center;
-    border-radius: 4px;
+    border-radius: 11px;
     line-height: 1;
-    min-width: 44px;
-    box-shadow: 1px 2px 5px 0 rgba(0, 0, 0, 0.34);
+    min-width: 48px;
 }
-.up-datebadge .up-day { font-size: 1.4rem; font-weight: 700; }
-.up-datebadge .up-month { font-size: 0.65rem; letter-spacing: 0.08em; opacity: 0.85; margin-top: 2px; }
+.up-datebadge .up-day { font-family: var(--rp-font-display); font-size: 26px; line-height: 1.05; }
+.up-datebadge .up-month { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--rp-photo-muted); margin-top: 2px; }
 .up-chip { position: absolute; top: 8px; right: 8px; }
 .up-logo {
     position: absolute;

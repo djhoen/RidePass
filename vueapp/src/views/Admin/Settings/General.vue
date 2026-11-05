@@ -1,18 +1,25 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">General</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Display name, mailing address, and timezone for your tenant. Used on the RidePass
-            Discover page so riders can find you by area, and on packages we ship you.
-            Feature toggles live in
-            <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">General</div>
+                <div class="rp-pagehead-sub">
+                    Display name, mailing address, and timezone for your tenant. Used on the RidePass
+                    Discover page so riders can find you by area, and on packages we ship you.
+                    Feature toggles live in
+                    <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
+                </div>
+            </div>
+        </div>
 
         <!-- Identity -->
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-storefront-outline</v-icon></template>
-                <v-card-title>Identity</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Identity</span>
+                </v-card-title>
                 <v-card-subtitle>Your track's name and how packages are addressed.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -42,7 +49,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-map-marker-outline</v-icon></template>
-                <v-card-title>Location</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Location</span>
+                </v-card-title>
                 <v-card-subtitle>Drives the Discover map, timezone, and shipping. Type the address and we'll find the coordinates.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -89,7 +99,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-card-account-phone-outline</v-icon></template>
-                <v-card-title>Contact</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Contact</span>
+                </v-card-title>
                 <v-card-subtitle>Shown in the home-page footer for riders to reach out.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -120,7 +133,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-email-newsletter</v-icon></template>
-                <v-card-title>Marketing email footer</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Marketing email footer</span>
+                </v-card-title>
                 <v-card-subtitle>Added to every campaign and automation email, above your name, address, and social links. Hours, a tagline, a legal line.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -133,7 +149,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-share-variant-outline</v-icon></template>
-                <v-card-title>Social links</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Social links</span>
+                </v-card-title>
                 <v-card-subtitle>Each link's icon shows in the footer when the URL is set; leave blank to hide that platform.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -163,7 +182,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-format-title</v-icon></template>
-                <v-card-title>Checkout headings</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Checkout headings</span>
+                </v-card-title>
                 <v-card-subtitle>What riders see the gate-fee sections called at checkout and in event pricing.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -185,7 +207,10 @@
         <v-card class="mb-4">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-file-document-outline</v-icon></template>
-                <v-card-title>Refund policy</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">General</span>
+                    <span class="rp-section-title">Refund policy</span>
+                </v-card-title>
                 <v-card-subtitle>Linked from the footer so riders can read it before purchasing.</v-card-subtitle>
             </v-card-item>
             <v-divider></v-divider>
@@ -440,3 +465,18 @@ watch(() => branding.loaded, (loaded) => {
     if (loaded) populateForm()
 })
 </script>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+</style>

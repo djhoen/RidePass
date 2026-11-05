@@ -3,7 +3,7 @@
         <v-row align="center" justify="center">
             <v-col cols="12" sm="8" md="6">
                 <v-card class="pa-4">
-                    <v-card-title class="text-h5">Bootstrap RidePass</v-card-title>
+                    <v-card-title class="font-display text-h4">Bootstrap RidePass</v-card-title>
                     <v-card-text>
                         <!-- Checked rather than assumed. This route has no role guard, and cannot have
                              a static one: during a genuine first run there is nobody to authenticate

@@ -10,7 +10,7 @@
                  product photos (only items flagged for the carousel, with a photo, in stock) -->
             <v-carousel v-if="settings.showCarousel && slides.length" cycle
                 :interval="(settings.carouselSeconds || 5) * 1000" hide-delimiter-background
-                height="300" class="mb-6 rounded-xl elevation-4">
+                height="300" class="mb-6 rounded-xl board-carousel">
                 <v-carousel-item v-for="s in slides" :key="s.key" :src="s.imageUrl ?? undefined" cover>
                     <!-- Text-only promo: full-bleed callout on the accent color -->
                     <div v-if="s.kind === 'promo' && !s.imageUrl" class="promo-tile" :style="promoTileStyle">
@@ -91,8 +91,9 @@ const slides = computed<Slide[]>(() => [
     })),
 ])
 
+// Text-only promo tile: the accent color, else a dark scrim (the tile's type is white).
 const promoTileStyle = computed(() => ({
-    backgroundColor: accentColor.value || '#1867c0',
+    backgroundColor: accentColor.value || 'rgba(var(--rp-scrim), 0.88)',
 }))
 
 // Group by category, ordered by the category's sort order; uncategorized items fall last under "Other".
@@ -120,7 +121,8 @@ function money(c: number) { return `$${(c / 100).toFixed(2)}` }
 <style scoped>
 .menu-board { padding: 32px 24px; min-height: 100%; }
 .board-inner { max-width: 1280px; margin: 0 auto; }
-.board-title { font-size: clamp(2rem, 4vw, 3.25rem); font-weight: 800; letter-spacing: -0.01em; text-align: center; }
+.board-title { font-family: var(--rp-font-display); font-style: italic; font-weight: 400; text-transform: uppercase; font-size: clamp(2.5rem, 5vw, 4.25rem); line-height: 0.95; letter-spacing: 0.005em; text-align: center; }
+.board-carousel { border: 1px solid var(--rp-line2); }
 
 /* Promo callout slide: big centered text, QSR-board style. */
 .promo-tile {
@@ -132,15 +134,17 @@ function money(c: number) { return `$${(c / 100).toFixed(2)}` }
     gap: 12px;
     padding: 24px 48px;
     text-align: center;
-    color: #fff;
+    color: var(--rp-photo-ink);
 }
 .promo-tile--overlay { background: rgba(0, 0, 0, 0.45); }
 .promo-tile__title {
-    font-size: clamp(2rem, 4.5vw, 3.5rem);
-    font-weight: 900;
-    letter-spacing: 0.02em;
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-size: clamp(2.5rem, 5.5vw, 4.5rem);
+    font-weight: 400;
+    letter-spacing: 0.01em;
     text-transform: uppercase;
-    line-height: 1.1;
+    line-height: 1;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .promo-tile__subtitle {
@@ -161,20 +165,22 @@ function money(c: number) { return `$${(c / 100).toFixed(2)}` }
     gap: 16px;
     padding: 24px 32px;
     background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0));
-    color: #fff;
+    color: var(--rp-photo-ink);
 }
 
 /* Flow categories into balanced columns so the whole menu fits the screen width. */
 .board-sections { columns: 3 340px; column-gap: 48px; }
 .board-section { break-inside: avoid; margin-bottom: 22px; }
 .board-section-title {
-    font-size: clamp(1.2rem, 2vw, 1.8rem);
-    font-weight: 800;
-    letter-spacing: -0.01em;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    text-transform: uppercase;
+    font-size: clamp(1.5rem, 2.4vw, 2.2rem);
+    letter-spacing: 0.02em;
     padding-left: 12px;
     margin-bottom: 8px;
-    border-left: 5px solid currentColor;
-    line-height: 1.1;
+    border-left: 4px solid currentColor;
+    line-height: 1;
 }
 .board-item { padding: 5px 0; }
 .board-item--out { opacity: 0.45; }
@@ -182,6 +188,6 @@ function money(c: number) { return `$${(c / 100).toFixed(2)}` }
 .board-item__row { display: flex; align-items: baseline; gap: 8px; }
 .board-item__name { font-size: clamp(1rem, 1.3vw, 1.35rem); font-weight: 700; line-height: 1.25; }
 .board-item__dots { flex: 1 1 auto; border-bottom: 2px dotted currentColor; opacity: 0.25; transform: translateY(-3px); min-width: 16px; }
-.board-item__price { font-size: clamp(1rem, 1.3vw, 1.35rem); font-weight: 800; white-space: nowrap; }
+.board-item__price { font-family: var(--rp-font-display); font-style: italic; font-weight: 400; font-size: clamp(1.25rem, 1.6vw, 1.7rem); line-height: 1; white-space: nowrap; }
 .board-item__desc { font-size: 0.9rem; opacity: 0.65; line-height: 1.25; max-width: 90%; }
 </style>

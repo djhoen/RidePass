@@ -125,16 +125,16 @@ onMounted(async () => {
     display: block;
     text-align: left;
     width: 100%;
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-    border-radius: 8px;
+    border: 1px solid var(--rp-line);
+    border-radius: 16px;
     overflow: hidden;
-    background: rgb(var(--v-theme-surface));
+    background: var(--rp-card);
     color: inherit;
     cursor: pointer;
-    transition: box-shadow 0.15s ease;
+    transition: border-color 0.15s ease;
     font: inherit;
 }
-.blog-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
+.blog-card:hover { border-color: var(--rp-line3); }
 .blog-card__excerpt {
     display: -webkit-box;
     -webkit-line-clamp: 3;

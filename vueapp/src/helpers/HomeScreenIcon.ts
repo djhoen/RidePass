@@ -29,7 +29,7 @@ export function setHomeScreenIcon(opts: {
     scope?: string
 }): void {
     const origin = window.location.origin
-    const icon = opts.iconUrl || '/pwa-icon.png'
+    const icon = opts.iconUrl || '/icon-512.png'
 
     setLink('apple-touch-icon', absolute(icon, origin))
     setMeta('apple-mobile-web-app-title', opts.title)
@@ -41,8 +41,8 @@ export function setHomeScreenIcon(opts: {
         start_url: `${origin}${opts.startPath}`,
         scope: `${origin}${opts.scope ?? '/'}`,
         display: 'standalone',
-        background_color: '#ffffff',
-        theme_color: '#111827',
+        background_color: '#0a0a0a',
+        theme_color: '#0a0a0a',
         icons: [
             { src: absolute(icon, origin), sizes: '192x192', type: 'image/png', purpose: 'any' },
             { src: absolute(icon, origin), sizes: '512x512', type: 'image/png', purpose: 'any maskable' },

@@ -250,7 +250,7 @@ onMounted(load)
 
 <style scoped>
 .border-b {
-    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-bottom: 1px solid var(--rp-line);
 }
 .drag-ghost {
     opacity: 0.5;

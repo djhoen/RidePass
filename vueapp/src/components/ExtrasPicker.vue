@@ -11,7 +11,7 @@
                 style="flex: 0 0 auto" @click="openImagePreview(primaryImage(e)!)"></v-img>
             <div v-else class="d-flex align-center justify-center rounded extra-media"
                 style="width: 80px; height: 80px; background: rgba(0,0,0,0.05); flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.05)">
-                <v-icon color="grey">mdi-image-off-outline</v-icon>
+                <v-icon class="text-muted2">mdi-image-off-outline</v-icon>
             </div>
 
             <!-- Info column. Left-aligned by default; flex-grow takes remaining width. -->
@@ -75,7 +75,7 @@
                             @click="openImagePreview(effectiveImage(optionsProduct, v)!)"></v-img>
                         <div v-else class="d-flex align-center justify-center rounded"
                             style="width: 56px; height: 56px; background: rgba(0,0,0,0.05); flex: 0 0 auto">
-                            <v-icon size="small" color="grey">mdi-image-off-outline</v-icon>
+                            <v-icon size="small" class="text-muted2">mdi-image-off-outline</v-icon>
                         </div>
                         <div class="flex-grow-1" style="min-width: 0">
                             <div class="text-body-2"><strong>{{ variantLabel(v) }}</strong></div>
@@ -240,7 +240,7 @@ function openImagePreview(url: string) {
 <style scoped>
 .extra-thumb {
     cursor: pointer;
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--rp-line);
     transition: opacity 0.15s ease-in-out;
 }
 .extra-thumb:hover {

@@ -1,47 +1,296 @@
-// Body font (Inter) + display font (Bebas Neue) for the RidePass hero and
-// other high-impact headlines. Bebas Neue is a tall condensed sans-serif
-// that matches the motocross brand tone in the landing-page mockup. Inter
-// handles everything else.
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700;800&display=swap');
+// ─────────────────────────────────────────────────────────────────────────────
+// RidePass global styles — dark monochrome design system.
+//
+// Source of truth for the look is the RidePass "webapp" mockup (landing page,
+// rider app, operator console): near-black surfaces, white as the only accent,
+// hairline borders instead of shadows, Bebas Neue italic display type for
+// headlines and big numbers, a system sans for everything else.
+//
+// Tokens live on :root as --rp-* custom properties so plain CSS in any view can
+// use them; the Vuetify theme in main.ts mirrors the same values so Vuetify
+// components pick them up through --v-theme-*.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Global styles
+// Body font. Bebas Neue is self-hosted (see @font-face below) — the Google
+// Fonts build has no italic and a different vertical metric.
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@font-face {
+    font-family: 'Bebas Neue';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('@/assets/fonts/bebasneue.woff2') format('woff2');
+}
+
+// Dark token set (the mockup). This is the default so the first paint, before a
+// tenant's branding arrives, is dark; App.vue flips `data-rp-theme` on <html> to
+// "light" for tenants whose Branding → Theme is light. A subtree that must stay dark
+// regardless of the tenant's mode (kitchen / pickup boards) opts in with
+// `data-rp-theme="dark"` on its root element.
+:root,
+:root[data-rp-theme="dark"],
+[data-rp-theme="dark"] {
+    // Surfaces
+    --rp-bg: #0a0a0a;
+    --rp-panel: #121212;      // sidebars, dialogs
+    --rp-panel2: #191919;     // inputs, hover rows
+    --rp-card: #131313;
+    --rp-card2: #1a1a1a;
+    --rp-raise: #1e1e1e;      // active/hover on panel
+    --rp-bar: rgba(10, 10, 10, 0.82);   // translucent app bar
+    // Hairlines
+    --rp-line: rgba(255, 255, 255, 0.08);
+    --rp-line2: rgba(255, 255, 255, 0.14);
+    --rp-line3: rgba(255, 255, 255, 0.3);
+    // Text
+    --rp-ink: #f5f5f5;
+    --rp-on-ink: #111111;     // text on an ink-filled element
+    --rp-ink2: #c9c9c9;       // slightly dimmed body copy
+    --rp-muted: #a6a6a6;
+    --rp-muted2: #6e6e6e;
+    // Semantic
+    --rp-green: #5dd39e;
+    --rp-green-soft: rgba(93, 211, 158, 0.14);
+    --rp-red: #ff6b6b;
+    --rp-red-text: #ff9a8a;
+    --rp-red-soft: rgba(255, 107, 107, 0.13);
+    --rp-blue: #5aa8ff;
+    --rp-blue-soft: rgba(90, 168, 255, 0.14);
+    --rp-purple: #b28cff;
+    --rp-purple-soft: rgba(178, 140, 255, 0.14);
+    --rp-amber: #f0b35a;
+    --rp-amber-soft: rgba(240, 179, 90, 0.14);
+    --rp-gold: #e6e6e6;
+    --rp-ink-soft: rgba(255, 255, 255, 0.12);   // soft fill in the ink color
+    --rp-white-soft: var(--rp-ink-soft);         // legacy alias
+    // Photo overlays (hero, card photos): the scrim is always dark and the text on it
+    // is always white, in BOTH modes — a photo is not a surface that flips.
+    --rp-scrim: 6, 6, 6;
+    --rp-photo-ink: #ffffff;
+    --rp-photo-muted: #c9c9c9;
+    --rp-photo-line: rgba(255, 255, 255, 0.35);
+    // Tenant brand hue (set at runtime by App.vue; neutral on the apex site).
+    --rp-tenant: #e6e6e6;
+    --rp-on-tenant: #111111;
+    // Shape
+    --rp-radius: 16px;
+    --rp-radius-sm: 9px;
+    --rp-radius-input: 10px;
+    --rp-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.85);
+    // Fonts
+    --rp-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --rp-font-display: 'Bebas Neue', Impact, 'Inter', sans-serif;
+
+    color-scheme: dark;
+    font-synthesis-weight: none;
+}
+
+// Light token set: the same system mirrored. White cards on a pale page, near-black
+// ink, borders instead of shadows, semantic hues darkened to hold contrast on white.
+:root[data-rp-theme="light"] {
+    --rp-bg: #f6f6f6;
+    --rp-panel: #ffffff;
+    --rp-panel2: #f0f0f0;
+    --rp-card: #ffffff;
+    --rp-card2: #f7f7f7;
+    --rp-raise: #e9e9e9;
+    --rp-bar: rgba(255, 255, 255, 0.86);
+    --rp-line: rgba(0, 0, 0, 0.08);
+    --rp-line2: rgba(0, 0, 0, 0.14);
+    --rp-line3: rgba(0, 0, 0, 0.3);
+    --rp-ink: #111111;
+    --rp-on-ink: #ffffff;
+    --rp-ink2: #333333;
+    --rp-muted: #5f5f5f;
+    --rp-muted2: #8a8a8a;
+    --rp-green: #178a52;
+    --rp-green-soft: rgba(23, 138, 82, 0.12);
+    --rp-red: #d64545;
+    --rp-red-text: #c23a3a;
+    --rp-red-soft: rgba(214, 69, 69, 0.1);
+    --rp-blue: #2a78d6;
+    --rp-blue-soft: rgba(42, 120, 214, 0.12);
+    --rp-purple: #7c5cd6;
+    --rp-purple-soft: rgba(124, 92, 214, 0.12);
+    --rp-amber: #b7791f;
+    --rp-amber-soft: rgba(183, 121, 31, 0.12);
+    --rp-gold: #333333;
+    --rp-ink-soft: rgba(0, 0, 0, 0.08);
+    --rp-scrim: 10, 10, 10;
+    --rp-tenant: #333333;
+    --rp-on-tenant: #ffffff;
+    --rp-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.25);
+
+    color-scheme: light;
+}
+
+html {
+    // No global smooth scrolling: the router's scroll-to-top on navigation and its
+    // back/forward position restore must be instant. In-page anchors get `smooth`
+    // from router.ts scrollBehavior.
+    scroll-padding-top: 76px;
+}
+
 body {
-    font-family: 'Inter', sans-serif;
+    font-family: var(--rp-font-body);
     margin: 0;
     padding: 0;
+    background: var(--rp-bg);
+    color: var(--rp-ink);
+    -webkit-font-smoothing: antialiased;
 }
+
+// Vuetify applies its own font-family on .v-application; keep ours.
+.v-application {
+    font-family: var(--rp-font-body) !important;
+    background: var(--rp-bg) !important;
+    color: var(--rp-ink) !important;
+}
+
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-thumb { background: var(--rp-line2); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
 
 .font-inter {
-    font-family: 'Inter', sans-serif;
+    font-family: var(--rp-font-body);
 }
 
-// Display utility class. Use on hero headlines, big stat numbers, and other
-// places where the RidePass brand wants to shout. Bebas Neue only ships at
-// weight 400, so we always render at 400 (any !important-driven font-weight
-// up the chain would synthesize bold; we explicitly hold the weight). All
-// caps + slight letter spacing match the mockup.
-.font-display {
-    font-family: 'Bebas Neue', 'Inter', sans-serif;
+// ── Display type ─────────────────────────────────────────────────────────────
+// Bebas Neue italic, all caps, tight leading. Use on hero headlines, section
+// titles, KPI numbers, prices. Only one weight exists, so hold 400.
+// !important on the family: Vuetify's text-h1…h6 utility classes set
+// `font-family: Roboto !important`, which would otherwise silently win over
+// this class whenever a heading carries both.
+.font-display,
+.bebas {
+    font-family: var(--rp-font-display) !important;
     font-weight: 400 !important;
-    // Bebas Neue ships only one weight on Google Fonts (no italic variant),
-    // so the browser synthesizes an oblique. For a heavy condensed display
-    // face this reads as the intended "slanted display" look from the mock.
     font-style: italic;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.005em;
     text-transform: uppercase;
+    line-height: 0.92;
 }
 
-// Upright Bebas variant for sub-headings (how-it-works step titles, event
-// card titles, etc.). Same condensed display family at its native weight,
-// just without the italic. Use this anywhere you want the brand voice on a
-// sub-heading without the hero-headline slant.
+// Upright Bebas for sub-headings (step titles, card titles).
 .font-display-upright {
-    font-family: 'Bebas Neue', 'Inter', sans-serif;
-    font-weight: 400;
+    font-family: var(--rp-font-display) !important;
+    font-weight: 400 !important;
     font-style: normal;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
+    line-height: 1;
 }
+
+// Outlined (stroke-only) display text, as in the hero's second line.
+.font-display-outline {
+    color: transparent !important;
+    -webkit-text-stroke: 2px var(--rp-ink);
+}
+
+// Kicker: tiny tracked uppercase label above a heading.
+.rp-kicker {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--rp-muted2);
+    display: block;
+    margin-bottom: 8px;
+}
+
+// Section header row: big display title left, quiet uppercase link right.
+.rp-sec-h {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+
+    h2 {
+        font-size: clamp(36px, 5vw, 54px);
+        margin: 0;
+    }
+    a, .v-btn {
+        font-size: 12.5px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--rp-muted);
+    }
+    a:hover, .v-btn:hover { color: var(--rp-ink); }
+}
+
+// Admin page heading: display title + muted subline.
+.rp-pagehead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+
+    .rp-pagehead-title {
+        font-family: var(--rp-font-display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 32px;
+        line-height: 0.95;
+        text-transform: uppercase;
+        letter-spacing: 0.01em;
+    }
+    .rp-pagehead-sub {
+        color: var(--rp-muted);
+        font-size: 13.5px;
+        margin-top: 5px;
+    }
+}
+
+// KPI tile (operator console "kpi" card).
+.rp-kpi {
+    .rp-kpi-label {
+        font-size: 11.5px;
+        color: var(--rp-muted);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        margin: 14px 0 4px;
+    }
+    .rp-kpi-value {
+        font-family: var(--rp-font-display);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 29px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+// Status pills (track open/closed, included/day-pass, few-left).
+.rp-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border-radius: 99px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: var(--rp-ink-soft);
+    color: var(--rp-ink2);
+
+    &.rp-pill--solid { background: var(--rp-ink); color: var(--rp-on-ink); }
+    &.rp-pill--green { background: var(--rp-green-soft); color: var(--rp-green); }
+    &.rp-pill--red { background: var(--rp-red-soft); color: var(--rp-red-text); }
+    &.rp-pill--blue { background: var(--rp-blue-soft); color: var(--rp-blue); }
+    &.rp-pill--tenant { background: var(--rp-tenant); color: var(--rp-on-tenant); }
+}
+
+.text-muted { color: var(--rp-muted) !important; }
+.text-muted2 { color: var(--rp-muted2) !important; }
+.tabular { font-variant-numeric: tabular-nums; }
 
 // Layout helpers
 .align-left { text-align: left; }
@@ -71,7 +320,7 @@ body {
 .p-10 { padding: 10px; }
 .p-20 { padding: 20px; }
 
-// Color helpers — use Vuetify theme variables so they react to tenant branding changes.
+// Color helpers — Vuetify theme variables so they follow the theme.
 .color-primary    { color: rgb(var(--v-theme-primary)); }
 .color-secondary  { color: rgb(var(--v-theme-secondary)); }
 .bg-color-primary { background-color: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
@@ -83,9 +332,9 @@ body {
     padding: 20px;
 }
 
-// Links — inherit theme primary, always pointer, never underlined.
+// Links — inherit the ink color; hover brightens. Never underlined.
 a {
-    color: rgb(var(--v-theme-primary));
+    color: inherit;
     text-decoration: none;
     cursor: pointer;
 
@@ -96,18 +345,273 @@ a {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Vuetify component overrides
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Buttons: tracked uppercase, heavy weight, 9px radius, never a shadow.
+// Solid primary = white on near-black; outlined = hairline ghost.
+.v-btn {
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-radius: var(--rp-radius-sm);
+    box-shadow: none !important;
+
+    &.v-btn--size-default { font-size: 12.5px; }
+    &.v-btn--size-large { font-size: 13px; }
+    &.v-btn--size-x-large { font-size: 13.5px; padding: 0 28px; }
+    &.v-btn--size-small { font-size: 11.5px; letter-spacing: 0.05em; }
+
+    &.v-btn--variant-outlined {
+        border-color: var(--rp-line3);
+        &:hover { border-color: currentColor; }
+    }
+    &.v-btn--variant-tonal .v-btn__underlay { opacity: 0.12; }
+    &.v-btn--icon { border-radius: 10px; }
+    &.v-btn--icon.v-btn--variant-text { letter-spacing: 0; }
+}
+// Solid buttons dim slightly on hover, whatever the brand color is.
+.v-btn.v-btn--variant-flat:hover, .v-btn.v-btn--variant-elevated:hover { filter: brightness(0.92); }
+
+// Cards / sheets: flat card surface, hairline border, 16px radius, no shadow.
+.v-card,
+.v-sheet.v-sheet--border,
+.v-expansion-panel {
+    border-radius: var(--rp-radius) !important;
+}
+.v-card {
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    box-shadow: none !important;
+    transition: border-color 0.15s;
+
+    &.v-card--variant-outlined { border-color: var(--rp-line2); }
+    &.v-card--variant-tonal { border-color: transparent; }
+    &.v-card--hover:hover { border-color: var(--rp-line3); }
+    &.v-card--link:hover { border-color: var(--rp-line3); }
+}
+.v-card-title { font-weight: 800; letter-spacing: 0.01em; }
+.v-card-subtitle { color: var(--rp-muted); opacity: 1; }
+.v-card .v-card { background: var(--rp-card2); }
+
+// Dialogs / menus / bottom sheets sit on the panel surface with a stronger line.
+.v-overlay__content > .v-card,
+.v-overlay__content > .v-sheet,
+.v-overlay__content > .v-list,
+.v-menu > .v-overlay__content > .v-card,
+.v-menu > .v-overlay__content > .v-list,
+.v-menu > .v-overlay__content > .v-sheet {
+    background: var(--rp-panel);
+    border: 1px solid var(--rp-line2);
+    border-radius: var(--rp-radius) !important;
+    box-shadow: var(--rp-shadow) !important;
+}
+// Fullscreen dialogs fill the viewport: no corner radius, no hairline frame.
+.v-dialog--fullscreen > .v-overlay__content > .v-card,
+.v-dialog--fullscreen > .v-overlay__content > .v-sheet {
+    border-radius: 0 !important;
+    border: 0;
+    box-shadow: none !important;
+}
+.v-overlay__scrim { background: #000; }
+
+// Inputs: field on the panel2 surface with a hairline outline, 10px radius, ink focus ring.
+.v-field {
+    border-radius: var(--rp-radius-input) !important;
+    &.v-field--variant-outlined {
+        background: var(--rp-panel2);
+        .v-field__outline { --v-field-border-opacity: 0.14; color: var(--rp-ink); }
+        &.v-field--focused .v-field__outline { --v-field-border-opacity: 0.7; }
+        &.v-field--error .v-field__outline { color: var(--rp-red); }
+    }
+    &.v-field--variant-filled,
+    &.v-field--variant-solo,
+    &.v-field--variant-solo-filled {
+        background: var(--rp-panel2);
+        box-shadow: none !important;
+    }
+    .v-field__input::placeholder { color: var(--rp-muted2); opacity: 1; }
+}
+.v-label { color: var(--rp-muted); opacity: 1; }
+.v-input__details .v-messages { color: var(--rp-muted); opacity: 1; }
+
+// Tables: transparent body, tracked uppercase header, hairline rows.
+.v-table {
+    background: transparent !important;
+    color: var(--rp-ink);
+    --v-table-header-height: 40px;
+
+    > .v-table__wrapper > table {
+        > thead > tr > th {
+            font-size: 10.5px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--rp-muted2) !important;
+            font-weight: 800;
+            border-bottom: 1px solid var(--rp-line) !important;
+            white-space: nowrap;
+            background: transparent;
+        }
+        > tbody > tr > td {
+            border-bottom: 1px solid var(--rp-line) !important;
+            font-size: 13px;
+        }
+        > tbody > tr:last-child > td { border-bottom: 0 !important; }
+        > tbody > tr:hover > td { background: var(--rp-panel2); }
+    }
+}
+.v-data-table-footer { border-top: 1px solid var(--rp-line); color: var(--rp-muted); }
+.v-data-table__th .v-data-table-header__content { gap: 6px; }
+
+// Chips: pills.
+.v-chip {
+    border-radius: 99px !important;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    &.v-chip--size-small, &.v-chip--size-x-small { font-size: 11px; }
+    &.v-chip--variant-tonal .v-chip__underlay { opacity: 0.14; }
+    &.v-chip--variant-outlined { border-color: var(--rp-line2); }
+}
+
+// Tabs
+.v-tabs {
+    .v-tab {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: none;
+        color: var(--rp-muted);
+        &.v-tab--selected { color: var(--rp-ink); }
+    }
+    .v-tab__slider { background: var(--rp-ink); height: 2px; }
+}
+.v-tabs--density-default { --v-tabs-height: 44px; }
+
+// Lists (nav drawers, menus): rounded rows, muted ink, white-soft active state.
+.v-list {
+    background: transparent;
+    color: var(--rp-ink);
+    .v-list-item {
+        border-radius: var(--rp-radius-sm);
+        color: var(--rp-muted);
+        font-weight: 600;
+        .v-list-item-title { font-size: 13.5px; font-weight: 600; }
+        &:hover > .v-list-item__overlay { opacity: 0.06; }
+        &.v-list-item--active {
+            color: var(--rp-ink);
+            background: var(--rp-ink-soft);
+            > .v-list-item__overlay { opacity: 0; }
+        }
+    }
+    .v-list-subheader {
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--rp-muted2);
+        font-weight: 800;
+    }
+}
+
+// Navigation drawer = operator console sidebar.
+.v-navigation-drawer {
+    background: var(--rp-panel) !important;
+    border-right: 1px solid var(--rp-line) !important;
+    color: var(--rp-ink);
+    .v-navigation-drawer__content { padding: 10px 10px; }
+}
+.v-navigation-drawer--right { border-right: 0 !important; border-left: 1px solid var(--rp-line) !important; }
+
+// Alerts, snackbars, banners.
+.v-alert { border-radius: 12px; font-size: 13.5px; }
+.v-alert.v-alert--variant-tonal .v-alert__underlay { opacity: 0.14; }
+.v-snackbar__wrapper {
+    background: var(--rp-raise) !important;
+    color: var(--rp-ink) !important;
+    border: 1px solid var(--rp-line2);
+    border-radius: 12px !important;
+    font-weight: 700;
+    box-shadow: var(--rp-shadow) !important;
+}
+
+// Dividers and borders default to the hairline.
+.v-divider { border-color: var(--rp-line) !important; opacity: 1; }
+
+// Expansion panels
+.v-expansion-panel {
+    background: var(--rp-card) !important;
+    border: 1px solid var(--rp-line);
+    &::after { border-color: var(--rp-line) !important; }
+    .v-expansion-panel-title { font-weight: 700; }
+}
+
+// Progress
+.v-progress-linear { border-radius: 99px; }
+
+// Footer host (content styled in Footer.vue)
+.v-footer { background: transparent !important; color: var(--rp-muted) !important; }
+
+// Vuetify text-emphasis helpers → our greys.
+.text-medium-emphasis { color: var(--rp-muted) !important; opacity: 1 !important; }
+.text-disabled { color: var(--rp-muted2) !important; opacity: 1 !important; }
+.text-high-emphasis { color: var(--rp-ink) !important; opacity: 1 !important; }
+
+// Legacy Material grey utility classes that views still use. Remap onto the
+// surface tokens so they follow light/dark instead of painting a fixed grey.
+.bg-white, .bg-grey-lighten-5, .bg-grey-lighten-4, .bg-grey-lighten-3 {
+    background-color: var(--rp-card) !important;
+    color: var(--rp-ink) !important;
+}
+.bg-grey-lighten-2, .bg-grey-lighten-1 {
+    background-color: var(--rp-raise) !important;
+    color: var(--rp-ink) !important;
+}
+.bg-grey-darken-4, .bg-grey-darken-3, .bg-black {
+    background-color: var(--rp-panel) !important;
+    color: var(--rp-ink) !important;
+}
+.text-grey-darken-1, .text-grey-darken-2, .text-grey-darken-3, .text-grey-darken-4,
+.text-grey-lighten-1, .text-grey { color: var(--rp-muted) !important; }
+.text-grey-lighten-2, .text-grey-lighten-3 { color: var(--rp-ink2) !important; }
+.text-black, .text-white { color: var(--rp-ink) !important; }
+// Inside a photo overlay the text really is white in both modes. Put `rp-on-photo` on
+// the hero/overlay container; descendants inherit white ink, muted copy and outlines.
+.rp-on-photo {
+    color: var(--rp-photo-ink);
+    .text-white, .text-black, .text-high-emphasis, h1, h2, h3 { color: var(--rp-photo-ink) !important; }
+    .text-medium-emphasis, .text-muted, .rp-kicker { color: var(--rp-photo-muted) !important; }
+    .font-display-outline { -webkit-text-stroke-color: var(--rp-photo-ink); }
+    .v-btn.v-btn--variant-outlined { color: var(--rp-photo-ink); border-color: var(--rp-photo-line); }
+    .v-btn.v-btn--variant-outlined:hover { border-color: var(--rp-photo-ink); }
+}
+
+// Material color names still used by a few chips/icons (`color="indigo"`, `color="blue-grey"`,
+// `color="orange"` …). Fold the whole Material wheel onto the design system's handful of
+// semantic hues so no stray chip reintroduces a brand color. Tonal chips derive their tint
+// from currentColor, so remapping the text class is enough for both looks.
+.text-indigo, .text-blue, .text-light-blue, .text-cyan, .text-teal { color: var(--rp-blue) !important; }
+.text-purple, .text-deep-purple { color: var(--rp-purple) !important; }
+.text-orange, .text-deep-orange, .text-amber, .text-yellow, .text-brown { color: var(--rp-amber) !important; }
+.text-pink, .text-red { color: var(--rp-red) !important; }
+.text-green, .text-light-green, .text-lime { color: var(--rp-green) !important; }
+.text-blue-grey, .text-grey { color: var(--rp-muted) !important; }
+.bg-indigo, .bg-blue, .bg-light-blue, .bg-cyan, .bg-teal { background-color: var(--rp-blue-soft) !important; color: var(--rp-blue) !important; }
+.bg-purple, .bg-deep-purple { background-color: var(--rp-purple-soft) !important; color: var(--rp-purple) !important; }
+.bg-orange, .bg-deep-orange, .bg-amber, .bg-yellow, .bg-brown { background-color: var(--rp-amber-soft) !important; color: var(--rp-amber) !important; }
+.bg-pink, .bg-red { background-color: var(--rp-red-soft) !important; color: var(--rp-red) !important; }
+.bg-green, .bg-light-green, .bg-lime { background-color: var(--rp-green-soft) !important; color: var(--rp-green) !important; }
+.bg-blue-grey, .bg-grey { background-color: var(--rp-ink-soft) !important; color: var(--rp-muted) !important; }
+
 // ── Sub-tabs ────────────────────────────────────────────────────────────────
-// The standard style for secondary/nested tab navigation inside a page that
-// already has a main <v-tabs> (or inside a settings panel). A compact pill group
-// in a subtle container, primary-tinted when active, so it reads as a level below
-// the page tabs. Usage:
+// Secondary/nested tab navigation inside a page that already has a main
+// <v-tabs>. A compact segmented control on the panel surface.
 //   <v-tabs v-model="x" :height="40" class="sub-tabs" hide-slider selected-class="sub-tab-active">
 //     <v-tab value="a" class="sub-tab">A</v-tab>
 //   </v-tabs>
 .sub-tabs {
-    background: rgba(var(--v-theme-on-surface), 0.04);
-    border-radius: 4px; // same radius as a button
-    padding: 4px;
+    background: var(--rp-panel);
+    border: 1px solid var(--rp-line);
+    border-radius: var(--rp-radius-sm);
+    padding: 3px;
     display: inline-flex;
     flex: 0 0 auto;
 
@@ -116,22 +620,22 @@ a {
         align-items: center;
     }
     .v-tab {
-        border-radius: 4px;
+        border-radius: 6px;
         height: 32px;
         min-height: 32px;
         min-width: 0;
-        padding: 0 18px;
-        font-size: 13px;
+        padding: 0 14px;
+        font-size: 12px;
+        font-weight: 700;
         letter-spacing: 0.01em;
         text-transform: none;
-        opacity: 0.75;
+        opacity: 1;
+        color: var(--rp-muted);
     }
     .v-tab.sub-tab-active,
     .v-tab--selected {
-        background: rgba(var(--v-theme-primary), 0.14);
-        color: rgb(var(--v-theme-primary));
-        opacity: 1;
-        font-weight: 600;
+        background: var(--rp-raise);
+        color: var(--rp-ink);
     }
 }
 

@@ -1,9 +1,11 @@
 <template>
     <v-container style="max-width: 880px">
-        <h1 class="text-h4 mb-4">Counter Sale</h1>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            For walk-ins without a device. Look up the customer, build their cart, capture waiver and payment.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Counter Sale</div>
+                <div class="rp-pagehead-sub">For walk-ins without a device. Look up the customer, build their cart, capture waiver and payment.</div>
+            </div>
+        </div>
 
         <v-stepper v-model="step" :items="stepperItems" hide-actions>
         <v-stepper-window>
@@ -27,7 +29,7 @@
                              email are both shown because two riders sharing a name is exactly the
                              case this list exists to resolve. -->
                         <v-list v-if="!customer && candidates.length > 1" density="compact" class="mt-2"
-                            style="max-width: 560px; border: 1px solid rgba(128,128,128,0.3); border-radius: 6px">
+                            style="max-width: 560px; border: 1px solid var(--rp-line2); border-radius: 10px">
                             <v-list-item v-for="c in candidates" :key="c.id" @click="pickCandidate(c)">
                                 <v-list-item-title>{{ c.firstName }} {{ c.lastName }}</v-list-item-title>
                                 <v-list-item-subtitle>
@@ -320,7 +322,7 @@
                         </v-alert>
                         <div class="text-subtitle-2 mb-2">Cart</div>
                         <div v-if="cart.length === 0" class="text-medium-emphasis pa-3 text-center"
-                             style="border: 1px dashed rgba(0,0,0,0.12); border-radius: 6px">
+                             style="border: 1px dashed var(--rp-line); border-radius: 6px">
                             Cart is empty.
                         </div>
                         <div v-else class="cart-summary">
@@ -395,7 +397,7 @@
                             <div v-if="customer.waiverSignatureDataUrl" class="mb-2">
                                 <div class="text-caption text-medium-emphasis mb-1">Their signature on file:</div>
                                 <img :src="customer.waiverSignatureDataUrl" alt="Customer signature"
-                                    style="max-width: 100%; border: 1px solid rgba(0,0,0,0.12); border-radius: 6px; background: #fff" />
+                                    style="max-width: 100%; border: 1px solid var(--rp-line); border-radius: 10px; padding: 6px; background: #fff" />
                             </div>
                         </template>
                         <template v-else>
@@ -518,7 +520,7 @@
                         <div v-for="li in lineItems" :key="li.purchaseId" class="mb-4 d-flex align-center ga-3">
                             <QrCode v-if="hasQr(li)" :value="redeemUrl(li.redemptionToken)" :size="120" />
                             <div v-else class="d-flex align-center justify-center"
-                                style="width: 120px; height: 120px; background: rgba(0,0,0,0.05); border-radius: 6px">
+                                style="width: 120px; height: 120px; background: var(--rp-panel2); border-radius: 10px">
                                 <v-icon size="40" color="primary">mdi-card-account-details</v-icon>
                             </div>
                             <div>
@@ -1352,21 +1354,21 @@ function flash(text: string, color: 'success' | 'error') {
 .waiver-body {
     max-height: 280px;
     overflow-y: auto;
-    background: rgba(0, 0, 0, 0.03);
+    background: var(--rp-panel2);
 }
 .catalog-row + .catalog-row {
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    border-top: 1px solid var(--rp-line);
 }
 .catalog-panels :deep(.v-expansion-panel-text__wrapper) {
     padding: 0 16px 12px;
 }
 .cart-summary {
-    background: rgba(0, 0, 0, 0.02);
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    border-radius: 6px;
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
+    border-radius: 10px;
     padding: 8px 12px;
 }
 .cart-line + .cart-line {
-    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    border-top: 1px solid var(--rp-line);
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
     <div>
         <div class="d-flex align-center mb-3 ga-3 flex-wrap">
-            <v-chip v-if="lowCount" color="warning" variant="flat" prepend-icon="mdi-alert">
+            <v-chip v-if="lowCount" color="warning" variant="tonal" prepend-icon="mdi-alert">
                 {{ lowCount }} low on stock
             </v-chip>
             <v-spacer></v-spacer>
@@ -32,7 +32,7 @@
                             <tr v-for="i in items" :key="i.id" :class="{ 'text-medium-emphasis': !i.isActive }">
                                 <td>
                                     {{ i.name }}
-                                    <v-chip v-if="i.isLow" size="x-small" color="warning" variant="flat" class="ml-2"
+                                    <v-chip v-if="i.isLow" size="x-small" color="warning" variant="tonal" class="ml-2"
                                         prepend-icon="mdi-alert">Low</v-chip>
                                 </td>
                                 <td>{{ i.unit }}</td>
@@ -139,7 +139,7 @@
         <!-- Stock take -->
         <v-dialog v-model="stockTakeDialog" fullscreen scrollable>
             <v-card class="d-flex flex-column">
-                <v-toolbar color="primary" density="comfortable">
+                <v-toolbar color="transparent" density="comfortable" class="border-b">
                     <v-toolbar-title>New stock take</v-toolbar-title>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" @click="stockTakeDialog = false"></v-btn>
@@ -162,7 +162,7 @@
                         </v-table>
                     </div>
                 </v-card-text>
-                <div class="pa-4 d-flex justify-end ga-2" style="border-top: 1px solid rgba(128,128,128,0.2);">
+                <div class="pa-4 d-flex justify-end ga-2" style="border-top: 1px solid var(--rp-line);">
                     <v-btn variant="text" @click="stockTakeDialog = false">Cancel</v-btn>
                     <v-btn color="primary" variant="flat" :loading="saving" @click="submitStockTake">Save count</v-btn>
                 </div>

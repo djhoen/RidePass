@@ -1,6 +1,6 @@
 <template>
     <v-container style="max-width: 640px">
-        <h1 class="text-h4 mb-4">Redeem</h1>
+        <h1 class="text-h3 font-display mb-4">Redeem</h1>
 
         <v-progress-circular v-if="loading" indeterminate color="primary"></v-progress-circular>
 
@@ -140,7 +140,7 @@ function statusColor(status: string): string {
         case 'paid': return 'success'
         case 'pending': return 'warning'
         case 'failed': return 'error'
-        case 'refunded': return 'grey'
+        case 'refunded': return ''
         case 'redeemed': return 'primary'
         default: return 'default'
     }

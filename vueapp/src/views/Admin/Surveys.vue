@@ -1,10 +1,13 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Surveys</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New Survey</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Surveys</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New Survey</v-btn>
+            </div>
         </div>
 
         <v-card>

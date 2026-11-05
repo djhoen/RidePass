@@ -304,7 +304,7 @@ async function onImageFileChange(e: Event) {
     gap: 4px;
     padding: 6px 8px;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background: rgb(var(--v-theme-surface-variant), 0.06);
+    background: var(--rp-panel2);
     color: rgb(var(--v-theme-on-surface));
 }
 /* The text-variant buttons inherit color from the theme; on dark backgrounds they
@@ -364,7 +364,7 @@ async function onImageFileChange(e: Event) {
     height: 56px;
     border-radius: 50%;
     background: rgba(220, 38, 38, 0.92);
-    color: #fff;
+    color: var(--rp-photo-ink);
     font-size: 22px;
     line-height: 56px;
     text-align: center;

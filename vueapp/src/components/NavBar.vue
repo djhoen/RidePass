@@ -10,27 +10,38 @@
         <v-app-bar-title>
             <router-link to="/" class="nav-title">
                 <img v-if="navLogoUrl" :src="navLogoUrl" class="nav-logo" :alt="navDisplayName" />
+                <!-- Apex default: the RidePass badge in the bar's foreground color. -->
+                <BrandLogo v-else-if="isApex" :height="30" class="nav-brand-svg" />
                 <span v-else>{{ navDisplayName }}</span>
             </router-link>
         </v-app-bar-title>
 
         <template v-if="!isMobile">
             <!-- Public site links: shown to everyone (including signed-in admins / super admins)
-                 so they can always navigate back to Home / Events. -->
-            <v-btn to="/" variant="text">Home</v-btn>
-            <v-btn to="/Events" variant="text">Events</v-btn>
-            <v-btn v-if="branding.seasonPassesEnabled" to="/SeasonPasses" variant="text">Season Passes</v-btn>
-            <v-btn v-if="branding.membershipEnabled" to="/Membership" variant="text">Membership</v-btn>
-            <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" prepend-icon="mdi-gift">Gift Cards</v-btn>
-            <v-btn v-if="branding.bikeShopEnabled" to="/Shop" variant="text" prepend-icon="mdi-bike">Shop</v-btn>
-            <v-btn v-if="branding.bikeShopEnabled" to="/Rentals" variant="text" prepend-icon="mdi-bike-fast">Rentals</v-btn>
-            <!-- Standalone /Rentals retired — rentals are booked at the Bike Shop counter now. -->
-
-            <v-btn v-if="showOrderFood" to="/Order" variant="text" prepend-icon="mdi-silverware-fork-knife">Order Food</v-btn>
-            <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text">Blog</v-btn>
-            <v-btn v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" variant="text">{{ p.label }}</v-btn>
-            <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
-            <v-btn v-if="isApex" to="/ForTracks" variant="text">For Tracks</v-btn>
+                 so they can always navigate back to Events etc. The logo is the Home link, as
+                 in the landing-page mockup. Tracked-uppercase "nav-link" styling below. -->
+            <div class="nav-links">
+                <template v-if="isApex">
+                    <v-btn to="/Events" variant="text" class="nav-link">Events</v-btn>
+                    <v-btn to="/Discover" variant="text" class="nav-link">Tracks</v-btn>
+                    <!-- "Season passes" (/#passes) returns when platform branding carries real pass
+                         tiers; the landing section is hidden until then (see Home.vue apexPassTiers). -->
+                    <!-- Apex only: operator-acquisition page. Meaningless on a tenant's own site. -->
+                    <v-btn to="/ForTracks" variant="text" class="nav-link">For track owners</v-btn>
+                </template>
+                <template v-else>
+                    <v-btn to="/Events" variant="text" class="nav-link">Events</v-btn>
+                    <v-btn v-if="branding.seasonPassesEnabled" to="/SeasonPasses" variant="text" class="nav-link">Season passes</v-btn>
+                    <v-btn v-if="branding.membershipEnabled" to="/Membership" variant="text" class="nav-link">Membership</v-btn>
+                    <v-btn v-if="branding.giftCardsEnabled" to="/GiftCard" variant="text" class="nav-link">Gift cards</v-btn>
+                    <v-btn v-if="branding.bikeShopEnabled" to="/Shop" variant="text" class="nav-link">Shop</v-btn>
+                    <v-btn v-if="branding.bikeShopEnabled" to="/Rentals" variant="text" class="nav-link">Rentals</v-btn>
+                    <!-- Standalone /Rentals retired — rentals are booked at the Bike Shop counter now. -->
+                    <v-btn v-if="showOrderFood" to="/Order" variant="text" class="nav-link">Order food</v-btn>
+                    <v-btn v-if="branding.blogEnabled" to="/Blog" variant="text" class="nav-link">Blog</v-btn>
+                    <v-btn v-for="p in branding.navPages" :key="p.slug" :to="'/' + p.slug" variant="text" class="nav-link">{{ p.label }}</v-btn>
+                </template>
+            </div>
 
             <v-spacer></v-spacer>
 
@@ -80,7 +91,12 @@
                 </v-menu>
             </template>
             <template v-else>
-                <v-btn to="/Login" variant="text">Login</v-btn>
+                <!-- Mockup: ghost "Sign in" + solid "Get the pass". On a tenant site the solid
+                     CTA points at season passes when the track sells them, else at events. -->
+                <v-btn to="/Login" variant="outlined" class="nav-cta nav-cta-ghost mr-2">Sign in</v-btn>
+                <v-btn v-if="isApex" to="/SignUp" color="primary" variant="flat" class="nav-cta nav-cta-solid">Get the pass</v-btn>
+                <v-btn v-else-if="branding.seasonPassesEnabled" to="/SeasonPasses" color="primary" variant="flat" class="nav-cta nav-cta-solid">Get the pass</v-btn>
+                <v-btn v-else to="/Events" color="primary" variant="flat" class="nav-cta nav-cta-solid">See events</v-btn>
             </template>
         </template>
 
@@ -93,8 +109,26 @@
     </v-app-bar>
 
     <!-- Drawer: SuperAdmin (platform-level pages) when role=super_admin,
-         Tenant Admin otherwise. Also used as the mobile menu container. -->
-    <v-navigation-drawer v-model="drawer" location="right" temporary width="320">
+         Tenant Admin otherwise. Also used as the mobile menu container.
+
+         On admin routes at desktop width it becomes the operator-console sidebar from the
+         design reference: a permanent 236px panel on the left with a brand block, so the
+         console reads as an app rather than a public page with a pop-out menu. Everywhere
+         else (public pages, phones) it stays the temporary right-hand menu. -->
+    <v-navigation-drawer v-model="drawer"
+        :location="adminShell ? 'left' : 'right'"
+        :permanent="adminShell"
+        :temporary="!adminShell"
+        :width="adminShell ? 236 : 320"
+        class="rp-drawer" :class="{ 'rp-drawer--shell': adminShell }">
+        <div v-if="adminShell" class="rp-side-brand">
+            <router-link to="/" class="rp-side-brand-link">
+                <img v-if="navLogoUrl" :src="navLogoUrl" class="rp-side-logo" :alt="navDisplayName" />
+                <BrandLogo v-else-if="isApex || isSuperAdmin" :height="42" class="rp-side-brand-svg" />
+                <span v-else class="font-display rp-side-wordmark">{{ navDisplayName }}</span>
+            </router-link>
+            <div class="rp-side-tag">{{ isSuperAdmin ? 'Platform admin' : 'Track console' }}</div>
+        </div>
         <v-list density="compact" v-model:opened="openedGroups">
             <!-- Super admin drawer: flat list of platform-level pages. No
                  tenant-context links (those are meaningless for super admins). -->
@@ -154,7 +188,7 @@
                     </v-list-group>
                 </template>
                 <template v-else>
-                    <v-list-item to="/Login" title="Login" prepend-icon="mdi-login"></v-list-item>
+                    <v-list-item to="/Login" title="Sign in" prepend-icon="mdi-login"></v-list-item>
                 </template>
             </template>
         </v-list>
@@ -171,6 +205,7 @@ import { platformBranding, platformImageUrl } from '../stores/platformBranding'
 import tenantHelper from '../helpers/TenantHelper'
 import NotificationBell from './NotificationBell.vue'
 import ImpersonationMenu from './ImpersonationMenu.vue'
+import BrandLogo from './BrandLogo.vue'
 import { Perm, type Permission } from '@/helpers/TenantPermissions'
 
 // Every tenant permission, for the staffOnly test below.
@@ -184,6 +219,16 @@ const drawer = ref(false)
 
 const isMobile = computed(() => mobile.value)
 const isAuthenticated = computed(() => authHelper.isAuthenticated())
+
+// Operator-console shell: on /Admin and /SuperAdmin at desktop width the drawer is a
+// permanent left sidebar (see the template comment). Keyed off the PATH so every admin
+// route gets it automatically, matching the full-width policy in App.vue.
+const adminShell = computed(() => !isMobile.value
+    && isAuthenticated.value
+    && (route.path.startsWith('/Admin') || route.path.startsWith('/SuperAdmin')))
+// Open the sidebar when entering the console; fold it away when leaving, so a public page
+// visited afterwards does not inherit an open right-hand menu.
+watch(adminShell, (on) => { drawer.value = on }, { immediate: true })
 
 // Order Food is only offered to a logged-in rider when F&B is enabled AND currently within operating
 // hours. Default closed and only reveal the link once the server confirms ordering is open now (it
@@ -225,11 +270,12 @@ const navBarVars = computed(() => {
     const bg = a?.navBarColor     ?? t?.navBarColor     ?? null
     const fg = a?.navBarTextColor ?? t?.navBarTextColor ?? null
 
-    // Fallbacks when the tenant left the nav color blank: the theme primary for the
-    // background (so a tenant that customized only their primary still gets their color,
-    // not a hardcoded brand orange) and white for text/icons.
-    const bgValue = bg ?? 'rgb(var(--v-theme-primary))'
-    const fgValue = fg ?? '#FFFFFF'
+    // Fallbacks when the nav color is blank: the design-system bar — translucent page
+    // color (blurred over the hero) with ink text, so it follows light/dark. A tenant or
+    // the platform admin can still pin an explicit color pair in Branding; it is honored
+    // as-is.
+    const bgValue = bg ?? 'var(--rp-bar)'
+    const fgValue = fg ?? 'var(--rp-ink)'
     return {
         // Exposed as CSS custom properties so the scoped `<style>` block can
         // paint the bar (root + toolbar background pseudo) and cascade onto
@@ -520,6 +566,12 @@ const logout = () => {
 }
 .nav-bar-themed {
     color: var(--nav-bar-fg) !important;
+    /* Design system bar: fixed, blurred over whatever scrolls under it, hairline
+       bottom edge, no shadow. */
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--rp-line) !important;
+    box-shadow: none !important;
 }
 /* Title link inherits the bar foreground. currentColor cascades to the
    underline and visited states so theming reads consistently. */
@@ -527,19 +579,73 @@ const logout = () => {
 .nav-title:hover,
 .nav-title:focus,
 .nav-title:visited {
-    color: var(--nav-bar-fg, #ffffff);
+    color: var(--nav-bar-fg, var(--rp-ink));
     text-decoration: none;
-    font-weight: bold;
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-size: 26px;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
     display: inline-flex;
     align-items: center;
+    margin-left: 12px;
+}
+.nav-brand-svg {
+    margin-left: 12px;
+    color: var(--nav-bar-fg, var(--rp-ink));
+}
+.rp-side-brand-svg {
+    color: var(--rp-ink);
 }
 .nav-logo {
     margin-left: 12px;          /* breathing room from the bar's left edge */
-    max-height: 40px;
+    max-height: 34px;
     max-width: 160px;
     width: auto;
     object-fit: contain;
     display: block;
+}
+/* Tracked-uppercase text links: muted at rest, ink on hover/active. Must beat the
+   generic foreground pin below (it has higher specificity, so no !important race). */
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 18px;
+}
+.nav-bar-themed :deep(.v-btn.nav-link) {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 0 10px;
+    min-width: 0;
+    color: color-mix(in srgb, var(--nav-bar-fg, var(--rp-ink)) 72%, transparent) !important;
+}
+.nav-bar-themed :deep(.v-btn.nav-link:hover),
+.nav-bar-themed :deep(.v-btn.nav-link.v-btn--active) {
+    color: var(--nav-bar-fg, var(--rp-ink)) !important;
+}
+.nav-bar-themed :deep(.v-btn.nav-link .v-btn__overlay) {
+    opacity: 0 !important;
+}
+/* CTA pair on the right. The solid one is white-on-black regardless of the bar's
+   foreground pin (which would otherwise paint its label white-on-white). */
+.nav-bar-themed :deep(.v-btn.nav-cta) {
+    height: 38px;
+    padding: 0 18px;
+    font-size: 12.5px;
+}
+.nav-bar-themed :deep(.v-btn.nav-cta-ghost) {
+    border-color: color-mix(in srgb, var(--nav-bar-fg, var(--rp-ink)) 35%, transparent);
+}
+.nav-bar-themed :deep(.v-btn.nav-cta-ghost:hover) {
+    border-color: var(--nav-bar-fg, var(--rp-ink));
+}
+.nav-bar-themed :deep(.v-btn.nav-cta-solid),
+.nav-bar-themed :deep(.v-btn.nav-cta-solid .v-btn__content) {
+    color: rgb(var(--v-theme-on-primary)) !important;
+    margin-right: 12px;
 }
 /* v-app-bar-title clips its content for text ellipsis, which cropped wide logos.
    Let the title slot show the full image, and flex-center it vertically so a
@@ -559,7 +665,7 @@ const logout = () => {
 .nav-bar-themed :deep(.v-btn__content),
 .nav-bar-themed :deep(.v-app-bar-title),
 .nav-bar-themed :deep(.v-icon) {
-    color: var(--nav-bar-fg, #ffffff) !important;
+    color: var(--nav-bar-fg, var(--rp-ink)) !important;
 }
 
 /* Exception: the red Impersonating pill keeps its own error-contrast text/icon
@@ -575,5 +681,52 @@ const logout = () => {
    group rather than way over to the right (Vuetify's default is ~36px). */
 :deep(.v-list-group__items > .v-list-item) {
     padding-inline-start: 40px !important;
+}
+
+/* Operator-console sidebar (admin routes, desktop). Brand block on top, then the nav. */
+.rp-side-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px 10px 16px;
+    border-bottom: 1px solid var(--rp-line);
+    margin-bottom: 6px;
+}
+.rp-side-brand-link {
+    display: block;
+    color: var(--rp-ink);
+}
+.rp-side-logo {
+    width: 100%;
+    max-width: 180px;
+    max-height: 44px;
+    height: auto;
+    object-fit: contain;
+    display: block;
+}
+.rp-side-wordmark {
+    font-size: 26px;
+    color: var(--rp-ink);
+}
+.rp-side-tag {
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--rp-muted2);
+    font-weight: 800;
+    text-transform: uppercase;
+    padding-left: 3px;
+}
+.rp-drawer--shell :deep(.v-list-item) {
+    min-height: 38px;
+}
+.rp-drawer--shell :deep(.v-list-item__prepend > .v-icon) {
+    font-size: 18px;
+    opacity: 0.9;
+    margin-inline-end: 11px;
+}
+.rp-drawer--shell :deep(.v-list-group__items > .v-list-item) {
+    padding-inline-start: 36px !important;
+    min-height: 34px;
 }
 </style>

@@ -1,19 +1,21 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h1 class="text-h4">Instructors</h1>
-            <v-spacer></v-spacer>
-            <v-switch v-model="showInactive" color="primary" density="compact" hide-details
-                label="Show inactive" style="flex: 0 0 auto"></v-switch>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Instructor</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Instructors</div>
+                <div class="rp-pagehead-sub">
+                    Coaches you can assign to lesson events. When you assign an instructor to a lesson, they can’t be
+                    booked on another lesson that overlaps the same time. Assign them on each lesson from
+                    <router-link to="/Admin/Events">Manage Events</router-link> → the lesson’s Entry &amp; Add-ons tab.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-switch v-model="showInactive" color="primary" density="compact" hide-details
+                    label="Show inactive" style="flex: 0 0 auto"></v-switch>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Instructor</v-btn>
+            </div>
         </div>
-
-        <p class="text-caption text-medium-emphasis mb-4">
-            Coaches you can assign to lesson events. When you assign an instructor to a lesson, they can’t be
-            booked on another lesson that overlaps the same time. Assign them on each lesson from
-            <router-link to="/Admin/Events">Manage Events</router-link> → the lesson’s Entry &amp; Add-ons tab.
-        </p>
 
         <v-card>
             <v-table>
@@ -34,7 +36,7 @@
                     </tr>
                     <tr v-for="i in visibleRows" :key="i.id">
                         <td>
-                            <v-avatar size="40" color="grey-lighten-2">
+                            <v-avatar size="40" style="background: var(--rp-raise)">
                                 <v-img v-if="i.imageUrl" :src="absoluteUrl(i.imageUrl)" :alt="i.name"></v-img>
                                 <span v-else class="text-caption">{{ initials(i.name) }}</span>
                             </v-avatar>

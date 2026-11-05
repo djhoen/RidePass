@@ -1,6 +1,11 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Analytics</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Analytics</div>
+                <div class="rp-pagehead-sub">Platform revenue, tenants, passes and tickets for the selected range.</div>
+            </div>
+        </div>
 
         <div class="d-flex align-center mb-4 flex-wrap ga-3">
             <v-select v-model="analyticsPreset" :items="analyticsPresetOptions" label="Range" density="compact"
@@ -20,29 +25,29 @@
 
         <v-row v-if="analytics" class="mb-4">
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Platform Revenue</div>
-                    <div class="text-h4">${{ (analytics.totalRevenueCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Platform Revenue</div>
+                    <div class="rp-kpi-value">${{ (analytics.totalRevenueCents / 100).toFixed(2) }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Tenants</div>
-                    <div class="text-h4">{{ analytics.activeTenants }} / {{ analytics.totalTenants }}</div>
-                    <div class="text-caption text-medium-emphasis">active / total</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Tenants</div>
+                    <div class="rp-kpi-value">{{ analytics.activeTenants }} / {{ analytics.totalTenants }}</div>
+                    <div class="text-caption text-muted mt-1">active / total</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Passes / Tickets</div>
-                    <div class="text-h4">{{ analytics.passesSold }} / {{ analytics.ticketsSold }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Passes / Tickets</div>
+                    <div class="rp-kpi-value">{{ analytics.passesSold }} / {{ analytics.ticketsSold }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Refunds / Disputes</div>
-                    <div class="text-h4">{{ analytics.refundedCount }} / {{ analytics.disputedCount }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Refunds / Disputes</div>
+                    <div class="rp-kpi-value">{{ analytics.refundedCount }} / {{ analytics.disputedCount }}</div>
+                </v-card>
             </v-col>
         </v-row>
 
@@ -105,7 +110,8 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { Line, Bar } from 'vue-chartjs'
 import { ReportsService, type PlatformAnalyticsSummary, type TenantBreakdownRow } from '@/services/ReportsService'
-import { registerChartJs } from '@/helpers/ChartSetup'
+import { registerChartJs, chartInk as rpInk, chartMuted as rpMuted, chartMuted2 as rpMuted2, chartGrid as rpGrid } from '@/helpers/ChartSetup'
+import { withAlpha } from '@/helpers/profitCenterColor'
 
 registerChartJs()
 
@@ -206,8 +212,8 @@ const platformRevenueChart = computed(() => {
             {
                 label: 'Revenue ($)',
                 data: points.map(p => p.revenueCents / 100),
-                borderColor: '#1976D2',
-                backgroundColor: 'rgba(25, 118, 210, 0.15)',
+                borderColor: rpInk(),
+                backgroundColor: withAlpha(rpInk(), 0.08),
                 fill: true,
                 tension: 0.3,
                 yAxisID: 'y',
@@ -215,7 +221,7 @@ const platformRevenueChart = computed(() => {
             {
                 label: 'Passes',
                 data: points.map(p => p.passesSold),
-                borderColor: '#43A047',
+                borderColor: rpMuted(),
                 backgroundColor: 'transparent',
                 tension: 0.3,
                 yAxisID: 'y1',
@@ -223,7 +229,7 @@ const platformRevenueChart = computed(() => {
             {
                 label: 'Tickets',
                 data: points.map(p => p.ticketsSold),
-                borderColor: '#FB8C00',
+                borderColor: rpMuted2(),
                 backgroundColor: 'transparent',
                 tension: 0.3,
                 yAxisID: 'y1',
@@ -232,15 +238,25 @@ const platformRevenueChart = computed(() => {
     }
 })
 
-const revenueChartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index' as const, intersect: false },
-    scales: {
-        y: { beginAtZero: true, position: 'left' as const, title: { display: true, text: 'Revenue ($)' } },
-        y1: { beginAtZero: true, position: 'right' as const, title: { display: true, text: 'Count' }, grid: { drawOnChartArea: false } },
-    },
-}
+// Chart chrome from the design tokens (follows light/dark): muted ticks, hairline grid. The token
+// getters read the live --rp-* values, so they are called inside each computed rather than once at
+// module load (the mode is applied after this module is evaluated). Tooltip styling comes from the
+// Chart.js global defaults set in helpers/ChartSetup.
+const revenueChartOptions = computed(() => {
+    const ink = rpMuted()
+    const grid = rpGrid()
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index' as const, intersect: false },
+        plugins: { legend: { labels: { color: ink } } },
+        scales: {
+            x: { grid: { color: grid }, ticks: { color: ink } },
+            y: { beginAtZero: true, position: 'left' as const, title: { display: true, text: 'Revenue ($)', color: ink }, grid: { color: grid }, ticks: { color: ink } },
+            y1: { beginAtZero: true, position: 'right' as const, title: { display: true, text: 'Count', color: ink }, grid: { drawOnChartArea: false }, ticks: { color: ink } },
+        },
+    }
+})
 
 const tenantChart = computed(() => {
     if (!analytics.value) return { labels: [], datasets: [] }
@@ -252,18 +268,25 @@ const tenantChart = computed(() => {
         datasets: [{
             label: 'Revenue ($)',
             data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#1976D2',
+            backgroundColor: rpInk(),
         }],
     }
 })
 
-const horizontalBarOptions = {
-    indexAxis: 'y' as const,
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: { x: { beginAtZero: true } },
-}
+const horizontalBarOptions = computed(() => {
+    const ink = rpMuted()
+    const grid = rpGrid()
+    return {
+        indexAxis: 'y' as const,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { beginAtZero: true, grid: { color: grid }, ticks: { color: ink } },
+            y: { grid: { color: grid }, ticks: { color: ink } },
+        },
+    }
+})
 
 function flash(text: string, color: 'success' | 'error') {
     snackbarText.value = text

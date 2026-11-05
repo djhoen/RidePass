@@ -1,15 +1,18 @@
 <template>
     <v-container>
-        <div class="d-flex align-center flex-wrap ga-3 mb-2">
-            <h1 class="text-h4">Tenant provisioning</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="tonal" prepend-icon="mdi-content-copy" @click="copyChecklist">Copy as checklist</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Tenant provisioning</div>
+                <div class="rp-pagehead-sub">
+                    Every step it takes to stand up a track, including the ones we still do by hand. The list lives in
+                    <code>vueapp/src/data/tenantProvisioning.mjs</code>; edit it there and run
+                    <code>npm run provisioning:doc</code> so <code>docs/tenant-provisioning.md</code> matches this page.
+                </div>
+            </div>
+            <div>
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyChecklist">Copy as checklist</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Every step it takes to stand up a track, including the ones we still do by hand. The list lives in
-            <code>vueapp/src/data/tenantProvisioning.mjs</code>; edit it there and run
-            <code>npm run provisioning:doc</code> so <code>docs/tenant-provisioning.md</code> matches this page.
-        </p>
 
         <!-- The automation backlog, up front: manual steps are the ones that cost us time per tenant. -->
         <v-alert type="warning" variant="tonal" density="comfortable" class="mb-4">

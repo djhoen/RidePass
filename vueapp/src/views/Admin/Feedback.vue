@@ -1,15 +1,18 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h1 class="text-h4">Feedback</h1>
-            <v-spacer></v-spacer>
-            <v-btn-toggle v-model="statusFilter" color="primary" density="compact" mandatory variant="outlined">
-                <v-btn value="new">New</v-btn>
-                <v-btn value="addressed">Addressed</v-btn>
-                <v-btn value="dismissed">Dismissed</v-btn>
-                <v-btn :value="null">All</v-btn>
-            </v-btn-toggle>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Feedback</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn-toggle v-model="statusFilter" color="primary" density="compact" mandatory variant="outlined">
+                    <v-btn value="new">New</v-btn>
+                    <v-btn value="addressed">Addressed</v-btn>
+                    <v-btn value="dismissed">Dismissed</v-btn>
+                    <v-btn :value="null">All</v-btn>
+                </v-btn-toggle>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <v-card>

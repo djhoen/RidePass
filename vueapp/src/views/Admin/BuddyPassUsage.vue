@@ -1,25 +1,24 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <h1 class="text-h5">Buddy Pass Usage</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Buddy Pass Usage</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
 
         <div class="d-flex ga-3 mb-4 flex-wrap">
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ initialLoading ? '-' : liveCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Buddies admitted</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Buddies admitted</div>
+                <div class="rp-kpi-value">{{ initialLoading ? '-' : liveCount }}</div>
             </v-card>
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ initialLoading ? '-' : returnedCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Credits returned</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Credits returned</div>
+                <div class="rp-kpi-value">{{ initialLoading ? '-' : returnedCount }}</div>
             </v-card>
         </div>
 

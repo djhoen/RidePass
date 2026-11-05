@@ -13,7 +13,11 @@
                 :loading="saving" @click="save('draft')">Unpublish</v-btn>
         </div>
 
-        <h1 class="text-h4 mb-6">{{ isNew ? 'New page' : 'Edit page' }}</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">{{ isNew ? 'New page' : 'Edit page' }}</div>
+            </div>
+        </div>
 
         <v-card class="mb-6">
             <v-card-text>
@@ -45,7 +49,7 @@
                     <v-img v-if="form.heroImageUrl" :src="absoluteUrl(form.heroImageUrl)" width="220" aspect-ratio="16/9"
                         cover class="rounded border"></v-img>
                     <div v-else class="hero-image-placeholder rounded d-flex align-center justify-center">
-                        <v-icon color="grey" size="40">mdi-image-outline</v-icon>
+                        <v-icon size="40" class="text-muted2">mdi-image-outline</v-icon>
                     </div>
                     <div class="d-flex flex-column ga-2">
                         <v-btn variant="tonal" prepend-icon="mdi-upload" :loading="uploadingHero"
@@ -277,7 +281,7 @@ onMounted(loadForEdit)
 .hero-image-placeholder {
     width: 220px;
     aspect-ratio: 16 / 9;
-    background: rgba(0, 0, 0, 0.04);
-    border: 1px dashed rgba(0, 0, 0, 0.2);
+    background: var(--rp-panel2);
+    border: 1px dashed var(--rp-line2);
 }
 </style>

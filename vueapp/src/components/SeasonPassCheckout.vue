@@ -38,7 +38,7 @@
                     <span class="text-h6 font-weight-bold">{{ priceLabel(estTotalCents) }}</span>
                 </div>
                 <p class="text-caption text-medium-emphasis mb-3">Final total is shown before you pay.</p>
-                <v-btn block color="primary" size="large" @click="step = 'details'">Continue</v-btn>
+                <v-btn block color="primary" variant="flat" size="large" @click="step = 'details'">Continue</v-btn>
             </template>
             <p v-else class="text-body-2 text-medium-emphasis text-center py-2">
                 Add a pass above to get started.
@@ -131,7 +131,7 @@
             <template v-else>
                 <div :id="paymentElementId" class="mb-4"></div>
                 <div v-if="paymentError" class="text-error text-body-2 mb-2">{{ paymentError }}</div>
-                <v-btn block color="primary" size="large" :loading="paying" :disabled="!stripeReady" @click="pay">
+                <v-btn block color="primary" variant="flat" size="large" :loading="paying" :disabled="!stripeReady" @click="pay">
                     Pay {{ priceLabel(chargeCents) }}
                 </v-btn>
             </template>
@@ -186,7 +186,7 @@
             </div>
 
             <div v-if="errorMessage" class="text-error text-body-2 mb-2">{{ errorMessage }}</div>
-            <v-btn block color="primary" size="large" :loading="finishing" @click="finish">
+            <v-btn block color="primary" variant="flat" size="large" :loading="finishing" @click="finish">
                 Finish registration
             </v-btn>
         </template>
@@ -572,8 +572,8 @@ function flash(text: string, color: 'success' | 'error') {
 .sp-reg {
     /* Surface (white on light themes) with a hairline border so these nested panels stay
        distinct against the light-gray selection card that now wraps the checkout. */
-    background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
-    border-radius: 8px;
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
+    border-radius: 12px;
 }
 </style>

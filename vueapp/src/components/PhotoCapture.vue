@@ -71,7 +71,7 @@ function fileToScaledDataUrl(file: File, max: number): Promise<string> {
     max-width: 240px;
     max-height: 240px;
     border-radius: 8px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--rp-line2);
     object-fit: cover;
 }
 </style>

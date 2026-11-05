@@ -3,7 +3,7 @@
         <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" to="/User/MyPasses" class="mb-2">
             My Passes
         </v-btn>
-        <h1 class="text-h4 mb-6">Upgrade your pass</h1>
+        <h1 class="text-h3 font-display mb-6">Upgrade your pass</h1>
 
         <v-progress-circular v-if="loading" indeterminate color="primary" />
 
@@ -54,7 +54,7 @@
                                 {{ o.priceCents <= 0 ? 'Free' : `$${(o.priceCents / 100).toFixed(2)}` }}
                             </div>
                             <v-spacer />
-                            <v-btn color="primary" block :disabled="!!selected" :loading="creating === o.pathId"
+                            <v-btn color="primary" variant="flat" block :disabled="!!selected" :loading="creating === o.pathId"
                                 @click="start(o)">
                                 {{ o.priceCents <= 0 ? 'Upgrade' : 'Upgrade for $' + (o.priceCents / 100).toFixed(2) }}
                             </v-btn>

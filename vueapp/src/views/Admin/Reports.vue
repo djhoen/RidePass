@@ -1,6 +1,10 @@
 <template>
     <v-container fluid>
-        <h1 class="text-h4 mb-4">Reporting</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Reporting</div>
+            </div>
+        </div>
         <v-row>
             <!-- Left: report selector. Stays visible at all breakpoints; on small
                  screens the right column wraps below it. -->

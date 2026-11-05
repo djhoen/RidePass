@@ -4,12 +4,16 @@
              while the form content scrolls underneath so the Save action is
              always one click away. -->
         <div class="homepage-sticky-header">
-            <div class="d-flex align-center ga-3 pt-2">
-                <h1 class="text-h4">Home page</h1>
-                <v-spacer></v-spacer>
-                <v-btn v-if="branding" color="primary" size="large" :loading="saving" @click="save">
-                    Save changes
-                </v-btn>
+            <div class="rp-pagehead mb-0 pt-2">
+                <div>
+                    <div class="rp-pagehead-title">Home page</div>
+                    <div class="rp-pagehead-sub">Hero, stats badge, section titles, testimonials and nav bar on ridepass.io.</div>
+                </div>
+                <div>
+                    <v-btn v-if="branding" color="primary" variant="flat" size="large" :loading="saving" @click="save">
+                        Save changes
+                    </v-btn>
+                </div>
             </div>
 
             <v-alert v-if="loadError" type="error" variant="tonal" class="mt-3">{{ loadError }}</v-alert>
@@ -214,19 +218,19 @@
 
                             <p class="text-caption text-medium-emphasis mb-4">
                                 Set the background and text/icon color for the top app bar. Leave a
-                                field blank to use the theme primary (background) or white (text).
+                                field blank for the default bar: a translucent page-colored background with ink text that follows light/dark.
                             </p>
                             <div style="max-width: 360px">
                                 <v-text-field v-model="form.navBarColor" label="Background color"
-                                    placeholder="#1A1F2B" persistent-hint
-                                    hint="Hex like #1A1F2B. Leave blank to use the theme primary."
+                                    placeholder="#0a0a0a" persistent-hint
+                                    hint="Hex like #0a0a0a. Leave blank for the default bar: translucent page color."
                                     density="compact"></v-text-field>
                                 <v-color-picker v-model="form.navBarColor"
                                     class="mt-2" mode="hex" hide-inputs hide-canvas-actions
                                     show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
                                 <v-text-field v-model="form.navBarTextColor" label="Text + icon color"
                                     placeholder="#FFFFFF" persistent-hint
-                                    hint="Hex like #FFFFFF. Leave blank for white."
+                                    hint="Hex like #FFFFFF. Leave blank for the default text color (follows light/dark)."
                                     density="compact" class="mt-4"></v-text-field>
                                 <v-color-picker v-model="form.navBarTextColor"
                                     class="mt-2" mode="hex" hide-inputs hide-canvas-actions
@@ -253,7 +257,7 @@
                     <v-text-field v-model="testimonialDraft.riderName" label="Rider name" density="compact"></v-text-field>
                     <v-textarea v-model="testimonialDraft.quote" label="Quote" rows="3" auto-grow
                         density="compact" class="mt-4"></v-textarea>
-                    <v-rating v-model="testimonialDraft.rating" length="5" color="amber" active-color="amber"></v-rating>
+                    <v-rating v-model="testimonialDraft.rating" length="5" color="primary"></v-rating>
                     <v-switch v-model="testimonialDraft.isActive" label="Active (shown on landing page)"
                         density="compact" hide-details color="primary" inset></v-switch>
 
@@ -691,44 +695,46 @@ function brandingToForm(b: PlatformBranding): SavePlatformBranding {
    one block while the form scrolls underneath. The top offset uses
    Vuetify's layout variable so the header sits flush against whatever
    v-app-bar height is in play (default 64px). Solid background prevents
-   form content bleeding through; box-shadow gives a soft divider when
+   form content bleeding through; a hairline gives a soft divider when
    content scrolls behind it. */
 .homepage-sticky-header {
     position: sticky;
     top: var(--v-layout-top, 0px);
     z-index: 5;
-    background: rgb(var(--v-theme-background));
+    background: var(--rp-bg);
     padding-top: 12px;
     padding-bottom: 12px;
     margin-top: -12px;
-    box-shadow: 0 6px 8px -8px rgba(0, 0, 0, 0.15);
+    border-bottom: 1px solid var(--rp-line);
 }
 
+/* Image previews sit on the nested-card surface so a dark hero or a
+   transparent logo reads the way it will on the live page. */
 .hero-preview {
     width: 240px;
     height: 120px;
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.04);
+    border-radius: 12px;
+    background-color: var(--rp-card2);
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line2);
 }
 .benefits-preview {
     width: 180px;
     height: 120px;
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.04);
+    border-radius: 12px;
+    background-color: var(--rp-card2);
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line2);
 }
 /* Dark backing mimics the nav bar so a white / transparent logo reads true. */
 .logo-preview {
     width: 200px;
     height: 56px;
-    border-radius: 6px;
-    background-color: #2a2f3a;
-    border: 1px dashed rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    background-color: var(--rp-card2);
+    border: 1px dashed var(--rp-line2);
     display: flex;
     align-items: center;
     justify-content: center;

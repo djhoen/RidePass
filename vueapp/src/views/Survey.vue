@@ -9,7 +9,7 @@
 
         <v-card v-if="submitted" class="text-center pa-8">
             <v-icon size="64" color="success">mdi-check-circle</v-icon>
-            <h2 class="text-h5 mt-3">Thanks for your response!</h2>
+            <h2 class="text-h4 font-display mt-3">Thanks for your response!</h2>
             <p class="text-medium-emphasis mt-1">Your answers have been recorded.</p>
         </v-card>
 

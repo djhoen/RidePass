@@ -91,9 +91,10 @@ namespace UnitTests
     [TestFixture]
     public class AutomationMergeFieldTests
     {
-        private static AutomationPassSubject Subject() => new()
+        private static AutomationSubject Subject() => new()
         {
-            PurchaseId = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            SubjectKind = AutomationTriggers.SubjectKindFor(AutomationTriggers.SeasonPassPurchased),
+            SubjectId = Guid.Parse("11111111-2222-3333-4444-555555555555"),
             TenantId = Guid.NewGuid(),
             Email = "rider@example.com",
             HolderName = "Alex Rivera",
@@ -108,7 +109,7 @@ namespace UnitTests
         [Test]
         public void SubstitutesKnownTokens()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://motoland.ridepass.io");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://motoland.ridepass.io", null);
             var html = AutomationMergeFields.Render(
                 "<p>Hi {{first_name}}, your {{pass_name}} can move up to {{upgrade_name}} for {{upgrade_price}}.</p>",
                 v, htmlEncode: true);
@@ -119,7 +120,7 @@ namespace UnitTests
         [Test]
         public void UpgradeLinkPointsAtThisRidersPass()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://motoland.ridepass.io/");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://motoland.ridepass.io/", null);
             Assert.That(AutomationMergeFields.Render("{{upgrade_link}}", v, htmlEncode: true),
                 Is.EqualTo("https://motoland.ridepass.io/User/PassUpgrade/11111111-2222-3333-4444-555555555555"),
                 "a trailing slash on the base URL must not double up");
@@ -129,7 +130,7 @@ namespace UnitTests
         [Test]
         public void UnknownTokenRendersEmpty_NotLiteral()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("Hi {{frist_name}}!", v, htmlEncode: true), Is.EqualTo("Hi !"));
         }
 
@@ -139,7 +140,7 @@ namespace UnitTests
             var s = Subject();
             s.UpgradePriceCents = null;
             s.UpgradeProductName = null;
-            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test", null);
             Assert.Multiple(() =>
             {
                 Assert.That(AutomationMergeFields.Render("{{upgrade_price}}", v, htmlEncode: true), Is.Empty,
@@ -151,7 +152,7 @@ namespace UnitTests
         [Test]
         public void UnlimitedPass_HasNoCreditCount()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("{{credits_remaining}}", v, htmlEncode: true), Is.Empty);
         }
 
@@ -160,7 +161,7 @@ namespace UnitTests
         {
             var s = Subject();
             s.CreditsRemaining = 3;
-            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("{{credits_remaining}} rides left", v, htmlEncode: true),
                 Is.EqualTo("3 rides left"));
         }
@@ -171,7 +172,7 @@ namespace UnitTests
         {
             var s = Subject();
             s.HolderName = "Bob & Sue <VIP>";
-            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test", null);
             Assert.Multiple(() =>
             {
                 Assert.That(AutomationMergeFields.Render("{{holder_name}}", v, htmlEncode: true),
@@ -186,14 +187,14 @@ namespace UnitTests
         {
             var s = Subject();
             s.HolderName = null;
-            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(s, "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("Hi {{first_name}},", v, htmlEncode: true), Is.EqualTo("Hi there,"));
         }
 
         [Test]
         public void UnclosedTokenIsLeftAlone_RatherThanEatingTheRestOfTheEmail()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("Hi {{first_name, see you soon", v, htmlEncode: true),
                 Is.EqualTo("Hi {{first_name, see you soon"));
         }
@@ -201,14 +202,14 @@ namespace UnitTests
         [Test]
         public void WhitespaceInsideBracesIsTolerated()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("{{ first_name }}", v, htmlEncode: true), Is.EqualTo("Alex"));
         }
 
         [Test]
         public void TemplateWithNoTokensIsUnchanged()
         {
-            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test");
+            var v = AutomationMergeFields.For(Subject(), "Moto Land", "https://x.test", null);
             Assert.That(AutomationMergeFields.Render("Come ride with us!", v, htmlEncode: true),
                 Is.EqualTo("Come ride with us!"));
         }

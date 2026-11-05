@@ -1,9 +1,11 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">SMS</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Provision a toll-free phone number so your customers can receive text messages from your track.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">SMS</div>
+                <div class="rp-pagehead-sub">Provision a toll-free phone number so your customers can receive text messages from your track.</div>
+            </div>
+        </div>
 
         <v-card v-if="status === null && !loadError" class="pa-6 text-center">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>

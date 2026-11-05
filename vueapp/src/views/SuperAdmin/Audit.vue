@@ -1,6 +1,11 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Audit log</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Audit log</div>
+                <div class="rp-pagehead-sub">Who did what across the platform, newest first.</div>
+            </div>
+        </div>
 
         <div class="d-flex align-center mb-3 ga-2">
             <v-text-field v-model="auditFilterAction" label="Action filter" placeholder="e.g. payout.create"

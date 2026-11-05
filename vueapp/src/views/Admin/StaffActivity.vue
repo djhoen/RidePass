@@ -1,10 +1,14 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-1">Staff Activity</h1>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Money movements and data exports recorded as they happen: refunds, voided sales, store
-            credit adjustments, and rider exports. Times are shown in this track's timezone.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Staff Activity</div>
+                <div class="rp-pagehead-sub">
+                    Money movements and data exports recorded as they happen: refunds, voided sales, store
+                    credit adjustments, and rider exports. Times are shown in this track's timezone.
+                </div>
+            </div>
+        </div>
 
         <!-- Everyone can see their own; only audit.view sees the whole track. -->
         <div v-if="canSeeAll" class="sub-tabs mb-4">
@@ -237,9 +241,8 @@ onMounted(async () => {
     transition: background-color 0.15s, color 0.15s;
 }
 .sub-tab.active {
-    background: rgb(var(--v-theme-surface));
-    color: rgb(var(--v-theme-primary));
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    background: var(--rp-raise);
+    color: var(--rp-ink);
 }
 .detail-json {
     margin: 0;

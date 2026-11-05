@@ -35,8 +35,8 @@ const style = computed(() => ({
     display: flex;
     align-items: center;
     padding: 0 16px;
-    border-radius: 6px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 9px;
+    border: 1px solid var(--rp-line2);
 }
 .navbar-preview-title {
     font-weight: 600;

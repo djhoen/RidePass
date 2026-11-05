@@ -1,12 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Inventory</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="tonal" prepend-icon="mdi-cog" to="/Admin/BikeShop/Settings">Shop settings</v-btn>
-            <v-btn color="primary" variant="tonal" prepend-icon="mdi-cash-register" to="/Admin/BikeShop/Register">
-                Open register
-            </v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Inventory</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="tonal" prepend-icon="mdi-cog" to="/Admin/BikeShop/Settings">Shop settings</v-btn>
+                <v-btn color="primary" variant="tonal" prepend-icon="mdi-cash-register" to="/Admin/BikeShop/Register">
+                    Open register
+                </v-btn>
+            </div>
         </div>
 
         <v-alert v-if="!branding.bikeShopEnabled" type="info" variant="tonal" class="mb-4">
@@ -132,9 +135,9 @@
                                 </td>
                                 <td>
                                     <div class="d-flex align-center ga-3">
-                                        <v-avatar size="36" rounded="lg" color="grey-lighten-3">
+                                        <v-avatar size="36" rounded="lg" style="background: var(--rp-raise)">
                                             <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)" cover></v-img>
-                                            <v-icon v-else size="20" color="grey">mdi-image-outline</v-icon>
+                                            <v-icon v-else size="20" class="text-muted2">mdi-image-outline</v-icon>
                                         </v-avatar>
                                         <div>
                                             <div class="d-flex align-center ga-2">

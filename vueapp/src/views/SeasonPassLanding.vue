@@ -6,7 +6,7 @@
 
         <v-container v-else-if="notFound" class="py-10 text-center">
             <v-icon icon="mdi-ticket-percent" size="44" class="text-medium-emphasis mb-3"></v-icon>
-            <h1 class="text-h5 font-weight-bold mb-2">This pass isn't available</h1>
+            <h1 class="text-h4 font-display mb-2">This pass isn't available</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 It may have been unpublished or the link may be out of date.
             </p>
@@ -29,7 +29,7 @@
 
             <!-- ── HERO (hosted only; the embed gets a slim header) ──────────── -->
             <section v-if="!isEmbed" class="spl-hero" :style="heroStyle">
-                <div class="spl-hero-overlay">
+                <div class="spl-hero-overlay rp-on-photo">
                     <v-container class="spl-hero-inner">
                         <router-link to="/SeasonPasses" class="spl-back">
                             <v-icon icon="mdi-arrow-left" size="18"></v-icon>
@@ -40,7 +40,7 @@
                             <p class="spl-hero-sub text-white">
                                 {{ accessLabel }} · ${{ (landing.priceCents / 100).toFixed(2) }}
                             </p>
-                            <v-btn color="primary" size="large" class="mt-4" @click="scrollToBuy">
+                            <v-btn color="primary" variant="flat" size="large" class="mt-4" @click="scrollToBuy">
                                 Buy {{ landing.name }}
                             </v-btn>
                         </div>
@@ -252,8 +252,7 @@ onMounted(async () => {
 <style scoped>
 .spl-page {
     background:
-        linear-gradient(rgba(var(--v-theme-on-surface), 0.04), rgba(var(--v-theme-on-surface), 0.04)),
-        rgb(var(--v-theme-background));
+        var(--rp-bg);
     min-height: 100vh;
 }
 
@@ -261,12 +260,12 @@ onMounted(async () => {
 .spl-hero {
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-panel);
 }
 .spl-hero-overlay {
     background:
-        linear-gradient(0deg, rgba(10, 13, 20, 0.9) 0%, rgba(10, 13, 20, 0.25) 55%, rgba(10, 13, 20, 0.45) 100%),
-        linear-gradient(90deg, rgba(16, 20, 28, 0.85) 0%, rgba(16, 20, 28, 0.5) 60%, rgba(16, 20, 28, 0.2) 100%);
+        linear-gradient(180deg, transparent 50%, var(--rp-bg) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
     min-height: 280px;
     display: flex;
 }
@@ -282,9 +281,9 @@ onMounted(async () => {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    color: #fff;
-    background: rgba(255, 255, 255, 0.16);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: var(--rp-photo-ink);
+    background: rgba(var(--rp-scrim), 0.72);
+    border: 1px solid var(--rp-photo-line);
     border-radius: 999px;
     padding: 6px 14px 6px 10px;
     font-size: 0.85rem;
@@ -292,12 +291,10 @@ onMounted(async () => {
     text-decoration: none;
     backdrop-filter: blur(4px);
 }
-.spl-back:hover { background: rgba(255, 255, 255, 0.3); }
+.spl-back:hover { background: rgba(var(--rp-scrim), 0.9); }
 .spl-hero-bottom { margin-top: 1.25rem; }
 .spl-title {
-    font-size: clamp(2rem, 5vw, 3.25rem);
-    line-height: 1.05;
-    font-weight: 700;
+    font-size: clamp(2.75rem, 7vw, 5.25rem);
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
 }
 .spl-hero-sub {
@@ -337,16 +334,19 @@ onMounted(async () => {
 .spl-infobox {
     display: flex;
     gap: 0.75rem;
-    background: rgba(232, 130, 12, 0.12);
-    border: 1px solid rgba(232, 130, 12, 0.35);
+    background: var(--rp-blue-soft);
+    border: 1px solid rgba(90, 168, 255, 0.35);
     border-radius: 10px;
     padding: 1rem 1.1rem;
     font-size: 0.95rem;
-    color: rgba(var(--v-theme-on-surface), 0.8);
+    color: var(--rp-ink);
 }
-.spl-infobox-icon { color: #e8820c; flex-shrink: 0; }
+.spl-infobox-icon { color: var(--rp-blue); flex-shrink: 0; }
 
-.spl-entry-card { border-radius: 14px; }
+.spl-entry-card {
+    background-color: var(--rp-panel) !important;
+    border: 1px solid var(--rp-line2) !important;
+}
 
 .rp-powered {
     font-size: 0.75rem;

@@ -1,6 +1,6 @@
 <template>
     <v-theme-provider theme="tenantDark" with-background>
-        <div class="board d-flex flex-column">
+        <div class="board d-flex flex-column" data-rp-theme="dark">
             <div class="board-header d-flex align-center px-8 py-4 ga-3">
                 <img v-if="branding.logoUrl" :src="branding.logoUrl" class="board-logo" :alt="branding.displayName || 'RidePass'" />
                 <h1 class="text-h4 font-weight-bold">Order Pickup</h1>
@@ -74,7 +74,12 @@ async function refresh() {
 </script>
 
 <style scoped>
-.board { height: 100vh; }
+.board {
+    height: 100vh;
+    /* Forced dark whatever the tenant's Branding → Theme is: the tenantDark provider flips
+       Vuetify's --v-theme-* variables, and data-rp-theme="dark" on this element (template)
+       flips the --rp-* design tokens for the whole subtree. */
+}
 .board-logo { height: 48px; width: auto; }
 .ready-grid {
     display: grid;
@@ -99,7 +104,7 @@ async function refresh() {
     padding: 12px 24px;
     min-width: 180px;
     text-align: center;
-    border: 1px solid rgba(128, 128, 128, 0.4);
+    border: 1px solid var(--rp-line2);
     border-radius: 14px;
 }
 .prep-num { font-size: 3rem; font-weight: 800; line-height: 1; }

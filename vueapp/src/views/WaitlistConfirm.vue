@@ -7,7 +7,7 @@
                  and link to MyPasses for the QR. -->
             <v-card v-if="details.status === 'confirmed'" class="pa-4 text-center">
                 <v-icon size="48" color="success" class="mb-2">mdi-check-decagram</v-icon>
-                <h1 class="text-h5 mb-2">You're confirmed!</h1>
+                <h1 class="text-h4 font-display mb-2">You're confirmed!</h1>
                 <p class="text-body-2 text-medium-emphasis mb-3">
                     Your spot at <strong>{{ details.eventTitle }}</strong> on {{ formatLong(details.eventStartsAtUtc) }} is locked in.
                 </p>
@@ -15,8 +15,8 @@
             </v-card>
 
             <v-card v-else-if="(details.status === 'expired' || expiredNow) && !clientSecret" class="pa-4 text-center">
-                <v-icon size="48" color="grey" class="mb-2">mdi-clock-outline</v-icon>
-                <h1 class="text-h5 mb-2">This window has closed</h1>
+                <v-icon size="48" class="mb-2 text-muted2">mdi-clock-outline</v-icon>
+                <h1 class="text-h4 font-display mb-2">This window has closed</h1>
                 <p class="text-body-2 text-medium-emphasis">
                     The spot has rolled to the next person in line.
                 </p>
@@ -24,8 +24,8 @@
             </v-card>
 
             <v-card v-else-if="details.status !== 'promoted'" class="pa-4 text-center">
-                <v-icon size="48" color="grey" class="mb-2">mdi-information-outline</v-icon>
-                <h1 class="text-h5 mb-2">Nothing to confirm</h1>
+                <v-icon size="48" class="mb-2 text-muted2">mdi-information-outline</v-icon>
+                <h1 class="text-h4 font-display mb-2">Nothing to confirm</h1>
                 <p class="text-body-2 text-medium-emphasis">
                     This waitlist entry is {{ details.status }}.
                 </p>
@@ -110,7 +110,7 @@
         </v-card>
 
         <v-card v-else class="pa-4 text-center">
-            <v-icon size="48" color="grey" class="mb-2">mdi-link-off</v-icon>
+            <v-icon size="48" class="mb-2 text-muted2">mdi-link-off</v-icon>
             <p class="text-body-2 text-medium-emphasis">This confirm link isn't valid (or has already been used).</p>
         </v-card>
 

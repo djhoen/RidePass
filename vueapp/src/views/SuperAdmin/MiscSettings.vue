@@ -1,11 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center ga-3 mb-4">
-            <h1 class="text-h4">Misc settings</h1>
-            <v-spacer></v-spacer>
-            <v-btn v-if="loaded" color="primary" size="large" :loading="saving" @click="save">
-                Save changes
-            </v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Misc settings</div>
+                <div class="rp-pagehead-sub">Embed origins, outbound email and SMS gates, Stripe key check, staging data.</div>
+            </div>
+            <div>
+                <v-btn v-if="loaded" color="primary" variant="flat" size="large" :loading="saving" @click="save">
+                    Save changes
+                </v-btn>
+            </div>
         </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
@@ -42,10 +46,10 @@
                 <v-card-title class="d-flex align-center flex-wrap ga-2">
                     <span>Outbound email &amp; SMS</span>
                     <v-chip size="small" label :color="envColor">{{ environmentName || 'unknown env' }}</v-chip>
-                    <v-chip size="small" label :color="emailConfigured ? 'success' : 'default'">
+                    <v-chip size="small" label :color="emailConfigured ? 'success' : undefined">
                         SMTP {{ emailConfigured ? 'configured' : 'not configured' }}
                     </v-chip>
-                    <v-chip size="small" label :color="smsConfigured ? 'success' : 'default'">
+                    <v-chip size="small" label :color="smsConfigured ? 'success' : undefined">
                         Twilio {{ smsConfigured ? 'configured' : 'not configured' }}
                     </v-chip>
                 </v-card-title>
@@ -92,7 +96,7 @@
                         and is in the mode you expect. Direct-charge tracks have their own per-tenant
                         test in the tenant dialog.
                     </p>
-                    <v-btn color="primary" prepend-icon="mdi-credit-card-check-outline"
+                    <v-btn color="primary" variant="flat" prepend-icon="mdi-credit-card-check-outline"
                         :loading="stripeTesting" @click="testPlatformStripe">
                         Test platform Stripe
                     </v-btn>
@@ -132,7 +136,7 @@
                         production, then scrubs PII and clears payment/SMS credentials. Production is read
                         from a read-only connection and is never modified. This can take a few minutes.
                     </v-alert>
-                    <v-btn color="primary" prepend-icon="mdi-database-sync"
+                    <v-btn color="primary" variant="flat" prepend-icon="mdi-database-sync"
                         :loading="mirrorRunning" :disabled="mirrorRunning" @click="refreshStage">
                         Refresh staging from production
                     </v-btn>
@@ -247,12 +251,12 @@ async function testPlatformStripe() {
 // --- Staging mirror (copy prod down to stage) ---------------------------------
 const stageMirror = ref<StageMirrorStatus | null>(null)
 const mirrorRunning = computed(() => stageMirror.value?.state === 'running')
-const mirrorColor = computed(() => {
+const mirrorColor = computed<string | undefined>(() => {
     switch (stageMirror.value?.state) {
         case 'running': return 'info'
         case 'succeeded': return 'success'
         case 'failed': return 'error'
-        default: return 'default'
+        default: return undefined
     }
 })
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -346,9 +350,11 @@ async function save() {
 .mirror-log {
     max-height: 320px;
     overflow: auto;
-    background: rgba(0, 0, 0, 0.06);
-    border-radius: 4px;
+    background: var(--rp-panel2);
+    border: 1px solid var(--rp-line);
+    border-radius: 10px;
     padding: 8px 12px;
+    color: var(--rp-muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.78rem;
     white-space: pre-wrap;

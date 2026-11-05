@@ -1,14 +1,17 @@
 <template>
     <v-container style="max-width: 900px">
-        <div class="d-flex align-center flex-wrap ga-2 mb-1">
-            <h1 class="text-h4">Discounts</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New discount</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Discounts</div>
+                <div class="rp-pagehead-sub">
+                    Discounts your staff can apply at a counter, like a military or club-member rate.
+                    Choose where each one applies and whether taking it needs a manager's PIN.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New discount</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Discounts your staff can apply at a counter, like a military or club-member rate.
-            Choose where each one applies and whether taking it needs a manager's PIN.
-        </p>
 
         <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-3">
             {{ loadError }}

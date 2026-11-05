@@ -6,12 +6,12 @@
             </div>
 
             <template v-else-if="errorText">
-                <h1 class="text-h5 mb-2">Unsubscribe link invalid</h1>
+                <h1 class="text-h4 font-display mb-2">Unsubscribe link invalid</h1>
                 <p class="text-body-2 text-medium-emphasis">{{ errorText }}</p>
             </template>
 
             <template v-else-if="status">
-                <h1 class="text-h5 mb-2">
+                <h1 class="text-h4 font-display mb-2">
                     {{ status.tenantDisplayName ? `${status.tenantDisplayName} emails` : 'Marketing emails' }}
                 </h1>
                 <p class="text-body-2 mb-4"><strong>{{ status.email }}</strong></p>

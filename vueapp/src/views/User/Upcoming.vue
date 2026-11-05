@@ -9,7 +9,7 @@
         <!-- Events: one card per event, split into upcoming + (toggleable) past. -->
         <section v-if="eventLikeItems.length > 0" class="mb-10">
             <div class="d-flex align-center mb-4">
-                <h1 class="text-h5">My Upcoming Events</h1>
+                <h1 class="text-h3 font-display">My Upcoming Events</h1>
                 <v-spacer></v-spacer>
                 <v-btn v-if="pastEvents.length" variant="text" size="small" @click="showPast = !showPast">
                     {{ showPast ? 'Hide past events' : `Show past events (${pastEvents.length})` }}
@@ -37,7 +37,7 @@
 
         <!-- Active passes: season passes + memberships. Range-based. -->
         <section v-if="passLikeItems.length > 0" class="mb-10">
-            <h2 class="text-h5 mb-4">Active passes and memberships</h2>
+            <h2 class="text-h4 font-display mb-4">Active passes and memberships</h2>
             <v-row>
                 <v-col v-for="item in passLikeItems" :key="item.kind + item.id" cols="12" sm="6" md="4">
                     <a :href="tenantUserUrl(item)" rel="noopener" class="up-card-link">
@@ -320,8 +320,8 @@ function tenantUserUrl(item: UpcomingItem): string {
 
 <style scoped>
 .up-card-link { text-decoration: none; color: inherit; display: block; height: 100%; }
-.up-card { overflow: visible; transition: transform 0.15s ease; }
-.up-card:hover { transform: translateY(-2px); }
+.up-card { overflow: visible; transition: transform 0.15s ease, border-color 0.15s ease; }
+.up-card:hover { transform: translateY(-2px); border-color: var(--rp-line3); }
 .up-past { opacity: 0.72; }
 
 .up-image {
@@ -331,14 +331,14 @@ function tenantUserUrl(item: UpcomingItem): string {
     border-top-right-radius: inherit;
 }
 .up-image--pass {
-    background: linear-gradient(135deg, #1f2937, #475569);
+    background: linear-gradient(135deg, var(--rp-raise), var(--rp-card2));
     display: flex;
     align-items: center;
     justify-content: center;
 }
-.up-pass-icon { color: rgba(255, 255, 255, 0.55); }
+.up-pass-icon { color: var(--rp-muted); }
 .up-chip { position: absolute; top: 8px; right: 8px; }
 
-.order-row { border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
-.invoice-head { border-bottom: 2px solid rgba(0, 0, 0, 0.12); }
+.order-row { border-bottom: 1px solid var(--rp-line); }
+.invoice-head { border-bottom: 2px solid var(--rp-line2); }
 </style>

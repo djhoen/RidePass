@@ -1,12 +1,16 @@
 <template>
     <v-container style="max-width: 820px">
-        <h1 class="text-h4 mb-1">Staff Access</h1>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Limit where and when staff can take money or check people in. Refunds, counter sales,
-            F&amp;B, the bike shop register, gate check-ins and cash handling are covered.
-            Reports, settings, catalog and marketing are never restricted, so you can always do
-            paperwork from home and always get back in to change these rules.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Staff Access</div>
+                <div class="rp-pagehead-sub">
+                    Limit where and when staff can take money or check people in. Refunds, counter sales,
+                    F&amp;B, the bike shop register, gate check-ins and cash handling are covered.
+                    Reports, settings, catalog and marketing are never restricted, so you can always do
+                    paperwork from home and always get back in to change these rules.
+                </div>
+            </div>
+        </div>
 
         <v-alert type="info" variant="tonal" density="compact" class="mb-4">
             Not sure what to allow? Check
@@ -24,7 +28,10 @@
         </v-card>
 
         <v-card class="mb-4">
-            <v-card-title class="text-subtitle-1">Allowed networks</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Staff access</span>
+                <span class="rp-section-title">Allowed networks</span>
+            </v-card-title>
             <v-card-text>
                 <p class="text-body-2 text-medium-emphasis mb-3">
                     Addresses the track operates from. Leave empty for no location rule, which is
@@ -54,7 +61,10 @@
         </v-card>
 
         <v-card class="mb-4">
-            <v-card-title class="text-subtitle-1">Operating hours</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Staff access</span>
+                <span class="rp-section-title">Operating hours</span>
+            </v-card-title>
             <v-card-text>
                 <p class="text-body-2 text-medium-emphasis mb-3">
                     Times are in your track's timezone ({{ branding.timezone || 'UTC' }}). Leave
@@ -73,7 +83,10 @@
         </v-card>
 
         <v-card class="mb-4">
-            <v-card-title class="text-subtitle-1">Daily alerts</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Staff access</span>
+                <span class="rp-section-title">Daily alerts</span>
+            </v-card-title>
             <v-card-text>
                 <p class="text-body-2 text-medium-emphasis mb-3">
                     Email {{ branding.contactEmail || 'the track contact address' }} when the
@@ -206,3 +219,18 @@ onMounted(async () => {
     }
 })
 </script>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+</style>

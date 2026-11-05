@@ -1,16 +1,19 @@
 <template>
     <v-container fluid class="pos">
-        <div class="d-flex align-center mb-3 ga-3 flex-wrap">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/Admin/BikeShop">Bike Shop</v-btn>
-            <h1 class="text-h5">Register</h1>
-            <v-spacer></v-spacer>
-            <v-chip size="small" variant="tonal" :color="readerColor" prepend-icon="mdi-contactless-payment">
-                {{ readerStatus }}
-            </v-chip>
-            <v-btn v-if="readerState !== 'connected'" size="small" variant="text"
-                :loading="readerConnecting" @click="connectReader">Connect reader</v-btn>
-            <v-btn size="small" variant="text" prepend-icon="mdi-printer-settings" @click="printerDialog = true">Printer</v-btn>
-            <ShopDisplayButton />
+        <div class="rp-pagehead">
+            <div class="d-flex align-center ga-3 flex-wrap">
+                <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" to="/Admin/BikeShop">Bike Shop</v-btn>
+                <div class="rp-pagehead-title">Register</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-chip size="small" variant="tonal" :color="readerColor" prepend-icon="mdi-contactless-payment">
+                    {{ readerStatus }}
+                </v-chip>
+                <v-btn v-if="readerState !== 'connected'" size="small" variant="text"
+                    :loading="readerConnecting" @click="connectReader">Connect reader</v-btn>
+                <v-btn size="small" variant="text" prepend-icon="mdi-printer-settings" @click="printerDialog = true">Printer</v-btn>
+                <ShopDisplayButton />
+            </div>
         </div>
 
         <v-row>
@@ -91,9 +94,9 @@
                         <CreditLookupField v-model="creditAccount" class="mt-4" />
 
                         <div class="d-flex ga-2 mt-4">
-                            <v-btn color="secondary" size="large" class="flex-grow-1" :disabled="cart.length === 0 || busy"
+                            <v-btn variant="outlined" size="large" class="flex-grow-1" :disabled="cart.length === 0 || busy"
                                 :loading="busy && payMethod === 'cash'" @click="checkout('cash')">Cash</v-btn>
-                            <v-btn color="primary" size="large" class="flex-grow-1" :disabled="cart.length === 0 || busy"
+                            <v-btn color="primary" variant="flat" size="large" class="flex-grow-1" :disabled="cart.length === 0 || busy"
                                 :loading="busy && payMethod === 'card'" @click="checkout('card')">Card</v-btn>
                         </div>
                         <div v-if="checkoutError" class="text-error text-body-2 mt-2">{{ checkoutError }}</div>
@@ -732,8 +735,8 @@ onMounted(() => { reload(); loadDiscounts() })
 .pos-tile {
     padding: 10px 12px;
     cursor: pointer;
-    transition: box-shadow 0.12s ease, transform 0.12s ease;
+    transition: border-color 0.12s ease, transform 0.12s ease;
 }
-.pos-tile:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14); transform: translateY(-1px); }
+.pos-tile:hover { border-color: var(--rp-line3); transform: translateY(-1px); }
 .pos-qty { min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
 </style>

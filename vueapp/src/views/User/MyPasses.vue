@@ -1,6 +1,6 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-6">My Passes</h1>
+        <h1 class="text-h3 font-display mb-6">My Passes</h1>
 
         <v-progress-circular v-if="loading" indeterminate color="primary"></v-progress-circular>
 
@@ -15,7 +15,7 @@
             <v-col v-for="p in purchases" :key="p.kind + p.id" cols="12" md="6" lg="4">
                 <v-card variant="outlined" class="pa-4">
                     <div class="d-flex align-center mb-2">
-                        <v-chip size="small" :color="p.kind === 'pass' ? 'primary' : 'secondary'">
+                        <v-chip size="small" :variant="p.kind === 'pass' ? 'flat' : 'tonal'" :color="p.kind === 'pass' ? 'primary' : undefined">
                             {{ p.kind === 'pass' ? 'Pass' : 'Admission' }}
                         </v-chip>
                         <v-spacer></v-spacer>
@@ -93,12 +93,12 @@
         </v-row>
 
         <template v-if="waitlists.length > 0">
-            <h2 class="text-h5 mt-8 mb-3">My Waitlists</h2>
+            <h2 class="text-h4 font-display mt-8 mb-3">My Waitlists</h2>
             <v-row>
                 <v-col v-for="w in waitlists" :key="w.id" cols="12" md="6" lg="4">
                     <v-card variant="outlined" class="pa-4">
                         <div class="d-flex align-center mb-2">
-                            <v-chip size="small" color="amber-darken-2">Waitlist</v-chip>
+                            <v-chip size="small" color="warning" variant="tonal">Waitlist</v-chip>
                             <v-spacer></v-spacer>
                             <v-chip size="small" :color="waitlistStatusColor(w.status)">{{ w.status }}</v-chip>
                         </div>
@@ -134,16 +134,16 @@
         </template>
 
         <template v-if="extras.length > 0">
-            <h2 class="text-h5 mt-8 mb-3">My Add-ons</h2>
+            <h2 class="text-h4 font-display mt-8 mb-3">My Add-ons</h2>
             <v-row>
                 <v-col v-for="x in extras" :key="x.id" cols="12" md="6" lg="4">
                     <v-card variant="outlined" class="pa-4">
                         <div class="d-flex align-center mb-2">
-                            <v-chip size="small" color="amber-darken-2" :prepend-icon="kindIcon(x.kind)">
+                            <v-chip size="small" variant="tonal" :prepend-icon="kindIcon(x.kind)">
                                 {{ kindLabel(x.kind) }}
                             </v-chip>
                             <v-spacer></v-spacer>
-                            <v-chip size="small" :color="x.status === 'paid' ? 'success' : (x.status === 'redeemed' ? 'primary' : 'grey')">
+                            <v-chip size="small" :color="x.status === 'paid' ? 'success' : (x.status === 'redeemed' ? 'primary' : undefined)">
                                 {{ x.status }}
                             </v-chip>
                         </div>
@@ -167,12 +167,12 @@
         </template>
 
         <template v-if="rentals.length > 0">
-            <h2 class="text-h5 mt-8 mb-3">My Rentals</h2>
+            <h2 class="text-h4 font-display mt-8 mb-3">My Rentals</h2>
             <v-row>
                 <v-col v-for="r in rentals" :key="r.id" cols="12" md="6" lg="4">
                     <v-card variant="outlined" class="pa-4">
                         <div class="d-flex align-center mb-2">
-                            <v-chip size="small" color="deep-purple">Rental</v-chip>
+                            <v-chip size="small" variant="tonal">Rental</v-chip>
                             <v-spacer></v-spacer>
                             <v-chip size="small" :color="rentalStatusColor(r.status)">{{ r.status }}</v-chip>
                         </div>
@@ -395,10 +395,10 @@ async function load() {
 }
 
 function waitlistStatusColor(s: string): string {
-    if (s === 'waiting') return 'amber-darken-2'
+    if (s === 'waiting') return 'warning'
     if (s === 'promoted') return 'warning'
     if (s === 'confirmed') return 'success'
-    if (s === 'expired' || s === 'cancelled') return 'grey'
+    if (s === 'expired' || s === 'cancelled') return ''
     return 'default'
 }
 
@@ -430,7 +430,7 @@ function rentalStatusColor(s: string): string {
     if (s === 'out') return 'warning'
     if (s === 'returned') return 'success'
     if (s === 'damaged') return 'error'
-    if (s === 'cancelled' || s === 'failed') return 'grey'
+    if (s === 'cancelled' || s === 'failed') return ''
     return 'default'
 }
 
@@ -582,7 +582,7 @@ function statusColor(status: string): string {
         case 'paid': return 'success'
         case 'pending': return 'warning'
         case 'failed': return 'error'
-        case 'refunded': return 'grey'
+        case 'refunded': return ''
         case 'redeemed': return 'primary'
         default: return 'default'
     }

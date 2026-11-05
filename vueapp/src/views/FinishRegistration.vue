@@ -6,7 +6,7 @@
 
         <div v-else-if="done" class="text-center py-8">
             <v-icon color="success" size="56">mdi-check-circle</v-icon>
-            <h1 class="text-h5 font-weight-bold mt-2 mb-1">Registration complete</h1>
+            <h1 class="text-h4 font-display mt-2 mb-1">Registration complete</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">You're all set for the gate. See you at the track!</p>
             <div class="d-flex flex-column flex-sm-row justify-center ga-2">
                 <v-btn v-if="isAuthed" color="primary" to="/User/Upcoming" prepend-icon="mdi-calendar-check">My upcoming events</v-btn>
@@ -23,7 +23,7 @@
 
         <div v-else-if="paymentFailed" class="text-center py-8">
             <v-icon color="error" size="56">mdi-alert-circle</v-icon>
-            <h1 class="text-h5 font-weight-bold mt-2 mb-1">Payment not completed</h1>
+            <h1 class="text-h4 font-display mt-2 mb-1">Payment not completed</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 Your payment didn't go through, so your entry wasn't purchased. Head back to the event to try again.
             </p>
@@ -41,7 +41,7 @@
         </div>
 
         <template v-else>
-            <h1 class="text-h5 font-weight-bold font-display mb-1">Finish your registration</h1>
+            <h1 class="text-h4 font-display mb-1">Finish your registration</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 {{ eventTitle }} , add rider details{{ anyWaiver ? ' and sign the waiver' : '' }} to check in at the gate.
             </p>
@@ -337,7 +337,8 @@ async function finish() {
 <style scoped>
 .reg-card,
 .reg-signup {
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 8px;
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    border-radius: 16px;
 }
 </style>

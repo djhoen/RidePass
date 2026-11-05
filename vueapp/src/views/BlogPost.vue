@@ -25,7 +25,7 @@
 
             <!-- Gallery: the "several other images". Click to open a fullscreen viewer. -->
             <section v-if="post.images.length > 0">
-                <h2 class="text-h5 mb-3">Photos</h2>
+                <h2 class="text-h4 font-display mb-3">Photos</h2>
                 <v-row>
                     <v-col v-for="(img, idx) in post.images" :key="img.id" cols="6" sm="4">
                         <v-img :src="absoluteUrl(img.imageUrl)" aspect-ratio="1" cover
@@ -39,18 +39,18 @@
         <v-dialog v-model="viewerOpen" fullscreen :scrim="false" transition="dialog-bottom-transition">
             <v-card color="black">
                 <v-toolbar color="black" density="compact">
-                    <v-toolbar-title v-if="post && post.images.length > 1" class="text-caption text-grey-lighten-2">
+                    <v-toolbar-title v-if="post && post.images.length > 1" class="text-caption text-muted">
                         {{ viewerIndex + 1 }} / {{ post.images.length }}
                     </v-toolbar-title>
                     <v-spacer></v-spacer>
-                    <v-btn icon="mdi-close" variant="text" color="white" @click="viewerOpen = false"></v-btn>
+                    <v-btn icon="mdi-close" variant="text" @click="viewerOpen = false"></v-btn>
                 </v-toolbar>
                 <v-carousel v-if="post" v-model="viewerIndex" hide-delimiters
                     :show-arrows="post.images.length > 1" height="calc(100vh - 48px)">
                     <v-carousel-item v-for="img in post.images" :key="img.id">
                         <div class="d-flex flex-column align-center justify-center fill-height">
                             <v-img :src="absoluteUrl(img.imageUrl)" max-height="90vh" contain></v-img>
-                            <div v-if="img.caption" class="text-grey-lighten-2 text-body-2 mt-2 px-4 text-center">
+                            <div v-if="img.caption" class="text-muted text-body-2 mt-2 px-4 text-center">
                                 {{ img.caption }}
                             </div>
                         </div>

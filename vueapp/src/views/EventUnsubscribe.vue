@@ -6,12 +6,12 @@
             </div>
 
             <template v-else-if="errorText">
-                <h1 class="text-h5 mb-2">Link is no longer valid</h1>
+                <h1 class="text-h4 font-display mb-2">Link is no longer valid</h1>
                 <p class="text-body-2 text-medium-emphasis">{{ errorText }}</p>
             </template>
 
             <template v-else-if="status">
-                <h1 class="text-h5 mb-2">{{ status.tenantDisplayName }} event updates</h1>
+                <h1 class="text-h4 font-display mb-2">{{ status.tenantDisplayName }} event updates</h1>
                 <p class="text-body-2 mb-4"><strong>{{ status.email }}</strong></p>
 
                 <v-alert v-if="actionError" type="error" variant="tonal" density="compact" class="mb-3">

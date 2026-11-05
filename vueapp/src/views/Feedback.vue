@@ -20,7 +20,7 @@
             <div class="d-flex align-center ga-2 mb-3">
                 <v-btn v-for="n in 5" :key="n" size="small" icon variant="text"
                     @click="form.rating = (form.rating === n ? null : n)">
-                    <v-icon :color="(form.rating ?? 0) >= n ? 'amber-darken-2' : 'grey-lighten-1'">
+                    <v-icon :color="(form.rating ?? 0) >= n ? 'warning' : undefined" :class="{ 'text-muted2': (form.rating ?? 0) < n }">
                         {{ (form.rating ?? 0) >= n ? 'mdi-star' : 'mdi-star-outline' }}
                     </v-icon>
                 </v-btn>

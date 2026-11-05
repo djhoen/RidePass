@@ -5,9 +5,9 @@
              platform hero image; a tenant uses its own hero. Mirrors the mock's
              "EVENTS CALENDAR" band. -->
         <section class="events-hero" :style="heroStyle">
-            <div class="events-hero-overlay">
+            <div class="events-hero-overlay rp-on-photo">
                 <v-container>
-                    <h1 class="text-h3 font-weight-bold text-white font-display mb-2">Events Calendar</h1>
+                    <h1 class="events-hero-title font-display text-white mb-2">Events Calendar</h1>
                     <p class="text-h6 text-white mb-0" style="max-width: 620px; opacity: 0.92">
                         {{ heroSubtitle }}
                     </p>
@@ -38,10 +38,9 @@
                  Same horizontal scroll-snap carousel as the home page, bound to
                  the currently-filtered upcoming events. -->
             <section v-if="upcomingEvents.length > 0" class="mt-8 mb-10">
-                <div class="d-flex align-center mb-4 ga-2">
-                    <h2 class="text-h5 font-weight-bold font-display">Upcoming Events</h2>
-                    <v-spacer></v-spacer>
-                    <v-btn variant="text" color="primary" append-icon="mdi-arrow-right" @click="viewMode = 'list'">
+                <div class="rp-sec-h mb-4">
+                    <h2 class="font-display">Upcoming Events</h2>
+                    <v-btn variant="text" append-icon="mdi-arrow-right" @click="viewMode = 'list'">
                         View All Events
                     </v-btn>
                 </div>
@@ -58,7 +57,7 @@
                         <div v-for="e in upcomingEvents" :key="e.id" class="carousel-card">
                             <component :is="linkTag(e)" v-bind="linkProps(e)" class="event-card-link">
                                 <v-card class="h-100 event-card">
-                                    <div class="event-image" :style="eventImageStyle(e)">
+                                    <div class="event-image rp-on-photo" :style="eventImageStyle(e)">
                                         <div class="event-datebadge">
                                             <div class="event-day">{{ formatDay(e.startsAtUtc) }}</div>
                                             <div class="event-month">{{ formatMonth(e.startsAtUtc) }}</div>
@@ -93,11 +92,11 @@
             <div class="d-flex align-center flex-wrap ga-2 mb-4">
                 <template v-if="viewMode === 'month'">
                     <v-btn icon="mdi-chevron-left" variant="text" @click="prevMonth"></v-btn>
-                    <h2 class="text-h6 mx-1" style="min-width: 170px; text-align: center">{{ monthLabel }}</h2>
+                    <h2 class="text-h6 font-display-upright mx-1" style="min-width: 170px; text-align: center">{{ monthLabel }}</h2>
                     <v-btn icon="mdi-chevron-right" variant="text" @click="nextMonth"></v-btn>
                     <v-btn variant="text" size="small" @click="goToday">Today</v-btn>
                 </template>
-                <h2 v-else class="text-h6">All Upcoming Events</h2>
+                <h2 v-else class="text-h6 font-display-upright">All Upcoming Events</h2>
 
                 <v-spacer></v-spacer>
                 <v-progress-circular v-if="loading" indeterminate size="20" width="2" class="mr-2"></v-progress-circular>
@@ -128,7 +127,7 @@
                             v-bind="linkProps(ev)" class="event-chip-link">
                             <v-tooltip :text="ev.title" location="top">
                                 <template #activator="{ props }">
-                                    <div v-bind="props" class="event-chip" :style="{ background: ev.eventTypeColor || '#1976D2' }">
+                                    <div v-bind="props" class="event-chip" :style="{ background: ev.eventTypeColor || 'var(--rp-muted2)' }">
                                         {{ ev.title }}
                                     </div>
                                 </template>
@@ -148,8 +147,8 @@
                 <v-card v-for="e in upcomingEvents" :key="e.id" class="mb-3 list-row">
                     <div class="d-flex align-center pa-3 ga-3 flex-wrap">
                         <div class="list-datebadge text-center flex-shrink-0">
-                            <div class="text-caption font-weight-bold text-primary">{{ formatMonth(e.startsAtUtc) }}</div>
-                            <div class="text-h5 font-weight-bold">{{ formatDay(e.startsAtUtc) }}</div>
+                            <div class="list-datebadge-m">{{ formatMonth(e.startsAtUtc) }}</div>
+                            <div class="list-datebadge-d font-display-upright">{{ formatDay(e.startsAtUtc) }}</div>
                         </div>
                         <div class="list-thumb flex-shrink-0" :style="eventImageStyle(e)"></div>
                         <div class="flex-grow-1" style="min-width: 200px">
@@ -166,11 +165,11 @@
                                 {{ formatWhen(e.startsAtUtc, e.endsAtUtc) }}
                             </div>
                         </div>
-                        <v-chip size="small" :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }" class="flex-shrink-0">
+                        <v-chip size="small" :style="{ backgroundColor: e.eventTypeColor, color: 'var(--rp-photo-ink)' }" class="flex-shrink-0">
                             {{ e.eventTypeName }}
                         </v-chip>
                         <component :is="linkTag(e)" v-bind="linkProps(e)" class="flex-shrink-0">
-                            <v-btn color="primary" variant="tonal" size="small" append-icon="mdi-arrow-right">View Details</v-btn>
+                            <v-btn color="primary" variant="flat" size="small" append-icon="mdi-arrow-right">View Details</v-btn>
                         </component>
                     </div>
                 </v-card>
@@ -737,9 +736,9 @@ function eventImageStyle(e: CalEvent) {
     const img = e.imageUrl ?? e.eventTypeImageUrl ?? null
     const url = isApex ? platformImageUrl(img) : absoluteTenantUrl(img)
     if (url) {
-        return { backgroundImage: `url(${url})`, backgroundColor: e.eventTypeColor || '#1976D2' }
+        return { backgroundImage: `url(${url})`, backgroundColor: e.eventTypeColor || 'var(--rp-raise)' }
     }
-    return { backgroundColor: e.eventTypeColor || '#1976D2' }
+    return { backgroundColor: e.eventTypeColor || 'var(--rp-raise)' }
 }
 
 // Tenant image URLs are relative /uploads paths; join to the API origin.
@@ -785,9 +784,10 @@ function flash(text: string, color: 'success' | 'error') {
 
 <style scoped>
 .events-page {
-    background-color: #f5f5f5;
+    background-color: var(--rp-bg);
     min-height: 100vh;
 }
+.events-hero-title { font-size: clamp(44px, 7vw, 84px); }
 
 /* ── Hero band ─────────────────────────────────────────────────────────────── */
 .events-hero {
@@ -795,10 +795,12 @@ function flash(text: string, color: 'success' | 'error') {
     min-height: 280px;
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-panel);
 }
 .events-hero-overlay {
-    background: linear-gradient(90deg, rgba(20, 24, 32, 0.92) 0%, rgba(20, 24, 32, 0.55) 60%, rgba(20, 24, 32, 0.2) 100%);
+    background:
+        linear-gradient(180deg, transparent 55%, var(--rp-bg) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
     min-height: 280px;
     display: flex;
     align-items: center;
@@ -815,16 +817,16 @@ function flash(text: string, color: 'success' | 'error') {
     width: 44px;
     height: 44px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.95);
-    color: rgba(0, 0, 0, 0.87);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    background: var(--rp-raise);
+    color: var(--rp-ink);
+    border: 1px solid var(--rp-line2);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    transition: border-color 0.15s;
 }
-.carousel-arrow:hover { background: #fff; }
+.carousel-arrow:hover { border-color: var(--rp-line3); }
 .carousel-arrow--left { left: -8px; }
 .carousel-arrow--right { right: -8px; }
 @media (max-width: 600px) {
@@ -866,8 +868,8 @@ function flash(text: string, color: 'success' | 'error') {
     object-fit: contain;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
-.event-card { overflow: visible; transition: transform 0.15s ease; }
-.event-card:hover { transform: translateY(-2px); }
+.event-card { overflow: visible; transition: transform 0.15s ease, border-color 0.15s ease; }
+.event-card:hover { transform: translateY(-2px); border-color: var(--rp-line3); }
 .event-image {
     position: relative;
     height: 150px;
@@ -876,30 +878,36 @@ function flash(text: string, color: 'success' | 'error') {
     border-top-left-radius: inherit;
     border-top-right-radius: inherit;
 }
+/* Date badge rides on the event photo: photo tokens, so it stays dark glass with
+   white type in both modes. */
 .event-datebadge {
     position: absolute;
     top: -6px;
     left: 12px;
-    background: #000;
-    color: #fff;
+    background: rgba(var(--rp-scrim), 0.88);
+    color: var(--rp-photo-ink);
+    border: 1px solid var(--rp-photo-line);
     padding: 6px 10px 5px;
     text-align: center;
-    border-radius: 4px;
+    border-radius: 11px;
     line-height: 1;
-    min-width: 44px;
-    box-shadow: 1px 2px 5px 0 rgba(0, 0, 0, 0.34);
+    min-width: 48px;
 }
-.event-datebadge .event-day { font-size: 1.4rem; font-weight: 700; }
-.event-datebadge .event-month { font-size: 0.65rem; letter-spacing: 0.08em; opacity: 0.85; margin-top: 2px; }
+.event-datebadge .event-day { font-family: var(--rp-font-display); font-size: 26px; line-height: 1.05; }
+.event-datebadge .event-month { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--rp-photo-muted); margin-top: 2px; }
 
 /* ── List rows ─────────────────────────────────────────────────────────────── */
-.list-row { transition: box-shadow 0.15s ease; }
-.list-row:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1); }
+.list-row { transition: border-color 0.15s ease; }
+.list-row:hover { border-color: var(--rp-line3); }
 .list-datebadge {
-    width: 56px;
-    border-right: 2px solid rgba(0, 0, 0, 0.08);
-    padding-right: 12px;
+    width: 58px;
+    background: var(--rp-bg);
+    border: 1px solid var(--rp-line2);
+    border-radius: 11px;
+    padding: 8px 0;
 }
+.list-datebadge-m { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--rp-muted); }
+.list-datebadge-d { font-size: 26px; line-height: 1.05; }
 .list-thumb {
     width: 84px;
     height: 64px;
@@ -922,24 +930,28 @@ function flash(text: string, color: 'success' | 'error') {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 1px;
-    background: rgba(0, 0, 0, 0.08);
+    background: var(--rp-line);
+    border-radius: inherit;
+    overflow: hidden;
 }
 .weekday-header {
-    background: rgb(var(--v-theme-surface));
+    background: var(--rp-card);
     padding: 8px;
     text-align: center;
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: rgba(var(--v-theme-on-surface), 0.7);
+    font-weight: 800;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--rp-muted2);
 }
 .day-cell {
-    background: rgb(var(--v-theme-surface));
+    background: var(--rp-card);
     min-height: 110px;
     padding: 6px;
     overflow: hidden;
 }
-.day-cell.other-month { background: rgba(var(--v-theme-on-surface), 0.03); }
-.day-cell.other-month .day-num { color: rgba(var(--v-theme-on-surface), 0.35); }
+.day-cell.other-month { background: var(--rp-panel); }
+.day-cell.other-month .day-num { color: var(--rp-muted2); }
 .day-cell.is-today .day-num {
     background: rgb(var(--v-theme-primary));
     color: rgb(var(--v-theme-on-primary));
@@ -954,7 +966,8 @@ function flash(text: string, color: 'success' | 'error') {
 .day-top-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 4px; }
 .event-chip-link { text-decoration: none; display: block; }
 .event-chip {
-    color: white;
+    /* White on an arbitrary event-type color, whatever the page mode. */
+    color: var(--rp-photo-ink);
     font-size: 0.7rem;
     padding: 2px 6px;
     border-radius: 3px;

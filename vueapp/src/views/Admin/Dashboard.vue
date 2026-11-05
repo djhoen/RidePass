@@ -1,12 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6">
-            <h1 class="text-h4">Dashboard</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
-            <v-btn variant="tonal" prepend-icon="mdi-cog" @click="customizeOpen = true" class="ml-2">
-                Customize
-            </v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Dashboard</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
+                <v-btn variant="tonal" prepend-icon="mdi-cog" @click="customizeOpen = true" class="ml-2">
+                    Customize
+                </v-btn>
+            </div>
         </div>
 
         <div v-if="loading && !snapshot" class="text-center py-12">
@@ -16,49 +19,41 @@
         <v-row v-else-if="snapshot">
             <v-col v-for="w in visibleWidgets" :key="w.type" :cols="12" :sm="w.sm" :md="w.md">
                 <!-- KPI: Today -->
-                <v-card v-if="w.type === 'kpi.today'" height="100%">
-                    <v-card-text>
-                        <div class="text-caption text-medium-emphasis">Today's Revenue</div>
-                        <div class="text-h4">${{ (snapshot.todayRevenue!.revenueCents / 100).toFixed(2) }}</div>
-                        <div class="text-caption text-medium-emphasis">
-                            {{ snapshot.todayRevenue!.passesSold }} passes · {{ snapshot.todayRevenue!.ticketsSold }} tickets
-                        </div>
-                    </v-card-text>
+                <v-card v-if="w.type === 'kpi.today'" height="100%" class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Today's Revenue</div>
+                    <div class="rp-kpi-value">${{ (snapshot.todayRevenue!.revenueCents / 100).toFixed(2) }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">
+                        {{ snapshot.todayRevenue!.passesSold }} passes · {{ snapshot.todayRevenue!.ticketsSold }} tickets
+                    </div>
                 </v-card>
 
                 <!-- KPI: Month -->
-                <v-card v-else-if="w.type === 'kpi.month'" height="100%">
-                    <v-card-text>
-                        <div class="text-caption text-medium-emphasis">Month-to-date Revenue</div>
-                        <div class="text-h4">${{ (snapshot.monthRevenue!.revenueCents / 100).toFixed(2) }}</div>
-                        <div class="text-caption text-medium-emphasis">
-                            {{ snapshot.monthRevenue!.passesSold }} passes · {{ snapshot.monthRevenue!.ticketsSold }} tickets
-                        </div>
-                    </v-card-text>
+                <v-card v-else-if="w.type === 'kpi.month'" height="100%" class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Month-to-date Revenue</div>
+                    <div class="rp-kpi-value">${{ (snapshot.monthRevenue!.revenueCents / 100).toFixed(2) }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">
+                        {{ snapshot.monthRevenue!.passesSold }} passes · {{ snapshot.monthRevenue!.ticketsSold }} tickets
+                    </div>
                 </v-card>
 
                 <!-- KPI: Unique riders -->
-                <v-card v-else-if="w.type === 'kpi.riders'" height="100%">
-                    <v-card-text>
-                        <div class="text-caption text-medium-emphasis">Unique Riders (MTD)</div>
-                        <div class="text-h4">{{ snapshot.uniqueRidersMonth }}</div>
-                    </v-card-text>
+                <v-card v-else-if="w.type === 'kpi.riders'" height="100%" class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Unique Riders (MTD)</div>
+                    <div class="rp-kpi-value">{{ snapshot.uniqueRidersMonth }}</div>
                 </v-card>
 
                 <!-- KPI: Needs attention. Tints amber when something is actually pending so a
                      dispute (with a chargeback deadline) can't hide among neutral revenue tiles. -->
-                <v-card v-else-if="w.type === 'kpi.attention'" height="100%"
+                <v-card v-else-if="w.type === 'kpi.attention'" height="100%" class="rp-kpi pa-4"
                     :color="attentionCount > 0 ? 'warning' : undefined"
                     :variant="attentionCount > 0 ? 'tonal' : undefined">
-                    <v-card-text>
-                        <div class="text-caption" :class="attentionCount > 0 ? '' : 'text-medium-emphasis'">Needs Attention</div>
-                        <div class="text-h4">{{ attentionCount }}</div>
-                        <div class="text-caption text-medium-emphasis">
-                            <span v-if="snapshot.openDisputesCount !== null">{{ snapshot.openDisputesCount }} disputes</span>
-                            <span v-if="snapshot.openDisputesCount !== null && snapshot.pendingRefundsCount !== null"> · </span>
-                            <span v-if="snapshot.pendingRefundsCount !== null">{{ snapshot.pendingRefundsCount }} refunds pending</span>
-                        </div>
-                    </v-card-text>
+                    <div class="rp-kpi-label mt-0">Needs Attention</div>
+                    <div class="rp-kpi-value">{{ attentionCount }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">
+                        <span v-if="snapshot.openDisputesCount !== null">{{ snapshot.openDisputesCount }} disputes</span>
+                        <span v-if="snapshot.openDisputesCount !== null && snapshot.pendingRefundsCount !== null"> · </span>
+                        <span v-if="snapshot.pendingRefundsCount !== null">{{ snapshot.pendingRefundsCount }} refunds pending</span>
+                    </div>
                 </v-card>
 
                 <!-- 7-day spark -->
@@ -82,7 +77,7 @@
                         <v-list density="compact">
                             <v-list-item v-for="e in snapshot.upcomingEvents" :key="e.id">
                                 <template #prepend>
-                                    <v-chip size="x-small" :style="{ backgroundColor: e.eventTypeColor, color: '#fff' }"
+                                    <v-chip size="x-small" :style="{ backgroundColor: e.eventTypeColor, color: 'var(--rp-photo-ink)' }"
                                         class="mr-2">{{ e.eventTypeName }}</v-chip>
                                 </template>
                                 <v-list-item-title>{{ e.title }}</v-list-item-title>
@@ -194,7 +189,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { Line } from 'vue-chartjs'
-import { registerChartJs } from '@/helpers/ChartSetup'
+import { registerChartJs, chartInk, chartMuted, chartGrid } from '@/helpers/ChartSetup'
+import { withAlpha } from '@/helpers/profitCenterColor'
 import { DashboardService, type DashboardSnapshot, type DashboardWidgetEntry } from '@/services/DashboardService'
 import authHelper from '@/helpers/AuthHelper'
 import { branding } from '@/stores/branding'
@@ -279,6 +275,11 @@ const visibleWidgets = computed(() => {
         .map(w => ({ ...w, ...(CATALOG.find(m => m.type === w.type)!) }))
 })
 
+// Hairline grid + muted ticks per axis (tooltip/legend colors come from ChartSetup defaults). A
+// function, not a constant: the token getters read the live light/dark values, so they are called
+// inside the computed that builds the options, never once at setup.
+const chartScale = () => ({ grid: { color: chartGrid() }, border: { color: chartGrid() }, ticks: { color: chartMuted() } })
+
 const sparkData = computed(() => {
     const points = snapshot.value?.last7Days ?? []
     return {
@@ -286,22 +287,25 @@ const sparkData = computed(() => {
         datasets: [{
             label: 'Revenue ($)',
             data: points.map(p => p.revenueCents / 100),
-            borderColor: '#1976D2',
-            backgroundColor: 'rgba(25, 118, 210, 0.15)',
+            borderColor: chartInk(),
+            backgroundColor: withAlpha(chartInk(), 0.08),
+            pointRadius: 0,
+            pointHoverRadius: 4,
             fill: true,
             tension: 0.3,
         }],
     }
 })
 
-const sparkOptions = {
+const sparkOptions = computed(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: {
-        y: { beginAtZero: true, ticks: { callback: (v: number | string) => `$${v}` } },
+        x: { ...chartScale(), grid: { display: false } },
+        y: { ...chartScale(), beginAtZero: true, ticks: { color: chartMuted(), callback: (v: number | string) => `$${v}` } },
     },
-}
+}))
 
 function moveWidget(i: number, delta: number) {
     const next = i + delta

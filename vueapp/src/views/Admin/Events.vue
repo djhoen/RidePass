@@ -1,17 +1,17 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Events</h1>
-            <v-spacer></v-spacer>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 180px"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 180px"></v-text-field>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Event</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Events</div>
+                <div class="rp-pagehead-sub">Times displayed in tenant timezone: <strong>{{ branding.timezone }}</strong>. Input fields are interpreted in that zone too.</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 180px"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 180px"></v-text-field>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Event</v-btn>
+            </div>
         </div>
-
-        <p class="text-caption text-medium-emphasis mb-2">
-            Times displayed in tenant timezone: <strong>{{ branding.timezone }}</strong>. Input fields are interpreted in that zone too.
-        </p>
 
         <EventCalendar v-model:monthStart="calendarMonth" :events="calendarEvents" :blackouts="calendarBlackouts"
             :timezone="tz()" @select="openEdit" />
@@ -39,7 +39,7 @@
                             <div v-if="row.locationLabel" class="text-caption text-medium-emphasis">{{ row.locationLabel }}</div>
                         </td>
                         <td>
-                            <v-chip size="small" :style="{ backgroundColor: row.eventTypeColor, color: '#fff' }">
+                            <v-chip size="small" :style="{ backgroundColor: row.eventTypeColor, color: 'var(--rp-photo-ink)' }">
                                 {{ row.eventTypeName }}
                             </v-chip>
                         </td>

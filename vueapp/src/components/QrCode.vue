@@ -35,7 +35,7 @@ watch(() => props.size, render)
     display: block;
     image-rendering: pixelated;
     background: white;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 4px;
+    border: 1px solid var(--rp-line2);
+    border-radius: 8px;
 }
 </style>

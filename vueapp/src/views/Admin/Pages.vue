@@ -1,14 +1,17 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-2 ga-2 flex-wrap">
-            <h1 class="text-h4">Pages</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" to="/Admin/Pages/New">New page</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Pages</div>
+                <div class="rp-pagehead-sub">
+                    Build custom pages (About, Rules, Sponsors, etc.) and optionally add them to your site's navigation.
+                    Drag rows to reorder how they appear in the nav.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" to="/Admin/Pages/New">New page</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Build custom pages (About, Rules, Sponsors, etc.) and optionally add them to your site's navigation.
-            Drag rows to reorder how they appear in the nav.
-        </p>
 
         <v-card>
             <v-table>
@@ -28,14 +31,14 @@
                     <template #item="{ element: p }">
                         <tr>
                             <td>
-                                <v-icon class="drag-handle" color="grey">mdi-drag</v-icon>
+                                <v-icon class="text-muted2 drag-handle">mdi-drag</v-icon>
                             </td>
                             <td>
                                 <v-avatar v-if="p.heroImageUrl" rounded size="44">
                                     <v-img :src="absoluteUrl(p.heroImageUrl)" cover></v-img>
                                 </v-avatar>
-                                <v-avatar v-else rounded size="44" color="grey-lighten-2">
-                                    <v-icon color="grey">mdi-file-document-outline</v-icon>
+                                <v-avatar v-else rounded size="44" style="background: var(--rp-raise)">
+                                    <v-icon class="text-muted2">mdi-file-document-outline</v-icon>
                                 </v-avatar>
                             </td>
                             <td>

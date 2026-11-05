@@ -1,6 +1,10 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-3">Food &amp; Beverage</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Food &amp; Beverage</div>
+            </div>
+        </div>
 
         <v-alert v-if="!branding.concessionsEnabled" type="info" variant="tonal" density="compact" class="mb-4">
             Food &amp; Beverage is turned off, so the cashier app won't show these items. You can still set up the catalog now,
@@ -23,7 +27,7 @@
             <v-tab value="combos">Combos</v-tab>
             <v-tab value="inventory">
                 Inventory
-                <v-chip v-if="inventoryLowCount" size="x-small" color="warning" variant="flat" class="ml-2"
+                <v-chip v-if="inventoryLowCount" size="x-small" color="warning" variant="tonal" class="ml-2"
                     prepend-icon="mdi-alert">{{ inventoryLowCount }}</v-chip>
             </v-tab>
             <v-tab value="settings">Settings</v-tab>
@@ -34,7 +38,7 @@
             <v-window-item value="items">
                 <div class="d-flex align-center ga-3 mb-3">
                     <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add item</v-btn>
-                    <v-chip v-if="rows.length" size="small" color="grey" variant="tonal">{{ rows.length }} items</v-chip>
+                    <v-chip v-if="rows.length" size="small" variant="tonal">{{ rows.length }} items</v-chip>
                 </div>
                 <p class="text-caption text-medium-emphasis mb-4" style="max-width: 720px;">
                     Food, drink, and swag a cashier rings up in the mobile tap-to-pay app, separate from events. Drag the
@@ -60,14 +64,14 @@
                     <template #item="{ element: p }">
                         <tr>
                             <td class="drag-handle-cell">
-                                <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                <v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon>
                             </td>
                             <td>
                                 <div class="d-flex align-center ga-3">
                                     <v-avatar v-if="p.imageUrl" size="36" rounded="lg">
                                         <v-img :src="absoluteUrl(p.imageUrl)"></v-img>
                                     </v-avatar>
-                                    <v-icon v-else icon="mdi-silverware-fork-knife" color="grey"></v-icon>
+                                    <v-icon v-else icon="mdi-silverware-fork-knife" class="text-muted2"></v-icon>
                                     <div>
                                         {{ p.name }}
                                         <v-chip v-if="!p.requiresPrep" size="x-small" variant="tonal" class="ml-2">
@@ -91,7 +95,7 @@
                                 <v-chip size="x-small" :color="p.isActive ? 'success' : 'grey'" variant="tonal">
                                     {{ p.isActive ? 'Active' : 'Hidden' }}
                                 </v-chip>
-                                <v-chip v-if="p.soldOut" size="x-small" color="error" variant="flat" class="ml-1">Sold out</v-chip>
+                                <v-chip v-if="p.soldOut" size="x-small" color="error" variant="tonal" class="ml-1">Sold out</v-chip>
                                 <span v-else-if="p.remaining >= 0" class="text-caption text-medium-emphasis ml-2">{{ p.remaining }} left</span>
                             </td>
                             <td class="text-right">
@@ -132,7 +136,7 @@
                                 :animation="180" ghost-class="drag-ghost">
                                 <template #item="{ element: b, index: i }">
                                     <tr>
-                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td class="drag-handle-cell"><v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon></td>
                                         <td><v-text-field v-model="b.name" density="compact" hide-details placeholder="Burgers &amp; Sandwiches"></v-text-field></td>
                                         <td><v-switch v-model="b.isActive" color="primary" density="compact" hide-details></v-switch></td>
                                         <td class="text-right text-no-wrap">
@@ -174,7 +178,7 @@
                                 :animation="180" ghost-class="drag-ghost">
                                 <template #item="{ element: c, index: i }">
                                     <tr>
-                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td class="drag-handle-cell"><v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon></td>
                                         <td><v-text-field v-model="c.name" density="compact" hide-details placeholder="Sandwiches"></v-text-field></td>
                                         <td v-if="menuBoards.length">
                                             <v-select v-model="c.menuBoardId" :items="boardSelectItems" density="compact" hide-details></v-select>
@@ -216,7 +220,7 @@
                                 :animation="180" ghost-class="drag-ghost">
                                 <template #item="{ element: p, index: i }">
                                     <tr>
-                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td class="drag-handle-cell"><v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon></td>
                                         <td><v-text-field v-model="p.title" density="compact" hide-details placeholder="Make it a combo"></v-text-field></td>
                                         <td><v-text-field v-model="p.subtitle" density="compact" hide-details placeholder="Add a side &amp; a drink for only $5.99 more"></v-text-field></td>
                                         <td v-if="menuBoards.length">
@@ -264,7 +268,7 @@
                                 :animation="180" ghost-class="drag-ghost">
                                 <template #item="{ element: s, index: i }">
                                     <tr>
-                                        <td class="drag-handle-cell"><v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon></td>
+                                        <td class="drag-handle-cell"><v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon></td>
                                         <td><v-text-field v-model="s.name" density="compact" hide-details placeholder="Grill"></v-text-field></td>
                                         <td><v-switch v-model="s.isActive" color="primary" density="compact" hide-details></v-switch></td>
                                         <td class="text-right"><v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="removeStationRow(s, i)"></v-btn></td>
@@ -431,7 +435,7 @@
                         <v-btn variant="tonal" size="small" prepend-icon="mdi-plus" class="mb-4" @click="addComboTier">Add tier</v-btn>
 
                         <div class="text-subtitle-2 font-weight-bold mb-1">Slots</div>
-                        <div v-for="(slot, si) in comboSlots" :key="si" class="mb-4 pa-3" style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
+                        <div v-for="(slot, si) in comboSlots" :key="si" class="mb-4 pa-3" style="border: 1px solid var(--rp-line2); border-radius: 10px;">
                             <div class="d-flex align-center ga-2 mb-2">
                                 <v-text-field v-model="slot.name" label="Slot name" density="compact" hide-details
                                     placeholder="Choose a side" style="flex: 1"></v-text-field>
@@ -775,7 +779,7 @@
         <!-- Add / edit product (full page) -->
         <v-dialog v-model="productDialog" fullscreen scrollable transition="dialog-bottom-transition">
             <v-card class="d-flex flex-column" style="height: 100%;">
-                <v-toolbar color="primary" density="comfortable">
+                <v-toolbar color="transparent" density="comfortable" class="border-b">
                     <v-toolbar-title>{{ editing ? 'Edit item' : 'Add item' }}</v-toolbar-title>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" @click="productDialog = false"></v-btn>
@@ -923,7 +927,7 @@
                         </v-card>
                     </div>
                 </v-card-text>
-                <div class="pa-3 d-flex justify-start ga-2" style="flex: 0 0 auto; border-top: 1px solid rgba(128, 128, 128, 0.2);">
+                <div class="pa-3 d-flex justify-start ga-2" style="flex: 0 0 auto; border-top: 1px solid var(--rp-line);">
                     <v-btn :disabled="saving" @click="productDialog = false">Cancel</v-btn>
                     <v-btn color="primary" variant="flat" :loading="saving" @click="saveProduct">Save</v-btn>
                 </div>
@@ -2107,8 +2111,8 @@ function flash(text: string, color: 'success' | 'error') {
 .drag-handle-cell { padding-left: 4px !important; padding-right: 0 !important; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
-.hours-input { border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 6px; padding: 2px 6px; font-size: 0.85rem; }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
+.hours-input { border: 1px solid var(--rp-line2); border-radius: 6px; padding: 2px 6px; font-size: 0.85rem; }
 
 /* Settings sections pack into columns so they fill the width and minimize scrolling. Cards keep their
    mb-4 for vertical spacing within a column; break-inside keeps each card whole. */

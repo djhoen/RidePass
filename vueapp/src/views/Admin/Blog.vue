@@ -1,18 +1,21 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-2 ga-2 flex-wrap">
-            <h1 class="text-h4">Blog</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" to="/Admin/Blog/New">New post</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Blog</div>
+                <div class="rp-pagehead-sub">
+                    Write posts with photos, publish them, and feature one on your home page.
+                    <template v-if="!branding.blogEnabled">
+                    The blog is currently <strong>off</strong> — turn it on under
+                    <router-link to="/Admin/Settings/Features">Settings &rarr; Features</router-link>
+                    to show it on your public site.
+                    </template>
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" to="/Admin/Blog/New">New post</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Write posts with photos, publish them, and feature one on your home page.
-            <template v-if="!branding.blogEnabled">
-                The blog is currently <strong>off</strong> — turn it on under
-                <router-link to="/Admin/Settings/Features">Settings &rarr; Features</router-link>
-                to show it on your public site.
-            </template>
-        </p>
 
         <v-card>
             <v-table>
@@ -37,8 +40,8 @@
                             <v-avatar v-if="p.mainImageUrl" rounded size="44">
                                 <v-img :src="absoluteUrl(p.mainImageUrl)" cover></v-img>
                             </v-avatar>
-                            <v-avatar v-else rounded size="44" color="grey-lighten-2">
-                                <v-icon color="grey">mdi-image-outline</v-icon>
+                            <v-avatar v-else rounded size="44" style="background: var(--rp-raise)">
+                                <v-icon class="text-muted2">mdi-image-outline</v-icon>
                             </v-avatar>
                         </td>
                         <td>

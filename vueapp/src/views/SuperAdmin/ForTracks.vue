@@ -1,11 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center ga-3 mb-4">
-            <h1 class="text-h4">For Tracks page</h1>
-            <v-spacer></v-spacer>
-            <v-btn v-if="loaded" color="primary" size="large" :loading="saving" @click="save">
-                Save changes
-            </v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">For Tracks page</div>
+                <div class="rp-pagehead-sub">Hero copy and the "Why Tracks love RidePass" section on the public For Tracks page.</div>
+            </div>
+            <div>
+                <v-btn v-if="loaded" color="primary" variant="flat" size="large" :loading="saving" @click="save">
+                    Save changes
+                </v-btn>
+            </div>
         </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
@@ -198,13 +202,14 @@ async function removeBenefits() {
 </script>
 
 <style scoped>
+/* Preview sits on the nested-card surface so the photo reads as it will on the dark page. */
 .ft-benefits-preview {
     width: 180px;
     height: 110px;
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.04);
+    border-radius: 12px;
+    background-color: var(--rp-card2);
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line2);
 }
 </style>

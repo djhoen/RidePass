@@ -1,11 +1,15 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">Payments</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Riders pay through RidePass, and RidePass pays you out via Stripe on the schedule
-            agreed with your account manager. Connect a Stripe account below to enable Stripe-based
-            payouts; without one, payouts are handled manually outside of Stripe.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Payments</div>
+                <div class="rp-pagehead-sub">
+                    Riders pay through RidePass, and RidePass pays you out via Stripe on the schedule
+                    agreed with your account manager. Connect a Stripe account below to enable Stripe-based
+                    payouts; without one, payouts are handled manually outside of Stripe.
+                </div>
+            </div>
+        </div>
 
         <v-alert v-if="branding.stripeChargeMode === 'direct'" type="info" variant="tonal" density="comfortable" class="mb-6">
             <strong>Direct payments are enabled for your track.</strong>
@@ -19,7 +23,7 @@
             <v-card-text>
                 <div v-if="!branding.stripeConnectAccountId" class="d-flex flex-column ga-3">
                     <div class="d-flex align-center ga-2">
-                        <v-icon color="grey">mdi-credit-card-outline</v-icon>
+                        <v-icon class="text-muted2">mdi-credit-card-outline</v-icon>
                         <span>No Stripe payout account connected.</span>
                     </div>
                     <div>
@@ -78,7 +82,10 @@
         <v-card class="mt-6">
             <v-card-item>
                 <template #prepend><v-icon color="primary">mdi-ticket-percent-outline</v-icon></template>
-                <v-card-title>Event admission tax</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">Payments</span>
+                    <span class="rp-section-title">Event admission tax</span>
+                </v-card-title>
                 <v-card-subtitle>
                     Amusement / admission tax charged on event tickets and gate fees. This is separate
                     from concession sales tax (set under Concessions). Leave the rate at 0% for no tax.
@@ -344,3 +351,18 @@ onMounted(async () => {
     }
 })
 </script>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+</style>

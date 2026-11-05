@@ -13,7 +13,7 @@
         </template>
 
         <template v-else-if="info">
-            <h1 class="text-h5 font-weight-bold mb-1">Before your visit</h1>
+            <h1 class="text-h4 font-display mb-1">Before your visit</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 {{ info.recipientName ? `Hi ${info.recipientName}, ` : '' }}sign this now and you can
                 skip the paperwork at the window.

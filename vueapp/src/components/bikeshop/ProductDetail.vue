@@ -8,7 +8,7 @@
         <div class="d-flex align-start pa-4 pb-0">
             <div class="flex-grow-1" style="min-width: 0">
                 <div v-if="product.brand" class="text-caption text-medium-emphasis">{{ product.brand }}</div>
-                <h2 class="text-h6 font-weight-bold">{{ product.name }}</h2>
+                <h2 class="font-display-upright text-h5">{{ product.name }}</h2>
             </div>
             <v-btn icon="mdi-close" variant="text" size="small" aria-label="Close" @click="$emit('close')"></v-btn>
         </div>
@@ -31,7 +31,7 @@
 
             <!-- Detail + buy -->
             <v-col cols="12" md="6">
-                <div class="text-h6 text-primary font-weight-bold">{{ priceLabel }}</div>
+                <div class="font-display text-h4">{{ priceLabel }}</div>
 
                 <p v-if="product.description" class="text-body-2 mt-3" style="white-space: pre-line">{{ product.description }}</p>
 
@@ -144,10 +144,11 @@ function add() {
 </script>
 
 <style scoped>
-.pd-hero { background: rgba(var(--v-theme-on-surface), 0.04); }
+.pd-hero { background: var(--rp-card2); }
 .pd-noimage {
     aspect-ratio: 4 / 3;
-    background: rgba(var(--v-theme-on-surface), 0.04);
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
 }
 .pd-thumbs { overflow-x: auto; }
 .pd-thumb {

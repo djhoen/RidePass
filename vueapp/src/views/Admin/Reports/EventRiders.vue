@@ -1,13 +1,16 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h2 class="text-h5">Event Riders</h2>
-            <v-spacer></v-spacer>
-            <v-autocomplete v-model="selectedEventId" :items="eventOptions" item-title="title" item-value="value"
-                label="Pick an event" density="compact" hide-details
-                style="min-width: 320px" :loading="loadingEvents"
-                @update:model-value="loadReport"></v-autocomplete>
-            <v-btn variant="text" :disabled="!selectedEventId" :loading="loading" @click="loadReport">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Event Riders</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-autocomplete v-model="selectedEventId" :items="eventOptions" item-title="title" item-value="value"
+                    label="Pick an event" density="compact" hide-details
+                    style="min-width: 320px" :loading="loadingEvents"
+                    @update:model-value="loadReport"></v-autocomplete>
+                <v-btn variant="text" :disabled="!selectedEventId" :loading="loading" @click="loadReport">Refresh</v-btn>
+            </div>
         </div>
 
         <v-card v-if="report" class="mb-4 pa-3" variant="outlined">
@@ -16,9 +19,9 @@
                     <div class="text-h6">{{ report.eventTitle }}</div>
                     <div class="text-caption text-medium-emphasis">{{ formatLong(report.eventStartsAtUtc) }}</div>
                 </div>
-                <div class="text-right">
-                    <div class="text-overline text-medium-emphasis">Checked in</div>
-                    <div class="text-h5">{{ report.totalCheckedIn }} / {{ report.totalRegistrants }}</div>
+                <div class="text-right rp-kpi">
+                    <div class="rp-kpi-label mt-0">Checked in</div>
+                    <div class="rp-kpi-value">{{ report.totalCheckedIn }} / {{ report.totalRegistrants }}</div>
                 </div>
             </div>
         </v-card>
@@ -109,7 +112,7 @@
         </v-card>
 
         <v-card v-else-if="!loading && !selectedEventId" variant="outlined" class="pa-6 text-center">
-            <v-icon size="48" color="grey" class="mb-2">mdi-account-group-outline</v-icon>
+            <v-icon size="48" class="text-muted2 mb-2">mdi-account-group-outline</v-icon>
             <p class="text-body-2 text-medium-emphasis">
                 Pick an event above to see who's registered and who has checked in.
             </p>

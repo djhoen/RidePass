@@ -1,17 +1,23 @@
 <template>
     <div>
-        <div class="d-flex flex-wrap align-center ga-2 mb-4">
-            <v-autocomplete v-model="selectedEventId" :items="eventOptions" item-title="title" item-value="value"
-                :loading="loadingEvents" label="Event" density="compact" hide-details clearable
-                style="min-width: 320px; max-width: 480px" @update:model-value="onEventChange"></v-autocomplete>
-            <v-btn variant="text" :disabled="!selectedEventId" :loading="loading" @click="loadReport">Refresh</v-btn>
-            <v-spacer></v-spacer>
-            <template v-if="report">
-                <v-chip size="small" variant="tonal">{{ report.totalAttendees }} attendees</v-chip>
-                <v-chip size="small" :color="allSigned ? 'success' : 'warning'" variant="tonal">
-                    {{ report.totalSigned }} / {{ report.totalAttendees }} cleared
-                </v-chip>
-            </template>
+        <div class="rp-pagehead">
+            <div>
+                <div class="d-flex align-center ga-3 flex-wrap">
+                    <div class="rp-pagehead-title">Waiver Signatures</div>
+                    <template v-if="report">
+                        <v-chip size="small" variant="tonal">{{ report.totalAttendees }} attendees</v-chip>
+                        <v-chip size="small" :color="allSigned ? 'success' : 'warning'" variant="tonal">
+                            {{ report.totalSigned }} / {{ report.totalAttendees }} cleared
+                        </v-chip>
+                    </template>
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-autocomplete v-model="selectedEventId" :items="eventOptions" item-title="title" item-value="value"
+                    :loading="loadingEvents" label="Event" density="compact" hide-details clearable
+                    style="min-width: 320px; max-width: 480px" @update:model-value="onEventChange"></v-autocomplete>
+                <v-btn variant="text" :disabled="!selectedEventId" :loading="loading" @click="loadReport">Refresh</v-btn>
+            </div>
         </div>
 
         <v-card v-if="!selectedEventId" variant="outlined" class="pa-6 text-center text-medium-emphasis">
@@ -29,7 +35,7 @@
                     </v-chip>
                 </template>
                 <template #[`item.waiver`]="{ item }">
-                    <v-chip size="x-small" :color="waiverColor(item)" variant="flat">{{ waiverLabel(item) }}</v-chip>
+                    <v-chip size="x-small" :color="waiverColor(item)" variant="tonal">{{ waiverLabel(item) }}</v-chip>
                 </template>
                 <template #[`item.registrationComplete`]="{ item }">
                     <v-icon :color="item.registrationComplete ? 'success' : 'warning'" size="small">

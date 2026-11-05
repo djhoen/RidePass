@@ -3,13 +3,13 @@
         <div class="pos-root d-flex flex-column">
             <!-- Header -->
             <div class="pos-header d-flex align-center px-4 py-2 ga-2">
-                <h1 class="text-h6 font-weight-bold">Food &amp; Beverage POS</h1>
-                <v-chip :color="readerColor" size="small" variant="flat">
+                <h1 class="pos-title">Food &amp; Beverage POS</h1>
+                <v-chip :color="readerColor" size="small" variant="tonal">
                     <v-icon start size="small">mdi-contactless-payment</v-icon>{{ readerStatus }}
                 </v-chip>
                 <v-btn v-if="readerState !== 'connected'" size="small" variant="text"
                     :loading="readerConnecting" @click="connectReader">Connect</v-btn>
-                <v-chip v-if="online.capacityEnabled" size="small" variant="flat"
+                <v-chip v-if="online.capacityEnabled" size="small" variant="tonal"
                     :color="online.openNow ? 'success' : 'error'">
                     <v-icon start size="small">{{ online.openNow ? 'mdi-cloud-check' : 'mdi-cloud-off-outline' }}</v-icon>
                     Online: {{ online.openNow ? 'Open' : (online.pausedManual ? 'Paused' : (online.capReached ? 'Busy' : 'Closed')) }}
@@ -51,7 +51,7 @@
                             <div v-for="p in filteredProducts" :key="p.id" class="tile" :class="{ 'tile--out': p.soldOut }" @click="beginAdd(p)">
                                 <div class="tile__media">
                                     <v-img v-if="p.imageUrl" :src="p.imageUrl" cover height="100%" />
-                                    <div v-else class="tile__placeholder"><v-icon size="34" color="grey-lighten-1">mdi-silverware-fork-knife</v-icon></div>
+                                    <div v-else class="tile__placeholder"><v-icon size="34" class="text-muted2">mdi-silverware-fork-knife</v-icon></div>
                                     <div v-if="p.soldOut" class="tile__ribbon">SOLD OUT</div>
                                     <v-menu>
                                         <template #activator="{ props }">
@@ -89,7 +89,7 @@
                     <v-divider />
                     <div class="pos-cart-items flex-grow-1">
                         <div v-if="cart.length === 0" class="empty-cart text-medium-emphasis">
-                            <v-icon size="48" color="grey-lighten-1">mdi-cart-outline</v-icon>
+                            <v-icon size="48" class="text-muted2">mdi-cart-outline</v-icon>
                             <div class="mt-2">Tap items to start an order</div>
                         </div>
                         <div v-for="(line, i) in cart" :key="i" class="cart-line">
@@ -153,7 +153,7 @@
                         </div>
                         <div class="d-flex justify-space-between align-center mb-3">
                             <span class="text-h6 font-weight-bold">Total</span>
-                            <span class="text-h4 font-weight-bold">{{ money(total) }}</span>
+                            <span class="pos-total">{{ money(total) }}</span>
                         </div>
                         <!-- Rush is decided while the customer is standing there ("I'm about to miss my
                              moto"), so it belongs next to the money, not on a screen the cashier would
@@ -205,7 +205,7 @@
                             @update:model-value="toggleOption(g, o.id, !!$event)" />
                     </div>
                     <!-- Make it a combo -->
-                    <div v-if="canCombo(adding)" ref="comboSectionEl" class="mt-4 pa-3" style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
+                    <div v-if="canCombo(adding)" ref="comboSectionEl" class="mt-4 pa-3" style="border: 1px solid var(--rp-line2); border-radius: 10px;">
                         <div class="text-subtitle-2 mb-1">Make it a combo</div>
                         <v-radio-group v-model="selComboTierId" density="compact" hide-details>
                             <v-radio :value="null" label="No thanks" />
@@ -269,7 +269,7 @@
         <!-- Customer confirmation: review order, choose tip + receipt, then tender -->
         <v-dialog v-model="confirmDialog" fullscreen transition="dialog-bottom-transition">
             <v-card class="d-flex flex-column">
-                <v-toolbar color="primary" density="comfortable">
+                <v-toolbar color="transparent" density="comfortable" class="border-b">
                     <v-btn icon="mdi-arrow-left" @click="confirmDialog = false" />
                     <v-toolbar-title>Review your order · {{ tender === 'cash' ? 'Cash' : 'Card' }}</v-toolbar-title>
                 </v-toolbar>
@@ -349,7 +349,7 @@
                         </div>
                         <div class="d-flex justify-space-between align-center my-2">
                             <span class="text-h6 font-weight-bold">{{ creditAppliedEstimate ? 'Due' : 'Total' }}</span>
-                            <span class="text-h4 font-weight-bold">{{ money(dueEstimate) }}</span>
+                            <span class="pos-total">{{ money(dueEstimate) }}</span>
                         </div>
                         <v-btn block size="large" height="56" :loading="paying"
                             :color="tender === 'cash' ? 'success' : 'primary'"
@@ -395,7 +395,7 @@
         <v-dialog v-model="doneDialog" max-width="340" persistent>
             <v-card class="text-center pa-4">
                 <v-icon color="success" size="64">mdi-check-circle</v-icon>
-                <div class="text-h4 mt-2">{{ lastOrderNumber != null ? `Order #${lastOrderNumber}` : 'Order placed' }}</div>
+                <div class="pos-total mt-2">{{ lastOrderNumber != null ? `Order #${lastOrderNumber}` : 'Order placed' }}</div>
                 <div class="text-medium-emphasis mb-4">
                     {{ lastOrderNumber != null ? 'Call this number at pickup.' : 'Payment received — the order number will appear on the cook screen shortly.' }}
                 </div>
@@ -529,7 +529,7 @@
                             prepend-inner-icon="mdi-account-search" @keyup.enter="lookupMember" />
                         <v-btn variant="tonal" :loading="memberLooking" @click="lookupMember">Look up</v-btn>
                     </div>
-                    <div v-if="memberResult" class="mt-3 pa-3" style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
+                    <div v-if="memberResult" class="mt-3 pa-3" style="border: 1px solid var(--rp-line2); border-radius: 10px;">
                         <div class="font-weight-medium">{{ memberResult.customerName || memberResult.customerEmail || 'Customer' }}</div>
                         <div v-if="memberResult.seasonPass?.eligible" class="d-flex align-center justify-space-between mt-2">
                             <span>{{ memberResult.seasonPass.label }}</span>
@@ -1644,11 +1644,30 @@ async function printLast() {
 
 <style scoped>
 .pos-root { height: calc(100dvh - 64px); }
-.pos-header { flex: 0 0 auto; border-bottom: 1px solid rgba(128, 128, 128, 0.18); }
+.pos-header { flex: 0 0 auto; border-bottom: 1px solid var(--rp-line); }
 .pos-body { flex: 1 1 auto; min-height: 0; }
 .pos-catalog { min-width: 0; }
 .pos-tabs { flex: 0 0 auto; }
-.pos-chip--active { background-color: rgb(var(--v-theme-primary)) !important; color: rgb(var(--v-theme-on-primary)) !important; }
+.pos-chip--active { background-color: var(--rp-ink) !important; color: var(--rp-on-ink) !important; }
+.pos-title {
+    margin: 0;
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+}
+.pos-total {
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 2.6rem;
+    line-height: 1;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
 
 .pos-grid-wrap { overflow-y: auto; min-height: 0; padding: 12px; }
 .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
@@ -1656,22 +1675,23 @@ async function printLast() {
 .tile {
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(128, 128, 128, 0.2);
+    border: 1px solid var(--rp-line);
     border-radius: 14px;
     overflow: hidden;
     cursor: pointer;
-    background: rgb(var(--v-theme-surface));
-    transition: box-shadow 0.15s ease, transform 0.15s ease;
+    background: var(--rp-card);
+    transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.tile:hover { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14); transform: translateY(-2px); }
+.tile:hover { border-color: var(--rp-line3); transform: translateY(-2px); }
 .tile:active { transform: translateY(0); }
 .tile--out { opacity: 0.5; }
-.tile__media { position: relative; height: 104px; background: rgba(128, 128, 128, 0.1); }
+.tile__media { position: relative; height: 104px; background: var(--rp-panel2); }
 .tile__placeholder { height: 100%; display: flex; align-items: center; justify-content: center; }
-.tile__menu { position: absolute; top: 6px; right: 6px; background: rgba(0, 0, 0, 0.45) !important; color: #fff !important; }
+/* Sits over the product photo: dark scrim + white glyph in both modes, like any photo overlay. */
+.tile__menu { position: absolute; top: 6px; right: 6px; background: rgba(var(--rp-scrim), 0.55) !important; color: var(--rp-photo-ink) !important; }
 .tile__ribbon {
     position: absolute; top: 12px; left: 0; right: 0; text-align: center;
-    background: rgba(211, 47, 47, 0.92); color: #fff;
+    background: var(--rp-red); color: var(--rp-on-ink);
     font-weight: 700; font-size: 0.72rem; letter-spacing: 0.06em; padding: 3px 0;
 }
 .tile__body { padding: 8px 10px 10px; }
@@ -1684,23 +1704,23 @@ async function printLast() {
 
 .pos-cart {
     flex: 0 0 380px; width: 380px;
-    border-left: 1px solid rgba(128, 128, 128, 0.18);
-    background: rgb(var(--v-theme-surface));
+    border-left: 1px solid var(--rp-line);
+    background: var(--rp-panel);
 }
 .pos-cart-items { overflow-y: auto; min-height: 0; }
 .empty-cart { text-align: center; padding: 56px 16px; }
-.cart-line { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid rgba(128, 128, 128, 0.14); }
-.pos-cart-footer { flex: 0 0 auto; border-top: 1px solid rgba(128, 128, 128, 0.18); }
+.cart-line { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--rp-line); }
+.pos-cart-footer { flex: 0 0 auto; border-top: 1px solid var(--rp-line); }
 
 .confirm-body { overflow-y: auto; min-height: 0; }
 .confirm-inner { max-width: 640px; margin: 0 auto; }
-.confirm-footer { flex: 0 0 auto; border-top: 1px solid rgba(128, 128, 128, 0.18); }
+.confirm-footer { flex: 0 0 auto; border-top: 1px solid var(--rp-line); }
 
 /* Stack to a single column on phones / small tablets so nothing gets cramped. */
 @media (max-width: 960px) {
     .pos-root { height: auto; }
     .pos-body { flex-direction: column; }
-    .pos-cart { flex-basis: auto; width: 100%; border-left: none; border-top: 1px solid rgba(128, 128, 128, 0.18); }
+    .pos-cart { flex-basis: auto; width: 100%; border-left: none; border-top: 1px solid var(--rp-line); }
     .pos-grid-wrap, .pos-cart-items { overflow: visible; }
 }
 </style>

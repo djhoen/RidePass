@@ -24,7 +24,7 @@
             <div v-for="p in photos" :key="p.id" class="photo-tile">
                 <v-img :src="p.imageUrl" :alt="p.caption || 'Condition photo'" aspect-ratio="1" cover
                     class="rounded" style="cursor: zoom-in" @click="viewing = p"></v-img>
-                <v-btn icon="mdi-close" size="x-small" variant="flat" color="surface"
+                <v-btn icon="mdi-close" size="x-small" variant="flat" color="primary"
                     class="photo-remove" :loading="deletingId === p.id" @click.stop="remove(p)"></v-btn>
                 <div v-if="p.caption" class="text-caption text-truncate mt-1">{{ p.caption }}</div>
             </div>

@@ -1,17 +1,20 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">F&amp;B Staff Sales</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">F&amp;B Staff Sales</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <v-card v-if="report">

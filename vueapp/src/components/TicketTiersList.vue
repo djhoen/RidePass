@@ -23,7 +23,7 @@
                 <template #item="{ element: t }">
                     <tr>
                         <td class="drag-handle-cell">
-                            <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                            <v-icon class="drag-handle text-muted2">mdi-drag-vertical</v-icon>
                         </td>
                         <td>
                             {{ t.name }}
@@ -46,7 +46,7 @@
                         <td>{{ t.sold ?? 0 }}</td>
                         <td>
                             <v-icon v-if="t.isActive" color="success">mdi-check</v-icon>
-                            <v-icon v-else color="grey">mdi-close</v-icon>
+                            <v-icon v-else class="text-muted2">mdi-close</v-icon>
                         </td>
                         <td class="text-right">
                             <v-btn variant="text" size="small" @click="openEdit(t)">Edit</v-btn>
@@ -723,5 +723,5 @@ defineExpose({ refresh: load, getBuffered, persistTo })
 .drag-handle-cell { padding-left: 4px !important; padding-right: 0 !important; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
 </style>

@@ -1,6 +1,11 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Reconcile</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Reconcile</div>
+                <div class="rp-pagehead-sub">Stripe balance transactions against the RidePass ledger for a period.</div>
+            </div>
+        </div>
 
         <div class="d-flex align-center mb-3 flex-wrap ga-3">
             <v-text-field v-model="reconcileFrom" type="date" label="From (UTC)" density="compact" hide-details
@@ -18,6 +23,35 @@
             Stripe credentials are not configured on the server, so the Stripe column is unavailable.
             Ledger totals are still shown.
         </v-alert>
+
+        <v-row v-if="reconciliation" class="mb-2">
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Stripe net</div>
+                    <div class="rp-kpi-value">{{ reconciliation.stripe ? '$' + (reconciliation.stripe.netCents / 100).toFixed(2) : '—' }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Ledger gross</div>
+                    <div class="rp-kpi-value">${{ (reconciliation.ledger.grossCents / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Net to tenants</div>
+                    <div class="rp-kpi-value">${{ (reconciliation.ledger.netToTenantCents / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Gross gap</div>
+                    <div class="rp-kpi-value" :class="reconciliation.stripe ? gapClass(reconciliation.gaps.grossGap) : ''">
+                        {{ reconciliation.stripe ? '$' + (reconciliation.gaps.grossGap / 100).toFixed(2) : '—' }}
+                    </div>
+                </v-card>
+            </v-col>
+        </v-row>
 
         <v-row v-if="reconciliation" class="mb-4">
             <v-col cols="12" md="6">

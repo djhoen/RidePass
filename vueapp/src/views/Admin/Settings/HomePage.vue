@@ -1,14 +1,21 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">Home Page</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Configure what visitors to your public site see. Hero images, the About section,
-            today's open/closed status, and operating hours.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Home Page</div>
+                <div class="rp-pagehead-sub">
+                    Configure what visitors to your public site see. Hero images, the About section,
+                    today's open/closed status, and operating hours.
+                </div>
+            </div>
+        </div>
 
         <!-- ── Daily Status ──────────────────────────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Today's Status</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Today's Status</span>
+            </v-card-title>
             <v-card-subtitle>
                 Quick toggle for whether you're open right now. Visible at the top of the public home page.
                 Auto-clears after 24 hours. Blackout days are always shown as closed automatically — no need to set status on those.
@@ -40,7 +47,10 @@
 
         <!-- ── Next Up section (events row) ──────────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Next Up section</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Next Up section</span>
+            </v-card-title>
             <v-card-subtitle>The events row at the top of the public home page.</v-card-subtitle>
             <v-card-text>
                 <v-text-field v-model="content.nextUpTitle" label="Heading"
@@ -57,7 +67,10 @@
 
         <!-- ── About + Hours (saved together, both live in tenant.about_html / hours_json) ── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>About</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">About</span>
+            </v-card-title>
             <v-card-subtitle>Shown on the home page below the hero. Tell riders what your track is like.</v-card-subtitle>
             <v-card-text>
                 <RichTextEditor v-model="content.aboutHtml" />
@@ -66,7 +79,10 @@
 
         <!-- ── Benefits ("why ride here" band) ──────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Benefits</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Benefits</span>
+            </v-card-title>
             <v-card-subtitle>A "why ride here" band on the home page. The side image is optional.</v-card-subtitle>
             <v-card-text>
                 <RichTextEditor v-model="content.benefitsHtml" />
@@ -78,7 +94,10 @@
 
         <!-- ── Section visibility ───────────────────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Page Sections</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Page Sections</span>
+            </v-card-title>
             <v-card-subtitle>Turn home page sections on or off. The hero is always shown.</v-card-subtitle>
             <v-card-text>
                 <v-switch v-for="s in SECTION_DEFS" :key="s.key" v-model="sections[s.key]"
@@ -91,7 +110,10 @@
         </v-card>
 
         <v-card class="mb-6 pa-4">
-            <v-card-title>Hours of Operation</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Hours of Operation</span>
+            </v-card-title>
             <v-card-subtitle>When riding is allowed. The public page can warn riders before they buy a pass for a day you're closed.</v-card-subtitle>
             <v-card-text>
                 <v-row v-for="day in days" :key="day.key" align="center" class="mb-1">
@@ -120,7 +142,10 @@
 
         <!-- ── Heroes (moved from Branding admin page) ──────────────────────── -->
         <v-card class="mt-8 mb-6 pa-4">
-            <v-card-title>Hero Images</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Hero Images</span>
+            </v-card-title>
             <v-card-subtitle>Large images shown at the top of the public home page.</v-card-subtitle>
             <v-card-text>
                 <BrandingImageSlot label="Home Hero" kind="hero" :url="branding.heroImageUrl"
@@ -133,7 +158,10 @@
 
         <!-- ── Photo Gallery ─────────────────────────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Photo Gallery</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Photo Gallery</span>
+            </v-card-title>
             <v-card-subtitle>Photos of the track shown in a grid on the home page. Add a caption to give context.</v-card-subtitle>
             <v-card-text>
                 <v-file-input v-model="galleryUploadFile" label="Add a photo" prepend-icon="mdi-camera-plus"
@@ -147,7 +175,7 @@
                         <v-card variant="outlined">
                             <div class="gallery-img-wrap">
                                 <v-img :src="absoluteUrl(img.imageUrl)" aspect-ratio="1.5" cover></v-img>
-                                <v-icon class="drag-handle gallery-handle" color="white">mdi-drag</v-icon>
+                                <v-icon class="drag-handle gallery-handle">mdi-drag</v-icon>
                             </div>
                             <v-card-text class="pa-2">
                                 <v-text-field :model-value="img.caption ?? ''"
@@ -169,7 +197,10 @@
 
         <!-- ── Track Graphics ───────────────────────────────────────────────── -->
         <v-card class="mb-6 pa-4">
-            <v-card-title>Track Graphics</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Home page</span>
+                <span class="rp-section-title">Track Graphics</span>
+            </v-card-title>
             <v-card-subtitle>
                 Layout diagrams or section maps of your track. Each graphic gets a title and description
                 shown next to it on the home page (e.g., "Pro Loop — advanced jumps only").
@@ -186,8 +217,8 @@
                         <v-card variant="outlined" class="mb-3">
                             <v-row no-gutters>
                                 <v-col cols="auto" class="d-flex align-center justify-center"
-                                    style="width: 36px; background: rgba(0,0,0,0.03)">
-                                    <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                    style="width: 36px; background: var(--rp-panel2)">
+                                    <v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon>
                                 </v-col>
                                 <v-col cols="12" md="4">
                                     <v-img :src="absoluteUrl(g.imageUrl)" aspect-ratio="1.5" cover></v-img>
@@ -596,11 +627,13 @@ watch(() => branding.loaded, (loaded) => {
     .gallery-grid { grid-template-columns: 1fr; }
 }
 .gallery-img-wrap { position: relative; }
+/* Sits over the gallery photo: dark scrim + white glyph in both modes, like any photo overlay. */
 .gallery-handle {
     position: absolute;
     top: 8px;
     left: 8px;
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(var(--rp-scrim), 0.55);
+    color: var(--rp-photo-ink);
     border-radius: 4px;
     padding: 2px;
     cursor: grab;
@@ -608,5 +641,20 @@ watch(() => branding.loaded, (loaded) => {
 .gallery-handle:active { cursor: grabbing; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
+</style>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
 </style>

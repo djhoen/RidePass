@@ -1,6 +1,6 @@
 <template>
     <v-container style="max-width: 720px">
-        <h1 class="text-h4 mb-2">Send a Gift Card</h1>
+        <h1 class="text-h3 font-display mb-2">Send a Gift Card</h1>
         <p class="text-body-2 text-medium-emphasis mb-4">
             Pick a denomination, add the recipient's info, and we'll email them a code they can use
             on any purchase at {{ branding.displayName }} until the balance runs out.

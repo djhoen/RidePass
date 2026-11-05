@@ -1,18 +1,20 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h1 class="text-h4">Waivers</h1>
-            <v-spacer></v-spacer>
-            <v-switch v-model="showInactive" color="primary" density="compact" hide-details
-                label="Show inactive / expired" style="flex: 0 0 auto"></v-switch>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Waiver</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Waivers</div>
+                <div class="rp-pagehead-sub">
+                    Define multiple waivers (e.g. General, Race Day, Minor) and attach them to specific events.
+                    Riders sign each waiver once — separate waivers are tracked separately.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-switch v-model="showInactive" color="primary" density="compact" hide-details
+                    label="Show inactive / expired" style="flex: 0 0 auto"></v-switch>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Waiver</v-btn>
+            </div>
         </div>
-
-        <p class="text-caption text-medium-emphasis mb-4">
-            Define multiple waivers (e.g. General, Race Day, Minor) and attach them to specific events.
-            Riders sign each waiver once — separate waivers are tracked separately.
-        </p>
 
         <v-card>
             <v-table>
@@ -40,7 +42,7 @@
                         </td>
                         <td>
                             <v-icon v-if="row.isActive" color="success">mdi-check</v-icon>
-                            <v-icon v-else color="grey">mdi-close</v-icon>
+                            <v-icon v-else class="text-muted2">mdi-close</v-icon>
                         </td>
                         <td class="text-right">
                             <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>

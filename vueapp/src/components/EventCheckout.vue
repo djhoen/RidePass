@@ -104,7 +104,7 @@
                     <span class="text-h6 font-weight-bold">{{ priceLabel(grandTotalCents) }}</span>
                 </div>
                 <p class="text-caption text-medium-emphasis mb-3">Final total is shown before you pay.</p>
-                <v-btn block color="primary" size="large" :disabled="!canContinue" @click="step = 'details'">Continue</v-btn>
+                <v-btn block color="primary" variant="flat" size="large" :disabled="!canContinue" @click="step = 'details'">Continue</v-btn>
             </template>
             <p v-else class="text-body-2 text-medium-emphasis text-center py-2">Add an option above to get started.</p>
         </template>
@@ -228,7 +228,7 @@
             <template v-else>
                 <div :id="paymentElementId" class="mb-4"></div>
                 <div v-if="paymentError" class="text-error text-body-2 mb-2">{{ paymentError }}</div>
-                <v-btn block color="primary" size="large" :loading="paying" :disabled="!stripeReady" @click="pay">
+                <v-btn block color="primary" variant="flat" size="large" :loading="paying" :disabled="!stripeReady" @click="pay">
                     Pay {{ priceLabel(chargeCents) }}
                 </v-btn>
                 <div class="text-caption text-medium-emphasis d-flex align-center justify-center ga-1 mt-2">
@@ -300,7 +300,7 @@
             </div>
 
             <div v-if="errorMessage" class="text-error text-body-2 mb-2">{{ errorMessage }}</div>
-            <v-btn block color="primary" size="large" :loading="finishing" @click="finish">Finish registration</v-btn>
+            <v-btn block color="primary" variant="flat" size="large" :loading="finishing" @click="finish">Finish registration</v-btn>
         </template>
 
         <!-- ── 5. Done ───────────────────────────────────────────────────── -->
@@ -1075,7 +1075,7 @@ async function finish() {
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
-    border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+    border-bottom: 1px solid var(--rp-line);
 }
 /* on-surface (not hardcoded black) so dark-theme tenants keep readable labels on
    the dark checkout card. */
@@ -1095,8 +1095,9 @@ async function finish() {
 .evt-reg,
 .evt-riders,
 .evt-signup {
-    background: rgba(var(--v-theme-on-surface), 0.03);
-    border-radius: 8px;
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
+    border-radius: 12px;
 }
 .evt-codes :deep(.v-expansion-panel) {
     background: transparent;

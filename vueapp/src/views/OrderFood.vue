@@ -1,6 +1,6 @@
 <template>
     <v-container class="of-container">
-        <h1 class="text-h4 mb-1 font-weight-bold">Order Food</h1>
+        <h1 class="text-h3 mb-1 font-display">Order Food</h1>
         <p class="text-body-2 text-medium-emphasis mb-4">Order ahead and pay here; we'll call your number when it's ready.</p>
 
         <v-alert v-if="!branding.concessionsEnabled" type="info" variant="tonal" class="mb-4">
@@ -35,15 +35,15 @@
                 <div v-if="loading" class="d-flex justify-center pa-8"><v-progress-circular indeterminate /></div>
                 <template v-else>
                     <div v-for="g in categoryGroups" :key="g.key" class="mb-6">
-                        <h2 class="text-h6 font-weight-bold mb-3">{{ g.name }}</h2>
+                        <h2 class="text-h5 font-display-upright mb-3">{{ g.name }}</h2>
                         <div class="of-grid">
                             <div v-for="p in g.items" :key="p.id" class="of-card" :class="{ 'of-card--out': p.soldOut }" @click="beginAdd(p)">
                                 <div class="of-card__media">
                                     <v-img v-if="p.imageUrl" :src="p.imageUrl" cover height="100%" />
-                                    <div v-else class="of-card__ph"><v-icon size="32" color="grey-lighten-1">mdi-silverware-fork-knife</v-icon></div>
+                                    <div v-else class="of-card__ph"><v-icon size="32" class="text-muted2">mdi-silverware-fork-knife</v-icon></div>
                                     <div v-if="p.soldOut" class="of-card__out">Sold out</div>
                                     <v-btn icon="mdi-dots-vertical" size="x-small" variant="flat" class="of-card__info" @click.stop="openDetails(p)" />
-                                    <v-btn v-if="!p.soldOut" icon="mdi-plus" size="small" color="primary" class="of-card__add" elevation="2" @click.stop="beginAdd(p)" />
+                                    <v-btn v-if="!p.soldOut" icon="mdi-plus" size="small" color="primary" variant="flat" class="of-card__add" @click.stop="beginAdd(p)" />
                                 </div>
                                 <div class="of-card__body">
                                     <div class="of-card__name">{{ p.name }}</div>
@@ -66,7 +66,7 @@
                     <v-divider />
                     <v-card-text>
                         <div v-if="cart.length === 0" class="text-medium-emphasis text-center py-6">
-                            <v-icon size="40" color="grey-lighten-1">mdi-cart-outline</v-icon>
+                            <v-icon size="40" class="text-muted2">mdi-cart-outline</v-icon>
                             <div class="mt-2">Tap items to add them.</div>
                         </div>
                         <div v-for="(line, i) in cart" :key="i" class="d-flex mb-3">
@@ -316,7 +316,7 @@ function statusLabel(o: RiderOrder) {
     return o.fulfillmentStatus === 'ready' ? 'Ready!' : o.fulfillmentStatus === 'completed' ? 'Picked up' : 'Preparing'
 }
 function statusColor(o: RiderOrder) {
-    if (o.status !== 'paid') return 'grey'
+    if (o.status !== 'paid') return ''
     return o.fulfillmentStatus === 'ready' ? 'success' : 'primary'
 }
 
@@ -660,41 +660,39 @@ async function pollOrderNumber(saleId: string): Promise<number | null> {
 .of-card {
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 14px;
+    border: 1px solid var(--rp-line);
+    border-radius: 16px;
     overflow: hidden;
     cursor: pointer;
-    background: rgb(var(--v-theme-surface));
-    transition: box-shadow 0.15s ease, transform 0.15s ease;
+    background: var(--rp-card);
+    transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.of-card:hover { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12); transform: translateY(-2px); }
+.of-card:hover { border-color: var(--rp-line3); transform: translateY(-2px); }
 .of-card--out { opacity: 0.55; cursor: default; }
-.of-card--out:hover { box-shadow: none; transform: none; }
-.of-card__media { position: relative; height: 120px; background: rgba(128, 128, 128, 0.1); }
+.of-card--out:hover { border-color: var(--rp-line); transform: none; }
+.of-card__media { position: relative; height: 120px; background: var(--rp-card2); }
 .of-card__ph { height: 100%; display: flex; align-items: center; justify-content: center; }
 .of-card__add { position: absolute; right: 8px; bottom: 8px; }
-.of-card__info { position: absolute; top: 8px; right: 8px; background: rgba(0, 0, 0, 0.45) !important; color: #fff !important; }
+.of-card__info { position: absolute; top: 8px; right: 8px; background: rgba(0, 0, 0, 0.55) !important; color: var(--rp-ink) !important; border: 1px solid var(--rp-line2); }
 .of-card__out {
     position: absolute; top: 10px; left: 0; right: 0; text-align: center;
-    background: rgba(211, 47, 47, 0.92); color: #fff; font-weight: 700;
+    background: var(--rp-red-soft); color: #ff9a8a; font-weight: 800; text-transform: uppercase;
     font-size: 0.72rem; letter-spacing: 0.05em; padding: 3px 0;
 }
 .of-card__body { padding: 10px 12px 12px; }
 .of-card__name { font-weight: 600; line-height: 1.25; }
 .of-card__desc {
-    font-size: 0.8rem; color: rgba(var(--v-theme-on-surface), 0.6); margin-top: 2px;
+    font-size: 0.8rem; color: var(--rp-muted); margin-top: 2px;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.of-card__price { font-weight: 700; margin-top: 6px; }
+.of-card__price { font-family: var(--rp-font-display); font-style: italic; font-size: 20px; line-height: 1; margin-top: 8px; }
 
-/* Cart = the item-selection container: a very light gray tint on light themes / a little
-   lighter than the background on dark themes (on-surface alpha inverts per theme). Defined
-   by a hairline border (0.2 on-surface = #cccccc on a white page) rather than a drop shadow,
-   which looked harsh against the white page. Already sits on the right of the menu. */
+/* Cart = the item-selection container: the panel surface with a stronger hairline so the
+   pick-your-items box reads as the actionable panel. Already sits on the right of the menu. */
 .of-cart {
     position: sticky; top: 16px;
-    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
+    background-color: var(--rp-panel) !important;
+    border: 1px solid var(--rp-line2);
 }
 
 .of-bottombar {
@@ -705,9 +703,8 @@ async function pollOrderNumber(saleId: string): Promise<number | null> {
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
-    background: rgb(var(--v-theme-surface));
-    border-top: 1px solid rgba(128, 128, 128, 0.2);
-    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+    background: var(--rp-panel);
+    border-top: 1px solid var(--rp-line2);
 }
 /* Keep the mobile checkout bar from covering the last items. */
 @media (max-width: 959px) {

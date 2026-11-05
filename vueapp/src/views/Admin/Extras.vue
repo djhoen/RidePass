@@ -1,12 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h1 class="text-h4">Add-ons</h1>
-            <v-spacer></v-spacer>
-            <v-switch v-model="showInactive" color="primary" density="compact" hide-details
-                label="Show inactive / expired" style="flex: 0 0 auto"></v-switch>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Product</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Add-ons</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-switch v-model="showInactive" color="primary" density="compact" hide-details
+                    label="Show inactive / expired" style="flex: 0 0 auto"></v-switch>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Product</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="!branding.extrasEnabled" type="info" variant="tonal" class="mb-4">
@@ -41,14 +44,14 @@
                     <template #item="{ element: row }">
                         <tr>
                             <td class="drag-handle-cell">
-                                <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                <v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon>
                             </td>
                             <td>
                                 <v-img v-if="row.imageUrl" :src="absoluteUrl(row.imageUrl)" width="48" height="48"
-                                    cover class="rounded" style="border: 1px solid rgba(0,0,0,0.1)"></v-img>
+                                    cover class="rounded" style="border: 1px solid var(--rp-line)"></v-img>
                                 <div v-else class="d-flex align-center justify-center rounded"
-                                    style="width: 48px; height: 48px; background: rgba(0,0,0,0.05)">
-                                    <v-icon size="small" color="grey">mdi-image-off-outline</v-icon>
+                                    style="width: 48px; height: 48px; background: var(--rp-panel2)">
+                                    <v-icon size="small" class="text-muted2">mdi-image-off-outline</v-icon>
                                 </div>
                             </td>
                             <td>
@@ -78,7 +81,7 @@
                             </td>
                             <td>
                                 <v-icon v-if="row.isActive" color="success">mdi-check</v-icon>
-                                <v-icon v-else color="grey">mdi-close</v-icon>
+                                <v-icon v-else class="text-muted2">mdi-close</v-icon>
                             </td>
                             <td class="text-right">
                                 <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>
@@ -209,10 +212,10 @@
                     <div class="text-subtitle-2 mt-4 mb-2">Image</div>
                     <div class="d-flex align-center ga-3 flex-wrap mb-2">
                         <v-img v-if="form.imageUrl" :src="absoluteUrl(form.imageUrl)" width="96" height="96" cover
-                            class="rounded" style="flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.1)"></v-img>
+                            class="rounded" style="flex: 0 0 auto; border: 1px solid var(--rp-line)"></v-img>
                         <div v-else class="d-flex align-center justify-center rounded"
-                            style="width: 96px; height: 96px; background: rgba(0,0,0,0.05); flex: 0 0 auto">
-                            <v-icon color="grey">mdi-image-off-outline</v-icon>
+                            style="width: 96px; height: 96px; background: var(--rp-panel2); flex: 0 0 auto">
+                            <v-icon class="text-muted2">mdi-image-off-outline</v-icon>
                         </div>
                         <div class="d-flex align-center ga-2 flex-wrap">
                             <v-btn variant="tonal" prepend-icon="mdi-upload" :loading="imageUploading"
@@ -748,7 +751,7 @@ async function saveVariants() {
 /* Visual hint that the variant thumbnail is clickable to replace. */
 .variant-thumb {
     cursor: pointer;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
 }
 .variant-thumb:hover {
     opacity: 0.85;
@@ -766,6 +769,6 @@ async function saveVariants() {
 /* Ghost row appearance during drag. */
 .drag-ghost {
     opacity: 0.35;
-    background: rgba(25, 118, 210, 0.08);
+    background: var(--rp-white-soft);
 }
 </style>

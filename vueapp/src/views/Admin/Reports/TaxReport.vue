@@ -1,17 +1,20 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">Tax</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !salesTax" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Tax</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !salesTax" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="errorText" type="error" variant="tonal" class="mb-4" :text="errorText"></v-alert>
@@ -22,32 +25,32 @@
             <!-- Sales tax headline -->
             <v-row class="mb-2">
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Sales tax to remit</div>
-                        <div class="text-h4">{{ money(salesTax.netTaxCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">collected minus refunded</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Sales tax to remit</div>
+                        <div class="rp-kpi-value">{{ money(salesTax.netTaxCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">collected minus refunded</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Collected</div>
-                        <div class="text-h4">{{ money(salesTax.collectedTaxCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Collected</div>
+                        <div class="rp-kpi-value">{{ money(salesTax.collectedTaxCents) }}</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Refunded</div>
-                        <div class="text-h4">{{ money(salesTax.refundedTaxCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Refunded</div>
+                        <div class="rp-kpi-value">{{ money(salesTax.refundedTaxCents) }}</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Taxed sales</div>
-                        <div class="text-h4">{{ salesTax.taxedSaleCount }}</div>
-                        <div class="text-caption text-medium-emphasis">
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Taxed sales</div>
+                        <div class="rp-kpi-value">{{ salesTax.taxedSaleCount }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">
                             {{ money(salesTax.taxableSalesCents) }} taxable
                         </div>
-                    </v-card-text></v-card>
+                    </v-card>
                 </v-col>
             </v-row>
 

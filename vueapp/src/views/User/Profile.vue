@@ -1,7 +1,7 @@
 <template>
     <v-container>
         <div class="profile-header">
-            <h1 class="text-h4">My Profile</h1>
+            <h1 class="text-h3 font-display">My Profile</h1>
             <v-spacer></v-spacer>
             <v-btn color="primary" :loading="saving" prepend-icon="mdi-content-save"
                 @click="saveProfile">Save profile</v-btn>
@@ -76,7 +76,7 @@
 
         <v-row v-if="!loading">
             <v-col cols="12" md="3" class="text-center">
-                <v-avatar size="120" color="grey-lighten-2" class="mb-4">
+                <v-avatar size="120" class="mb-4 profile-avatar">
                     <v-img v-if="avatarSrc" :src="avatarSrc"></v-img>
                     <v-icon v-else size="64">mdi-account</v-icon>
                 </v-avatar>
@@ -440,7 +440,12 @@ async function saveProfile() {
     gap: 12px;
     padding: 12px 0;
     margin-bottom: 16px;
-    background: rgb(var(--v-theme-background));
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: var(--rp-bg);
+    border-bottom: 1px solid var(--rp-line);
+}
+.profile-avatar {
+    background: linear-gradient(135deg, var(--rp-raise), var(--rp-card2));
+    border: 1px solid var(--rp-line2);
+    color: var(--rp-muted);
 }
 </style>

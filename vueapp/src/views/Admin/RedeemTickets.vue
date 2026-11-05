@@ -1,6 +1,10 @@
 <template>
     <v-container style="max-width: 760px">
-        <h1 class="text-h4 mb-4">Redeem Tickets</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Redeem Tickets</div>
+            </div>
+        </div>
 
         <v-card class="mb-4 pa-4">
             <v-card-title>Scan QR</v-card-title>
@@ -198,7 +202,7 @@
                                 <v-spacer></v-spacer>
                                 <v-chip v-if="!a.waiverRequired" size="small" variant="tonal">Not required</v-chip>
                                 <v-chip v-else-if="a.waiverSigned" size="small" color="success">Signed</v-chip>
-                                <v-chip v-else size="small" color="error" variant="flat" class="font-weight-bold">
+                                <v-chip v-else size="small" color="error" variant="tonal" class="font-weight-bold">
                                     NOT SIGNED
                                 </v-chip>
                             </div>
@@ -286,8 +290,8 @@
                     <v-avatar v-if="pass.photoDataUrl" size="96" rounded="lg">
                         <v-img :src="pass.photoDataUrl" cover></v-img>
                     </v-avatar>
-                    <v-avatar v-else size="96" rounded="lg" color="grey-lighten-3">
-                        <v-icon size="48" color="grey">mdi-account</v-icon>
+                    <v-avatar v-else size="96" rounded="lg" style="background: var(--rp-raise)">
+                        <v-icon size="48" class="text-muted2">mdi-account</v-icon>
                     </v-avatar>
                     <div class="flex-grow-1" style="min-width: 0">
                         <div class="text-h6">{{ pass.holderName || pass.purchaserName }}</div>
@@ -312,14 +316,14 @@
                      what the worker is actually deciding on, and it has to be readable across a
                      counter without being clicked into. -->
                 <div v-if="pass.requireIdForWristband" class="d-flex align-center ga-2 flex-wrap mt-3">
-                    <v-chip :color="pass.waiverSigned ? 'success' : 'error'" variant="flat" size="small"
+                    <v-chip :color="pass.waiverSigned ? 'success' : 'error'" variant="tonal" size="small"
                         :prepend-icon="pass.waiverSigned ? 'mdi-check-circle' : 'mdi-alert-circle'">
                         Waiver {{ pass.waiverSigned ? 'signed' : 'not signed' }}
                     </v-chip>
 
                     <v-tooltip :text="idChipTooltip" location="top">
                         <template #activator="{ props }">
-                            <v-chip v-bind="props" :color="pass.idVerified ? 'success' : 'error'" variant="flat"
+                            <v-chip v-bind="props" :color="pass.idVerified ? 'success' : 'error'" variant="tonal"
                                 size="small"
                                 :prepend-icon="pass.idVerified ? 'mdi-check-circle' : 'mdi-alert-circle'">
                                 ID &amp; age
@@ -1341,13 +1345,13 @@ onBeforeUnmount(() => {
     width: 100%;
     max-width: 420px;
     min-height: 260px;
-    border: 1px dashed rgba(0, 0, 0, 0.2);
+    border: 1px dashed var(--rp-line2);
     border-radius: 6px;
     margin: 0 auto;
-    background: #f5f5f5;
+    background: var(--rp-panel2);
 }
 .order-row + .order-row {
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    border-top: 1px solid var(--rp-line);
 }
 .search-row {
     border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));

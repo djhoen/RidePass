@@ -1,9 +1,12 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6">
-            <h1 class="text-h4">Season Passes</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New Pass</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Season Passes</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New Pass</v-btn>
+            </div>
         </div>
 
         <v-card>
@@ -24,7 +27,7 @@
                     <template #item="{ element: p }">
                         <tr>
                             <td class="drag-handle-cell">
-                                <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                <v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon>
                             </td>
                             <td>
                                 <strong>{{ p.name }}</strong>
@@ -39,7 +42,7 @@
                             </td>
                             <td>
                                 <v-icon v-if="p.isActive" color="success">mdi-check</v-icon>
-                                <v-icon v-else color="grey">mdi-close</v-icon>
+                                <v-icon v-else class="text-muted2">mdi-close</v-icon>
                             </td>
                             <td class="text-right">
                                 <v-tooltip text="Copy pass ID (used by the embedded widget)" location="top">
@@ -709,5 +712,5 @@ function flash(text: string, color: 'success' | 'error') {
 .drag-handle-cell { padding-left: 4px !important; padding-right: 0 !important; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
 </style>

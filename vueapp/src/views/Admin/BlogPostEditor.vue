@@ -8,7 +8,11 @@
             </v-chip>
         </div>
 
-        <h1 class="text-h4 mb-6">{{ isNew ? 'New post' : 'Edit post' }}</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">{{ isNew ? 'New post' : 'Edit post' }}</div>
+            </div>
+        </div>
 
         <v-card class="mb-6">
             <v-card-text>
@@ -37,7 +41,7 @@
                     <v-img v-if="form.mainImageUrl" :src="absoluteUrl(form.mainImageUrl)" width="220" aspect-ratio="16/9"
                         cover class="rounded border"></v-img>
                     <div v-else class="main-image-placeholder rounded d-flex align-center justify-center">
-                        <v-icon color="grey" size="40">mdi-image-outline</v-icon>
+                        <v-icon size="40" class="text-muted2">mdi-image-outline</v-icon>
                     </div>
                     <div class="d-flex flex-column ga-2">
                         <v-btn variant="tonal" prepend-icon="mdi-upload" :loading="uploadingMain"
@@ -83,7 +87,7 @@
                     :animation="180" ghost-class="drag-ghost" class="gallery-grid" @end="onReorderEnd">
                     <template #item="{ element: img }">
                         <div class="gallery-card rounded border">
-                            <v-icon class="drag-handle" color="grey">mdi-drag</v-icon>
+                            <v-icon class="drag-handle">mdi-drag</v-icon>
                             <v-img :src="absoluteUrl(img.imageUrl)" aspect-ratio="1" cover class="rounded-t"></v-img>
                             <div class="pa-2">
                                 <v-text-field :model-value="img.caption ?? ''" label="Caption" density="compact"
@@ -321,8 +325,8 @@ onMounted(loadForEdit)
 .main-image-placeholder {
     width: 220px;
     aspect-ratio: 16 / 9;
-    background: rgba(0, 0, 0, 0.04);
-    border: 1px dashed rgba(0, 0, 0, 0.2);
+    background: var(--rp-panel2);
+    border: 1px dashed var(--rp-line2);
 }
 .gallery-grid {
     display: grid;
@@ -333,13 +337,15 @@ onMounted(loadForEdit)
     position: relative;
     background: rgb(var(--v-theme-surface));
 }
+/* Sits over the gallery photo: dark scrim + white glyph in both modes, like any photo overlay. */
 .drag-handle {
     position: absolute;
     top: 6px;
     left: 6px;
     z-index: 2;
     cursor: grab;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(var(--rp-scrim), 0.55);
+    color: var(--rp-photo-ink);
     border-radius: 4px;
 }
 .drag-handle:active { cursor: grabbing; }

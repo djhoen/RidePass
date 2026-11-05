@@ -57,7 +57,7 @@ const editingId = ref<string | null>(null)
 const form = ref<{ label: string; serial: string; notes: string; status: ShopItemStatus }>({ label: '', serial: '', notes: '', status: 'available' })
 
 function statusColor(s: string) {
-    return s === 'available' ? 'success' : s === 'sold' ? 'blue-grey' : s === 'rented_out' ? 'indigo' : 'warning'
+    return s === 'available' ? 'success' : s === 'sold' ? '' : s === 'rented_out' ? 'info' : 'warning'
 }
 function resetForm() { editingId.value = null; form.value = { label: '', serial: '', notes: '', status: 'available' }; error.value = '' }
 function edit(i: ShopItem) { editingId.value = i.id; form.value = { label: i.label, serial: i.serial ?? '', notes: i.notes ?? '', status: i.status } }

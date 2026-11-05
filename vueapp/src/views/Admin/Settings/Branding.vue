@@ -1,24 +1,31 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-6">Branding</h1>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Branding</div>
+            </div>
+        </div>
 
         <v-row>
             <v-col cols="12">
                 <!-- Nav bar color: one background + text/icon color for the whole site. -->
                 <v-card class="mb-6 pa-4">
-                    <v-card-title>Nav bar</v-card-title>
+                    <v-card-title class="rp-section">
+                        <span class="rp-kicker">Branding</span>
+                        <span class="rp-section-title">Nav bar</span>
+                    </v-card-title>
                     <v-card-text>
                         <div style="max-width: 360px">
                             <v-text-field v-model="form.navBarColor" label="Background color"
                                 placeholder="#1A1F2B" persistent-hint
-                                hint="Hex like #1A1F2B. Leave blank to use the theme primary."
+                                hint="Hex like #0a0a0a. Leave blank for the default bar: translucent page color."
                                 density="compact"></v-text-field>
                             <v-color-picker v-model="form.navBarColor"
                                 class="mt-2" mode="hex" hide-inputs hide-canvas-actions
                                 show-swatches swatches-max-height="100" :modes="['hex']"></v-color-picker>
                             <v-text-field v-model="form.navBarTextColor" label="Text + icon color"
                                 placeholder="#FFFFFF" persistent-hint
-                                hint="Hex like #FFFFFF. Leave blank for white."
+                                hint="Hex like #FFFFFF. Leave blank for the default text color (follows light/dark)."
                                 density="compact" class="mt-4"></v-text-field>
                             <v-color-picker v-model="form.navBarTextColor"
                                 class="mt-2" mode="hex" hide-inputs hide-canvas-actions
@@ -31,9 +38,17 @@
                 </v-card>
             </v-col>
 
-            <v-col cols="12" md="6">
+            <v-col cols="12">
                 <v-card class="mb-6 pa-4">
-                    <v-card-title>Colors & Theme</v-card-title>
+                    <v-card-title class="rp-section">
+                        <span class="rp-kicker">Branding</span>
+                        <span class="rp-section-title">Colors & Theme</span>
+                    </v-card-title>
+                    <v-card-subtitle>
+                        Primary colors your buttons, links and highlights; secondary and accent are used for
+                        supporting surfaces and details. Text on each is chosen automatically for contrast.
+                        Pick light or dark below for the surfaces behind them.
+                    </v-card-subtitle>
                     <v-card-text>
                         <v-row>
                             <v-col cols="12" md="6">
@@ -58,10 +73,13 @@
                             </v-col>
                             <v-col cols="12" md="6">
                                 <label class="text-subtitle-2">Theme Mode</label>
-                                <v-radio-group v-model="form.themeMode" inline>
+                                <v-radio-group v-model="form.themeMode" inline hide-details>
                                     <v-radio label="Light" value="light"></v-radio>
                                     <v-radio label="Dark" value="dark"></v-radio>
                                 </v-radio-group>
+                                <p class="text-caption text-medium-emphasis mb-2">
+                                    Light mode puts your colors on white cards and a pale page; dark mode on near-black surfaces. Your site switches as soon as you save.
+                                </p>
                                 <label class="text-subtitle-2 mt-4 d-block">Tagline</label>
                                 <v-textarea v-model="form.tagline" rows="3" placeholder="Ride hard. Ride safe."
                                     density="compact" hide-details></v-textarea>
@@ -72,9 +90,12 @@
                 </v-card>
             </v-col>
 
-            <v-col cols="12" md="6">
+            <v-col cols="12">
                 <v-card class="mb-6 pa-4">
-                    <v-card-title>Images</v-card-title>
+                    <v-card-title class="rp-section">
+                        <span class="rp-kicker">Branding</span>
+                        <span class="rp-section-title">Images</span>
+                    </v-card-title>
                     <v-card-text>
                         <BrandingImageSlot label="Logo" kind="logo" :url="branding.logoUrl" @uploaded="onUploaded" @removed="onRemoved" />
                         <v-divider class="my-4"></v-divider>
@@ -189,3 +210,18 @@ watch(() => branding.loaded, (loaded) => {
     if (loaded) populateForm()
 })
 </script>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+</style>

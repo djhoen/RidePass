@@ -1,14 +1,14 @@
 <template>
     <div>
       <v-theme-provider theme="tenantDark" with-background>
-        <div class="kds d-flex flex-column">
+        <div class="kds d-flex flex-column" data-rp-theme="dark">
             <div class="kds-header d-flex align-center px-4 py-2 ga-2">
-                <h1 class="text-h6 font-weight-bold">Cook Screen</h1>
+                <h1 class="pos-title">Cook Screen</h1>
                 <v-chip v-if="orders.length" size="small" variant="tonal">{{ orders.length }} active</v-chip>
                 <v-chip v-if="stats.completedToday" size="small" variant="tonal" prepend-icon="mdi-timer-outline">
                     {{ stats.completedToday }} done today · avg {{ stats.avgPrepMinutes }}m
                 </v-chip>
-                <v-chip v-if="online.capacityEnabled" size="small" variant="flat"
+                <v-chip v-if="online.capacityEnabled" size="small" variant="tonal"
                     :color="online.openNow ? 'success' : 'error'"
                     :prepend-icon="online.openNow ? 'mdi-cloud-check' : 'mdi-cloud-off-outline'">
                     Online: {{ online.openNow ? 'Open' : (online.pausedManual ? 'Paused' : 'Busy') }}
@@ -37,7 +37,7 @@
 
             <div ref="boardEl" class="kds-board flex-grow-1">
                 <div v-if="orders.length === 0 && finished.length === 0" class="kds-empty">
-                    <v-icon size="56" color="grey">mdi-silverware-clean</v-icon>
+                    <v-icon size="56" class="text-muted2">mdi-silverware-clean</v-icon>
                     <div class="mt-2 text-medium-emphasis">No orders in the queue.</div>
                 </div>
                 <div v-else class="kds-rail">
@@ -50,7 +50,7 @@
                                 <span class="ticket__num">#{{ o.orderNumber ?? '—' }}</span>
                                 <span v-if="o.customerName" class="ticket__cust">{{ o.customerName }}</span>
                             </div>
-                            <v-icon size="28" color="grey">mdi-check-circle-outline</v-icon>
+                            <v-icon size="28" class="text-muted2">mdi-check-circle-outline</v-icon>
                         </div>
                         <div class="ticket__doneflag">PICKED UP</div>
                         <button class="ticket__recall" :disabled="recalling === o.saleId" @click="recall(o.saleId)">
@@ -409,11 +409,26 @@ async function complete(order: KitchenOrder) {
 </script>
 
 <style scoped>
-.kds { min-height: calc(100dvh - 64px); }
-.kds-header { flex: 0 0 auto; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.kds {
+    min-height: calc(100dvh - 64px);
+    /* Forced dark whatever the tenant's Branding → Theme is: the tenantDark provider flips
+       Vuetify's --v-theme-* variables, and data-rp-theme="dark" on this element (template)
+       flips the --rp-* design tokens for the whole subtree. */
+}
+.kds-header { flex: 0 0 auto; border-bottom: 1px solid var(--rp-line); }
 .kds-tabs { flex: 0 0 auto; }
 .kds-board { overflow: auto; min-height: 0; padding: 14px; }
 .kds-empty { text-align: center; padding: 64px 16px; }
+.pos-title {
+    margin: 0;
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+}
 /* One horizontal lane instead of a wrapping grid: finished tickets to the left, live to the right,
    the viewport parked on the live ones. Tickets keep a fixed width so a long ticket grows downward
    (scrollable within itself) rather than squeezing its neighbours. */
@@ -434,50 +449,51 @@ async function complete(order: KitchenOrder) {
     flex-direction: column;
     border-radius: 14px;
     overflow: hidden;
-    background: #1e2530;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
 }
 .ticket__head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-.ticket__num { font-size: 2.3rem; font-weight: 800; line-height: 1; color: #fff; }
-.ticket__cust { font-size: 1.25rem; color: #fff; opacity: 0.85; margin-top: 2px; }
-.ticket__rush { background: #c62828; color: #fff; font-weight: 800; text-align: center; padding: 5px 0; font-size: 1.05rem; letter-spacing: 0.1em; }
+.ticket__num { font-family: var(--rp-font-display); font-style: italic; font-size: 2.8rem; font-weight: 400; line-height: 1; color: var(--rp-ink); font-variant-numeric: tabular-nums; }
+.ticket__cust { font-size: 1.25rem; color: var(--rp-ink); opacity: 0.85; margin-top: 2px; }
+.ticket__rush { background: var(--rp-red); color: var(--rp-on-ink); font-weight: 800; text-align: center; padding: 5px 0; font-size: 1.05rem; letter-spacing: 0.1em; }
 .ticket__time { font-size: 1.2rem; font-weight: 700; padding: 3px 12px; border-radius: 999px; }
-.ticket--fresh .ticket__head { background: #233246; }
-.ticket--fresh .ticket__time { background: rgba(67, 160, 71, 0.25); color: #9be7a0; }
-.ticket--warn .ticket__head { background: #4a3a1a; }
-.ticket--warn .ticket__time { background: rgba(251, 140, 0, 0.3); color: #ffc66e; }
-.ticket--late .ticket__head { background: #4a1f1f; }
-.ticket--late .ticket__time { background: rgba(229, 57, 53, 0.4); color: #ff9a96; animation: kds-pulse 1.3s ease-in-out infinite; }
-.ticket--ready { outline: 2px solid #43A047; outline-offset: -1px; }
-.ticket--ready .ticket__head { background: #1f3a22; }
+.ticket--fresh .ticket__head { background: var(--rp-raise); }
+.ticket--fresh .ticket__time { background: var(--rp-green-soft); color: var(--rp-green); }
+/* State tints are the semantic -soft tokens; the time pill stacks a second layer of the same tint. */
+.ticket--warn .ticket__head { background: var(--rp-amber-soft); }
+.ticket--warn .ticket__time { background: var(--rp-amber-soft); color: var(--rp-amber); }
+.ticket--late .ticket__head { background: var(--rp-red-soft); }
+.ticket--late .ticket__time { background: var(--rp-red-soft); color: var(--rp-red-text); animation: kds-pulse 1.3s ease-in-out infinite; }
+.ticket--ready { outline: 2px solid var(--rp-green); outline-offset: -1px; }
+.ticket--ready .ticket__head { background: var(--rp-green-soft); }
 
 /* Finished lane: visibly inert so it can never be mistaken for outstanding work. */
-.ticket--done { opacity: 0.45; background: #171c24; }
-.ticket--done .ticket__head { background: #202832; }
+.ticket--done { opacity: 0.45; background: var(--rp-panel); }
+.ticket--done .ticket__head { background: var(--rp-panel2); }
 .ticket__doneflag { text-align: center; font-weight: 800; letter-spacing: 0.1em; font-size: 0.9rem;
-    color: #9be7a0; padding: 6px 0; }
+    color: var(--rp-green); padding: 6px 0; }
 .ticket__recall { margin: 6px 14px 14px; padding: 10px; border: none; border-radius: 10px;
-    font-weight: 700; font-size: 1rem; cursor: pointer; background: rgba(255, 255, 255, 0.12); color: #fff; }
+    font-weight: 700; font-size: 1rem; cursor: pointer; background: var(--rp-ink-soft); color: var(--rp-ink); }
 .ticket__recall:disabled { opacity: 0.6; cursor: default; }
 
 .ticket__lines { display: flex; flex-direction: column; }
-.kline { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); cursor: pointer; }
-.kline:hover { background: rgba(255, 255, 255, 0.04); }
+.kline { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--rp-line); cursor: pointer; }
+.kline:hover { background: var(--rp-panel2); }
 .kline__icon { margin-top: 1px; }
-.kline--queued .kline__icon { color: #90a4ae; }
-.kline--in_progress .kline__icon { color: #ffc66e; }
-.kline--ready .kline__icon { color: #9be7a0; }
+.kline--queued .kline__icon { color: var(--rp-muted2); }
+.kline--in_progress .kline__icon { color: var(--rp-amber); }
+.kline--ready .kline__icon { color: var(--rp-green); }
 /* Combo entree badge + its indented component children. */
 .kline__combo { margin-left: 8px; padding: 2px 9px; border-radius: 10px; font-size: 0.95rem;
-    font-weight: 700; background: #5e35b1; color: #fff; vertical-align: middle; }
+    font-weight: 700; background: var(--rp-purple); color: var(--rp-on-ink); vertical-align: middle; }
 .kline--child { padding-left: 30px; }
-.kline__name { font-size: 1.4rem; font-weight: 600; color: #fff; line-height: 1.25; }
+.kline__name { font-size: 1.4rem; font-weight: 600; color: var(--rp-ink); line-height: 1.25; }
 .kline__name.done { text-decoration: line-through; opacity: 0.45; }
 .kline__variant { font-weight: 400; opacity: 0.8; }
-.kline__removed { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: #ff8a80; }
-.kline__added { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: #80e0a0; }
-.kline__standard { font-size: 1.1rem; color: #fff; }
-.kline__note { font-size: 1.1rem; font-style: italic; color: #ffe6a3; }
+.kline__removed { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: var(--rp-red-text); }
+.kline__added { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; color: var(--rp-green); }
+.kline__standard { font-size: 1.1rem; color: var(--rp-ink); }
+.kline__note { font-size: 1.1rem; font-style: italic; color: var(--rp-amber); }
 
 .ticket__done {
     margin: 10px 14px 14px;
@@ -487,20 +503,23 @@ async function complete(order: KitchenOrder) {
     font-weight: 700;
     font-size: 1.25rem;
     cursor: pointer;
-    background: #43A047;
-    color: #fff;
+    background: var(--rp-ink);
+    color: var(--rp-on-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
-.ticket__done:disabled { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.4); cursor: default; }
+.ticket__done:hover:not(:disabled) { opacity: 0.86; }
+.ticket__done:disabled { background: var(--rp-ink-soft); color: var(--rp-muted2); cursor: default; }
 .ticket__allready {
     margin: 10px 14px 0;
     padding: 12px;
-    border: 2px solid #43A047;
+    border: 2px solid var(--rp-green);
     border-radius: 10px;
     font-weight: 700;
     font-size: 1.15rem;
     cursor: pointer;
     background: transparent;
-    color: #9be7a0;
+    color: var(--rp-green);
 }
 .ticket__allready:disabled { opacity: 0.6; cursor: default; }
 

@@ -1,6 +1,6 @@
 <template>
     <v-container style="max-width: 720px">
-        <h1 class="text-h4 mb-4">Waiver</h1>
+        <h1 class="text-h3 font-display mb-4">Waiver</h1>
 
         <div v-if="loading" class="d-flex justify-center py-8">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>

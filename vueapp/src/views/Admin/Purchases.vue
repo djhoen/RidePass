@@ -1,18 +1,21 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Purchases</h1>
-            <v-spacer></v-spacer>
-            <v-text-field v-model="emailQuery" label="Email" density="compact" hide-details clearable
-                prepend-inner-icon="mdi-email-search-outline" style="max-width: 200px"></v-text-field>
-            <v-text-field v-model="orderIdQuery" label="Order ID" density="compact" hide-details clearable
-                prepend-inner-icon="mdi-magnify" style="max-width: 170px"></v-text-field>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 170px"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 170px"></v-text-field>
-            <v-select v-model="statusFilter" :items="STATUS_OPTIONS" label="Status" density="compact" hide-details
-                multiple chips closable-chips clearable style="max-width: 220px"></v-select>
-            <v-select v-model="kindFilter" :items="KIND_OPTIONS" label="Kind" density="compact" hide-details
-                multiple chips closable-chips clearable style="max-width: 220px"></v-select>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Purchases</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-text-field v-model="emailQuery" label="Email" density="compact" hide-details clearable
+                    prepend-inner-icon="mdi-email-search-outline" style="max-width: 200px"></v-text-field>
+                <v-text-field v-model="orderIdQuery" label="Order ID" density="compact" hide-details clearable
+                    prepend-inner-icon="mdi-magnify" style="max-width: 170px"></v-text-field>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details style="max-width: 170px"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details style="max-width: 170px"></v-text-field>
+                <v-select v-model="statusFilter" :items="STATUS_OPTIONS" label="Status" density="compact" hide-details
+                    multiple chips closable-chips clearable style="max-width: 220px"></v-select>
+                <v-select v-model="kindFilter" :items="KIND_OPTIONS" label="Kind" density="compact" hide-details
+                    multiple chips closable-chips clearable style="max-width: 220px"></v-select>
+            </div>
         </div>
 
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>

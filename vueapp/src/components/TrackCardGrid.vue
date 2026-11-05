@@ -6,7 +6,7 @@
             <v-card class="h-100 track-card" :class="{ 'track-card--active': t.tenantId === highlightedId }"
                 :href="tenantHomeUrl(t)" rel="noopener"
                 @mouseenter="emit('hover', t.tenantId)" @mouseleave="emit('hover', null)">
-                <div class="track-card-image" :style="imageStyle(t)">
+                <div class="track-card-image rp-on-photo" :style="imageStyle(t)">
                     <v-chip v-if="featuredIds.includes(t.tenantId)" size="x-small" color="primary"
                         variant="flat" class="track-card-featured">Featured</v-chip>
                 </div>
@@ -25,7 +25,7 @@
                         <v-chip v-if="t.distanceKm !== null" size="x-small" color="primary">
                             {{ formatDistance(t.distanceKm) }}
                         </v-chip>
-                        <v-chip v-if="t.upcomingEventsCount > 0" size="x-small" color="secondary">
+                        <v-chip v-if="t.upcomingEventsCount > 0" size="x-small" variant="tonal">
                             {{ t.upcomingEventsCount }} upcoming
                         </v-chip>
                     </div>
@@ -80,15 +80,15 @@ function formatDistance(km: number): string {
 <style scoped>
 .track-card {
     text-decoration: none;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: transform 0.15s ease, border-color 0.15s ease;
 }
 .track-card:hover {
     transform: translateY(-3px);
+    border-color: var(--rp-line3);
 }
 /* Emphasized when the matching map pin is hovered (and vice versa). */
 .track-card--active {
-    outline: 2px solid rgb(var(--v-theme-primary));
-    outline-offset: -2px;
+    border-color: var(--rp-ink);
     transform: translateY(-3px);
 }
 .track-card-image {
@@ -96,6 +96,14 @@ function formatDistance(km: number): string {
     height: 160px;
     background-size: cover;
     background-position: center;
+}
+/* Bottom fade so the card body reads as one piece with the photo (mockup .tcard .ph). */
+.track-card-image::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 40%, rgba(var(--rp-scrim), 0.75));
+    pointer-events: none;
 }
 .track-card-featured {
     position: absolute;

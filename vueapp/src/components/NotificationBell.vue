@@ -35,7 +35,7 @@
                 <v-list-item v-for="n in items" :key="n.id" :class="{ 'bg-blue-lighten-5': !n.isRead }"
                     @click="onClick(n)" style="cursor: pointer">
                     <template #prepend>
-                        <v-icon :color="n.isRead ? 'grey' : 'primary'">{{ iconFor(n.kind) }}</v-icon>
+                        <v-icon :color="n.isRead ? undefined : 'primary'" :class="{ 'text-muted2': n.isRead }">{{ iconFor(n.kind) }}</v-icon>
                     </template>
                     <v-list-item-title :class="n.isRead ? '' : 'font-weight-bold'">
                         {{ n.title }}

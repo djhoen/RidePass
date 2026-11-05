@@ -1,29 +1,26 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <h1 class="text-h5">Compliance Today</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Compliance Today</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <div class="d-flex ga-3 mb-4 flex-wrap">
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ data?.totalOnSite ?? 0 }}</div>
-                    <div class="text-caption text-medium-emphasis">Expected today</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Expected today</div>
+                <div class="rp-kpi-value">{{ data?.totalOnSite ?? 0 }}</div>
             </v-card>
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ checkedInCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Checked in</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Checked in</div>
+                <div class="rp-kpi-value">{{ checkedInCount }}</div>
             </v-card>
-            <v-card variant="tonal" :color="(data?.missingCount ?? 0) > 0 ? 'error' : 'success'" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ data?.missingCount ?? 0 }}</div>
-                    <div class="text-caption">Missing a current waiver</div>
-                </v-card-text>
+            <v-card variant="tonal" :color="(data?.missingCount ?? 0) > 0 ? 'error' : 'success'" class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Missing a current waiver</div>
+                <div class="rp-kpi-value">{{ data?.missingCount ?? 0 }}</div>
             </v-card>
         </div>
 

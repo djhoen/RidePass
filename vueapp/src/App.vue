@@ -1,14 +1,13 @@
 <template>
     <v-app :class="{ 'embed-mode': isEmbed }">
-        <!-- Pre-branding splash. Sits above everything in a neutral white state with a
-             faint logo so the user doesn't see the default Vuetify theme flash before
+        <!-- Pre-branding splash. Sits above everything on the page surface with the
+             RidePass badge so the user doesn't see the default Vuetify theme flash before
              the tenant colors arrive. Vue's <transition> handles the fade-out the
              moment branding.loaded flips true. -->
         <transition name="splash-fade">
             <div v-if="!branding.loaded || !routerReady" class="branding-splash">
                 <div class="branding-splash-content">
-                    <img :src="splashLogo" alt="RidePass" class="branding-splash-img" />
-                    <div class="branding-splash-text">RidePass</div>
+                    <BrandLogo :height="56" class="branding-splash-img" />
                 </div>
             </div>
         </transition>
@@ -25,7 +24,7 @@
             <!-- Tenant not available to this visitor (unknown / inactive / unpublished). -->
             <div v-if="branding.unavailable" class="tenant-unavailable">
                 <div class="tenant-unavailable-content">
-                    <img :src="splashLogo" alt="" class="tenant-unavailable-img" />
+                    <BrandLogo :height="40" class="tenant-unavailable-img mx-auto" />
                     <h1 class="text-h5 font-weight-bold mt-3 mb-2">This track isn't available yet</h1>
                     <p class="text-body-2 text-medium-emphasis mb-5">
                         This page hasn't been published. Check back soon, or explore other tracks on RidePass.
@@ -64,7 +63,8 @@ import Footer from './components/Footer.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { branding, loadBranding } from './stores/branding'
 import tenantHelper from './helpers/TenantHelper'
-import splashLogo from './assets/helmet.png'
+import { applyChartTheme } from './helpers/ChartSetup'
+import BrandLogo from './components/BrandLogo.vue'
 
 const theme = useTheme()
 const route = useRoute()
@@ -259,49 +259,74 @@ function readableOn(bg: string): string {
     return contrastBlack >= contrastWhite ? '#000000' : '#FFFFFF'
 }
 
-// Darken a color just enough that it meets WCAG AA (>= 4.5:1) as TEXT on a white
-// surface. The tenant brand color is fine as a button/background fill, but a mid-tone
-// brand hue used as colored link/button text on white can fall short (e.g. #0288D1 is
-// only 3.86:1). Returns the original when it already passes; otherwise scales toward
-// black until the contrast target is reached. Used only for primary-colored button text,
-// so the brand fill color itself is untouched.
-function darkenForTextOnWhite(hex: string, target = 4.5): string {
+// Contrast ratio between two #rrggbb colors (WCAG).
+function contrast(a: string, b: string): number {
+    const la = relLuminance(a), lb = relLuminance(b)
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+// Nudge a color toward black (on a light surface) or white (on a dark one) until it
+// meets WCAG AA (4.5:1) as TEXT on that surface. A tenant's brand color is fine as a
+// button fill, but a mid-tone hue used as colored link/button text can fall short —
+// e.g. #0288D1 is 3.86:1 on white. Returns the original when it already passes.
+function adjustForTextOn(hex: string, surface: string, target = 4.5): string {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
     if (!m) return hex
-    const maxL = (1 + 0.05) / target - 0.05   // max luminance that still meets target on white
-    if (relLuminance(hex) <= maxL) return `#${m[1].toLowerCase()}`
+    if (contrast(hex, surface) >= target) return `#${m[1].toLowerCase()}`
+    const towardWhite = relLuminance(surface) < 0.5
     const n = parseInt(m[1], 16)
     const r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff
     const toHex = (rr: number, gg: number, bb: number) =>
-        '#' + [rr, gg, bb].map(c => Math.max(0, Math.round(c)).toString(16).padStart(2, '0')).join('')
-    for (let k = 0.97; k > 0; k -= 0.03) {
-        const cand = toHex(r * k, g * k, b * k)
-        if (relLuminance(cand) <= maxL) return cand
+        '#' + [rr, gg, bb].map(c => Math.min(255, Math.max(0, Math.round(c))).toString(16).padStart(2, '0')).join('')
+    for (let k = 0.03; k <= 1; k += 0.03) {
+        const cand = towardWhite
+            ? toHex(r + (255 - r) * k, g + (255 - g) * k, b + (255 - b) * k)
+            : toHex(r * (1 - k), g * (1 - k), b * (1 - k))
+        if (contrast(cand, surface) >= target) return cand
     }
-    return '#000000'
+    return towardWhite ? '#ffffff' : '#000000'
 }
+
+// Dev-only theme override for checking both modes without a tenant backend:
+// http://localhost:3000/?theme=light (or dark). Ignored in production builds.
+const devThemeOverride = import.meta.env.DEV
+    ? new URLSearchParams(window.location.search).get('theme')
+    : null
 
 watchEffect(() => {
     if (!branding.loaded) return
-    const themeName = branding.themeMode === 'dark' ? 'tenantDark' : 'tenant'
+    const isApexSite = !tenantHelper.getSubdomain()
+    // The apex site is the mockup: always dark. A tenant site follows Branding → Theme.
+    let mode: 'light' | 'dark' = isApexSite ? 'dark' : (branding.themeMode === 'dark' ? 'dark' : 'light')
+    if (devThemeOverride === 'light' || devThemeOverride === 'dark') mode = devThemeOverride
+    const themeName = mode === 'dark' ? 'tenantDark' : 'tenant'
     const target = theme.themes.value[themeName]
     if (!target) return
-    // Direct mutation: Vuetify's theme stylesheet recomputes via deep reactivity.
-    // Reassigning the whole theme object with a plain POJO loses reactive wiring
-    // and Vuetify may fall back to the initial config.
-    target.colors.primary = branding.primaryColor
-    target.colors.secondary = branding.secondaryColor
-    target.colors.accent = branding.accentColor
-    // Set the on-* text colors explicitly so buttons/chips using these brand colors
-    // keep accessible contrast regardless of the tenant's chosen hue.
-    target.colors['on-primary'] = readableOn(branding.primaryColor)
-    target.colors['on-secondary'] = readableOn(branding.secondaryColor)
-    target.colors['on-accent'] = readableOn(branding.accentColor)
-    // Accessible shade of primary for use as TEXT on light surfaces (text/outlined/plain
-    // buttons + links). Consumed by the global .v-btn.text-primary rule below.
-    document.documentElement.style.setProperty(
-        '--rp-primary-text-on-light', darkenForTextOnWhite(branding.primaryColor))
+
+    if (!isApexSite) {
+        // Tenant branding drives the action colors on the tenant's own site.
+        // Direct mutation: Vuetify's theme stylesheet recomputes via deep reactivity.
+        // Reassigning the whole theme object with a plain POJO loses reactive wiring
+        // and Vuetify may fall back to the initial config.
+        target.colors.primary = branding.primaryColor
+        target.colors.secondary = branding.secondaryColor
+        target.colors.accent = branding.accentColor
+        // Set the on-* text colors explicitly so buttons/chips using these brand colors
+        // keep accessible contrast regardless of the tenant's chosen hue.
+        target.colors['on-primary'] = readableOn(branding.primaryColor)
+        target.colors['on-secondary'] = readableOn(branding.secondaryColor)
+        target.colors['on-accent'] = readableOn(branding.accentColor)
+    }
+    const root = document.documentElement
+    // Flip the --rp-* token set (styles/index.scss) to match the Vuetify theme.
+    root.dataset.rpTheme = mode
+    root.style.setProperty('--rp-tenant', target.colors.primary)
+    root.style.setProperty('--rp-on-tenant', readableOn(target.colors.primary))
+    // Accessible shade of primary for use as TEXT (text/outlined/plain buttons, links)
+    // on this mode's surface. Consumed by the global .v-btn.text-primary rule below.
+    root.style.setProperty('--rp-primary-text', adjustForTextOn(target.colors.primary, target.colors.surface))
     theme.global.name.value = themeName
+    applyChartTheme()
 })
 </script>
 
@@ -312,13 +337,16 @@ watchEffect(() => {
    is a fixed estimate (it restacks taller on narrow widths, hence the
    breakpoint); tweak --footer-h if it looks off on your content. */
 :deep(.v-main) {
-    --footer-h: 360px;
+    /* The redesigned footer is a single row on the apex site (~150px) and a compact
+       details grid plus row on tenant sites (~330px); use the tenant height so neither
+       ever overshoots into a scrollbar on a short page. */
+    --footer-h: 330px;
     min-height: calc(100vh - var(--footer-h));
     min-height: calc(100dvh - var(--footer-h));
 }
 @media (max-width: 600px) {
     :deep(.v-main) {
-        --footer-h: 620px;
+        --footer-h: 560px;
     }
 }
 
@@ -335,7 +363,9 @@ watchEffect(() => {
 .branding-splash {
     position: fixed;
     inset: 0;
-    background: #ffffff;
+    /* Branding (and so the light/dark choice) is unknown while the splash shows, so it
+       follows the token default (dark) — the mockup's first impression. */
+    background: var(--rp-bg);
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -344,26 +374,12 @@ watchEffect(() => {
 .branding-splash-content {
     text-align: center;
 }
-.branding-splash-icon {
-    color: #888;
-}
 .branding-splash-img {
-    width: 80px;
-    max-width: 60vw;
-    height: auto;
-    display: block;
+    /* The badge in ink; quiet enough not to compete with the page that replaces it. */
+    color: var(--rp-ink);
+    opacity: 0.85;
     margin: 0 auto;
-    /* The helmet stays intentionally faint; the wordmark below carries legibility. */
-    opacity: 0.3;
-}
-.branding-splash-text {
-    font-size: 22px;
-    /* #666 on white is 5.7:1 (passes WCAG AA). The old #888 under a 0.22 content
-       opacity was far below AA; keep the splash light but the brand name legible. */
-    color: #666666;
-    margin-top: 6px;
-    letter-spacing: 0.18em;
-    font-weight: 500;
+    max-width: 70vw;
 }
 /* Fade out only — the splash never fades in (it's there from first paint).
    Long, gentle ease-out so the tenant colors don't rush in. */
@@ -381,7 +397,7 @@ watchEffect(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #ffffff;
+    background: var(--rp-bg);
     padding: 24px;
     z-index: 9999;
 }
@@ -390,9 +406,8 @@ watchEffect(() => {
     max-width: 420px;
 }
 .tenant-unavailable-img {
-    width: 64px;
-    height: auto;
-    opacity: 0.5;
+    color: var(--rp-ink);
+    opacity: 0.6;
 }
 </style>
 
@@ -404,7 +419,7 @@ watchEffect(() => {
    links/CTAs like "All events" meet WCAG AA against white. Falls back to the raw
    theme primary if the variable hasn't been set yet. */
 .v-btn.text-primary {
-    color: var(--rp-primary-text-on-light, rgb(var(--v-theme-primary))) !important;
+    color: var(--rp-primary-text, rgb(var(--v-theme-primary))) !important;
 }
 
 /* ── Admin screens are full width ───────────────────────────────────────────────

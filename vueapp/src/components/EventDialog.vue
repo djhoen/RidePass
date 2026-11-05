@@ -95,7 +95,7 @@
                             <div v-if="form.imageUrl" class="event-image-preview"
                                 :style="{ backgroundImage: `url(${absoluteUrl(form.imageUrl)})` }"></div>
                             <div v-else class="event-image-preview empty">
-                                <v-icon color="grey">mdi-image-off-outline</v-icon>
+                                <v-icon class="text-muted2">mdi-image-off-outline</v-icon>
                             </div>
                             <div class="d-flex flex-column ga-1">
                                 <v-file-input v-model="imageFile" label="Upload" accept="image/*"
@@ -851,13 +851,13 @@ function dup() {
     border-radius: 6px;
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
     display: flex;
     align-items: center;
     justify-content: center;
 }
 .event-image-preview.empty {
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--rp-card2);
 }
 
 /* Active-tab indicator.

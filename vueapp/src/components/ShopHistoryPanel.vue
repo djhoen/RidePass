@@ -31,7 +31,7 @@
                         <td class="text-caption" style="width: 110px">{{ formatDate(s.createdAt) }}</td>
                         <td class="text-caption">{{ s.isRepair ? 'Repair bill-out' : 'Retail' }}{{ s.orderNumber != null ? ` #${s.orderNumber}` : '' }}</td>
                         <td class="text-right" style="width: 90px">{{ money(s.totalCents) }}</td>
-                        <td style="width: 100px"><v-chip size="x-small" :color="s.status === 'paid' ? 'success' : s.status === 'refunded' ? 'grey' : 'warning'">{{ s.status }}</v-chip></td>
+                        <td style="width: 100px"><v-chip size="x-small" :color="s.status === 'paid' ? 'success' : s.status === 'refunded' ? undefined : 'warning'">{{ s.status }}</v-chip></td>
                     </tr>
                 </tbody>
             </v-table>
@@ -43,7 +43,7 @@
                     <tr v-for="r in history.rentals" :key="r.id">
                         <td class="text-caption" style="width: 110px">{{ formatDate(r.startsAt) }}</td>
                         <td class="text-right" style="width: 90px">{{ money(r.totalCents) }}</td>
-                        <td style="width: 100px"><v-chip size="x-small" :color="r.status === 'returned' ? 'success' : r.status === 'out' ? 'indigo' : 'grey'">{{ r.status }}</v-chip></td>
+                        <td style="width: 100px"><v-chip size="x-small" :color="r.status === 'returned' ? 'success' : r.status === 'out' ? 'info' : undefined">{{ r.status }}</v-chip></td>
                     </tr>
                 </tbody>
             </v-table>

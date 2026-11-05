@@ -1,9 +1,12 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Shop Settings</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="tonal" prepend-icon="mdi-package-variant" to="/Admin/BikeShop">Inventory</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Shop Settings</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="tonal" prepend-icon="mdi-package-variant" to="/Admin/BikeShop">Inventory</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="!branding.bikeShopEnabled" type="info" variant="tonal" class="mb-4">

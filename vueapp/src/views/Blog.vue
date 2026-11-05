@@ -1,6 +1,6 @@
 <template>
     <v-container class="py-8">
-        <h1 class="text-h3 font-display mb-6">Blog</h1>
+        <h1 class="text-h2 font-display mb-6">Blog</h1>
 
         <div v-if="loading" class="d-flex justify-center py-12">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -21,7 +21,7 @@
                 <v-card class="h-100 d-flex flex-column" :to="`/Blog/${p.slug}`" hover>
                     <v-img v-if="p.mainImageUrl" :src="absoluteUrl(p.mainImageUrl)" aspect-ratio="16/9" cover></v-img>
                     <div v-else class="blog-card-placeholder d-flex align-center justify-center">
-                        <v-icon color="grey" size="48">mdi-post-outline</v-icon>
+                        <v-icon class="text-muted2" size="48">mdi-post-outline</v-icon>
                     </div>
                     <v-card-item>
                         <v-card-title class="text-wrap">{{ p.title }}</v-card-title>
@@ -80,6 +80,6 @@ onMounted(async () => {
 <style scoped>
 .blog-card-placeholder {
     aspect-ratio: 16 / 9;
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--rp-card2);
 }
 </style>

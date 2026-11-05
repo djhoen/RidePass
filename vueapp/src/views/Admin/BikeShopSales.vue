@@ -1,15 +1,18 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/Admin/BikeShop/Register">Register</v-btn>
-            <h1 class="text-h5">Shop Sales</h1>
-            <v-spacer></v-spacer>
-            <!-- Tenant-wide queue, so it holds its count no matter how the list is filtered. -->
-            <v-chip v-if="awaitingPickupCount > 0" color="warning" variant="tonal"
-                prepend-icon="mdi-package-variant" style="cursor: pointer"
-                @click="showAwaitingPickup">
-                {{ awaitingPickupCount }} awaiting pickup
-            </v-chip>
+        <div class="rp-pagehead">
+            <div class="d-flex align-center ga-3 flex-wrap">
+                <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" to="/Admin/BikeShop/Register">Register</v-btn>
+                <div class="rp-pagehead-title">Shop Sales</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <!-- Tenant-wide queue, so it holds its count no matter how the list is filtered. -->
+                <v-chip v-if="awaitingPickupCount > 0" color="warning" variant="tonal"
+                    prepend-icon="mdi-package-variant" style="cursor: pointer"
+                    @click="showAwaitingPickup">
+                    {{ awaitingPickupCount }} awaiting pickup
+                </v-chip>
+            </div>
         </div>
 
         <!-- ── Filters ─────────────────────────────────────────────────── -->

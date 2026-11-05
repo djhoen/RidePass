@@ -1,17 +1,20 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">Revenue by Department</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Revenue by Department</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="errorText" type="error" variant="tonal" class="mb-4" :text="errorText"></v-alert>
@@ -24,18 +27,19 @@
             <v-row class="mb-2">
                 <v-col v-for="d in report.departments" :key="d.key" cols="12" sm="6"
                     :md="tileWidth">
-                    <v-card>
+                    <v-card class="rp-kpi">
                         <!-- The department's color on the tile edge, matching the chart and the
                              End of Day report. -->
                         <div class="dept-stripe" :style="{ background: seriesColor(d.color, isDark) }"></div>
-                        <v-card-text>
-                        <div class="text-caption text-medium-emphasis">{{ d.label }}</div>
-                        <div class="text-h4">{{ money(d.netRevenueCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">
-                            {{ pct(d.pctOfTotal) }} of revenue &middot;
-                            {{ d.saleCount }} {{ d.saleCount === 1 ? 'sale' : 'sales' }}
+                        <div class="pa-4 pt-2">
+                            <div class="rp-kpi-label mt-0">{{ d.label }}</div>
+                            <div class="rp-kpi-value">{{ money(d.netRevenueCents) }}</div>
+                            <div class="text-caption text-medium-emphasis mt-2">
+                                {{ pct(d.pctOfTotal) }} of revenue &middot;
+                                {{ d.saleCount }} {{ d.saleCount === 1 ? 'sale' : 'sales' }}
+                            </div>
                         </div>
-                    </v-card-text></v-card>
+                    </v-card>
                 </v-col>
                 <v-col v-if="report.departments.length === 0" cols="12">
                     <v-alert type="info" variant="tonal"

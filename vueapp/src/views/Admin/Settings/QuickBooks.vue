@@ -1,12 +1,16 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-2">QuickBooks</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Send your RidePass sales into QuickBooks Online or QuickBooks Desktop as one summarised
-            journal entry per day: revenue by category, sales tax and tips as liabilities, and
-            processing fees as expenses. Nothing is sent twice, and only days that have fully ended in
-            your track's timezone are included.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">QuickBooks</div>
+                <div class="rp-pagehead-sub">
+                    Send your RidePass sales into QuickBooks Online or QuickBooks Desktop as one summarised
+                    journal entry per day: revenue by category, sales tax and tips as liabilities, and
+                    processing fees as expenses. Nothing is sent twice, and only days that have fully ended in
+                    your track's timezone are included.
+                </div>
+            </div>
+        </div>
 
         <v-alert v-if="!loading && !status.isConfigured && status.edition !== 'desktop'" type="warning" variant="tonal"
             density="comfortable" class="mb-6">
@@ -19,7 +23,7 @@
             <v-tab value="accounts" :disabled="!status.isConnected">
                 Chart of accounts
                 <v-chip v-if="status.isConnected && !status.mappingComplete" size="x-small" color="warning"
-                    variant="flat" class="ml-2">{{ status.unmappedKeys.length }}</v-chip>
+                    variant="tonal" class="ml-2">{{ status.unmappedKeys.length }}</v-chip>
             </v-tab>
             <v-tab value="classes" :disabled="!status.isConnected">Profit centers</v-tab>
             <v-tab value="history" :disabled="!status.isConnected">Sync history</v-tab>
@@ -37,7 +41,7 @@
 
                         <div v-else-if="!status.isConnected" class="d-flex flex-column ga-4">
                             <div class="d-flex align-center ga-2">
-                                <v-icon color="grey">mdi-link-off</v-icon>
+                                <v-icon class="text-muted2">mdi-link-off</v-icon>
                                 <span>Not set up yet. Which QuickBooks does your bookkeeper use?</span>
                             </div>
                             <v-row>

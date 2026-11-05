@@ -1,9 +1,12 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Gift Cards</h1>
-            <v-spacer></v-spacer>
-            <v-btn v-if="canManage" variant="tonal" prepend-icon="mdi-file-upload-outline" @click="importOpen = true">Import</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Gift Cards</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn v-if="canManage" variant="tonal" prepend-icon="mdi-file-upload-outline" @click="importOpen = true">Import</v-btn>
+            </div>
         </div>
 
         <v-card>
@@ -38,7 +41,7 @@
                                 <td class="text-right text-medium-emphasis">{{ money(c.initialAmountCents) }}</td>
                                 <td><v-chip size="x-small" :color="statusColor(c.status)" variant="tonal">{{ c.status }}</v-chip></td>
                                 <td>
-                                    <v-chip v-if="c.imported" size="x-small" variant="tonal" color="secondary">
+                                    <v-chip v-if="c.imported" size="x-small" variant="tonal" color="info">
                                         Imported
                                         <v-tooltip v-if="c.importedFrom" activator="parent" location="top">{{ c.importedFrom }}</v-tooltip>
                                     </v-chip>
@@ -72,7 +75,7 @@
                     <div class="d-flex align-center ga-3 mb-3">
                         <span class="text-h6 font-mono">{{ detail.code }}</span>
                         <v-chip size="small" :color="statusColor(detail.status)" variant="tonal">{{ detail.status }}</v-chip>
-                        <v-chip v-if="detail.imported" size="small" variant="tonal" color="secondary">Imported</v-chip>
+                        <v-chip v-if="detail.imported" size="small" variant="tonal" color="info">Imported</v-chip>
                     </div>
                     <div class="d-flex justify-space-between text-body-1">
                         <span class="text-medium-emphasis">Balance</span>

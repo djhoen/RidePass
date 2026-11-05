@@ -1,13 +1,16 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <h1 class="text-h5">Signature Requests</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
-            <v-btn color="primary" variant="tonal" prepend-icon="mdi-account-multiple-plus"
-                @click="openBulk">Event roster</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-email-arrow-right-outline"
-                @click="openNew">New request</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Signature Requests</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
+                <v-btn color="primary" variant="tonal" prepend-icon="mdi-account-multiple-plus"
+                    @click="openBulk">Event roster</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-email-arrow-right-outline"
+                    @click="openNew">New request</v-btn>
+            </div>
         </div>
 
         <div class="d-flex mb-3 ga-2 flex-wrap align-center">

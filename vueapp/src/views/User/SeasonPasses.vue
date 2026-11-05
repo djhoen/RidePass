@@ -1,6 +1,6 @@
 <template>
     <v-container style="max-width: 720px">
-        <h1 class="text-h4 mb-4">My Season Passes</h1>
+        <h1 class="text-h3 font-display mb-4">My Season Passes</h1>
 
         <v-card v-if="loading" class="pa-6 text-center">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -8,7 +8,7 @@
         <v-card v-else-if="passes.length === 0" class="pa-6 text-center text-medium-emphasis">
             You don't have any season passes yet.
             <div v-if="branding.seasonPassesEnabled" class="mt-3">
-                <v-btn to="/SeasonPasses" color="primary">Browse passes</v-btn>
+                <v-btn to="/SeasonPasses" color="primary" variant="flat">Browse passes</v-btn>
             </div>
             <div v-else class="text-caption mt-3">
                 This track isn't selling season passes right now.
@@ -61,7 +61,7 @@
                     Walk-ups welcome: just show this QR at the gate on any operating day.
                     Riding a capacity-limited event? Reserve your spot below.
                 </p>
-                <v-btn v-if="p.status === 'paid'" size="small" variant="tonal" color="primary"
+                <v-btn v-if="p.status === 'paid'" size="small" variant="outlined"
                     class="mt-2" prepend-icon="mdi-calendar-plus" @click="openReserve(p)">
                     Reserve for an event
                 </v-btn>

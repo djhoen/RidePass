@@ -3,9 +3,10 @@
         <!-- Brand panel (md+), matching the Login layout. -->
         <div class="login-brand d-none d-md-flex" :style="brandStyle">
             <div class="login-brand-overlay"></div>
-            <div class="login-brand-content">
+            <div class="login-brand-content rp-on-photo">
                 <img v-if="branding.logoUrl" :src="branding.logoUrl" :alt="branding.displayName"
                     class="login-brand-logo" />
+                <BrandLogo v-else-if="isApex" :height="48" class="login-brand-svg" />
                 <div v-else class="login-brand-name font-display">{{ branding.displayName }}</div>
                 <p v-if="branding.tagline" class="login-brand-tagline">{{ branding.tagline }}</p>
                 <p class="login-brand-welcome">
@@ -33,11 +34,11 @@
                 <!-- Success -->
                 <div v-else-if="state === 'success'" class="text-center">
                     <v-icon color="success" size="64" class="mb-4">mdi-check-circle-outline</v-icon>
-                    <h1 class="text-h5 font-weight-bold mb-1">Your email is verified</h1>
+                    <h1 class="login-title font-display mb-1">Your email is verified</h1>
                     <p class="text-body-2 text-medium-emphasis mb-6">
                         You're all set. Sign in to start managing your passes.
                     </p>
-                    <v-btn color="primary" block size="large" class="text-none" rounded="lg" to="/Login">
+                    <v-btn color="primary" variant="flat" block size="large" to="/Login">
                         Go to sign in
                     </v-btn>
                 </div>
@@ -46,7 +47,7 @@
                 <div v-else>
                     <div class="text-center mb-6">
                         <v-icon color="error" size="64" class="mb-4">mdi-alert-circle-outline</v-icon>
-                        <h1 class="text-h5 font-weight-bold mb-1">Verification failed</h1>
+                        <h1 class="login-title font-display mb-1">Verification failed</h1>
                         <p class="text-body-2 text-medium-emphasis">{{ errorMessage }}</p>
                     </div>
 
@@ -64,8 +65,8 @@
                         <v-form @submit.prevent="resend">
                             <v-text-field v-model="resendEmail" label="Email" type="email" autocomplete="email"
                                 prepend-inner-icon="mdi-email-outline" variant="outlined" density="compact"></v-text-field>
-                            <v-btn type="submit" color="primary" block size="large" :loading="resending"
-                                class="text-none mt-4" rounded="lg">Resend link</v-btn>
+                            <v-btn type="submit" color="primary" variant="flat" block size="large" :loading="resending"
+                                class="mt-4">Resend link</v-btn>
                         </v-form>
                     </template>
 
@@ -85,6 +86,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { UserService } from '@/services/UserService'
 import { branding } from '@/stores/branding'
+import tenantHelper from '@/helpers/TenantHelper'
+import BrandLogo from '@/components/BrandLogo.vue'
+
+// Apex (no tenant subdomain) shows the RidePass badge; tenant sites show their own logo/name.
+const isApex = computed(() => !tenantHelper.getSubdomain())
 
 const route = useRoute()
 const userService = new UserService()
@@ -146,8 +152,7 @@ async function resend() {
 .login-page {
     display: flex;
     min-height: 100vh;
-    /* Theme-aware so the panel background follows light/dark mode. */
-    background: rgb(var(--v-theme-background));
+    background: var(--rp-bg);
 }
 
 /* Brand panel */
@@ -156,22 +161,22 @@ async function resend() {
     flex: 1 1 50%;
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-panel);
     display: flex;
     align-items: flex-end;
     overflow: hidden;
+    border-right: 1px solid var(--rp-line);
 }
 .login-brand-overlay {
     position: absolute;
     inset: 0;
-    background: linear-gradient(150deg,
-        color-mix(in srgb, rgb(var(--v-theme-primary)) 78%, #000) 0%,
-        rgba(18, 22, 30, 0.86) 55%,
-        rgba(18, 22, 30, 0.74) 100%);
+    background:
+        linear-gradient(180deg, transparent 40%, rgb(var(--rp-scrim)) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
 }
 .login-brand-content {
     position: relative;
-    color: #fff;
+    color: var(--rp-photo-ink);
     padding: 3.5rem;
     max-width: 520px;
 }
@@ -182,23 +187,23 @@ async function resend() {
     margin-bottom: 1.25rem;
 }
 .login-brand-name {
-    font-size: 2.75rem;
-    font-weight: 700;
-    line-height: 1;
+    font-size: 3.25rem;
     margin-bottom: 1rem;
+    padding: 0 0.1em;
 }
 .login-brand-tagline {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 500;
     margin-bottom: 0.75rem;
-    opacity: 0.95;
+    color: var(--rp-photo-muted);
 }
 .login-brand-welcome {
     font-size: 1rem;
-    opacity: 0.8;
+    color: var(--rp-photo-muted);
     margin-bottom: 0;
     max-width: 420px;
 }
+.login-title { font-size: 2rem; }
 
 /* Content panel */
 .login-form-wrap {
@@ -211,12 +216,11 @@ async function resend() {
 .login-card {
     width: 100%;
     max-width: 400px;
-    /* Surface (not hardcoded white) so text stays legible in dark mode. */
-    background: rgb(var(--v-theme-surface));
-    color: rgb(var(--v-theme-on-surface));
-    border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
-    padding: 2.5rem 2.25rem;
+    background: var(--rp-panel);
+    color: var(--rp-ink);
+    border: 1px solid var(--rp-line2);
+    border-radius: 18px;
+    padding: 30px 26px;
 }
 .login-mobile-logo {
     max-height: 56px;
@@ -224,18 +228,13 @@ async function resend() {
     width: auto;
 }
 .login-link {
-    color: rgb(var(--v-theme-primary));
+    color: var(--rp-ink);
     text-decoration: none;
-    font-weight: 600;
+    font-weight: 700;
 }
 .login-link:hover { text-decoration: underline; }
 
 @media (max-width: 600px) {
-    .login-card {
-        box-shadow: none;
-        background: transparent;
-        padding: 1.5rem 0.5rem;
-    }
-    .login-form-wrap { background: rgb(var(--v-theme-surface)); }
+    .login-card { padding: 24px 18px; }
 }
 </style>

@@ -1,9 +1,12 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <h1 class="text-h5">Employee Passes</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Employee Passes</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
@@ -25,23 +28,17 @@
         </v-alert>
 
         <div class="d-flex ga-3 mb-4 flex-wrap">
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ initialLoading ? '-' : activeCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Active passes</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Active passes</div>
+                <div class="rp-kpi-value">{{ initialLoading ? '-' : activeCount }}</div>
             </v-card>
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ initialLoading ? '-' : needsAttentionCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Need attention</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">Need attention</div>
+                <div class="rp-kpi-value">{{ initialLoading ? '-' : needsAttentionCount }}</div>
             </v-card>
-            <v-card variant="tonal" class="stat-tile">
-                <v-card-text>
-                    <div class="text-h5">{{ initialLoading ? '-' : noPassCount }}</div>
-                    <div class="text-caption text-medium-emphasis">No pass</div>
-                </v-card-text>
+            <v-card class="rp-kpi stat-tile pa-4">
+                <div class="rp-kpi-label mt-0">No pass</div>
+                <div class="rp-kpi-value">{{ initialLoading ? '-' : noPassCount }}</div>
             </v-card>
         </div>
 

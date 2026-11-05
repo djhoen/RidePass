@@ -1,39 +1,42 @@
 <template>
     <v-container v-if="results">
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <v-btn variant="text" size="small" @click="$router.push('/Admin/Surveys')">
-                <v-icon>mdi-arrow-left</v-icon> Back
-            </v-btn>
-            <h1 class="text-h5">{{ results.title }}</h1>
-            <v-chip size="small" :color="statusColor(results.status)">{{ results.status }}</v-chip>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" size="small" @click="$router.push(`/Admin/Surveys/${id}`)">Edit survey</v-btn>
-            <v-btn variant="text" size="small" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div class="d-flex align-center ga-3 flex-wrap">
+                <v-btn variant="text" size="small" @click="$router.push('/Admin/Surveys')">
+                    <v-icon>mdi-arrow-left</v-icon> Back
+                </v-btn>
+                <div class="rp-pagehead-title">{{ results.title }}</div>
+                <v-chip size="small" variant="tonal" :color="statusColor(results.status)">{{ results.status }}</v-chip>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" size="small" @click="$router.push(`/Admin/Surveys/${id}`)">Edit survey</v-btn>
+                <v-btn variant="text" size="small" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <v-row class="mb-4">
             <v-col cols="6" md="3">
-                <v-card variant="outlined" class="pa-3 text-center">
-                    <div class="text-h5">{{ results.responseCount }}</div>
-                    <div class="text-caption text-medium-emphasis">Responses</div>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Responses</div>
+                    <div class="rp-kpi-value">{{ results.responseCount }}</div>
                 </v-card>
             </v-col>
             <v-col cols="6" md="3">
-                <v-card variant="outlined" class="pa-3 text-center">
-                    <div class="text-h5">{{ results.inviteSent }}</div>
-                    <div class="text-caption text-medium-emphasis">Invites sent</div>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Invites sent</div>
+                    <div class="rp-kpi-value">{{ results.inviteSent }}</div>
                 </v-card>
             </v-col>
             <v-col cols="6" md="3">
-                <v-card variant="outlined" class="pa-3 text-center">
-                    <div class="text-h5">{{ results.inviteOpened }}</div>
-                    <div class="text-caption text-medium-emphasis">Opened</div>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Opened</div>
+                    <div class="rp-kpi-value">{{ results.inviteOpened }}</div>
                 </v-card>
             </v-col>
             <v-col cols="6" md="3">
-                <v-card variant="outlined" class="pa-3 text-center">
-                    <div class="text-h5">{{ results.inviteCompleted }}</div>
-                    <div class="text-caption text-medium-emphasis">Completed</div>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Completed</div>
+                    <div class="rp-kpi-value">{{ results.inviteCompleted }}</div>
                 </v-card>
             </v-col>
         </v-row>

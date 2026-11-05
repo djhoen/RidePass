@@ -1,10 +1,14 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">Features</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Plan features (marked <strong>Included</strong>) are enabled for your track by RidePass , contact us to
-            add or remove one. The remaining settings are policies you control.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Features</div>
+                <div class="rp-pagehead-sub">
+                    Plan features (marked <strong>Included</strong>) are enabled for your track by RidePass , contact us to
+                    add or remove one. The remaining settings are policies you control.
+                </div>
+            </div>
+        </div>
 
         <v-card>
             <v-list>

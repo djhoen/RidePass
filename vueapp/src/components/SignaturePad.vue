@@ -1,4 +1,6 @@
 <template>
+    <!-- Dark card frame; the drawing surface itself stays white (ink on white is the
+         legal-signature convention and what the saved image looks like). -->
     <div class="signature-pad" :class="{ disabled }">
         <div class="canvas-wrap" :class="{ active: isDrawing, empty: isEmpty, disabled }">
             <canvas ref="canvasRef"
@@ -135,15 +137,21 @@ watch(() => props.disabled, async (now, prev) => {
 </script>
 
 <style scoped>
+.signature-pad {
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line2);
+    border-radius: 12px;
+    padding: 10px 10px 4px;
+}
 .canvas-wrap {
     position: relative;
-    border: 2px dashed rgba(0, 0, 0, 0.25);
-    border-radius: 6px;
-    background: #fff;
+    border: 2px dashed var(--rp-line3);
+    border-radius: 8px;
+    background: #fff; /* the drawing surface is white in both modes (ink-on-white signature) */
     transition: border-color 0.15s;
 }
 .canvas-wrap.active {
-    border-color: rgb(var(--v-theme-primary));
+    border-color: var(--rp-ink);
     border-style: solid;
 }
 .canvas-wrap.empty:not(.active) .placeholder {
@@ -162,8 +170,8 @@ canvas {
     cursor: crosshair;
 }
 .canvas-wrap.disabled {
-    background: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.15);
+    background: #e6e6e6;
+    border-color: var(--rp-line2);
 }
 .canvas-wrap.disabled canvas { cursor: not-allowed; }
 </style>

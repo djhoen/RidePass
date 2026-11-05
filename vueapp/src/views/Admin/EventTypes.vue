@@ -1,9 +1,12 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6">
-            <h1 class="text-h4">Event Types</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Custom Type</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Event Types</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Custom Type</v-btn>
+            </div>
         </div>
 
         <v-card>
@@ -24,7 +27,7 @@
                     <template #item="{ element: row }">
                         <tr>
                             <td class="drag-handle-cell">
-                                <v-icon class="drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                <v-icon class="text-muted2 drag-handle">mdi-drag-vertical</v-icon>
                             </td>
                             <td>
                                 <div v-if="row.imageUrl" class="preview-img" :style="{ backgroundImage: `url(${absoluteUrl(row.imageUrl)})` }"></div>
@@ -78,7 +81,7 @@
                         <div v-if="form.imageUrl" class="image-preview"
                             :style="{ backgroundImage: `url(${absoluteUrl(form.imageUrl)})` }"></div>
                         <div v-else class="image-preview empty" :style="{ backgroundColor: form.color }">
-                            <v-icon color="white">mdi-image-off-outline</v-icon>
+                            <v-icon>mdi-image-off-outline</v-icon>
                         </div>
                         <div class="d-flex flex-column ga-1">
                             <v-file-input v-model="uploadFile" label="Upload" accept="image/*"
@@ -274,7 +277,7 @@ function flash(text: string, color: 'success' | 'error') {
     width: 28px;
     height: 28px;
     border-radius: 4px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
 }
 .preview-img {
     width: 56px;
@@ -282,7 +285,7 @@ function flash(text: string, color: 'success' | 'error') {
     border-radius: 4px;
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
 }
 .image-preview {
     width: 100px;
@@ -290,16 +293,17 @@ function flash(text: string, color: 'success' | 'error') {
     border-radius: 6px;
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
     display: flex;
     align-items: center;
     justify-content: center;
 }
+/* The empty preview is filled with the event type's own color, so the glyph on it is white in both modes. */
 .image-preview.empty {
-    color: white;
+    color: var(--rp-photo-ink);
 }
 .drag-handle-cell { padding-left: 4px !important; padding-right: 0 !important; }
 .drag-handle { cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
 </style>

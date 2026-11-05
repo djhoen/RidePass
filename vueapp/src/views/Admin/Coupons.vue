@@ -1,9 +1,12 @@
 ﻿<template>
     <v-container>
-        <div class="d-flex align-center mb-6">
-            <h1 class="text-h4">Coupons</h1>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Coupon</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Coupons</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Add Coupon</v-btn>
+            </div>
         </div>
 
         <v-card>
@@ -34,7 +37,7 @@
                         </td>
                         <td>
                             <v-icon v-if="c.isActive" color="success">mdi-check</v-icon>
-                            <v-icon v-else color="grey">mdi-close</v-icon>
+                            <v-icon v-else class="text-muted2">mdi-close</v-icon>
                         </td>
                         <td class="text-right">
                             <v-btn variant="text" size="small" @click="openEdit(c)">Edit</v-btn>

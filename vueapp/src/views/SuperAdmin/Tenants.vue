@@ -1,11 +1,14 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Tenants</h1>
-
-        <div class="d-flex align-center mb-3">
-            <v-spacer></v-spacer>
-            <v-btn variant="tonal" prepend-icon="mdi-cloud-download-outline" class="mr-2" @click="openImport">Import from stage</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateTenant">New Tenant</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Tenants</div>
+                <div class="rp-pagehead-sub">Every track on the platform: status, fees, client type and timezone.</div>
+            </div>
+            <div class="d-flex ga-2 flex-wrap">
+                <v-btn variant="outlined" prepend-icon="mdi-cloud-download-outline" @click="openImport">Import from stage</v-btn>
+                <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreateTenant">New Tenant</v-btn>
+            </div>
         </div>
         <v-card>
             <v-table>
@@ -36,11 +39,10 @@
                             </span>
                         </td>
                         <td>
-                            <v-chip size="small" variant="flat" label
-                                :color="clientTypeColor(t.clientType)"
-                                :prepend-icon="clientTypeIcon(t.clientType)">
+                            <span class="rp-pill" :class="clientTypeColor(t.clientType)">
+                                <v-icon size="12" :icon="clientTypeIcon(t.clientType)"></v-icon>
                                 {{ clientTypeShort(t.clientType) }}
-                            </v-chip>
+                            </span>
                         </td>
                         <td>{{ t.timezone }}</td>
                         <td>{{ formatDate(t.createdAtUtc) }}</td>
@@ -409,7 +411,7 @@
                         </p>
                         <div v-if="showPreview && widgetPreviewUrl" class="mt-1">
                             <iframe ref="previewIframe" :src="widgetPreviewUrl" title="Widget preview"
-                                style="width: 100%; min-height: 320px; border: 1px solid rgba(0,0,0,0.12); border-radius: 6px; display: block;"></iframe>
+                                style="width: 100%; min-height: 320px; border: 1px solid var(--rp-line2); border-radius: 10px; display: block; background: #fff;"></iframe>
                         </div>
                     </v-window-item>
                     </v-window>
@@ -420,7 +422,7 @@
                     <!-- Stage/local only. Re-running is safe: the seeder skips sections that already
                          have data, so it only fills in demo sections added since the last run. -->
                     <v-btn v-if="editTenant?.canSeedData"
-                        variant="tonal" color="secondary" prepend-icon="mdi-database-plus"
+                        variant="outlined" prepend-icon="mdi-database-plus"
                         :loading="seeding" @click="populateSeed">
                         {{ editTenant?.seedDataPopulated ? 'Re-run Seed Data' : 'Populate Seed Data' }}</v-btn>
                     <v-spacer></v-spacer>
@@ -777,9 +779,9 @@ function clientTypeShort(v: string): string {
     return v === 'custom_domain' ? 'Custom domain' : v === 'embedded' ? 'Embedded' : 'Hosted'
 }
 function clientTypeColor(v: string): string {
-    // Solid, distinct colors so the type reads at a glance (the old grey tonal
-    // "Hosted" chip was nearly invisible against the row).
-    return v === 'custom_domain' ? 'indigo' : v === 'embedded' ? 'deep-purple' : 'blue-grey-darken-1'
+    // rp-pill modifier so the type reads at a glance: blue = custom domain,
+    // solid white = embedded widgets, plain = hosted on our subdomain.
+    return v === 'custom_domain' ? 'rp-pill--blue' : v === 'embedded' ? 'rp-pill--solid' : ''
 }
 function clientTypeIcon(v: string): string {
     return v === 'custom_domain' ? 'mdi-web' : v === 'embedded' ? 'mdi-code-tags' : 'mdi-server'

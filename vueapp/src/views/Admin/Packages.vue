@@ -1,15 +1,18 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 ga-2 flex-wrap">
-            <h1 class="text-h5">Packages</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New package</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Packages</div>
+                <div class="rp-pagehead-sub">
+                    Bundled products (like Find Your Ride): a day pass, a coached session, a bike, and gear,
+                    sold at day-type tiers with a landing page.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New package</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Bundled products (like Find Your Ride): a day pass, a coached session, a bike, and gear,
-            sold at day-type tiers with a landing page.
-        </p>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
 

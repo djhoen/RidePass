@@ -18,7 +18,7 @@
                  a full-bleed hero inside someone else's page reads as a
                  site-within-a-site. -->
             <section v-if="!isEmbed" class="sp-hero" :style="heroStyle">
-                <div class="sp-hero-overlay">
+                <div class="sp-hero-overlay rp-on-photo">
                     <v-container class="sp-hero-inner">
                         <router-link to="/" class="sp-back">
                             <v-icon icon="mdi-arrow-left" size="18"></v-icon>
@@ -107,19 +107,22 @@
                             <p v-if="hasServiceFee" class="text-body-2 text-medium-emphasis mb-4">
                                 All passes include a {{ serviceFeePercent }}% service fee.
                             </p>
-                            <div v-for="p in products" :key="p.id" class="sp-price-block mb-4">
-                                <div class="sp-price-row">
-                                    <span class="sp-price-name">{{ p.name }}</span>
-                                    <span class="sp-price-amt">${{ (p.priceCents / 100).toFixed(2) }}</span>
+                            <!-- Pricing tiles (mockup "pcard"): tracked tier name, display-font price,
+                                 muted terms line, then a ✓ checklist of the pass's perks. -->
+                            <div class="sp-pgrid">
+                                <div v-for="p in products" :key="p.id" class="sp-pcard">
+                                    <div class="sp-pcard-tn">{{ p.name }}</div>
+                                    <div class="sp-pcard-pr font-display">${{ (p.priceCents / 100).toFixed(2) }}</div>
+                                    <div class="sp-pcard-per">{{ accessLabel(p) }} · {{ validLabel(p) }}</div>
+                                    <ul v-if="perkLines(p).length" class="sp-pcard-list">
+                                        <li v-for="(line, i) in perkLines(p)" :key="i">{{ line.text }}</li>
+                                    </ul>
+                                    <div v-if="p.description" class="text-body-2 text-muted mb-3">{{ p.description }}</div>
+                                    <router-link v-if="p.landingPublished && p.slug" class="sp-link mt-auto"
+                                        :to="`/SeasonPasses/${p.slug}`">
+                                        Learn more about {{ p.name }} &rarr;
+                                    </router-link>
                                 </div>
-                                <div class="text-caption text-medium-emphasis">
-                                    {{ accessLabel(p) }} · {{ validLabel(p) }}
-                                </div>
-                                <div v-if="p.description" class="text-body-2 mt-1">{{ p.description }}</div>
-                                <router-link v-if="p.landingPublished && p.slug" class="sp-link"
-                                    :to="`/SeasonPasses/${p.slug}`">
-                                    Learn more about {{ p.name }} &rarr;
-                                </router-link>
                             </div>
                         </section>
                     </v-col>
@@ -341,14 +344,14 @@ onMounted(async () => {
 .sp-hero {
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-panel);
 }
 .sp-hero-overlay {
-    /* Bottom-up darken (where the title sits) over a left-to-right darken, so text stays
-       legible over any photo. */
+    /* Dark gradient overlay plus a bottom fade into the page background, so text stays
+       legible over any photo and the hero melts into the page. */
     background:
-        linear-gradient(0deg, rgba(10, 13, 20, 0.9) 0%, rgba(10, 13, 20, 0.25) 55%, rgba(10, 13, 20, 0.45) 100%),
-        linear-gradient(90deg, rgba(16, 20, 28, 0.85) 0%, rgba(16, 20, 28, 0.5) 60%, rgba(16, 20, 28, 0.2) 100%);
+        linear-gradient(180deg, transparent 50%, var(--rp-bg) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
     min-height: 220px;
     display: flex;
 }
@@ -365,9 +368,9 @@ onMounted(async () => {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    color: #fff;
-    background: rgba(255, 255, 255, 0.16);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: var(--rp-photo-ink);
+    background: rgba(var(--rp-scrim), 0.72);
+    border: 1px solid var(--rp-photo-line);
     border-radius: 999px;
     padding: 6px 14px 6px 10px;
     font-size: 0.85rem;
@@ -377,7 +380,7 @@ onMounted(async () => {
     transition: background-color 0.15s ease;
     cursor: pointer;
 }
-.sp-back:hover { background: rgba(255, 255, 255, 0.3); }
+.sp-back:hover { background: rgba(var(--rp-scrim), 0.9); }
 /* Embed header variant: primary-tinted so it reads on light and dark themes alike. */
 .sp-back-embed {
     color: rgb(var(--v-theme-primary));
@@ -387,9 +390,7 @@ onMounted(async () => {
 .sp-back-embed:hover { background: rgba(var(--v-theme-primary), 0.16); }
 .sp-hero-bottom { margin-top: 1rem; }
 .sp-title {
-    font-size: clamp(2rem, 5vw, 3.25rem);
-    line-height: 1.05;
-    font-weight: 700;
+    font-size: clamp(2.75rem, 7vw, 5.25rem);
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
 }
 .sp-hero-sub {
@@ -422,24 +423,45 @@ onMounted(async () => {
 }
 .sp-meta-icon { color: rgb(var(--v-theme-primary)); }
 
-/* ── Pricing list ───────────────────────────────────────────────────────── */
-.sp-price-block {
-    padding-bottom: 0.6rem;
-    border-bottom: 1px dashed rgba(var(--v-theme-on-surface), 0.08);
+/* ── Pricing tiles (mockup "pcard") ─────────────────────────────────────── */
+.sp-pgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 14px;
 }
-.sp-price-block:last-child { border-bottom: none; }
-.sp-price-row {
+.sp-pcard {
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    border-radius: 18px;
+    padding: 22px;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
+    flex-direction: column;
+    transition: border-color 0.15s;
 }
-.sp-price-name { color: rgba(var(--v-theme-on-surface), 0.9); font-weight: 600; }
-.sp-price-amt {
-    font-weight: 700;
-    white-space: nowrap;
-    color: rgb(var(--v-theme-primary));
+.sp-pcard:hover { border-color: var(--rp-line3); }
+.sp-pcard-tn {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--rp-ink2);
 }
+.sp-pcard-pr { font-size: 52px; margin: 8px 0 2px; white-space: nowrap; }
+.sp-pcard-per { font-size: 11.5px; color: var(--rp-muted2); margin-bottom: 16px; }
+.sp-pcard-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+    flex: 1;
+}
+.sp-pcard-list li {
+    font-size: 12.5px;
+    color: var(--rp-ink2);
+    line-height: 1.5;
+    padding: 5px 0 5px 20px;
+    position: relative;
+}
+.sp-pcard-list li::before { content: '✓'; position: absolute; left: 0; font-weight: 800; }
 
 /* ── Perks ──────────────────────────────────────────────────────────────── */
 .sp-section-subtitle {
@@ -470,15 +492,15 @@ onMounted(async () => {
 .sp-infobox {
     display: flex;
     gap: 0.75rem;
-    /* Alpha-tinted orange reads as the same soft warning band on light and dark. */
-    background: rgba(232, 130, 12, 0.12);
-    border: 1px solid rgba(232, 130, 12, 0.35);
+    /* Semantic info blue: the only chromatic tint allowed on the monochrome site. */
+    background: var(--rp-blue-soft);
+    border: 1px solid rgba(90, 168, 255, 0.35);
     border-radius: 10px;
     padding: 1rem 1.1rem;
     font-size: 0.95rem;
-    color: rgba(var(--v-theme-on-surface), 0.8);
+    color: var(--rp-ink);
 }
-.sp-infobox-icon { color: #e8820c; flex-shrink: 0; }
+.sp-infobox-icon { color: var(--rp-blue); flex-shrink: 0; }
 
 /* ── About + photo ──────────────────────────────────────────────────────── */
 .sp-link {
@@ -498,15 +520,10 @@ onMounted(async () => {
 .rich-text-body :deep(*) { max-width: 100%; }
 
 /* ── Entry card (the item-selection container) ──────────────────────────────
-   A very light gray surface on light themes (a little darker than the white page) and a
-   little LIGHTER than the background on dark themes so the pick-your-pass box reads as the
-   actionable panel. A drop shadow looked harsh on the white page, so the panel is defined
-   by a hairline border instead: on-surface at 0.2 renders to exactly #cccccc on a white
-   page and stays a subtle hairline on dark themes. on-surface alpha inverts per theme to
-   give both directions from one rule; !important on the fill beats Vuetify's flat variant. */
+   Panel surface with a stronger hairline so the pick-your-pass box reads as the
+   actionable panel. !important on the fill beats Vuetify's flat variant. */
 .sp-entry-card {
-    border-radius: 14px;
-    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
+    background-color: var(--rp-panel) !important;
+    border: 1px solid var(--rp-line2) !important;
 }
 </style>

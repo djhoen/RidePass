@@ -4,8 +4,8 @@
         <v-card v-if="inspection" class="d-flex flex-column" style="max-height: 92vh">
             <v-card-title class="d-flex align-center" style="flex: 0 0 auto">
                 <span>Inspection</span>
-                <v-chip size="small" class="ml-2"
-                    :color="inspection.status === 'complete' ? 'success' : 'grey'">
+                <v-chip size="small" class="ml-2" variant="tonal"
+                    :color="inspection.status === 'complete' ? 'success' : undefined">
                     {{ inspection.status === 'complete' ? 'Complete' : 'Draft' }}
                 </v-chip>
                 <v-spacer></v-spacer>
@@ -63,15 +63,15 @@
                 <template v-else>
                     <div class="d-flex ga-3 mb-4 flex-wrap">
                         <v-card variant="tonal" color="error" class="pa-3" style="min-width: 150px">
-                            <div class="text-h5">{{ counts.attention }}</div>
+                            <div class="font-display text-h4">{{ counts.attention }}</div>
                             <div class="text-caption">Needs attention now</div>
                         </v-card>
                         <v-card variant="tonal" color="warning" class="pa-3" style="min-width: 150px">
-                            <div class="text-h5">{{ counts.monitor }}</div>
+                            <div class="font-display text-h4">{{ counts.monitor }}</div>
                             <div class="text-caption">Wearing, keep an eye on</div>
                         </v-card>
                         <v-card variant="tonal" color="success" class="pa-3" style="min-width: 150px">
-                            <div class="text-h5">{{ counts.good }}</div>
+                            <div class="font-display text-h4">{{ counts.good }}</div>
                             <div class="text-caption">Checked and good</div>
                         </v-card>
                     </div>
@@ -181,7 +181,7 @@ const customerBuckets = computed(() => {
 })
 
 function ratingColor(r: string) {
-    return r === 'attention' ? 'error' : r === 'monitor' ? 'warning' : r === 'good' ? 'success' : 'grey'
+    return r === 'attention' ? 'error' : r === 'monitor' ? 'warning' : r === 'good' ? 'success' : ''
 }
 function formatDate(d: string) { return dayjs(d).format('MMM D, YYYY') }
 
@@ -277,23 +277,7 @@ watch(() => [props.modelValue, props.inspectionId], ([open, id]) => {
 </script>
 
 <style scoped>
-.insp-row:hover { background: rgba(var(--v-theme-on-surface), 0.03); }
-.sub-tabs {
-    background: rgba(var(--v-theme-on-surface), 0.04);
-    border-radius: 4px;
-    padding: 4px;
-    display: inline-flex;
-    flex: 0 0 auto;
-    margin-left: 16px;
-}
-.sub-tabs :deep(.v-slide-group__content) { gap: 4px; align-items: center; }
-.sub-tabs :deep(.v-tab) {
-    border-radius: 4px; height: 32px; min-height: 32px; min-width: 0;
-    padding: 0 18px; font-size: 13px; text-transform: none; opacity: 0.75;
-}
-.sub-tabs :deep(.v-tab.sub-tab-active), .sub-tabs :deep(.v-tab--selected) {
-    background: rgba(var(--v-theme-primary), 0.14);
-    color: rgb(var(--v-theme-primary));
-    opacity: 1; font-weight: 600;
-}
+.insp-row:hover { background: var(--rp-panel2); }
+/* Segmented look comes from the global .sub-tabs rules; only the offset is local. */
+.sub-tabs { margin-left: 16px; }
 </style>

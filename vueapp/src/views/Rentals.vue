@@ -38,7 +38,7 @@
             <v-col v-for="p in products" :key="p.id" cols="12" sm="6" md="4">
                 <v-card class="d-flex flex-column" height="100%">
                     <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)" height="180" cover />
-                    <div v-else class="rental-ph"><v-icon size="40" color="grey-lighten-1">mdi-bike</v-icon></div>
+                    <div v-else class="rental-ph"><v-icon size="40" class="text-muted2">mdi-bike</v-icon></div>
                     <v-card-text class="flex-grow-1">
                         <div class="text-caption text-medium-emphasis">{{ p.brand || '' }}</div>
                         <div class="font-weight-medium text-body-1">{{ p.name }}</div>
@@ -402,19 +402,20 @@ onMounted(async () => {
 <style scoped>
 .rentals-page { max-width: 1100px; }
 .rental-date {
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.3);
-    border-radius: 6px;
-    padding: 8px 10px;
+    border: 1px solid var(--rp-line2);
+    border-radius: var(--rp-radius-input);
+    padding: 10px 12px;
     font-size: 14px;
-    background: rgb(var(--v-theme-surface));
-    color: rgb(var(--v-theme-on-surface));
+    background: var(--rp-panel2);
+    color: var(--rp-ink);
 }
+.rental-date:focus { outline: none; border-color: var(--rp-line3); }
 .rental-ph {
     height: 180px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(var(--v-theme-on-surface), 0.04);
+    background: var(--rp-card2);
 }
 .rental-desc {
     display: -webkit-box;

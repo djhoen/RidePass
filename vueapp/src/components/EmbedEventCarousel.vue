@@ -12,7 +12,7 @@
         <div ref="scroller" class="rp-carousel" @scroll.passive="updateArrows">
             <router-link v-for="e in events" :key="e.id" :to="`/embed/event/${e.id}`" class="rp-slide">
                 <v-card class="h-100 embed-event-card">
-                    <div class="embed-event-image" :style="imageStyle(e)">
+                    <div class="embed-event-image rp-on-photo" :style="imageStyle(e)">
                         <div class="embed-event-datebadge">
                             <div class="embed-event-day">{{ formatDay(e.startsAtUtc) }}</div>
                             <div class="embed-event-month">{{ formatMonth(e.startsAtUtc) }}</div>
@@ -37,9 +37,9 @@
             </router-link>
         </div>
 
-        <v-btn v-if="canPrev" icon="mdi-chevron-left" size="small" class="rp-carousel-arrow rp-carousel-prev"
+        <v-btn v-if="canPrev" icon="mdi-chevron-left" size="small" variant="outlined" class="rp-carousel-arrow rp-carousel-prev"
             aria-label="Previous events" @click="page(-1)"></v-btn>
-        <v-btn v-if="canNext" icon="mdi-chevron-right" size="small" class="rp-carousel-arrow rp-carousel-next"
+        <v-btn v-if="canNext" icon="mdi-chevron-right" size="small" variant="outlined" class="rp-carousel-arrow rp-carousel-next"
             aria-label="More events" @click="page(1)"></v-btn>
     </div>
 </template>
@@ -84,7 +84,7 @@ function absoluteUrl(url: string | null | undefined): string | null {
 }
 function imageStyle(e: EventDto) {
     const u = absoluteUrl(e.imageUrl ?? e.eventTypeImageUrl)
-    return u ? { backgroundImage: `url(${u})` } : { backgroundColor: e.eventTypeColor || '#1976D2' }
+    return u ? { backgroundImage: `url(${u})` } : { backgroundColor: e.eventTypeColor || 'var(--rp-raise)' }
 }
 
 function tz(): string { return branding.timezone || 'UTC' }
@@ -126,15 +126,16 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
     top: 65px; /* image-band center, clear of title/text */
     transform: translateY(-50%);
     z-index: 1;
-    opacity: 0.92;
+    background: var(--rp-raise);
+    border-color: var(--rp-line2);
 }
 .rp-carousel-prev { left: 4px; }
 .rp-carousel-next { right: 4px; }
 
 /* overflow: visible overrides v-card's default clipping so the date badge can
    overhang the top edge, exactly how the hosted home page's up-card does it. */
-.embed-event-card { overflow: visible; transition: transform 0.15s ease; }
-.embed-event-card:hover { transform: translateY(-2px); }
+.embed-event-card { overflow: visible; transition: transform 0.15s ease, border-color 0.15s ease; }
+.embed-event-card:hover { transform: translateY(-2px); border-color: var(--rp-line3); }
 .embed-event-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .embed-event-image {
     position: relative;
@@ -151,15 +152,15 @@ function formatWhen(utc: string): string { return dayjs.utc(utc).tz(tz()).format
        scroller's padding-top headroom, or the overhang gets sliced off. */
     top: -6px;
     left: 12px;
-    background: #000;
-    color: #fff;
+    background: rgba(var(--rp-scrim), 0.88);
+    color: var(--rp-photo-ink);
+    border: 1px solid var(--rp-photo-line);
     padding: 6px 10px 5px;
     text-align: center;
-    border-radius: 4px;
+    border-radius: 11px;
     line-height: 1;
-    min-width: 44px;
-    box-shadow: 1px 2px 5px 0 rgba(0, 0, 0, 0.34);
+    min-width: 48px;
 }
-.embed-event-day { font-size: 1.4rem; font-weight: 700; line-height: 1; }
-.embed-event-month { font-size: 0.65rem; letter-spacing: 0.08em; opacity: 0.85; }
+.embed-event-day { font-family: var(--rp-font-display); font-size: 26px; line-height: 1.05; }
+.embed-event-month { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--rp-photo-muted); margin-top: 2px; }
 </style>

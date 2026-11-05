@@ -92,30 +92,7 @@ function onCreated(payload: any) {
 </script>
 
 <style scoped>
-/* Sub-tabs: pills on a tinted rail (house style). */
-.sub-tabs {
-    background: rgba(var(--v-theme-on-surface), 0.04);
-    border-radius: 4px;
-    padding: 4px;
-    display: inline-flex;
-    flex: 0 0 auto;
-}
-.sub-tabs :deep(.v-slide-group__content) { gap: 4px; align-items: center; }
-.sub-tabs :deep(.v-tab) {
-    border-radius: 4px;
-    height: 32px;
-    min-height: 32px;
-    min-width: 0;
-    padding: 0 18px;
-    font-size: 13px;
-    letter-spacing: 0.01em;
-    text-transform: none;
-    opacity: 0.75;
-}
-.sub-tabs :deep(.sub-tab-active) {
-    background: rgb(var(--v-theme-surface));
-    opacity: 1;
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
+/* Sub-tabs: the segmented control is styled globally (.sub-tabs in index.scss);
+   only the wider tap target is kept here. */
+.sub-tabs :deep(.v-tab) { padding: 0 18px; }
 </style>

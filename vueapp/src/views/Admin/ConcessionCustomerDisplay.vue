@@ -229,7 +229,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 <style scoped>
 .cfd { min-height: 100vh; }
 .cfd-lines { overflow-y: auto; min-height: 0; }
-.cfd-line { padding: 10px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.12); }
+.cfd-line { padding: 10px 0; border-bottom: 1px solid var(--rp-line); }
 .pair-code { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 1rem; }
 .cfd-stale { position: fixed; top: 8px; right: 12px; opacity: 0.6; }
 </style>

@@ -1,25 +1,27 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <h2 class="text-h5">Daily Events</h2>
-            <v-spacer></v-spacer>
-            <v-text-field v-model="localDate" type="date" label="Date" density="compact" hide-details
-                style="max-width: 180px" @change="loadReport"></v-text-field>
-            <v-btn variant="text" @click="prevDay">
-                <v-icon>mdi-chevron-left</v-icon>
-            </v-btn>
-            <v-btn variant="text" @click="nextDay">
-                <v-icon>mdi-chevron-right</v-icon>
-            </v-btn>
-            <v-btn color="primary" :loading="loading" @click="loadReport">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Daily Events</div>
+                <div class="rp-pagehead-sub">
+                    All events on <strong>{{ formatLong(localDate) }}</strong>
+                    in your tenant timezone (<strong>{{ tz }}</strong>).
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-text-field v-model="localDate" type="date" label="Date" density="compact" hide-details
+                    style="max-width: 180px" @change="loadReport"></v-text-field>
+                <v-btn variant="text" @click="prevDay">
+                    <v-icon>mdi-chevron-left</v-icon>
+                </v-btn>
+                <v-btn variant="text" @click="nextDay">
+                    <v-icon>mdi-chevron-right</v-icon>
+                </v-btn>
+                <v-btn color="primary" :loading="loading" @click="loadReport">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
-
-        <p class="text-caption text-medium-emphasis mb-3">
-            All events on <strong>{{ formatLong(localDate) }}</strong>
-            in your tenant timezone (<strong>{{ tz }}</strong>).
-        </p>
 
         <v-card>
             <v-table density="comfortable">

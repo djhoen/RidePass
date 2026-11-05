@@ -7,7 +7,7 @@
         <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
 
         <template v-else-if="info">
-            <h1 class="text-h5 font-weight-bold mb-1">Before you ride</h1>
+            <h1 class="text-h4 font-display mb-1">Before you ride</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">
                 {{ info.renterName ? `Hi ${info.renterName}, ` : '' }}sign these and your gear will be
                 ready to collect without paperwork at the counter.

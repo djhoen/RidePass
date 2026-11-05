@@ -90,7 +90,7 @@
                                     <div class="photo-tile">
                                         <v-img :src="absoluteUrl(img.imageUrl)!" :aspect-ratio="1" cover rounded></v-img>
                                         <div class="d-flex align-center">
-                                            <v-icon class="drag-handle" size="18" color="grey">mdi-drag</v-icon>
+                                            <v-icon class="drag-handle text-muted2" size="18">mdi-drag</v-icon>
                                             <v-spacer></v-spacer>
                                             <v-tooltip text="Use as the cover image" location="top">
                                                 <template #activator="{ props: tp }">
@@ -309,8 +309,9 @@ async function save() {
     gap: 12px;
 }
 .photo-tile {
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-    border-radius: 8px;
+    border: 1px solid var(--rp-line);
+    background: var(--rp-card2);
+    border-radius: 12px;
     padding: 8px;
 }
 .drag-handle { cursor: grab; }

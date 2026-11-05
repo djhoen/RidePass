@@ -1,23 +1,26 @@
 <template>
     <v-container v-if="survey">
-        <div class="d-flex align-center mb-4 flex-wrap ga-3">
-            <v-btn variant="text" size="small" @click="$router.push('/Admin/Surveys')">
-                <v-icon>mdi-arrow-left</v-icon> Back
-            </v-btn>
-            <h1 class="text-h5">{{ survey.name }}</h1>
-            <v-chip size="small" :color="statusColor(survey.status)">{{ survey.status }}</v-chip>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" size="small" @click="goResults">View results</v-btn>
-            <v-btn variant="text" size="small" @click="previewOpen = true">Preview survey</v-btn>
-            <v-btn v-if="survey.status === 'draft'" color="primary" variant="tonal" @click="setStatus('published')">
-                Publish
-            </v-btn>
-            <v-btn v-if="survey.status === 'published'" variant="tonal" @click="openSendDialog">Send invites</v-btn>
-            <v-btn v-if="survey.status === 'published'" variant="tonal" @click="setStatus('closed')">Close</v-btn>
-            <v-btn v-if="survey.status === 'closed'" color="primary" variant="tonal"
-                @click="setStatus('published')">
-                Reopen
-            </v-btn>
+        <div class="rp-pagehead">
+            <div class="d-flex align-center ga-3 flex-wrap">
+                <v-btn variant="text" size="small" @click="$router.push('/Admin/Surveys')">
+                    <v-icon>mdi-arrow-left</v-icon> Back
+                </v-btn>
+                <div class="rp-pagehead-title">{{ survey.name }}</div>
+                <v-chip size="small" variant="tonal" :color="statusColor(survey.status)">{{ survey.status }}</v-chip>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" size="small" @click="goResults">View results</v-btn>
+                <v-btn variant="text" size="small" @click="previewOpen = true">Preview survey</v-btn>
+                <v-btn v-if="survey.status === 'draft'" color="primary" variant="flat" @click="setStatus('published')">
+                    Publish
+                </v-btn>
+                <v-btn v-if="survey.status === 'published'" variant="outlined" @click="openSendDialog">Send invites</v-btn>
+                <v-btn v-if="survey.status === 'published'" variant="outlined" @click="setStatus('closed')">Close</v-btn>
+                <v-btn v-if="survey.status === 'closed'" color="primary" variant="flat"
+                    @click="setStatus('published')">
+                    Reopen
+                </v-btn>
+            </div>
         </div>
 
         <!-- Survey metadata -->
@@ -60,7 +63,7 @@
                         <v-card variant="outlined" class="mb-3">
                             <v-card-text>
                                 <div class="d-flex align-center mb-2 flex-wrap ga-2">
-                                    <v-icon class="question-drag-handle" color="grey">mdi-drag-vertical</v-icon>
+                                    <v-icon class="text-muted2 question-drag-handle">mdi-drag-vertical</v-icon>
                                     <v-chip size="x-small" color="primary" variant="tonal">
                                         {{ kindLabel(q.kind) }}
                                     </v-chip>
@@ -83,7 +86,7 @@
                                         :animation="180" ghost-class="drag-ghost">
                                         <template #item="{ element: c, index: ci }">
                                             <div class="d-flex align-center mb-2 ga-2">
-                                                <v-icon class="choice-drag-handle" size="small" color="grey">mdi-drag-vertical</v-icon>
+                                                <v-icon class="text-muted2 choice-drag-handle" size="small">mdi-drag-vertical</v-icon>
                                                 <v-text-field v-model="c.label" density="compact" hide-details
                                                     placeholder="Choice label" @blur="saveChoices(q.id)"></v-text-field>
                                                 <v-checkbox v-model="c.allowsFreeText" label="Other (allow custom answer)"
@@ -711,13 +714,13 @@ function flash(text: string, color: 'success' | 'error') {
 .invite-preview-frame {
     width: 100%;
     height: 320px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    border-radius: 4px;
+    border: 1px solid var(--rp-line);
+    border-radius: 12px;
     background: #fafafa;
 }
 .question-drag-handle,
 .choice-drag-handle { cursor: grab; }
 .question-drag-handle:active,
 .choice-drag-handle:active { cursor: grabbing; }
-.drag-ghost { opacity: 0.35; background: rgba(25, 118, 210, 0.08); }
+.drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
 </style>

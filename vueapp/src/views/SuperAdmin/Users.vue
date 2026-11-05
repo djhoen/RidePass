@@ -1,14 +1,20 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Users</h1>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Users</div>
+                <div class="rp-pagehead-sub">Riders, track staff and super admins across every tenant.</div>
+            </div>
+            <div>
+                <v-btn color="primary" variant="flat" prepend-icon="mdi-shield-plus" @click="openCreateSuperAdmin">Add Super Admin</v-btn>
+            </div>
+        </div>
 
         <div class="d-flex align-center mb-3 ga-2 flex-wrap">
             <v-text-field v-model="userQuery" label="Search by name or email" density="compact" hide-details clearable
                 prepend-inner-icon="mdi-magnify" style="max-width: 340px"
                 @keyup.enter="loadUsers" @click:clear="onClearSearch"></v-text-field>
-            <v-btn @click="loadUsers">Search</v-btn>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-shield-plus" @click="openCreateSuperAdmin">Add Super Admin</v-btn>
+            <v-btn variant="outlined" @click="loadUsers">Search</v-btn>
         </div>
 
         <div class="d-flex align-center mb-3 ga-2 flex-wrap">
@@ -110,7 +116,7 @@
                         {{ editTenantSubdomain ? `Tenant: ${editTenantSubdomain}` : 'Global account (no tenant)' }}
                     </div>
 
-                    <div class="text-overline">Account</div>
+                    <div class="rp-kicker">Account</div>
                     <v-row dense>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.email" type="email" label="Email" density="compact"></v-text-field>
@@ -125,7 +131,7 @@
                     <v-switch v-model="editForm.emailVerified" color="primary" density="compact" hide-details
                         :label="`Email verified: ${editForm.emailVerified ? 'yes' : 'no'}`"></v-switch>
 
-                    <div class="text-overline mt-4">Profile</div>
+                    <div class="rp-kicker mt-4">Profile</div>
                     <v-row dense>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.firstName" label="First name" density="compact"></v-text-field>
@@ -141,7 +147,7 @@
                         </v-col>
                     </v-row>
 
-                    <div class="text-overline mt-4">Emergency contact</div>
+                    <div class="rp-kicker mt-4">Emergency contact</div>
                     <v-row dense>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.emergencyContactName" label="Name" density="compact"></v-text-field>
@@ -151,7 +157,7 @@
                         </v-col>
                     </v-row>
 
-                    <div class="text-overline mt-4">Address</div>
+                    <div class="rp-kicker mt-4">Address</div>
                     <v-row dense>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.addressLine" label="Address" density="compact"></v-text-field>
@@ -173,7 +179,7 @@
                         </v-col>
                     </v-row>
 
-                    <div class="text-overline mt-4">Racer</div>
+                    <div class="rp-kicker mt-4">Racer</div>
                     <v-row dense>
                         <v-col cols="12" md="6">
                             <v-text-field v-model="editForm.bike" label="Bike" density="compact"></v-text-field>

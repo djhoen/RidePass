@@ -73,7 +73,7 @@ function withVideoPlayers(html: string): string {
     margin: 12px 0;
     border-radius: 6px;
     background: rgb(var(--v-theme-primary));
-    color: #fff !important;
+    color: rgb(var(--v-theme-on-primary)) !important;
     font-weight: 600;
     text-decoration: none;
 }

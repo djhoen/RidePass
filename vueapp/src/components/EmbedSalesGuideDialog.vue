@@ -161,8 +161,8 @@ const emit = defineEmits<{ (e: 'update:open', value: boolean): void }>()
 
 <style scoped>
 .snippet {
-    background: rgba(0, 0, 0, 0.05);
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    background: var(--rp-panel2);
+    border: 1px solid var(--rp-line2);
     border-radius: 6px;
     padding: 10px 12px;
     font-size: 12px;

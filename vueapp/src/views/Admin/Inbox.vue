@@ -1,10 +1,14 @@
 <template>
     <v-container fluid class="inbox-container">
-        <h1 class="text-h4 mb-2">Inbox</h1>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Two-way SMS conversations with your customers. Inbound texts appear here; refresh to
-            check for new messages. Replies go out from your provisioned number.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Inbox</div>
+                <div class="rp-pagehead-sub">
+                    Two-way SMS conversations with your customers. Inbound texts appear here; refresh to
+                    check for new messages. Replies go out from your provisioned number.
+                </div>
+            </div>
+        </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">
             {{ loadError }}
@@ -364,7 +368,7 @@ function flash(text: string, color: 'success' | 'error') {
 
 .thread-scroller {
     overflow-y: auto;
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--rp-card2);
 }
 
 .msg-row {

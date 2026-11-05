@@ -252,7 +252,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 <style scoped>
 .scfd { min-height: 100vh; }
 .scfd-lines { overflow-y: auto; min-height: 0; }
-.scfd-line { padding: 10px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.12); }
+.scfd-line { padding: 10px 0; border-bottom: 1px solid var(--rp-line); }
 .doc-body { white-space: pre-wrap; }
 .pair-code { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 1rem; }
 .scfd-stale { position: fixed; top: 8px; right: 12px; opacity: 0.6; }

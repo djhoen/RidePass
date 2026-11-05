@@ -1,11 +1,14 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Work Orders</h1>
-            <v-spacer></v-spacer>
-            <v-switch v-model="includeClosed" label="Include closed" color="primary" hide-details density="compact"
-                @update:model-value="reload"></v-switch>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New work order</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Work Orders</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-switch v-model="includeClosed" label="Include closed" color="primary" hide-details density="compact"
+                    @update:model-value="reload"></v-switch>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openNew">New work order</v-btn>
+            </div>
         </div>
 
         <!-- Job templates live here rather than in settings: they only exist to be dropped onto a
@@ -82,7 +85,7 @@
                         <v-chip size="x-small" :color="statusColor(o.status)">{{ statusLabel(o.status) }}</v-chip>
                         <!-- Overdue jobs get a red flag next to the (config-colored) status so staff
                              can spot them at a glance during a busy counter session. -->
-                        <v-chip v-if="overdue(o)" size="x-small" color="error" variant="flat" class="ml-1">Overdue</v-chip>
+                        <v-chip v-if="overdue(o)" size="x-small" color="error" variant="tonal" class="ml-1">Overdue</v-chip>
                         <v-tooltip v-if="o.checkedByUserId" text="QC checked" location="top">
                             <template #activator="{ props }">
                                 <v-icon v-bind="props" size="14" color="success" class="ml-1"
@@ -479,7 +482,7 @@
                                 <v-btn size="small" variant="tonal" color="primary"
                                     :disabled="!editing.customerEmail || editing.depositCents < 50"
                                     :loading="depositBusy === 'email'" @click="emailDepositRequest">Email payment link</v-btn>
-                                <v-btn size="small" variant="tonal" color="secondary" :disabled="editing.depositCents <= 0"
+                                <v-btn size="small" variant="tonal" :disabled="editing.depositCents <= 0"
                                     :loading="depositBusy === 'cash'" @click="recordCashDeposit">Cash received</v-btn>
                                 <v-chip v-if="editing.depositRequestSentAt" size="small" color="info" variant="tonal">Link sent</v-chip>
                             </template>
@@ -518,7 +521,7 @@
                                 size="small" @click="printEstimate"></v-btn>
                         </template>
                     </v-tooltip>
-                    <v-btn v-if="editing && !closed && editing.lines.length > 0" color="secondary" variant="tonal"
+                    <v-btn v-if="editing && !closed && editing.lines.length > 0" variant="tonal"
                         :disabled="form.status === 'estimate'" @click="openBill">Bill &amp; pick up</v-btn>
                     <v-spacer></v-spacer>
                     <v-btn :disabled="saving" @click="editorOpen = false">Close</v-btn>
@@ -562,7 +565,7 @@
                     </template>
                     <div v-if="billError" class="text-error text-body-2 mb-2">{{ billError }}</div>
                     <div class="d-flex ga-2">
-                        <v-btn color="secondary" size="large" class="flex-grow-1" :loading="billing && billMethod === 'cash'"
+                        <v-btn variant="outlined" size="large" class="flex-grow-1" :loading="billing && billMethod === 'cash'"
                             :disabled="billing" @click="bill('cash')">Cash</v-btn>
                         <v-btn color="primary" size="large" class="flex-grow-1" :loading="billing && billMethod === 'card'"
                             :disabled="billing" @click="bill('card')">Card</v-btn>

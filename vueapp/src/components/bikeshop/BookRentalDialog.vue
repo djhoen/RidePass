@@ -154,9 +154,9 @@
 
                     <div v-if="bookError" class="text-error text-body-2 mt-3">{{ bookError }}</div>
                     <div class="d-flex ga-2 mt-4">
-                        <v-btn color="secondary" size="large" class="flex-grow-1" :disabled="form.lines.length === 0 || !windowValid || booking"
+                        <v-btn variant="outlined" size="large" class="flex-grow-1" :disabled="form.lines.length === 0 || !windowValid || booking"
                             :loading="booking && payMethod === 'cash'" @click="book('cash')">Cash</v-btn>
-                        <v-btn color="primary" size="large" class="flex-grow-1" :disabled="form.lines.length === 0 || !windowValid || booking"
+                        <v-btn color="primary" variant="flat" size="large" class="flex-grow-1" :disabled="form.lines.length === 0 || !windowValid || booking"
                             :loading="booking && payMethod === 'card'" @click="book('card')">Card</v-btn>
                     </div>
                     <p v-if="form.lines.length > 0 && !windowValid" class="text-caption text-error mt-1">
@@ -179,7 +179,7 @@
                         Payment received. Now authorize the refundable deposit — the card is NOT charged
                         unless damage is kept at return.
                     </p>
-                    <div class="text-h6 mb-3">{{ money(payStage === 'fee' ? pendingTotal : pendingDeposit) }}</div>
+                    <div class="font-display text-h4 mb-3">{{ money(payStage === 'fee' ? pendingTotal : pendingDeposit) }}</div>
                     <div ref="paymentHost" class="mb-4"></div>
                     <div v-if="payError" class="text-error text-body-2 mb-2">{{ payError }}</div>
                     <v-btn block color="primary" size="large" :loading="paying" :disabled="!stripeReady" @click="payCurrent">
@@ -661,7 +661,7 @@ function closePay() {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: rgba(var(--v-theme-on-surface), 0.6);
+    color: var(--rp-muted);
 }
 .pos-qty { min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
 </style>

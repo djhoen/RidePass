@@ -1047,9 +1047,10 @@ onMounted(load)
 
 <style scoped>
 .email-preview-frame {
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
+    border-radius: 12px;
+    padding: 8px;
     height: 600px;
     overflow: hidden;
 }

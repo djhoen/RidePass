@@ -6,15 +6,16 @@
 
         <div class="login-form-wrap">
             <!-- Brand block above the card: always visible, photo gets the full stage. -->
-            <div class="login-brand-block text-center mb-5">
+            <div class="login-brand-block text-center mb-5 rp-on-photo">
                 <img v-if="branding.logoUrl" :src="branding.logoUrl" :alt="branding.displayName"
                     class="login-brand-logo" />
+                <BrandLogo v-else-if="isApex" :height="44" class="login-brand-svg mx-auto" />
                 <div v-else class="login-brand-name font-display">{{ branding.displayName }}</div>
                 <p v-if="branding.tagline" class="login-brand-tagline">{{ branding.tagline }}</p>
             </div>
 
             <div class="login-card">
-                <h1 class="text-h5 font-weight-bold mb-1">Welcome back</h1>
+                <h1 class="login-title font-display mb-1">Welcome back</h1>
                 <p class="text-body-2 text-medium-emphasis mb-6">Sign in to your account to continue.</p>
 
                 <v-form @submit.prevent="login">
@@ -33,15 +34,14 @@
                         <router-link to="/ResetPassword" class="login-link text-body-2">Forgot password?</router-link>
                     </div>
 
-                    <v-btn type="submit" color="primary" block size="large" :loading="loading"
-                        class="text-none" rounded="lg">Sign in</v-btn>
+                    <v-btn type="submit" color="primary" variant="flat" block size="large" :loading="loading">Sign in</v-btn>
                 </v-form>
 
                 <!-- Shown only after a login attempt fails because the email is not yet
                      verified. Lets the rider request a fresh verification link inline. -->
                 <v-alert v-if="showResend" type="info" variant="tonal" density="compact" class="mt-4">
                     <div class="text-body-2 mb-2">Your email isn't verified yet.</div>
-                    <v-btn color="primary" variant="text" size="small" class="text-none px-0"
+                    <v-btn variant="text" size="small" class="px-0"
                         :loading="resending" @click="resendVerification">Resend verification email</v-btn>
                 </v-alert>
 
@@ -62,6 +62,10 @@ import { UserService } from '@/services/UserService'
 import authHelper from '@/helpers/AuthHelper'
 import tenantHelper from '@/helpers/TenantHelper'
 import { branding } from '@/stores/branding'
+import BrandLogo from '@/components/BrandLogo.vue'
+
+// Apex (no tenant subdomain) shows the RidePass badge; tenant sites show their own logo/name.
+const isApex = computed(() => !tenantHelper.getSubdomain())
 
 const router = useRouter()
 const route = useRoute()
@@ -155,23 +159,22 @@ async function resendVerification() {
     flex-direction: column;
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-bg);
 }
+/* Operator-login treatment: the tenant photo (when set) is dimmed almost to black
+   with a soft radial glow behind the card. */
 .login-overlay {
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(ellipse at center, rgba(14, 17, 24, 0.35) 0%, rgba(14, 17, 24, 0.72) 100%),
-        linear-gradient(160deg,
-            color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, transparent) 0%,
-            rgba(14, 17, 24, 0.35) 60%);
+        radial-gradient(80% 60% at 50% 30%, rgba(61, 61, 61, 0.22), transparent 60%),
+        linear-gradient(180deg, rgba(var(--rp-scrim), 0.82), rgba(var(--rp-scrim), 0.94));
 }
 
 /* ── Brand block (above the card) ───────────────────────────────────────── */
 .login-brand-block {
-    color: #fff;
-    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
-    max-width: 460px;
+    color: var(--rp-photo-ink);
+    max-width: 400px;
 }
 .login-brand-logo {
     max-height: 72px;
@@ -180,21 +183,19 @@ async function resendVerification() {
     filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
 }
 .login-brand-name {
-    font-size: clamp(2rem, 5vw, 2.75rem);
-    font-weight: 700;
-    line-height: 1.05;
+    font-size: clamp(2.25rem, 5vw, 3rem);
     overflow-wrap: break-word;
     padding: 0 0.1em;   /* slanted display fonts clip their edge glyphs without this */
 }
 .login-brand-tagline {
-    font-size: clamp(1rem, 2vw, 1.2rem);
-    font-weight: 500;
-    opacity: 0.92;
+    font-size: 0.95rem;
+    color: var(--rp-photo-muted);
     margin: 0.5rem 0 0;
     overflow-wrap: break-word;
 }
+.login-title { font-size: 2rem; }
 
-/* ── Floating glass card ────────────────────────────────────────────────── */
+/* ── Centered card (operator-login "opcard") ────────────────────────────── */
 .login-form-wrap {
     position: relative;   /* above the overlay */
     flex: 1;
@@ -206,27 +207,22 @@ async function resendVerification() {
 }
 .login-card {
     width: 100%;
-    max-width: 420px;
-    /* Theme surface at ~86% over a blur: light theme reads as frosted white, dark theme
-       as smoked glass — Vuetify inputs inherit the right on-surface text either way. */
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 86%, transparent);
-    color: rgb(var(--v-theme-on-surface));
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-surface)) 40%, transparent);
+    max-width: 400px;
+    background: var(--rp-panel);
+    color: var(--rp-ink);
+    border: 1px solid var(--rp-line2);
     border-radius: 18px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
-    padding: 2.5rem 2.25rem;
+    padding: 30px 26px;
 }
 .login-link {
-    color: rgb(var(--v-theme-primary));
+    color: var(--rp-ink);
     text-decoration: none;
-    font-weight: 600;
+    font-weight: 700;
 }
 .login-link:hover { text-decoration: underline; }
 
 @media (max-width: 600px) {
     .login-form-wrap { padding: 1.75rem 1rem; }
-    .login-card { padding: 1.75rem 1.25rem; }
+    .login-card { padding: 24px 18px; }
 }
 </style>

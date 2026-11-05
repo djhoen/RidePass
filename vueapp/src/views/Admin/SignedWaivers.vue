@@ -1,9 +1,12 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <h1 class="text-h5">Signed Waivers</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" @click="loadPeople">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Signed Waivers</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" @click="loadPeople">Refresh</v-btn>
+            </div>
         </div>
 
         <!-- One person per row (rider account, or name+birthdate for walk-ups); expanding a

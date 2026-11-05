@@ -866,7 +866,12 @@ const routes = [
 const router = createRouter({
     history: createWebHistory(),
     routes,
-    scrollBehavior() {
+    scrollBehavior(to, _from, savedPosition) {
+        // Back/forward restores where the user was; in-page anchors (the landing page's
+        // /#passes link) scroll to the section, offset for the fixed 64px app bar; every
+        // other navigation starts at the top.
+        if (savedPosition) return savedPosition
+        if (to.hash) return { el: to.hash, top: 76, behavior: 'smooth' }
         return { top: 0 }
     }
 })

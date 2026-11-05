@@ -1,18 +1,20 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6">
-            <h1 class="text-h4">Marketing — Captured Emails</h1>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" prepend-icon="mdi-download" @click="exportCsv" :disabled="rows.length === 0">
-                Export CSV
-            </v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Marketing — Captured Emails</div>
+                <div class="rp-pagehead-sub">
+                    Every time a rider sends a coupon code to a friend from My Passes, the recipient's
+                    email is captured here. These are warm leads — people who heard about a track from
+                    someone they know. Use sparingly and respect unsubscribe preferences.
+                </div>
+            </div>
+            <div>
+                <v-btn variant="outlined" prepend-icon="mdi-download" @click="exportCsv" :disabled="rows.length === 0">
+                    Export CSV
+                </v-btn>
+            </div>
         </div>
-
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Every time a rider sends a coupon code to a friend from My Passes, the recipient's
-            email is captured here. These are warm leads — people who heard about a track from
-            someone they know. Use sparingly and respect unsubscribe preferences.
-        </p>
 
         <v-card>
             <v-table>
@@ -32,7 +34,7 @@
                         <td>{{ r.tenantDisplayName }} <span class="text-caption text-medium-emphasis">({{ r.tenantSubdomain }})</span></td>
                         <td class="text-caption">{{ formatDate(r.sentAtUtc) }}</td>
                         <td>
-                            <v-chip v-if="r.redeemedAtUtc" size="small" color="success">
+                            <v-chip v-if="r.redeemedAtUtc" size="small" variant="tonal" color="success">
                                 {{ formatDate(r.redeemedAtUtc) }}
                             </v-chip>
                             <span v-else class="text-medium-emphasis">—</span>

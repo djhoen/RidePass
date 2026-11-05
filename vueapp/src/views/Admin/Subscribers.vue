@@ -1,14 +1,19 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Newsletter Subscribers</h1>
-            <v-chip v-if="activeCount !== null" size="small" color="success" variant="tonal">
-                {{ activeCount }} active
-            </v-chip>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-account-plus" @click="addDialog = true">Add</v-btn>
-            <v-btn variant="tonal" prepend-icon="mdi-upload" @click="importDialog = true">Import</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="d-flex align-center ga-3 flex-wrap">
+                    <div class="rp-pagehead-title">Newsletter Subscribers</div>
+                    <v-chip v-if="activeCount !== null" size="small" color="success" variant="tonal">
+                        {{ activeCount }} active
+                    </v-chip>
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-account-plus" @click="addDialog = true">Add</v-btn>
+                <v-btn variant="tonal" prepend-icon="mdi-upload" @click="importDialog = true">Import</v-btn>
+            </div>
         </div>
 
         <v-tabs v-model="tab" density="compact" class="mb-3">

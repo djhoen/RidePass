@@ -1,33 +1,36 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">Void / Comp report</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Void / Comp report</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <template v-if="report">
             <!-- Summary tiles -->
             <v-row class="mb-4">
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Total comped</div>
-                        <div class="text-h4">{{ money(report.totalCompCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Total comped</div>
+                        <div class="rp-kpi-value">{{ money(report.totalCompCents) }}</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Count</div>
-                        <div class="text-h4">{{ report.count }}</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Count</div>
+                        <div class="rp-kpi-value">{{ report.count }}</div>
+                    </v-card>
                 </v-col>
             </v-row>
 

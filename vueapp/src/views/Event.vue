@@ -11,7 +11,7 @@
                  embed gets the slim header below instead (a second full-bleed hero
                  inside someone else's page reads as a site-within-a-site). -->
             <section v-if="!isEmbed" class="evt-hero" :style="heroStyle">
-                <div class="evt-hero-overlay">
+                <div class="evt-hero-overlay rp-on-photo">
                     <v-container class="evt-hero-inner">
                         <router-link to="/Events" class="evt-back">
                             <v-icon icon="mdi-arrow-left" size="18"></v-icon>
@@ -368,17 +368,10 @@ async function reloadTiers() {
 </script>
 
 <style scoped>
-/* Theme-aware surface + text colors: dark-mode tenants (theme_mode = 'dark') get a
-   dark page with light text; hardcoding light-mode values here made their inherited
-   white headings vanish on the light page and the black labels vanish on the dark
-   checkout card. */
+/* Everything here is token-driven so the page follows the tenant's light/dark
+   setting; the hero is the one photo surface and keeps its scrim in both modes. */
 .evt-page {
-    /* Theme background plus a 4% on-surface tint: ~#f5f5f5 on light (the previous
-       hardcoded value) and a softly-raised near-black on dark, so the surface-colored
-       entry card keeps its subtle separation from the page on both. */
-    background:
-        linear-gradient(rgba(var(--v-theme-on-surface), 0.04), rgba(var(--v-theme-on-surface), 0.04)),
-        rgb(var(--v-theme-background));
+    background: var(--rp-bg);
     min-height: 100vh;
 }
 
@@ -386,14 +379,14 @@ async function reloadTiers() {
 .evt-hero {
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-panel);
 }
 .evt-hero-overlay {
-    /* Bottom-up darken (where the title + meta sit) layered over a left-to-right
-       darken, so text and icons stay legible over any photo. */
+    /* Dark gradient overlay plus a bottom fade into the page background, so
+       the title stays legible over any photo and the hero melts into the page. */
     background:
-        linear-gradient(0deg, rgba(10, 13, 20, 0.9) 0%, rgba(10, 13, 20, 0.25) 55%, rgba(10, 13, 20, 0.45) 100%),
-        linear-gradient(90deg, rgba(16, 20, 28, 0.85) 0%, rgba(16, 20, 28, 0.5) 60%, rgba(16, 20, 28, 0.2) 100%);
+        linear-gradient(180deg, transparent 50%, var(--rp-bg) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
     min-height: 220px;
     display: flex;
 }
@@ -410,9 +403,9 @@ async function reloadTiers() {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    color: #fff;
-    background: rgba(255, 255, 255, 0.16);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: var(--rp-photo-ink);
+    background: rgba(var(--rp-scrim), 0.72);
+    border: 1px solid var(--rp-photo-line);
     border-radius: 999px;
     padding: 6px 14px 6px 10px;
     font-size: 0.85rem;
@@ -423,8 +416,8 @@ async function reloadTiers() {
     /* Also rendered as an href-less <a role="button"> in embed mode. */
     cursor: pointer;
 }
-.evt-back:hover { background: rgba(255, 255, 255, 0.3); }
-/* Embed header variant: the base pill is white-on-hero; on the plain page it goes
+.evt-back:hover { background: rgba(var(--rp-scrim), 0.9); }
+/* Embed header variant: the base pill is frosted-on-hero; on the plain page it goes
    primary-tinted so it's visible on light and dark themes alike. */
 .evt-back-embed {
     color: rgb(var(--v-theme-primary));
@@ -442,9 +435,7 @@ async function reloadTiers() {
 .rp-powered:hover { color: rgba(var(--v-theme-on-surface), 0.8); text-decoration: underline; }
 .evt-hero-bottom { margin-top: 1rem; }
 .evt-title {
-    font-size: clamp(2rem, 5vw, 3.25rem);
-    line-height: 1.05;
-    font-weight: 700;
+    font-size: clamp(2.75rem, 7vw, 5.25rem);
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
 }
 /* Meta now lives in the Event Details column on a light page, so it's a plain
@@ -510,20 +501,21 @@ async function reloadTiers() {
 .evt-infobox {
     display: flex;
     gap: 0.75rem;
-    /* Alpha-tinted orange reads as the same soft warning band on light and dark. */
-    background: rgba(232, 130, 12, 0.12);
-    border: 1px solid rgba(232, 130, 12, 0.35);
+    /* Semantic info blue: the only chromatic tint allowed on the monochrome site. */
+    background: var(--rp-blue-soft);
+    border: 1px solid rgba(90, 168, 255, 0.35);
     border-radius: 10px;
     padding: 1rem 1.1rem;
     font-size: 0.95rem;
-    color: rgba(var(--v-theme-on-surface), 0.8);
+    color: var(--rp-ink);
 }
-.evt-infobox-icon { color: #e8820c; flex-shrink: 0; }
+.evt-infobox-icon { color: var(--rp-blue); flex-shrink: 0; }
 
 /* ── Schedule ───────────────────────────────────────────────────────────── */
 .evt-schedule {
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-    border-radius: 10px;
+    border: 1px solid var(--rp-line);
+    background: var(--rp-card);
+    border-radius: 12px;
     overflow: hidden;
 }
 .evt-schedule-row {
@@ -531,7 +523,7 @@ async function reloadTiers() {
     gap: 1rem;
     padding: 0.65rem 1rem;
 }
-.evt-schedule-row:nth-child(odd) { background: rgba(var(--v-theme-on-surface), 0.03); }
+.evt-schedule-row + .evt-schedule-row { border-top: 1px solid var(--rp-line); }
 .evt-schedule-time {
     width: 116px;
     flex-shrink: 0;
@@ -559,7 +551,8 @@ async function reloadTiers() {
 
 /* ── Entry card ─────────────────────────────────────────────────────────── */
 .evt-entry-card {
-    border-radius: 14px;
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line2) !important;
 }
 .evt-choice {
     display: flex;
@@ -576,17 +569,15 @@ async function reloadTiers() {
     text-align: center;
     background: rgba(var(--v-theme-primary), 0.05);
     cursor: pointer;
-    transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    transition: transform 0.12s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 .evt-choice-card:hover {
     border-color: rgb(var(--v-theme-primary));
     background: rgba(var(--v-theme-primary), 0.1);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
     transform: translateY(-2px);
 }
 .evt-choice-card:active {
     transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 .evt-choice-card:focus-visible {
     outline: 3px solid rgba(var(--v-theme-primary), 0.5);
@@ -598,7 +589,7 @@ async function reloadTiers() {
     margin-top: 0.9rem;
     display: inline-block;
     background: rgb(var(--v-theme-primary));
-    color: #fff;
+    color: rgb(var(--v-theme-on-primary));
     font-weight: 700;
     font-size: 0.8rem;
     letter-spacing: 0.02em;

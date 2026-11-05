@@ -1,12 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h1 class="text-h4">Customers</h1>
-            <v-spacer></v-spacer>
-            <v-text-field v-model="search" label="Search by name or email" density="compact" hide-details
-                clearable style="max-width: 320px" prepend-inner-icon="mdi-magnify"
-                @update:model-value="onSearchChanged"></v-text-field>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Customers</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-text-field v-model="search" label="Search by name or email" density="compact" hide-details
+                    clearable style="max-width: 320px" prepend-inner-icon="mdi-magnify"
+                    @update:model-value="onSearchChanged"></v-text-field>
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+            </div>
         </div>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
@@ -131,5 +134,5 @@ function formatWhen(utc: string): string {
 
 <style scoped>
 .cursor-pointer { cursor: pointer; }
-.cursor-pointer:hover { background-color: rgba(0, 0, 0, 0.04); }
+.cursor-pointer:hover { background-color: var(--rp-panel2); }
 </style>

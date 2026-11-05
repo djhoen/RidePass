@@ -2,237 +2,266 @@
     <div>
         <!-- Apex (ridepass.io, no tenant subdomain): platform landing page.
              Purpose: promote the platform's tracks and their events to riders,
-             spotlight a rider, and promote RidePass to prospective track
-             operators (bottom CTA -> /ForTracks). Copy, hero image, featured
-             tracks, benefits, testimonials, and the bottom CTA banner are all
-             pulled from platform_branding so super admins can edit without a
-             deploy. The map section is a stub for now; a real map ships later. -->
+             sell the season-pass idea, and promote RidePass to prospective track
+             operators (owners band -> /ForTracks). Copy, hero image, featured
+             tracks, testimonials and the bottom CTA band are pulled from
+             platform_branding so super admins can edit without a deploy; every
+             field falls back to the landing-mockup copy when it is empty.
+             Pass tiers and the "how it works" steps are placeholder marketing
+             content for now (see apexPassTiers / apexSteps in the script). -->
         <div v-if="isApex" class="apex-page">
-            <!-- ── HERO ────────────────────────────────────────────────────── -->
-            <section class="apex-hero" :style="heroStyle">
-                <div class="apex-hero-overlay">
-                    <v-container class="text-left">
-                        <v-row justify="start">
-                            <v-col cols="12" md="8" lg="7" class="text-left">
-                                <h1 class="text-h1 mb-3 font-display apex-hero-headline text-left">
-                                    <span v-for="(line, i) in apexHeroLines" :key="i"
-                                        class="apex-hero-line"
-                                        :class="i === 0 ? 'text-white' : 'text-primary'">
-                                        {{ line }}
-                                    </span>
-                                </h1>
-                                <p class="text-h6 text-white mb-8 text-left" style="max-width: 600px">
-                                    {{ apexHeroSubhead }}
-                                </p>
-                                <div class="d-flex flex-wrap ga-3 mb-10 justify-start">
-                                    <v-btn v-if="apexHeroPrimary"
-                                        color="primary" size="x-large"
-                                        :to="apexHeroPrimary.url">{{ apexHeroPrimary.label }}</v-btn>
-                                    <v-btn v-if="apexHeroSecondary"
-                                        variant="outlined" size="x-large" color="white"
-                                        :to="apexHeroSecondary.url">{{ apexHeroSecondary.label }}</v-btn>
-                                </div>
-                                <div class="apex-stats">
-                                    <div v-if="apexStatsShowTracks" class="apex-stat">
-                                        <v-icon icon="mdi-map-marker-multiple" size="28" class="apex-stat-icon"></v-icon>
-                                        <div>
-                                            <div class="apex-stat-num">{{ apexTrackCount }}+</div>
-                                            <div class="apex-stat-label">Tracks</div>
-                                        </div>
-                                    </div>
-                                    <div v-if="apexStatsShowEventDays" class="apex-stat">
-                                        <v-icon icon="mdi-calendar-check" size="28" class="apex-stat-icon"></v-icon>
-                                        <div>
-                                            <div class="apex-stat-num">{{ apexEventDayCount }}+</div>
-                                            <div class="apex-stat-label">Event days</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </v-col>
-                        </v-row>
-                    </v-container>
-                </div>
+            <!-- ── 1. HERO ─────────────────────────────────────────────────── -->
+            <header class="lp-hero">
+                <!-- Photo layer: CMS hero when set (inline style), else the bundled
+                     landing photo from the scoped CSS. The ::after gradient dims the
+                     left side for the copy and fades the bottom into the page. -->
+                <div class="lp-hero-bg" :style="heroStyle"></div>
+                <v-container class="wrap lp-hero-inner rp-on-photo">
+                    <h1 class="font-display lp-hero-h1">
+                        <span v-for="(line, i) in apexHeroLines" :key="i"
+                            class="lp-hero-line" :class="{ 'font-display-outline': i > 0 }">{{ line }}</span>
+                    </h1>
+                    <p class="lp-hero-sub">{{ apexHeroSubhead }}</p>
+                    <div class="lp-ctas">
+                        <v-btn color="primary" variant="flat" size="x-large"
+                            :to="apexHeroPrimary.url">{{ apexHeroPrimary.label }}</v-btn>
+                        <v-btn variant="outlined" size="x-large"
+                            :to="apexHeroSecondary.url">{{ apexHeroSecondary.label }}</v-btn>
+                    </div>
+                    <div class="stats">
+                        <div v-if="apexStatsShowTracks"><b>{{ apexTrackCountLabel }}</b><span>Tracks</span></div>
+                        <div v-if="apexStatsShowEventDays"><b>{{ apexEventDayCountLabel }}</b><span>Event days</span></div>
+                        <div><b>1</b><span>Waiver, whole network</span></div>
+                    </div>
+                </v-container>
+            </header>
+
+            <!-- ── 2. UPCOMING EVENTS ──────────────────────────────────────
+                 Compact date-block rows; each deep-links to the event on its
+                 tenant. The discover DTO has no capacity, so no "few left" pill. -->
+            <section id="events" class="lp-sec">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">On the schedule</span>
+                            <h2 class="font-display">{{ apexSectionTitle('events', 'Upcoming events') }}</h2>
+                        </div>
+                        <router-link to="/SignUp">Create a free account to enter →</router-link>
+                    </div>
+                    <div v-if="apexEvents.length > 0" class="evgrid">
+                        <a v-for="e in apexEvents" :key="e.eventId" class="evcard"
+                            :href="apexEventUrl(e)" rel="noopener">
+                            <div class="evdate">
+                                <div class="m">{{ formatApexEventMonth(e.startsAtUtc) }}</div>
+                                <div class="d font-display">{{ formatApexEventDay(e.startsAtUtc) }}</div>
+                            </div>
+                            <div class="evbody">
+                                <div class="n">{{ e.title }}</div>
+                                <div class="t">{{ apexEventLocation(e) }}</div>
+                                <span class="rp-pill">{{ e.eventTypeName }}</span>
+                            </div>
+                        </a>
+                    </div>
+                    <p v-else class="lp-empty">No upcoming events scheduled — check back soon.</p>
+                </v-container>
             </section>
 
-            <v-container>
-                <!-- ── UPCOMING EVENTS (promoted to full width, first) ──────
-                     Events are the most time-sensitive content, so they lead
-                     the page. Cards deep-link to the event on its tenant. -->
-                <section class="my-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('events', 'Upcoming events') }}</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">View all events</v-btn>
-                    </div>
-                    <v-row v-if="apexEvents.length > 0" dense>
-                        <v-col v-for="e in apexEvents" :key="e.eventId" cols="12" sm="6" md="3">
-                            <v-card class="h-100 apex-event-card"
-                                :href="apexEventUrl(e)" rel="noopener">
-                                <!-- Cover image with the date badge floated in the top-left.
-                                     Falls back to event type color when no image is set. -->
-                                <div class="apex-event-image"
-                                    :style="apexEventImageStyle(e)">
-                                    <div class="apex-event-datebadge">
-                                        <div class="apex-event-day">{{ formatApexEventDay(e.startsAtUtc) }}</div>
-                                        <div class="apex-event-month">{{ formatApexEventMonth(e.startsAtUtc) }}</div>
-                                    </div>
-                                    <img v-if="e.tenantLogoUrl" class="apex-event-logo"
-                                        :src="absoluteUrl(e.tenantLogoUrl)" :alt="e.tenantDisplayName" />
-                                </div>
-                                <v-card-text class="pa-4">
-                                    <div class="text-h6 font-display-upright mb-1">{{ e.title }}</div>
-                                    <div class="text-caption text-medium-emphasis d-flex align-center ga-1">
-                                        <v-icon icon="mdi-map-marker" size="14"></v-icon>
-                                        <span>
-                                            {{ e.tenantDisplayName }}<span v-if="e.tenantCity">, {{ e.tenantCity }}<span v-if="e.tenantRegion">, {{ e.tenantRegion }}</span></span>
-                                        </span>
-                                    </div>
-                                </v-card-text>
-                            </v-card>
-                        </v-col>
-                    </v-row>
-                    <v-card v-else variant="outlined">
-                        <v-card-text class="text-center text-medium-emphasis py-8">
-                            No upcoming events scheduled.
-                        </v-card-text>
-                    </v-card>
-                </section>
-
-                <!-- ── RIDE THE BEST TRACKS ────────────────────────────────── -->
-                <section class="my-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracks', 'Ride the best tracks') }}</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">See all tracks</v-btn>
+            <!-- ── 3. RIDE THE BEST TRACKS ─────────────────────────────────── -->
+            <section id="tracks" class="lp-sec lp-sec--tight">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">The network</span>
+                            <h2 class="font-display">{{ apexSectionTitle('tracks', 'Ride the best tracks') }}</h2>
+                        </div>
+                        <router-link to="/Discover">See them in the app →</router-link>
                     </div>
                     <TrackCardGrid :tracks="apexFeaturedTracks" empty-text="No tracks on the platform yet." />
-                </section>
+                </v-container>
+            </section>
 
-                <!-- The "Why Tracks love RidePass" benefits band moved to the For
-                     Tracks page (/ForTracks), edited under Super Admin -> For Tracks. -->
-
-                <!-- ── TRACKS NEAR YOU (lower-48 map, auto-pinned from lat/lng) ── -->
-                <section class="my-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4 font-weight-bold font-display">{{ apexSectionTitle('tracksNearYou', 'Tracks near you') }}</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Discover" append-icon="mdi-arrow-right">Browse all tracks</v-btn>
+            <!-- ── TRACKS NEAR YOU (lower-48 map, auto-pinned from lat/lng) ── -->
+            <section class="lp-sec lp-sec--tight">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">Near you</span>
+                            <h2 class="font-display">{{ apexSectionTitle('tracksNearYou', 'Tracks near you') }}</h2>
+                        </div>
+                        <router-link to="/Discover">Browse all tracks →</router-link>
                     </div>
                     <!-- overflow visible so the hover preview card can extend past the
                          map's border instead of being clipped. -->
-                    <v-card variant="outlined" class="pa-4" style="overflow: visible">
+                    <v-card class="pa-4 lp-map-card" style="overflow: visible">
                         <TracksMap :tracks="apexTracks" @select="openTrack" />
                     </v-card>
-                </section>
+                </v-container>
+            </section>
 
-                <!-- ── TESTIMONIALS (kept last on the apex home) ───────────────── -->
-                <section v-if="apexTestimonials.length > 0" class="my-12">
-                    <h2 class="text-h4 font-weight-bold text-center mb-6 font-display">
-                        {{ apexSectionTitle('testimonials', 'What riders are saying') }}
-                    </h2>
-                    <v-row dense>
-                        <v-col v-for="t in apexTestimonials" :key="t.id" cols="12" md="6">
-                            <v-card class="h-100">
-                                <v-card-text>
-                                    <div class="d-flex align-center mb-3 ga-3">
-                                        <v-avatar size="48" color="grey-lighten-3">
-                                            <v-img v-if="t.riderPhotoUrl" :src="testimonialPhoto(t.riderPhotoUrl)"></v-img>
-                                            <v-icon v-else>mdi-account</v-icon>
-                                        </v-avatar>
-                                        <div>
-                                            <div class="font-weight-medium">{{ t.riderName }}</div>
-                                            <div class="text-caption text-warning">
-                                                <span v-for="n in t.rating" :key="n">★</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <p class="text-body-1 font-italic">"{{ t.quote }}"</p>
-                                </v-card-text>
-                            </v-card>
-                        </v-col>
-                    </v-row>
-                </section>
-            </v-container>
+            <!-- ── 4. SEASON PASSES (nav links to /#passes) ─────────────────── -->
+            <section v-if="apexPassTiers.length > 0" id="passes" class="lp-sec lp-passes">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">Season passes</span>
+                            <h2 class="font-display">One pass. Every gate.</h2>
+                        </div>
+                    </div>
+                    <div class="pgrid">
+                        <div v-for="tier in apexPassTiers" :key="tier.key"
+                            class="pcard" :class="{ 'pcard--pop': tier.popular }">
+                            <div class="tn">{{ tier.name }}</div>
+                            <div class="pr font-display">{{ tier.price }}</div>
+                            <div class="per">per season</div>
+                            <ul>
+                                <li v-for="b in tier.bullets" :key="b">{{ b }}</li>
+                            </ul>
+                            <v-btn v-if="tier.popular" color="primary" variant="flat" block to="/SignUp">{{ tier.cta }}</v-btn>
+                            <v-btn v-else variant="outlined" block to="/SignUp">{{ tier.cta }}</v-btn>
+                        </div>
+                    </div>
+                </v-container>
+            </section>
 
+            <!-- ── 5. HOW IT WORKS ─────────────────────────────────────────── -->
+            <section class="lp-sec">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">How it works</span>
+                            <h2 class="font-display">Gate in three steps</h2>
+                        </div>
+                    </div>
+                    <div class="steps">
+                        <div v-for="s in apexSteps" :key="s.num" class="step">
+                            <div class="num font-display">{{ s.num }}</div>
+                            <h3>{{ s.title }}</h3>
+                            <p>{{ s.body }}</p>
+                        </div>
+                    </div>
+                </v-container>
+            </section>
+
+            <!-- ── 6. FOR TRACK OWNERS ─────────────────────────────────────── -->
+            <section id="owners" class="lp-sec">
+                <v-container class="wrap">
+                    <div class="owners">
+                        <div class="txt">
+                            <span class="rp-kicker">For track owners</span>
+                            <h2 class="font-display">Your gate, upgraded.</h2>
+                            <p>Join the network and get a full track business suite: live revenue dashboard, QR gate check-in, rider CRM, events with race classes, POS, payouts through Stripe — and a new stream of riders carrying the pass.</p>
+                            <div class="ownstats">
+                                <div><b class="font-display">85%</b><span>of pass revenue pooled to tracks, paid by visits</span></div>
+                                <div><b class="font-display">90%</b><span>of every day-pass sale goes to your track</span></div>
+                                <div><b class="font-display">$0</b><span>software cost — we only earn when you do</span></div>
+                            </div>
+                            <v-btn color="primary" variant="flat" to="/ForTracks">Operator sign in</v-btn>
+                        </div>
+                        <!-- CMS photo when set, else the bundled track photo from the scoped CSS. -->
+                        <div class="ph" :style="ownersPhotoStyle"></div>
+                    </div>
+                </v-container>
+            </section>
+
+            <!-- ── 7. TESTIMONIALS ─────────────────────────────────────────── -->
+            <section v-if="apexQuotes.length > 0" class="lp-sec">
+                <v-container class="wrap">
+                    <div class="rp-sec-h">
+                        <div>
+                            <span class="rp-kicker">Riders on RidePass</span>
+                            <h2 class="font-display">{{ apexSectionTitle('testimonials', 'What riders are saying') }}</h2>
+                        </div>
+                    </div>
+                    <div class="quotes">
+                        <div v-for="q in apexQuotes" :key="q.key" class="quote">
+                            <div class="stars">{{ q.stars }}</div>
+                            <p>"{{ q.quote }}"</p>
+                            <div class="who">
+                                <v-avatar v-if="q.photo" size="26"><v-img :src="q.photo" cover></v-img></v-avatar>
+                                <span>{{ q.who }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </v-container>
+            </section>
+
+            <!-- ── 8. CTA BAND ─────────────────────────────────────────────── -->
+            <div class="band">
+                <h2 class="font-display">{{ apexCta.headline }}</h2>
+                <p>{{ apexCta.subhead }}</p>
+                <v-btn color="primary" variant="flat" size="x-large" :to="apexCta.url">{{ apexCta.label }}</v-btn>
+            </div>
         </div>
 
         <template v-else>
-            <!-- ── 1. Hero (apex-style: full-bleed photo, left-aligned, keeps the
-                 live track-status badge). Always shown. ──────────────────────── -->
-            <section class="apex-hero" :style="tenantHeroStyle">
-                <div class="apex-hero-overlay">
-                    <v-container>
-                        <v-row>
-                            <v-col cols="12" md="8" lg="7">
-                                <h1 class="text-h2 text-md-h1 mb-3 font-display apex-hero-headline text-left text-white">
-                                    {{ branding.displayName }}
-                                </h1>
-                                <p v-if="branding.tagline" class="text-h6 text-white mb-5 hero-subhead">
-                                    {{ branding.tagline }}
-                                </p>
-                                <div v-if="effectiveStatus" class="status-badge mb-6" :class="`status-${effectiveStatus.tone}`">
-                                    <v-icon size="small">{{ effectiveStatus.icon }}</v-icon>
-                                    <strong>{{ effectiveStatus.label }}</strong>
-                                    <span v-if="effectiveStatus.message" class="ml-2 text-body-2">— {{ effectiveStatus.message }}</span>
-                                </div>
-                                <div class="d-flex flex-wrap ga-3">
-                                    <v-btn color="primary" size="x-large" to="/Events">See Events</v-btn>
-                                    <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large" color="white"
-                                        to="/SeasonPasses">Season Passes</v-btn>
-                                </div>
-                            </v-col>
-                        </v-row>
-                    </v-container>
-                </div>
-            </section>
+            <!-- ── 1. Hero (same chrome as the landing hero: full-bleed photo,
+                 left-aligned, keeps the live track-status pill). Always shown. ── -->
+            <header class="lp-hero lp-hero--tenant">
+                <div class="lp-hero-bg" :style="tenantHeroStyle"></div>
+                <v-container class="wrap lp-hero-inner rp-on-photo">
+                    <h1 class="font-display lp-hero-h1 lp-hero-h1--tenant">{{ branding.displayName }}</h1>
+                    <p v-if="branding.tagline" class="lp-hero-sub">{{ branding.tagline }}</p>
+                    <div v-if="effectiveStatus" class="lp-status-row">
+                        <span class="rp-pill lp-status status-badge"
+                            :class="{ 'rp-pill--green': effectiveStatus.tone === 'open', 'rp-pill--red': effectiveStatus.tone === 'closed' }">
+                            <v-icon size="14">{{ effectiveStatus.icon }}</v-icon>
+                            {{ effectiveStatus.label }}
+                        </span>
+                        <span v-if="effectiveStatus.message" class="lp-status-msg">{{ effectiveStatus.message }}</span>
+                    </div>
+                    <div class="lp-ctas">
+                        <v-btn color="primary" variant="flat" size="x-large" to="/Events">See Events</v-btn>
+                        <v-btn v-if="hasSeasonPasses" variant="outlined" size="x-large"
+                            to="/SeasonPasses">Season Passes</v-btn>
+                    </div>
+                </v-container>
+            </header>
 
-            <v-container>
+            <v-container class="wrap lp-tenant-body">
                 <!-- ── 2. Next events row ──────────────────────────────────────── -->
                 <!-- Horizontal scroll-snap track. Chevrons overlay the track edges
                      like a typical carousel — only visible while scrolling is possible
                      in that direction. Native scroll keeps touch + keyboard
                      accessibility free; we just script the buttons. -->
                 <section v-if="sectionVisible('nextEvents') && nextEvents.length > 0" class="mb-12">
-                    <div class="d-flex align-center mb-4 ga-2">
-                        <h2 class="text-h4 font-weight-bold font-display">{{ nextUpTitle }}</h2>
-                        <v-spacer></v-spacer>
-                        <v-btn variant="text" color="primary" to="/Events" append-icon="mdi-arrow-right">See Events</v-btn>
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">{{ nextUpTitle }}</h2>
+                        <router-link to="/Events">See events →</router-link>
                     </div>
                     <div class="next-up-wrap">
                         <button v-show="canScrollLeft" type="button" class="next-up-arrow next-up-arrow--left"
                             aria-label="Previous events" @click="scrollNextUp(-1)">
-                            <v-icon size="32">mdi-chevron-left</v-icon>
+                            <v-icon size="28">mdi-chevron-left</v-icon>
                         </button>
                         <button v-show="canScrollRight" type="button" class="next-up-arrow next-up-arrow--right"
                             aria-label="Next events" @click="scrollNextUp(1)">
-                            <v-icon size="32">mdi-chevron-right</v-icon>
+                            <v-icon size="28">mdi-chevron-right</v-icon>
                         </button>
                         <div ref="nextUpTrack" class="next-up-track"
                             @scroll.passive="updateNextUpScrollState">
                             <div v-for="e in nextEvents" :key="e.id" class="next-up-card">
-                                <!-- Whole card links to the event landing page. The Race Entry button
-                                     stops propagation so it opens the buy dialog instead of navigating. -->
+                                <!-- Whole card links to the event landing page. -->
                                 <v-card class="apex-event-card d-flex flex-column" style="height: 100%"
                                     :to="`/Event/${e.id}`">
-                                <!-- Cover image with the black day/month date badge floated over the
-                                     top-left corner (matches the apex home cards); chip moves right. -->
-                                <div class="apex-event-image" :style="eventCoverStyle(e)">
+                                <!-- Cover image with the day/month date block pinned top-left
+                                     and the event-type pill top-right. -->
+                                <div class="apex-event-image rp-on-photo" :style="eventCoverStyle(e)">
                                     <div class="apex-event-datebadge">
-                                        <div class="apex-event-day">{{ eventDayBadge(e) }}</div>
                                         <div class="apex-event-month">{{ eventMonthBadge(e) }}</div>
+                                        <div class="apex-event-day font-display">{{ eventDayBadge(e) }}</div>
                                     </div>
-                                    <v-chip size="small" class="event-chip event-chip--right">{{ e.eventTypeName }}</v-chip>
+                                    <span class="rp-pill event-chip event-chip--right">{{ e.eventTypeName }}</span>
                                 </div>
                                 <v-card-text class="pa-4 flex-grow-1 d-flex flex-column">
-                                    <div class="text-h6 font-display-upright mb-1">{{ e.title }}</div>
-                                    <div class="text-caption text-medium-emphasis">{{ formatEventDate(e) }}</div>
-                                    <div v-if="e.minTicketPriceCents" class="text-body-2 mt-2">
+                                    <div class="lp-card-title font-display-upright">{{ e.title }}</div>
+                                    <div class="lp-card-sub">{{ formatEventDate(e) }}</div>
+                                    <div v-if="e.minTicketPriceCents" class="lp-card-price">
                                         From <strong>${{ (e.minTicketPriceCents / 100).toFixed(2) }}</strong>
                                     </div>
                                     <!-- Every card gets a CTA so non-race events (practice, lesson,
                                          open ride) don't look unbookable. -->
                                     <div class="d-flex flex-wrap ga-2 mt-auto pt-3">
-                                        <v-btn v-if="e.hasRaceEntryTiers" size="small" color="deep-orange" :to="`/Event/${e.id}`">
+                                        <v-btn v-if="e.hasRaceEntryTiers" size="small" color="primary" variant="flat" :to="`/Event/${e.id}`">
                                             Race Entry
                                         </v-btn>
                                         <v-btn v-else size="small" color="primary" variant="flat" :to="`/Event/${e.id}`">
@@ -254,13 +283,13 @@
                             :style="featuredPost.mainImageUrl ? { backgroundImage: `url(${absoluteUrl(featuredPost.mainImageUrl)})` } : {}">
                         </div>
                         <div class="featured-blog-content">
-                            <div class="text-overline text-primary mb-1">From the blog</div>
-                            <h2 class="text-h4 text-md-h3 font-display mb-3">{{ featuredPost.title }}</h2>
-                            <p v-if="featuredPost.excerpt" class="text-body-1 mb-6 featured-blog-excerpt">
+                            <span class="rp-kicker">From the blog</span>
+                            <h2 class="font-display featured-blog-title">{{ featuredPost.title }}</h2>
+                            <p v-if="featuredPost.excerpt" class="featured-blog-excerpt mb-6">
                                 {{ featuredPost.excerpt }}
                             </p>
                             <div>
-                                <v-btn color="primary" size="large" :to="`/Blog/${featuredPost.slug}`"
+                                <v-btn color="primary" variant="flat" size="large" :to="`/Blog/${featuredPost.slug}`"
                                     append-icon="mdi-arrow-right">Read more</v-btn>
                             </div>
                         </div>
@@ -274,17 +303,19 @@
                      resolves it shows the real card, or collapses if there are no priced passes. -->
                 <section v-if="sectionVisible('passes') && branding.seasonPassesEnabled
                              && (initialLoading || seasonPassFromCents !== null)" class="my-12">
-                    <h2 class="text-h4 font-weight-bold font-display mb-4">Passes</h2>
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">Passes</h2>
+                    </div>
                     <v-row>
                         <v-col cols="12" md="6">
-                            <v-card class="pa-6" variant="outlined" style="min-height: 236px">
+                            <v-card class="pcard pcard--tenant" style="min-height: 236px">
                                 <template v-if="seasonPassFromCents !== null">
-                                    <h3 class="text-h5 mb-2">Season Pass</h3>
-                                    <p class="text-body-2 text-medium-emphasis mb-4">Ride the whole season — best value.</p>
-                                    <div class="text-h4 font-weight-bold mb-4 font-display">
-                                        From ${{ (seasonPassFromCents / 100).toFixed(2) }}
+                                    <div class="tn">Season Pass</div>
+                                    <div class="pr font-display">From ${{ (seasonPassFromCents / 100).toFixed(2) }}</div>
+                                    <div class="per">Ride the whole season — best value.</div>
+                                    <div class="mt-auto">
+                                        <v-btn color="primary" variant="flat" to="/SeasonPasses">See Season Passes</v-btn>
                                     </div>
-                                    <v-btn color="primary" to="/SeasonPasses">See Season Passes</v-btn>
                                 </template>
                                 <v-skeleton-loader v-else type="heading, text, text, button"
                                     class="bg-transparent px-0" />
@@ -293,7 +324,7 @@
                     </v-row>
                 </section>
 
-                <!-- ── Benefits (apex dark band: photo left, checkmark perks right) ── -->
+                <!-- ── Benefits (bordered band: photo left, checkmark perks right) ── -->
                 <section v-if="sectionVisible('benefits') && (branding.benefitsHtml || branding.benefitsImageUrl)"
                     class="apex-benefits my-12">
                     <v-row no-gutters>
@@ -303,7 +334,8 @@
                             <div v-else class="apex-benefits-photo apex-benefits-photo--placeholder"></div>
                         </v-col>
                         <v-col cols="12" md="8" class="apex-benefits-content">
-                            <h2 class="text-h4 mb-4 font-display">Why ride with {{ branding.displayName }}</h2>
+                            <span class="rp-kicker">Membership</span>
+                            <h2 class="font-display apex-benefits-title">Why ride with {{ branding.displayName }}</h2>
                             <div v-if="branding.benefitsHtml" v-html="benefitsHtmlSafe"></div>
                         </v-col>
                     </v-row>
@@ -311,20 +343,24 @@
 
                 <!-- ── 4. About ──────────────────────────────────────────────── -->
                 <section v-if="sectionVisible('about') && branding.aboutHtml" class="my-12">
-                    <h2 class="text-h4 font-weight-bold font-display mb-4">About</h2>
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">About</h2>
+                    </div>
                     <div class="rich-text-body" v-html="aboutHtmlSafe"></div>
                     <v-img v-if="branding.secondaryHeroUrl" :src="branding.secondaryHeroUrl"
-                        max-height="400" cover class="mt-6 rounded"></v-img>
+                        max-height="400" cover class="mt-6 lp-rounded-img"></v-img>
                 </section>
 
                 <!-- ── 5. Photo gallery ──────────────────────────────────────── -->
                 <section v-if="sectionVisible('gallery') && gallery.length > 0" class="my-12">
-                    <h2 class="text-h4 font-weight-bold font-display mb-4">Photos</h2>
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">Photos</h2>
+                    </div>
                     <v-row>
                         <v-col v-for="(img, idx) in gallery" :key="img.id" cols="6" md="4" lg="3">
                             <!-- Thumbnail: caption hidden here; only shown inside the slideshow. -->
                             <v-img :src="absoluteUrl(img.imageUrl)" aspect-ratio="1" cover
-                                class="rounded gallery-thumb" @click="openGallery(idx)"></v-img>
+                                class="gallery-thumb" @click="openGallery(idx)"></v-img>
                         </v-col>
                     </v-row>
                 </section>
@@ -333,17 +369,19 @@
                 <!-- Park location info (map + address) was removed — riders find that
                      in the footer now. Track-layout images are unique content, kept here. -->
                 <section v-if="sectionVisible('trackLayout') && trackGraphics.length > 0" class="my-12">
-                    <h2 class="text-h4 font-weight-bold font-display mb-4">Track Layout</h2>
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">Track Layout</h2>
+                    </div>
                     <div>
-                        <v-card v-for="g in trackGraphics" :key="g.id" variant="outlined" class="mb-3">
+                        <v-card v-for="g in trackGraphics" :key="g.id" class="mb-3">
                             <v-row no-gutters>
                                 <v-col cols="12" md="5">
                                     <v-img :src="absoluteUrl(g.imageUrl)" aspect-ratio="1.5" cover></v-img>
                                 </v-col>
                                 <v-col cols="12" md="7">
-                                    <v-card-text>
-                                        <h4 v-if="g.title" class="text-h6 mb-2">{{ g.title }}</h4>
-                                        <p v-if="g.description" class="text-body-1 mb-0" style="white-space: pre-wrap">{{ g.description }}</p>
+                                    <v-card-text class="pa-6">
+                                        <h4 v-if="g.title" class="lp-card-title font-display-upright mb-2">{{ g.title }}</h4>
+                                        <p v-if="g.description" class="lp-body-copy mb-0" style="white-space: pre-wrap">{{ g.description }}</p>
                                     </v-card-text>
                                 </v-col>
                             </v-row>
@@ -353,22 +391,24 @@
 
                 <!-- ── 7. Hours of operation ─────────────────────────────────── -->
                 <section v-if="sectionVisible('hours') && weekHours.length > 0" class="my-12">
-                    <h2 class="text-h4 font-weight-bold font-display mb-4">Hours</h2>
-                    <v-card variant="outlined" class="pa-4 hours-card">
+                    <div class="rp-sec-h">
+                        <h2 class="font-display">Hours</h2>
+                    </div>
+                    <v-card class="pa-5 hours-card">
                         <div v-for="day in weekHours" :key="day.key" class="hours-row">
                             <span class="hours-day">{{ day.label }}</span>
-                            <span v-if="day.closed" class="text-medium-emphasis">Closed</span>
-                            <span v-else>{{ day.open }} – {{ day.close }}</span>
+                            <span v-if="day.closed" class="rp-pill rp-pill--red">Closed</span>
+                            <span v-else class="tabular">{{ day.open }} – {{ day.close }}</span>
                         </div>
                     </v-card>
                 </section>
 
                 <!-- ── 9. Sign up / log in strip ─────────────────────────────── -->
                 <section v-if="sectionVisible('signup') && !isAuthenticated" class="mb-12">
-                    <v-card variant="tonal" color="primary" class="pa-6 text-center">
-                        <h3 class="text-h5 mb-2">Already have an account?</h3>
-                        <p class="mb-4">Log in to check in at the gate, see your purchases, or buy more passes. New here? Your account is created automatically at your first purchase.</p>
-                        <v-btn to="/Login">Log In</v-btn>
+                    <v-card class="pa-8 text-center lp-signup">
+                        <h3 class="font-display lp-signup-title">Already have an account?</h3>
+                        <p class="lp-signup-copy">Log in to check in at the gate, see your purchases, or buy more passes. New here? Your account is created automatically at your first purchase.</p>
+                        <v-btn color="primary" variant="flat" to="/Login">Log In</v-btn>
                     </v-card>
                 </section>
 
@@ -377,13 +417,13 @@
                      at the bottom so the image owns the whole viewport. -->
                 <v-dialog v-model="galleryDialog" fullscreen
                     transition="dialog-bottom-transition" :scrim="false">
-                    <v-card class="gallery-fullscreen" color="black">
+                    <v-card class="gallery-fullscreen">
                         <v-toolbar density="compact" color="transparent" theme="dark" flat>
-                            <v-toolbar-title v-if="gallery.length > 1" class="text-caption text-grey-lighten-2">
+                            <v-toolbar-title v-if="gallery.length > 1" class="text-caption text-muted">
                                 {{ galleryIndex + 1 }} / {{ gallery.length }}
                             </v-toolbar-title>
                             <v-spacer></v-spacer>
-                            <v-btn icon="mdi-close" variant="text" color="white"
+                            <v-btn icon="mdi-close" variant="text"
                                 @click="galleryDialog = false"></v-btn>
                         </v-toolbar>
                         <v-carousel v-model="galleryIndex" hide-delimiters
@@ -433,18 +473,18 @@ import DOMPurify from 'dompurify'
 const isApex = computed(() => !tenantHelper.getSubdomain())
 const isAuthenticated = computed(() => authHelper.isAuthenticated())
 
+
 // Admin-authored "About" copy is rendered as HTML, so sanitize it before it
 // hits v-html. The wrapper keeps the rich-text-body class for its layout rules.
 const aboutHtmlSafe = computed(() => DOMPurify.sanitize(branding.aboutHtml ?? ''))
 const benefitsHtmlSafe = computed(() => DOMPurify.sanitize(branding.benefitsHtml ?? ''))
 
-// Tenant hero background (reuses the apex hero styling). With no hero photo we
-// paint a brand-colored diagonal gradient instead of a flat block so the band
-// still looks intentional.
+// Tenant hero background (reuses the landing hero chrome). With no hero photo
+// the scoped CSS paints a dark diagonal gradient instead of a stock photo.
 const tenantHeroStyle = computed(() =>
     branding.heroImageUrl
         ? { backgroundImage: `url(${branding.heroImageUrl})` }
-        : { backgroundImage: 'linear-gradient(135deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-secondary)))' })
+        : {})
 
 // A non-hero section is visible unless its key is explicitly toggled off.
 function sectionVisible(key: string): boolean {
@@ -480,10 +520,10 @@ const trackGraphics = ref<TrackGraphic[]>([])
 const apexTracks = ref<TrackDiscoverItem[]>([])
 const apexEvents = ref<EventDiscoverItem[]>([])
 
-// Featured tracks render 3; upcoming events lead the page full-width as a
-// single row of up to 4 (four across on desktop).
+// Featured tracks render 3; upcoming events fill a three-column grid of
+// compact rows, two rows deep at most.
 const APEX_TRACK_LIMIT = 3
-const APEX_EVENT_LIMIT = 4
+const APEX_EVENT_LIMIT = 6
 
 // Surfaced to the rider via a top snackbar when a page load fails, so a network
 // error shows a real message instead of a blank home / apex page.
@@ -561,18 +601,18 @@ async function loadApex() {
 }
 onMounted(loadApex)
 
-// ── Apex computed (all driven by platform_branding) ─────────────────────────
+// ── Apex computed (all driven by platform_branding, mockup copy as fallback) ──
 const apexHeroHeadline = computed(() =>
     platformBranding.data?.heroHeadline?.trim() || 'Find your track. Ride this weekend.')
 const apexHeroSubhead = computed(() =>
     platformBranding.data?.heroSubhead?.trim()
-    || 'Discover motocross tracks near you, see what is on the schedule, and grab your gate pass before you load the van.')
+    || 'Discover motocross tracks near you, see what\'s on the schedule, and grab your gate pass before you load the van. One membership, one waiver, one QR code at every member gate.')
 
 // Split the headline on sentence boundaries so each clause renders on its
-// own line and gets its own color (mockup: "RIDE MORE." white,
-// "PAY LESS." orange). When the admin enters a single sentence, only one
-// line renders. Periods dropped by the split are re-added so the rendered
-// text matches what the admin typed.
+// own line: the first line solid, the rest outlined (mockup: "FIND YOUR
+// TRACK." solid, "RIDE THIS WEEKEND." stroke-only). When the admin enters a
+// single sentence, only one line renders. Periods dropped by the split are
+// re-added so the rendered text matches what the admin typed.
 const apexHeroLines = computed<string[]>(() => {
     const raw = apexHeroHeadline.value.trim()
     if (!raw) return []
@@ -582,24 +622,36 @@ const apexHeroLines = computed<string[]>(() => {
         return p.endsWith('.') ? p : p + '.'
     })
 })
+// Hero CTA pair: CMS label + URL when both are set, else the mockup pair.
 const apexHeroPrimary = computed(() => buttonFrom(
     platformBranding.data?.heroCtaPrimaryLabel,
-    platformBranding.data?.heroCtaPrimaryUrl))
+    platformBranding.data?.heroCtaPrimaryUrl) ?? { label: 'Browse tracks', url: '/Discover' })
 const apexHeroSecondary = computed(() => buttonFrom(
     platformBranding.data?.heroCtaSecondaryLabel,
-    platformBranding.data?.heroCtaSecondaryUrl))
+    platformBranding.data?.heroCtaSecondaryUrl) ?? { label: 'Upcoming events', url: '/Events' })
 
 const apexStatsShowTracks = computed(() => platformBranding.data?.statsShowTracks !== false)
 const apexStatsShowEventDays = computed(() => platformBranding.data?.statsShowEventDays !== false)
 
-// Stats counts use real numbers from /Discover. Pad the displayed value so
-// admins don't see a misleading "0+" before tracks load.
+// Stats counts use real numbers from /Discover. Show a dash until tracks load
+// so admins never see a misleading "0" or "0+".
 const apexTrackCount = computed(() => apexTracks.value.length)
 const apexEventDayCount = computed(() =>
     apexTracks.value.reduce((sum, t) => sum + (t.upcomingEventsCount || 0), 0))
+const apexTrackCountLabel = computed(() => apexTrackCount.value > 0 ? String(apexTrackCount.value) : '–')
+const apexEventDayCountLabel = computed(() => apexEventDayCount.value > 0 ? `${apexEventDayCount.value}+` : '–')
 
+// CMS hero photo as an inline background; empty when unset so the bundled
+// landing photo from the scoped CSS shows instead.
 const heroStyle = computed(() => {
     const url = platformImageUrl(platformBranding.data?.heroImageUrl)
+    return url ? { backgroundImage: `url(${url})` } : {}
+})
+
+// Owners band photo: the platform's "benefits" photo when a super admin has
+// uploaded one, else the bundled track photo from the scoped CSS.
+const ownersPhotoStyle = computed(() => {
+    const url = platformImageUrl(platformBranding.data?.benefitsImageUrl)
     return url ? { backgroundImage: `url(${url})` } : {}
 })
 
@@ -624,6 +676,48 @@ const apexFeaturedTracks = computed(() => {
 })
 
 const apexTestimonials = computed(() => platformBranding.data?.testimonials ?? [])
+
+// Quote cards come only from CMS testimonials (Super Admin → Home page). The section
+// is hidden when there are none: invented reviews must never ship on the public site.
+type ApexQuote = { key: string; stars: string; quote: string; who: string; photo: string }
+const apexQuotes = computed<ApexQuote[]>(() => {
+    return apexTestimonials.value.map(t => ({
+        key: t.id,
+        stars: '★'.repeat(Math.min(5, Math.max(1, Math.round(t.rating || 5)))),
+        quote: t.quote,
+        who: t.riderName,
+        photo: testimonialPhoto(t.riderPhotoUrl),
+    }))
+})
+
+// Bottom CTA band: CMS banner copy when set, else the mockup copy.
+const apexCta = computed(() => {
+    const b = platformBranding.data
+    const btn = buttonFrom(b?.ctaBannerCtaLabel, b?.ctaBannerCtaUrl)
+        ?? { label: 'Get started — it\'s free', url: '/SignUp' }
+    return {
+        headline: b?.ctaBannerHeadline?.trim() || 'Ready to ride?',
+        subhead: b?.ctaBannerSubhead?.trim() || 'Create your free account, sign once, and your pass works at every member gate.',
+        label: btn.label,
+        url: btn.url,
+    }
+})
+
+// ── Apex marketing content (placeholder) ────────────────────────────────────
+// The landing-page mockup shows four priced season-pass tiers. RidePass has no
+// platform-wide pass product yet, so this list is intentionally EMPTY and the section
+// (and the NavBar "Season passes" link) stay hidden: advertising prices for products
+// that do not exist is not acceptable on the public site. Populate it from
+// platform_branding once it grows pass-tier fields (name, price, bullets, "most
+// popular" flag, CTA label + URL); the template below the fold is ready for it.
+// The "how it works" steps (apexSteps) remain mockup copy and describe the product truthfully.
+type ApexPassTier = { key: string; name: string; price: string; popular: boolean; cta: string; bullets: string[] }
+const apexPassTiers: ApexPassTier[] = []
+const apexSteps = [
+    { num: '01', title: 'Create your account', body: 'Sign up free and e-sign the network waiver once — it covers you at every member track, all season.' },
+    { num: '02', title: 'Pick your pass', body: 'Buy a season pass in the app with secure in-app checkout — or just grab a one-tap day pass when you show up.' },
+    { num: '03', title: 'Scan in and ride', body: 'Your QR pass lives on your phone. Flash it at the gate, the track gets paid automatically, and you\'re on the track.' },
+]
 
 function apexSectionTitle(key: 'tracks' | 'events' | 'benefits' | 'testimonials' | 'tracksNearYou', fallback: string): string {
     const b = platformBranding.data
@@ -663,13 +757,18 @@ function openTrack(t: TrackDiscoverItem) {
     window.location.href = tenantHomeUrl(t)
 }
 
-// Date-badge helpers for the upcoming-events list (day number + month abbrev,
-// to match the mockup's "12 / OCT" stacked format).
+// Date-block helpers for the upcoming-events rows (month abbrev over day
+// number, to match the mockup's "OCT / 12" stacked format).
 function formatApexEventDay(utc: string): string {
     return dayjs.utc(utc).local().format('D')
 }
 function formatApexEventMonth(utc: string): string {
     return dayjs.utc(utc).local().format('MMM').toUpperCase()
+}
+// "Track · City, Region" subline for an apex event row.
+function apexEventLocation(e: EventDiscoverItem): string {
+    const place = [e.tenantCity, e.tenantRegion].filter(Boolean).join(', ')
+    return place ? `${e.tenantDisplayName} · ${place}` : e.tenantDisplayName
 }
 // Tenant event-card date badge (day / month) in the tenant's timezone, matching
 // the rest of the tenant page's date display.
@@ -680,17 +779,7 @@ function eventMonthBadge(e: EventDto): string {
     return dayjs.utc(e.startsAtUtc).tz(branding.timezone || 'UTC').format('MMM').toUpperCase()
 }
 
-// Background style for the apex track card cover. Reuses the tenant's own
-// hero image; falls back to a flat themed background so the card never
-// renders an empty white block when a tenant has no hero photo yet.
-function apexTrackImageStyle(t: TrackDiscoverItem) {
-    if (t.heroImageUrl) {
-        return { backgroundImage: `url(${absoluteUrl(t.heroImageUrl)})` }
-    }
-    return { backgroundColor: 'rgb(var(--v-theme-secondary))' }
-}
-
-// Deep link from an apex event card straight to that event's public page on its
+// Deep link from an apex event row straight to that event's public page on its
 // tenant subdomain (the new standalone event page, not the old calendar modal).
 function apexEventUrl(e: EventDiscoverItem): string {
     return tenantEventUrl({
@@ -702,20 +791,6 @@ function apexEventUrl(e: EventDiscoverItem): string {
         externalEventsUrl: e.tenantExternalEventsUrl,
         embedEventTarget: e.tenantEmbedEventTarget,
     }, e.eventId)
-}
-
-// Apex event card image: per-event image wins, fall back to the event type's
-// image, then to a flat fill in the event-type color. Both URLs come back as
-// relative `/uploads/...` paths so we need to absolutize against the API host.
-function apexEventImageStyle(e: EventDiscoverItem) {
-    const img = e.imageUrl ?? e.eventTypeImageUrl ?? null
-    if (img) {
-        return {
-            backgroundImage: `url(${absoluteUrl(img)})`,
-            backgroundColor: e.eventTypeColor || '#1976D2',
-        }
-    }
-    return { backgroundColor: e.eventTypeColor || '#1976D2' }
 }
 
 // ── Pricing snapshots ────────────────────────────────────────────────────────
@@ -789,15 +864,15 @@ function eventCoverStyle(e: EventDto) {
     if (img) {
         return {
             backgroundImage: `url(${absoluteUrl(img)})`,
-            backgroundColor: e.eventTypeColor || '#1976D2',
+            backgroundColor: e.eventTypeColor || 'var(--rp-raise)',
         }
     }
-    const base = e.eventTypeColor || '#1976D2'
+    const base = e.eventTypeColor || 'var(--rp-raise)'
     // Diagonal gradient: full color → 25% darker overlay (rgba black) so the typography
     // pops without us having to compute a second color from the hex.
     return {
         backgroundColor: base,
-        backgroundImage: `linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(0,0,0,0.32) 100%)`,
+        backgroundImage: `linear-gradient(135deg, transparent 0%, rgba(0,0,0,0.32) 100%)`,
     }
 }
 
@@ -878,12 +953,457 @@ function formatTime12(hhmm: string): string {
 </script>
 
 <style scoped>
-/* ── Featured blog band (full-bleed; image left, copy right on desktop) ── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Landing page (apex) + tenant home — dark monochrome system.
+   Mirrors ridepassNewUi/public/index.html: 1140px column, Bebas display
+   type, hairline-bordered cards on --rp-card, white as the only accent.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.apex-page {
+    background: var(--rp-bg);
+    color: var(--rp-ink);
+}
+/* Mockup .wrap: 1140px column with 22px gutters. Scoped class + attribute
+   outranks Vuetify's breakpoint max-widths on .v-container. */
+.wrap {
+    max-width: 1140px;
+    padding-left: 22px;
+    padding-right: 22px;
+}
+.lp-sec { padding: 74px 0; }
+.lp-sec--tight { padding-top: 20px; }
+.lp-tenant-body { padding-top: 48px; }
+.lp-empty {
+    color: var(--rp-muted2);
+    font-size: 13px;
+    margin: 0;
+}
+.lp-body-copy {
+    color: var(--rp-muted);
+    font-size: 14.5px;
+    line-height: 1.6;
+}
+.lp-rounded-img { border-radius: var(--rp-radius); }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+/* v-main already pads for the 64px app bar, so the hero starts flush under
+   it; the mockup's 92vh is measured against the full viewport. */
+.lp-hero {
+    position: relative;
+    min-height: calc(92vh - 64px);
+    display: flex;
+    align-items: center;
+    padding: 56px 0 70px;
+    overflow: hidden;
+    background: var(--rp-bg);
+}
+.lp-hero-bg {
+    position: absolute;
+    inset: 0;
+    background: url('@/assets/landing-hero.jpg') center / cover no-repeat;
+}
+.lp-hero-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35)),
+        linear-gradient(180deg, transparent 55%, var(--rp-bg));
+}
+.lp-hero-inner {
+    position: relative;
+    z-index: 1;
+}
+.lp-hero-h1 {
+    font-size: clamp(58px, 9vw, 108px);
+    margin: 0;
+    color: var(--rp-photo-ink);
+}
+.lp-hero-line { display: block; }
+.lp-hero-sub {
+    max-width: 520px;
+    color: var(--rp-photo-muted);
+    font-size: 16.5px;
+    line-height: 1.6;
+    margin: 18px 0 26px;
+}
+.lp-ctas {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+/* Stats strip: frosted pill group with display-type numbers. Sits on the hero
+   photo, so it uses the photo tokens (dark glass, white type) in both modes. */
+.stats {
+    display: flex;
+    margin-top: 38px;
+    background: rgba(var(--rp-scrim), 0.72);
+    border: 1px solid var(--rp-photo-line);
+    border-radius: 14px;
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
+}
+.stats > div {
+    padding: 14px 26px;
+    border-right: 1px solid var(--rp-photo-line);
+}
+.stats > div:last-child { border-right: 0; }
+.stats b {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 30px;
+    line-height: 1;
+    color: var(--rp-photo-ink);
+}
+.stats span {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rp-photo-muted);
+}
+
+/* Tenant hero: same chrome, shorter, dark gradient instead of a stock photo
+   when the track has no hero image, slightly smaller title for long names.
+   The photo-less gradient stays dark in both modes: the hero is a photo
+   surface (white type over a scrim), and the bottom fade meets the page. */
+.lp-hero--tenant { min-height: min(640px, calc(82vh - 64px)); }
+.lp-hero--tenant .lp-hero-bg {
+    background-image: linear-gradient(135deg, rgba(var(--rp-scrim), 0.78) 0%, rgb(var(--rp-scrim)) 70%);
+}
+.lp-hero-h1--tenant { font-size: clamp(44px, 7vw, 92px); }
+.lp-status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 0 0 22px;
+}
+/* Status pill sits on the hero photo: frosted dark glass so it reads in both modes.
+   The open/closed tints are the dark-mode semantic hues (the light-mode ones are
+   darkened for white cards and would sink into the scrim). */
+.lp-status {
+    font-size: 12px;
+    padding: 7px 14px;
+    background: rgba(var(--rp-scrim), 0.72);
+    border: 1px solid var(--rp-photo-line);
+    color: var(--rp-photo-ink);
+    backdrop-filter: blur(6px);
+}
+.lp-status.rp-pill--green { color: #5dd39e; border-color: rgba(93, 211, 158, 0.45); }
+.lp-status.rp-pill--red { color: #ff9a8a; border-color: rgba(255, 107, 107, 0.45); }
+.lp-status-msg {
+    color: var(--rp-photo-muted);
+    font-size: 13.5px;
+}
+
+/* ── Upcoming events (compact rows) ─────────────────────────────────────── */
+.evgrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+}
+.evcard {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    min-width: 0;
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    border-radius: 15px;
+    padding: 16px;
+    color: inherit;
+    transition: border-color 0.15s;
+}
+.evcard:hover { border-color: var(--rp-line3); }
+.evdate {
+    flex: 0 0 auto;
+    width: 58px;
+    text-align: center;
+    background: var(--rp-bg);
+    border: 1px solid var(--rp-line2);
+    border-radius: 11px;
+    padding: 8px 0;
+}
+.evdate .m {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rp-muted);
+}
+.evdate .d {
+    font-size: 26px;
+    line-height: 1.05;
+}
+.evbody {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.evcard .n {
+    font-weight: 800;
+    font-size: 14.5px;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.evcard .t {
+    font-size: 12px;
+    color: var(--rp-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.evcard .rp-pill { margin-top: 6px; }
+
+/* ── Tracks near you ────────────────────────────────────────────────────── */
+.lp-map-card { background: var(--rp-card); }
+
+/* ── Season passes ──────────────────────────────────────────────────────── */
+.lp-passes {
+    background: var(--rp-panel);
+    border-top: 1px solid var(--rp-line);
+    border-bottom: 1px solid var(--rp-line);
+}
+/* On the light page the panel is white, same as the cards; drop the band a step
+   so the pricing cards still read as cards. */
+:root[data-rp-theme="light"] .lp-passes { background: var(--rp-panel2); }
+.pgrid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+}
+.pcard {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line2);
+    border-radius: 18px;
+    padding: 22px;
+    transition: border-color 0.15s;
+}
+.pcard:hover { border-color: var(--rp-line3); }
+.pcard--pop,
+.pcard--pop:hover { border-color: var(--rp-ink); }
+.pcard--pop::before {
+    content: 'Most popular';
+    position: absolute;
+    top: -11px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--rp-ink);
+    color: var(--rp-on-ink);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 99px;
+    white-space: nowrap;
+}
+.pcard .tn {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--rp-ink2);
+}
+.pcard .pr {
+    font-size: 52px;
+    margin: 8px 0 2px;
+}
+.pcard .per {
+    font-size: 11.5px;
+    color: var(--rp-muted2);
+    margin-bottom: 16px;
+}
+.pcard ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+    flex: 1;
+}
+.pcard li {
+    position: relative;
+    font-size: 12.5px;
+    color: var(--rp-ink2);
+    line-height: 1.5;
+    padding: 5px 0 5px 20px;
+}
+.pcard li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    font-weight: 800;
+}
+/* Vuetify's block button is flex: 1 0 auto, which would stretch it to fill
+   the card column; pin it to its natural height. */
+.pcard .v-btn {
+    flex: 0 0 auto;
+}
+/* Tenant pricing snapshot reuses the tier card chrome on a v-card. */
+.pcard--tenant {
+    padding: 26px !important;
+    border-radius: 18px !important;
+}
+.pcard--tenant .per { font-size: 13px; color: var(--rp-muted); margin-bottom: 22px; }
+.pcard--tenant .pr { font-size: 44px; }
+
+/* ── How it works ───────────────────────────────────────────────────────── */
+.steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+}
+.step {
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    border-radius: 16px;
+    padding: 24px;
+}
+.step .num {
+    font-size: 44px;
+    color: transparent;
+    -webkit-text-stroke: 1.5px var(--rp-muted2);
+}
+.step h3 {
+    font-size: 16px;
+    font-weight: 800;
+    margin: 10px 0 6px;
+}
+.step p {
+    font-size: 13px;
+    color: var(--rp-muted);
+    line-height: 1.55;
+    margin: 0;
+}
+
+/* ── For track owners ───────────────────────────────────────────────────── */
+.owners {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    align-items: stretch;
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line2);
+    border-radius: 22px;
+    overflow: hidden;
+}
+.owners .txt { padding: 38px; }
+.owners .txt h2 {
+    font-size: clamp(32px, 4vw, 44px);
+    margin: 0 0 12px;
+}
+.owners .txt p {
+    font-size: 14px;
+    color: var(--rp-muted);
+    line-height: 1.65;
+    margin: 0 0 6px;
+}
+.owners .ph {
+    min-height: 320px;
+    background: url('@/assets/landing-owners.jpg') center / cover no-repeat;
+    background-color: var(--rp-card2);
+}
+.ownstats {
+    display: flex;
+    gap: 24px;
+    margin: 20px 0 24px;
+    flex-wrap: wrap;
+}
+.ownstats b {
+    display: block;
+    font-size: 34px;
+}
+.ownstats span {
+    display: block;
+    max-width: 130px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--rp-muted2);
+    line-height: 1.35;
+}
+
+/* ── Testimonials ───────────────────────────────────────────────────────── */
+.quotes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+.quote {
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
+    border-radius: 16px;
+    padding: 26px;
+}
+.quote .stars {
+    letter-spacing: 3px;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+.quote p {
+    font-size: 16px;
+    line-height: 1.55;
+    font-weight: 600;
+    margin: 0;
+}
+.quote .who {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--rp-muted2);
+}
+
+/* ── CTA band ───────────────────────────────────────────────────────────── */
+.band {
+    text-align: center;
+    padding: 84px 22px;
+}
+.band h2 {
+    font-size: clamp(44px, 6vw, 72px);
+    margin: 0 0 14px;
+}
+.band p {
+    color: var(--rp-muted);
+    font-size: 15px;
+    margin: 0 0 26px;
+}
+
+/* ── Responsive (mockup breakpoints) ────────────────────────────────────── */
+@media (max-width: 920px) {
+    .evgrid, .steps, .pgrid { grid-template-columns: 1fr 1fr; }
+    .owners { grid-template-columns: 1fr; }
+    .owners .ph { min-height: 220px; order: -1; }
+}
+@media (max-width: 560px) {
+    .evgrid, .steps, .pgrid, .quotes { grid-template-columns: 1fr; }
+    .stats > div { padding: 12px 16px; }
+    .lp-hero { min-height: calc(86vh - 56px); padding: 40px 0 56px; }
+    .lp-sec { padding: 56px 0; }
+    .owners .txt { padding: 26px 22px; }
+    .pgrid { padding-top: 12px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Tenant home sections
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Featured blog band (contained card; image left, copy right on desktop) ── */
 .featured-blog {
     width: 100%;
-    background: rgb(var(--v-theme-surface));
-    /* Contained card within the page container (no longer a full-bleed band). */
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line);
     border-radius: 16px;
     overflow: hidden;
 }
@@ -895,7 +1415,7 @@ function formatTime12(hhmm: string): string {
 .featured-blog-media {
     background-size: cover;
     background-position: center;
-    background-color: rgba(0, 0, 0, 0.06);
+    background-color: var(--rp-card2);
     min-height: 240px;
 }
 .featured-blog-content {
@@ -904,275 +1424,22 @@ function formatTime12(hhmm: string): string {
     justify-content: center;
     padding: 48px;
 }
+.featured-blog-title {
+    font-size: clamp(30px, 4vw, 44px);
+    margin: 0 0 12px;
+}
 .featured-blog-excerpt {
     max-width: 52ch;
-    color: rgba(var(--v-theme-on-surface), 0.8);
+    color: var(--rp-muted);
+    font-size: 14.5px;
+    line-height: 1.6;
 }
 @media (max-width: 960px) {
     .featured-blog-grid { grid-template-columns: 1fr; }
     .featured-blog-content { padding: 28px; }
 }
 
-/* ── Apex landing page ───────────────────────────────────────────────────
-   Hero is full-bleed with a configurable background image; falls back to a
-   dark gradient when the super admin hasn't uploaded one. The overlay sits
-   on top of the image and dims it so white text always reads.
-
-   Stats badges sit in a row at the bottom of the hero with a subtle dark
-   pill background. Other sections (how-it-works, benefits, testimonials,
-   CTA banner) inherit normal page width from v-container.
-*/
-/* Slight warm gray for the apex page background. Cards stay white (their
-   default surface color) so they visually pop against this. Hero and CTA
-   banner have their own background colors and override this. */
-.apex-page {
-    background-color: #f5f5f5;
-}
-
-.apex-hero {
-    position: relative;
-    min-height: 540px;
-    background-size: cover;
-    /* Anchor the crop to the top of the photo so heads stay in frame.
-       `cover` zooms to fill and the default `center` drops the top first;
-       `top` pins the top edge no matter the viewport ratio. */
-    background-position: center top;
-    background-color: rgb(var(--v-theme-secondary));
-}
-.apex-hero-overlay {
-    position: relative;
-    /* Horizontal darken: heavy on the left (where the headline, subhead,
-       CTAs and stats sit) fading to fully transparent on the right (where
-       the photo subject reads clean). Uniform top-to-bottom on each side
-       so the text always has the same backstop regardless of viewport
-       height, and so the right side of the photo never gets a mask. */
-    background: linear-gradient(90deg,
-        rgba(20, 24, 32, 0.95) 0%,
-        rgba(20, 24, 32, 0.85) 25%,
-        rgba(20, 24, 32, 0.50) 50%,
-        rgba(20, 24, 32, 0.0) 75%);
-    padding: 5rem 0 4rem;
-    min-height: 540px;
-    display: flex;
-    align-items: center;
-}
-/* Hero headline: two-clause split renders one clause per line, alternating
-   colors. line-height tight so the two clauses sit close together. */
-.apex-hero-headline {
-    line-height: 0.95;
-}
-.apex-hero-line {
-    display: block;
-}
-
-.hero-subhead {
-    max-width: 640px;
-    opacity: 0.92;
-}
-
-.apex-stats {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 1rem 4rem;
-    padding: 1rem 2rem;
-    background: rgba(0, 0, 0, 0.45);
-    border-radius: 14px;
-    color: #fff;
-}
-.apex-stat {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    text-align: left;
-}
-.apex-stat-icon {
-    color: #ffffff;
-    opacity: 0.95;
-}
-.apex-stat-num {
-    font-family: 'Inter', sans-serif;
-    font-weight: 700;
-    font-style: normal;
-    font-size: 1.75rem;
-    line-height: 1.05;
-}
-.apex-stat-label {
-    font-size: 0.8rem;
-    opacity: 0.85;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-top: 2px;
-}
-
-/* Section heading: title centered between two horizontal rules that flex to
-   fill the remaining space on each side. An optional trailing CTA (used on
-   the "Upcoming events" header for the "View All Events" link) sits to the
-   right of the second rule. Mirrors the "---  Title  ---" pattern from the
-   mock for both column headers. */
-.apex-section-head {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    width: 100%;
-}
-.apex-section-rule {
-    flex: 1 1 auto;
-    border: 0;
-    height: 1px;
-    margin: 0;
-    background-color: rgba(0, 0, 0, 0.22);
-}
-.apex-section-title {
-    flex: 0 0 auto;
-    margin: 0;
-    white-space: nowrap;
-}
-.apex-section-cta {
-    flex: 0 0 auto;
-}
-
-/* Ride the best tracks: each card pairs the tenant's hero photo at the top
-   with the track name + location below. Whole card is a link to the tenant
-   subdomain. Hover gives a subtle lift to signal interactivity. */
-.apex-track-card {
-    overflow: hidden;
-    text-decoration: none;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.apex-track-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
-}
-.apex-track-image {
-    height: 180px;
-    background-size: cover;
-    background-position: center;
-}
-
-/* Upcoming events: card has a cover image at the top with a black date badge
-   floated in the top-left, slightly inset from the corners so it reads as
-   pinned-over-the-image rather than crammed into it. Falls back to a flat
-   event-type color fill when no image is set. */
-.apex-event-card {
-    overflow: visible;
-}
-.apex-event-image {
-    position: relative;
-    height: 160px;
-    background-size: cover;
-    background-position: center;
-}
-/* Tenant white logo overlaid bottom-right on the event photo. */
-.apex-event-logo {
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    max-height: 28px;
-    max-width: 96px;
-    object-fit: contain;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
-}
-.apex-event-datebadge {
-    position: absolute;
-    top: -6px;
-    left: 12px;
-    background: #000;
-    color: #fff;
-    padding: 6px 10px 5px;
-    text-align: center;
-    border-radius: 4px;
-    line-height: 1;
-    min-width: 44px;
-    box-shadow: 1px 2px 5px 0px rgba(0,0,0,0.34); 
-}
-.apex-event-datebadge .apex-event-day {
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: #fff;
-    line-height: 1;
-}
-.apex-event-datebadge .apex-event-month {
-    font-size: 0.65rem;
-    letter-spacing: 0.08em;
-    color: #fff;
-    opacity: 0.85;
-    margin-top: 2px;
-}
-.apex-event-day {
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1;
-}
-.apex-event-month {
-    font-size: 0.75rem;
-    letter-spacing: 0.08em;
-    opacity: 0.7;
-    margin-top: 2px;
-}
-
-/* Benefits section: dark navy band that pairs a photo on the left with the
-   bullet list of member perks on the right. 50/50 split on desktop. No
-   gutter between the columns so the photo butts up against the dark panel
-   for an editorial layout (mirrors the mock). The whole section gets a
-   border radius so it reads as a contained card against the light page bg. */
-.apex-benefits {
-    background-color: rgb(var(--v-theme-secondary));
-    color: #ffffff;
-    border-radius: 16px;
-    overflow: hidden;
-}
-.apex-benefits-photo {
-    width: 100%;
-    height: 100%;
-    min-height: 360px;
-    background-size: cover;
-    background-position: center;
-    background-color: rgba(255, 255, 255, 0.04);
-}
-.apex-benefits-photo--placeholder {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
-}
-.apex-benefits-content {
-    padding: 3rem 3rem !important;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-}
-.apex-benefits-content :deep(ul) {
-    list-style: none;
-    padding-left: 0;
-    margin: 0;
-}
-.apex-benefits-content :deep(li) {
-    padding: 0.5rem 0 0.5rem 1.75rem;
-    position: relative;
-    font-size: 1.05rem;
-}
-.apex-benefits-content :deep(li::before) {
-    content: '✓';
-    position: absolute;
-    left: 0;
-    color: rgb(var(--v-theme-primary));
-    font-weight: 700;
-}
-@media (max-width: 960px) {
-    .apex-benefits-photo { min-height: 240px; }
-    .apex-benefits-content { padding: 2rem 1.5rem; }
-}
-
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-size: 14px;
-    color: white;
-}
-.status-open { background: rgba(76, 175, 80, 0.9); }
-.status-closed { background: rgba(244, 67, 54, 0.9); }
-.status-caution { background: rgba(255, 152, 0, 0.9); }
-
+/* ── Next-up carousel ───────────────────────────────────────────────────── */
 /* Carousel wrapper hosts the absolutely-positioned chevrons. The track itself
    handles the actual scroll; the arrows sit over the left + right edges,
    vertically centered, and only render when scroll is actually possible
@@ -1188,18 +1455,18 @@ function formatTime12(hhmm: string): string {
     width: 44px;
     height: 44px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.95);
-    color: rgba(0, 0, 0, 0.87);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    background: var(--rp-raise);
+    color: var(--rp-ink);
+    border: 1px solid var(--rp-line2);
+    box-shadow: var(--rp-shadow);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background-color 0.15s ease, transform 0.15s ease;
+    transition: border-color 0.15s ease, transform 0.15s ease;
 }
 .next-up-arrow:hover {
-    background: #fff;
+    border-color: var(--rp-line3);
     transform: translateY(-50%) scale(1.05);
 }
 .next-up-arrow:active {
@@ -1226,10 +1493,8 @@ function formatTime12(hhmm: string): string {
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
     scroll-behavior: smooth;
-    /* Top room so the date badge, floated -6px above each card, isn't clipped by
-       overflow-y: hidden (which overflow-x: auto forces on this axis). */
-    padding-top: 10px;
-    padding-bottom: 4px;          /* room for hover translate without clipping */
+    padding-top: 4px;
+    padding-bottom: 4px;          /* room for hover border without clipping */
     /* Hide the native scrollbar — chevrons are the affordance. */
     scrollbar-width: none;
     -ms-overflow-style: none;
@@ -1252,51 +1517,182 @@ function formatTime12(hhmm: string): string {
 @media (max-width: 600px) {   /* < sm → 1 up, lean a bit so the next card peeks */
     .next-up-card { width: 88%; }
 }
-/* The chip uses a white background regardless of theme so it pops against the event
-   cover image; pin the foreground color too so dark-mode (where chip text would
-   otherwise be white) doesn't render white-on-white. */
+
+/* Event card: cover photo (or event-type gradient) with the date block pinned
+   top-left and the type pill top-right, both on a frosted dark backdrop so
+   they read on any photo. The image is an rp-on-photo surface: the badges use
+   the photo tokens and stay dark-glass / white type in both modes. */
+.apex-event-card {
+    overflow: hidden;
+}
+.apex-event-image {
+    position: relative;
+    height: 160px;
+    background-size: cover;
+    background-position: center;
+    background-color: var(--rp-card2);
+}
+.apex-event-image::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 40%, rgba(var(--rp-scrim), 0.75));
+    pointer-events: none;
+}
+.apex-event-datebadge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1;
+    width: 54px;
+    text-align: center;
+    background: rgba(var(--rp-scrim), 0.82);
+    border: 1px solid var(--rp-photo-line);
+    border-radius: 11px;
+    padding: 6px 0 5px;
+    backdrop-filter: blur(6px);
+}
+.apex-event-datebadge .apex-event-month {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rp-photo-muted);
+}
+.apex-event-datebadge .apex-event-day {
+    font-size: 24px;
+    line-height: 1.05;
+    color: var(--rp-photo-ink);
+}
 .event-chip {
     position: absolute;
-    top: 8px;
-    left: 8px;
-    background: rgba(255, 255, 255, 0.92) !important;
-    color: rgba(0, 0, 0, 0.87) !important;
+    top: 10px;
+    left: 10px;
+    z-index: 1;
+    background: rgba(var(--rp-scrim), 0.82);
+    border: 1px solid var(--rp-photo-line);
+    color: var(--rp-photo-ink);
+    backdrop-filter: blur(6px);
 }
-/* Event-type chip moves to the top-right on the apex-style cards so it clears
-   the date badge pinned top-left. */
+/* Event-type pill moves to the top-right so it clears the date block. */
 .event-chip--right {
     left: auto;
-    right: 8px;
+    right: 10px;
 }
-:deep(.event-chip .v-chip__content) {
-    color: rgba(0, 0, 0, 0.87) !important;
+.lp-card-title {
+    font-size: 22px;
+    line-height: 1;
+    margin-bottom: 4px;
+}
+.lp-card-sub {
+    font-size: 12.5px;
+    color: var(--rp-muted);
+}
+.lp-card-price {
+    font-size: 13.5px;
+    color: var(--rp-ink2);
+    margin-top: 8px;
 }
 
+/* ── Benefits band (photo left, checkmark perks right) ─────────────────── */
+.apex-benefits {
+    background: var(--rp-card);
+    border: 1px solid var(--rp-line2);
+    border-radius: 22px;
+    overflow: hidden;
+}
+.apex-benefits-photo {
+    width: 100%;
+    height: 100%;
+    min-height: 360px;
+    background-size: cover;
+    background-position: center;
+    background-color: var(--rp-card2);
+}
+.apex-benefits-photo--placeholder {
+    background: linear-gradient(135deg, var(--rp-raise), var(--rp-card2));
+}
+.apex-benefits-content {
+    padding: 38px !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.apex-benefits-title {
+    font-size: clamp(32px, 4vw, 44px);
+    margin: 0 0 16px;
+}
+.apex-benefits-content :deep(ul) {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+.apex-benefits-content :deep(li) {
+    position: relative;
+    padding: 6px 0 6px 22px;
+    font-size: 14.5px;
+    color: var(--rp-ink2);
+    line-height: 1.5;
+}
+.apex-benefits-content :deep(li::before) {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--rp-ink);
+    font-weight: 800;
+}
+.apex-benefits-content :deep(p) {
+    color: var(--rp-ink2);
+    font-size: 14.5px;
+    line-height: 1.6;
+}
+@media (max-width: 960px) {
+    .apex-benefits-photo { min-height: 240px; }
+    .apex-benefits-content { padding: 26px 22px !important; }
+}
+
+/* ── Hours ──────────────────────────────────────────────────────────────── */
 .hours-card .hours-row {
     display: flex;
     justify-content: space-between;
-    padding: 6px 0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    align-items: center;
+    padding: 9px 0;
+    font-size: 14px;
+    border-bottom: 1px solid var(--rp-line);
 }
 .hours-card .hours-row:last-child { border-bottom: none; }
-.hours-card .hours-day { font-weight: 500; }
+.hours-card .hours-day { font-weight: 600; }
 
-.footer a {
-    color: inherit;
-    text-decoration: none;
+/* ── Sign-in strip ──────────────────────────────────────────────────────── */
+.lp-signup-title {
+    font-size: clamp(30px, 4vw, 40px);
+    margin: 0 0 10px;
 }
-.footer a:hover { text-decoration: underline; }
+.lp-signup-copy {
+    color: var(--rp-muted);
+    font-size: 14.5px;
+    line-height: 1.6;
+    max-width: 60ch;
+    margin: 0 auto 22px;
+}
 
 .rich-text-body :deep(*) { max-width: 100%; }
+.rich-text-body :deep(p) {
+    color: var(--rp-ink2);
+    font-size: 15px;
+    line-height: 1.65;
+}
 
-/* Gallery thumbnails — click cue + subtle hover lift. */
+/* Gallery thumbnails — hairline frame, lifts on hover. */
 .gallery-thumb {
     cursor: pointer;
-    transition: transform 150ms ease, box-shadow 150ms ease;
+    border-radius: 12px;
+    border: 1px solid var(--rp-line);
+    transition: transform 150ms ease, border-color 150ms ease;
 }
 .gallery-thumb:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-color: var(--rp-line3);
 }
 
 /* Full-screen slideshow — black background, carousel + slide expand to fill the
@@ -1306,6 +1702,9 @@ function formatTime12(hhmm: string): string {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    background: #000 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
 }
 .gallery-carousel,
 .gallery-carousel :deep(.v-window),
@@ -1341,9 +1740,10 @@ function formatTime12(hhmm: string): string {
     display: inline-block;
     max-width: min(900px, 90%);
     padding: 12px 20px;
-    background: rgba(0, 0, 0, 0.65);
-    color: #fff;
-    border-radius: 8px;
+    background: rgba(var(--rp-scrim), 0.75);
+    border: 1px solid var(--rp-photo-line);
+    color: var(--rp-photo-ink);
+    border-radius: 10px;
     font-size: 15px;
     line-height: 1.5;
     text-align: center;

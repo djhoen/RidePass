@@ -1,5 +1,5 @@
 <template>
-    <v-card variant="tonal" class="pa-4">
+    <v-card class="pa-4">
         <div class="text-subtitle-1 font-weight-medium mb-1">{{ title }}</div>
         <div class="text-caption newsletter-subtitle mb-3">{{ subtitle }}</div>
         <v-row dense>
@@ -10,7 +10,7 @@
                 <v-text-field v-model="name" label="Name (optional)" density="compact" hide-details></v-text-field>
             </v-col>
         </v-row>
-        <v-btn block color="primary" class="mt-3" :loading="submitting" :disabled="subscribed"
+        <v-btn block color="primary" variant="flat" class="mt-3" :loading="submitting" :disabled="subscribed"
             @click="submit">{{ subscribed ? 'Subscribed ✓' : 'Subscribe' }}</v-btn>
         <div v-if="error" class="text-caption text-error mt-2">{{ error }}</div>
     </v-card>
@@ -59,6 +59,6 @@ async function submit() {
 /* The signup lives in the dark footer, so keep the subtitle legible there
    instead of the default low-opacity dark medium-emphasis color. */
 .newsletter-subtitle {
-    color: rgba(255, 255, 255, 0.82);
+    color: var(--rp-muted);
 }
 </style>

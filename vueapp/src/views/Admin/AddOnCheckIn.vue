@@ -1,15 +1,18 @@
 <template>
     <v-container fluid>
-        <div class="d-flex align-center mb-2 flex-wrap ga-2">
-            <h1 class="text-h5">Add-on Check-in</h1>
-            <v-spacer />
-            <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Add-on Check-in</div>
+                <div class="rp-pagehead-sub">
+                    Camping, parking, pit vehicles and anything else sold as an add-on. Tick people off as
+                    they turn up. You can also scan a rider's QR at Scan Tickets, which checks in their
+                    add-ons alongside their entry.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+            </div>
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Camping, parking, pit vehicles and anything else sold as an add-on. Tick people off as
-            they turn up. You can also scan a rider's QR at Scan Tickets, which checks in their
-            add-ons alongside their entry.
-        </p>
 
         <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">{{ loadError }}</v-alert>
 

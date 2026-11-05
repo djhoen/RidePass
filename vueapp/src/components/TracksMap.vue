@@ -11,15 +11,16 @@
             aria-label="Map of tracks across the lower 48 states"
             @click="hovered = null">
             <defs>
-                <!-- Soft "ocean" backdrop and a subtle top-to-bottom gradient on the
-                     land so the map reads with some depth instead of flat white. -->
+                <!-- "Ocean" backdrop and a subtle top-to-bottom gradient on the land so the
+                     map reads with some depth instead of a flat fill. Stop colors come from
+                     the --rp-* tokens (scoped CSS below) so the map follows light/dark mode. -->
                 <linearGradient id="tm-ocean" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#eef4fb" />
-                    <stop offset="100%" stop-color="#d6e2f0" />
+                    <stop offset="0%" class="tm-ocean-a" />
+                    <stop offset="100%" class="tm-ocean-b" />
                 </linearGradient>
                 <linearGradient id="tm-land" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" :y2="HEIGHT">
-                    <stop offset="0%" stop-color="#ffffff" />
-                    <stop offset="100%" stop-color="#e7edf4" />
+                    <stop offset="0%" class="tm-land-a" />
+                    <stop offset="100%" class="tm-land-b" />
                 </linearGradient>
             </defs>
             <!-- Background sits outside the zoom layer so it stays put while the land pans/zooms. -->
@@ -41,11 +42,11 @@
 
         <!-- Zoom controls -->
         <div class="map-zoom-controls">
-            <v-btn icon="mdi-plus" size="small" variant="elevated" aria-label="Zoom in"
+            <v-btn icon="mdi-plus" size="small" variant="outlined" class="map-zoom-btn" aria-label="Zoom in"
                 @click="zoomBy(1.6)"></v-btn>
-            <v-btn icon="mdi-minus" size="small" variant="elevated" aria-label="Zoom out"
+            <v-btn icon="mdi-minus" size="small" variant="outlined" class="map-zoom-btn" aria-label="Zoom out"
                 @click="zoomBy(1 / 1.6)"></v-btn>
-            <v-btn icon="mdi-restore" size="small" variant="elevated" aria-label="Reset view"
+            <v-btn icon="mdi-restore" size="small" variant="outlined" class="map-zoom-btn" aria-label="Reset view"
                 @click="resetZoom()"></v-btn>
         </div>
 
@@ -268,9 +269,15 @@ function absUrl(u: string | null): string {
 .tracks-map-svg:active {
     cursor: grabbing;
 }
+/* Gradient stops read the mode tokens: dark = near-black water under charcoal
+   land; light = pale page under #e9e9e9 land. */
+.tm-ocean-a { stop-color: var(--rp-bg); }
+.tm-ocean-b { stop-color: var(--rp-bg); }
+.tm-land-a { stop-color: var(--rp-raise); }
+.tm-land-b { stop-color: var(--rp-card2); }
 .state-path {
     fill: url(#tm-land);
-    stroke: #c6d2e0;
+    stroke: var(--rp-line2);
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
 }
@@ -279,24 +286,20 @@ function absUrl(u: string | null): string {
     outline: none;
 }
 .pin-halo {
-    fill: rgb(var(--v-theme-primary));
-    opacity: 0.22;
+    fill: var(--rp-ink);
+    opacity: 0.18;
     transition: opacity 0.15s ease, r 0.12s ease;
 }
 .pin-dot {
-    fill: rgb(var(--v-theme-primary));
-    stroke: #ffffff;
+    fill: var(--rp-ink);
+    stroke: var(--rp-card);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
     transition: fill 0.15s ease, r 0.12s ease;
 }
 .track-pin:hover .pin-halo,
 .track-pin:focus .pin-halo {
-    opacity: 0.42;
-}
-.track-pin:hover .pin-dot,
-.track-pin:focus .pin-dot {
-    fill: rgb(var(--v-theme-secondary));
+    opacity: 0.35;
 }
 
 /* Zoom controls, stacked top-right over the map. */
@@ -309,6 +312,10 @@ function absUrl(u: string | null): string {
     gap: 6px;
     z-index: 2;
 }
+.map-zoom-btn {
+    background: var(--rp-panel);
+    border-color: var(--rp-line2);
+}
 
 /* Hover preview card. Anchored at the pin (left/top set inline) and shifted so
    it floats above the pin, or below it when the pin is near the top edge. */
@@ -320,9 +327,10 @@ function absUrl(u: string | null): string {
     /* Grow out of the pin: scale up anchored at the caret (the side nearest
        the pin). */
     transform-origin: bottom center;
-    background: #ffffff;
+    background: var(--rp-panel);
+    border: 1px solid var(--rp-line2);
     border-radius: 12px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+    box-shadow: var(--rp-shadow);
     pointer-events: auto;
     animation: thc-grow 0.17s cubic-bezier(0.2, 0.9, 0.3, 1.25);
 }
@@ -350,33 +358,32 @@ function absUrl(u: string | null): string {
     width: 0;
     height: 0;
     transform: translateX(-50%);
-    filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.06));
 }
 .track-hover-card:not(.is-below) .thc-caret {
-    bottom: -10px;
+    bottom: -11px;
     border-left: 11px solid transparent;
     border-right: 11px solid transparent;
-    border-top: 11px solid #ffffff;
+    border-top: 11px solid var(--rp-panel);
 }
 .track-hover-card.is-below .thc-caret {
-    top: -10px;
+    top: -11px;
     border-left: 11px solid transparent;
     border-right: 11px solid transparent;
-    border-bottom: 11px solid #ffffff;
+    border-bottom: 11px solid var(--rp-panel);
 }
 
 .thc-img {
     height: 110px;
     background-size: cover;
     background-position: center;
-    background-color: rgb(var(--v-theme-secondary));
+    background-color: var(--rp-card2);
     border-radius: 12px 12px 0 0;
 }
 .thc-img--placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--rp-muted);
 }
 .thc-body {
     padding: 10px 12px 12px;
@@ -390,7 +397,7 @@ function absUrl(u: string | null): string {
     display: flex;
     align-items: center;
     gap: 3px;
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--rp-muted);
     font-size: 0.8rem;
     margin-top: 3px;
 }

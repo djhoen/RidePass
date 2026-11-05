@@ -1,11 +1,11 @@
 <template>
-    <v-container class="fill-height" fluid>
+    <v-container class="fill-height reset-page" fluid>
         <v-row align="center" justify="center">
-            <v-col cols="12" sm="8" md="4">
-                <v-card class="pa-4">
+            <v-col cols="12" class="d-flex justify-center">
+                <v-card class="reset-card">
                     <!-- Confirm mode: token in URL -->
                     <template v-if="hasToken">
-                        <v-card-title class="text-h5 text-center">Choose a new password</v-card-title>
+                        <v-card-title class="reset-title font-display text-center">Choose a new password</v-card-title>
                         <v-card-text>
                             <p v-if="!done" class="text-body-2 text-medium-emphasis mb-4">
                                 Enter and confirm your new password. The link expires 60 minutes after it was sent.
@@ -17,7 +17,7 @@
                                 <v-text-field v-model="confirmPassword" label="Confirm password" type="password"
                                     prepend-inner-icon="mdi-lock-check" required
                                     :rules="[v => v === newPassword || 'Passwords do not match']" class="mb-4 mt-4"></v-text-field>
-                                <v-btn type="submit" color="primary" block size="large" :loading="loading"
+                                <v-btn type="submit" color="primary" variant="flat" block size="large" :loading="loading"
                                     :disabled="!canSubmitConfirm">Set new password</v-btn>
                             </v-form>
                             <v-alert v-else type="success" variant="tonal" class="mt-2">
@@ -28,7 +28,7 @@
 
                     <!-- Request mode: just an email field -->
                     <template v-else>
-                        <v-card-title class="text-h5 text-center">Reset Password</v-card-title>
+                        <v-card-title class="reset-title font-display text-center">Reset Password</v-card-title>
                         <v-card-text>
                             <p class="text-body-2 text-medium-emphasis mb-4">
                                 Enter your email address and we'll send you a link to set a new password.
@@ -36,7 +36,7 @@
                             <v-form @submit.prevent="requestReset">
                                 <v-text-field v-model="email" label="Email" type="email" prepend-inner-icon="mdi-email"
                                     required class="mb-4"></v-text-field>
-                                <v-btn type="submit" color="primary" block size="large" :loading="loading">
+                                <v-btn type="submit" color="primary" variant="flat" block size="large" :loading="loading">
                                     Send reset link
                                 </v-btn>
                             </v-form>
@@ -44,7 +44,7 @@
                     </template>
 
                     <v-card-actions class="justify-center">
-                        <router-link to="/Login">Back to Login</router-link>
+                        <router-link to="/Login" class="reset-link">Back to Login</router-link>
                     </v-card-actions>
                 </v-card>
             </v-col>
@@ -111,3 +111,29 @@ function flash(text: string, color: 'success' | 'error') {
     snackbar.value = true
 }
 </script>
+
+<style scoped>
+/* Centered card, same "opcard" treatment as Login. */
+.reset-page {
+    background: radial-gradient(80% 60% at 50% 30%, rgba(61, 61, 61, 0.22), transparent 60%), var(--rp-bg);
+}
+.reset-card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--rp-panel) !important;
+    border: 1px solid var(--rp-line2) !important;
+    border-radius: 18px !important;
+    padding: 30px 26px;
+}
+.reset-title {
+    font-size: 2rem;
+    white-space: normal;
+    line-height: 0.95;
+}
+.reset-link {
+    color: var(--rp-ink);
+    font-weight: 700;
+    font-size: 13px;
+}
+.reset-link:hover { text-decoration: underline; }
+</style>

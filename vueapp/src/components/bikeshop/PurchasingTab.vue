@@ -249,7 +249,7 @@ const visibleOrders = computed(() => {
 
 function supplierName(id: string | null): string { return id ? (props.suppliers.find(s => s.id === id)?.name ?? '—') : '(no supplier)' }
 function statusColor(s: string) {
-    return s === 'open' ? 'grey' : s === 'ordered' ? 'primary' : s === 'partial' ? 'warning'
+    return s === 'open' ? '' : s === 'ordered' ? 'info' : s === 'partial' ? 'warning'
         : s === 'received' ? 'success' : 'error'
 }
 const variantItems = computed(() =>
@@ -389,6 +389,6 @@ async function receive() {
     white-space: nowrap;
 }
 .sortable-col:hover {
-    background: rgba(var(--v-theme-on-surface), 0.04);
+    background: var(--rp-panel2);
 }
 </style>

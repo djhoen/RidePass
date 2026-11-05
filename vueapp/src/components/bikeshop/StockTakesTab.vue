@@ -18,7 +18,7 @@
             <tbody>
                 <tr v-for="c in counts" :key="c.id">
                     <td class="text-caption">{{ formatDate(c.startedAt) }}</td>
-                    <td><v-chip size="x-small" :color="c.status === 'open' ? 'warning' : c.status === 'completed' ? 'success' : 'grey'">{{ c.status }}</v-chip></td>
+                    <td><v-chip size="x-small" :color="c.status === 'open' ? 'warning' : c.status === 'completed' ? 'success' : undefined">{{ c.status }}</v-chip></td>
                     <td class="text-caption">{{ c.notes || '—' }}</td>
                     <td class="text-right"><v-btn size="x-small" variant="text" icon="mdi-open-in-app" @click="openDetail(c.id)"></v-btn></td>
                 </tr>

@@ -1,7 +1,7 @@
 <template>
     <v-container>
         <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Shop</h1>
+            <h1 class="text-h3 font-display">Shop</h1>
             <v-spacer></v-spacer>
             <v-btn v-if="cartCount > 0" color="primary" prepend-icon="mdi-cart" @click="cartOpen = true">
                 Cart ({{ cartCount }}) · {{ money(cartTotal) }}
@@ -43,7 +43,7 @@
                                     label="Option" class="mr-2" style="max-width: 170px"
                                     @click.stop></v-select>
                                 <v-spacer></v-spacer>
-                                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-cart-plus"
+                                <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-cart-plus"
                                     :disabled="!canAdd(p)" @click.stop="addToCart(p)">
                                     {{ canAdd(p) ? 'Add' : 'Out of stock' }}
                                 </v-btn>

@@ -1,10 +1,15 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Store Credit</h1>
-            <v-chip v-if="!loading" variant="tonal" color="primary">{{ money(outstandingCents) }} outstanding</v-chip>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New account</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="d-flex align-center ga-3 flex-wrap">
+                    <div class="rp-pagehead-title">Store Credit</div>
+                    <v-chip v-if="!loading" variant="tonal" color="primary">{{ money(outstandingCents) }} outstanding</v-chip>
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">New account</v-btn>
+            </div>
         </div>
 
         <v-text-field v-model="query" label="Search by name, email, or phone" density="compact"

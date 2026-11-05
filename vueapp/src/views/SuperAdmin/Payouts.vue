@@ -1,14 +1,44 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Payouts</h1>
-
-        <div class="d-flex align-center mb-3">
-            <p class="text-caption text-medium-emphasis mb-0 mr-4">
-                Per-tenant available balance and lifetime totals. Click a row for ledger detail and fee schedule.
-            </p>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="loadBalances">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Payouts</div>
+                <div class="rp-pagehead-sub">
+                    Per-tenant available balance and lifetime totals. Click a row for ledger detail and fee schedule.
+                </div>
+            </div>
+            <div>
+                <v-btn variant="outlined" @click="loadBalances">Refresh</v-btn>
+            </div>
         </div>
+
+        <v-row v-if="balances.length > 0" class="mb-2">
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Available to pay out</div>
+                    <div class="rp-kpi-value">${{ (totals.available / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">This month gross</div>
+                    <div class="rp-kpi-value">${{ (totals.month / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Lifetime gross</div>
+                    <div class="rp-kpi-value">${{ (totals.gross / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+            <v-col cols="12" sm="6" md="3">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label">Paid out</div>
+                    <div class="rp-kpi-value">${{ (totals.paid / 100).toFixed(2) }}</div>
+                </v-card>
+            </v-col>
+        </v-row>
+
         <v-card>
             <v-table>
                 <thead>
@@ -61,7 +91,7 @@
                     <div class="d-flex align-center mb-2">
                         <div class="text-subtitle-2">Past payouts</div>
                         <v-spacer></v-spacer>
-                        <v-btn size="small" color="primary" prepend-icon="mdi-plus" @click="openCreatePayout">
+                        <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreatePayout">
                             New payout
                         </v-btn>
                     </div>
@@ -80,13 +110,13 @@
                             <tr v-for="p in detailPayouts" :key="p.id">
                                 <td>{{ formatDateOnly(p.periodStartUtc) }} – {{ formatDateOnly(p.periodEndUtc) }}</td>
                                 <td>
-                                    <v-chip size="x-small" :color="payoutStatusColor(p.status)">{{ p.status }}</v-chip>
+                                    <v-chip size="x-small" variant="tonal" :color="payoutStatusColor(p.status)">{{ p.status }}</v-chip>
                                 </td>
                                 <td class="text-right">${{ (p.netPaidCents / 100).toFixed(2) }}</td>
                                 <td><code v-if="p.externalReference">{{ p.externalReference }}</code><span v-else class="text-medium-emphasis">—</span></td>
                                 <td>{{ p.payoutDateUtc ? formatDate(p.payoutDateUtc) : '—' }}</td>
                                 <td class="text-right">
-                                    <v-btn v-if="p.status === 'pending'" size="x-small" variant="tonal" color="primary"
+                                    <v-btn v-if="p.status === 'pending'" size="x-small" variant="flat" color="primary"
                                         :loading="stripeSendingId === p.id" :disabled="voidingId === p.id" @click="sendPayoutViaStripe(p)">
                                         Send via Stripe
                                     </v-btn>
@@ -124,7 +154,7 @@
                             <tr v-for="e in detailLedger" :key="e.id">
                                 <td>{{ formatDate(e.occurredAtUtc) }}</td>
                                 <td>
-                                    <v-chip size="x-small" :color="e.entryKind === 'sale' ? 'primary' : 'warning'">
+                                    <v-chip size="x-small" variant="tonal" :color="e.entryKind === 'sale' ? 'success' : 'error'">
                                         {{ e.entryKind }}<span v-if="e.sourceKind"> · {{ e.sourceKind }}</span>
                                     </v-chip>
                                 </td>
@@ -133,8 +163,8 @@
                                 <td class="text-right">${{ (e.ridepassCutCents / 100).toFixed(2) }}</td>
                                 <td class="text-right"><strong>${{ (e.netToTenantCents / 100).toFixed(2) }}</strong></td>
                                 <td>
-                                    <span v-if="e.payoutId" class="text-success text-caption">paid out</span>
-                                    <span v-else class="text-warning text-caption">pending</span>
+                                    <span v-if="e.payoutId" class="rp-pill rp-pill--green">paid out</span>
+                                    <span v-else class="rp-pill">pending</span>
                                 </td>
                             </tr>
                             <tr v-if="detailLedger.length === 0">
@@ -208,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { SuperAdminService, type TenantBalanceSummary, type LedgerEntry, type PayoutSummary } from '@/services/SuperAdminService'
 import { useConfirm } from '@/composables/useConfirm'
@@ -218,6 +248,13 @@ const confirm = useConfirm()
 
 const balances = ref<TenantBalanceSummary[]>([])
 const loadingBalances = ref(false)
+// Platform-wide sums for the KPI strip; purely a presentation roll-up of the table rows.
+const totals = computed(() => balances.value.reduce((t, b) => ({
+    available: t.available + b.availableBalanceCents,
+    month: t.month + b.currentMonthGrossCents,
+    gross: t.gross + b.lifetimeGrossCents,
+    paid: t.paid + b.lifetimePaidOutCents,
+}), { available: 0, month: 0, gross: 0, paid: 0 }))
 const detailDialog = ref(false)
 const detailTenant = ref<TenantBalanceSummary | null>(null)
 const detailPayouts = ref<PayoutSummary[]>([])
@@ -404,14 +441,14 @@ async function refreshAfterMoneyAction() {
     }
 }
 
-function payoutStatusColor(s: string): string {
+function payoutStatusColor(s: string): string | undefined {
     switch (s) {
         case 'paid': return 'success'
         case 'pending': return 'warning'
         case 'processing': return 'info'
         case 'failed': return 'error'
-        case 'on_hold': return 'grey'
-        default: return 'default'
+        case 'on_hold': return 'error'
+        default: return undefined
     }
 }
 

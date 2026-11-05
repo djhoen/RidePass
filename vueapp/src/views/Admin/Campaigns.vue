@@ -826,9 +826,10 @@ function flash(text: string, color: 'success' | 'error') {
 
 <style scoped>
 .email-preview-frame {
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    background: var(--rp-card2);
+    border: 1px solid var(--rp-line);
+    border-radius: 12px;
+    padding: 8px;
     height: min(72vh, 960px);
     overflow: hidden;
 }
@@ -844,7 +845,7 @@ function flash(text: string, color: 'success' | 'error') {
     background: #f3f4f6;
 }
 .rendered-body {
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--rp-line);
     border-radius: 4px;
     padding: 12px;
     min-height: 200px;

@@ -1,17 +1,20 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-3 ga-3 flex-wrap">
-            <h1 class="text-h4">Order History</h1>
-            <v-spacer></v-spacer>
-            <v-text-field v-model="dateFrom" type="date" label="From" density="compact" hide-details
-                :max="dateTo || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
-            <v-text-field v-model="dateTo" type="date" label="To" density="compact" hide-details
-                :min="dateFrom || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
-            <v-btn variant="text" size="small" @click="resetToday">Today</v-btn>
-            <v-text-field v-model="query" label="Search order # or name" density="compact" hide-details clearable
-                prepend-inner-icon="mdi-magnify" style="max-width: 280px"
-                @keyup.enter="load" @click:clear="onClear"></v-text-field>
-            <v-btn @click="load">Search</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Order History</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-text-field v-model="dateFrom" type="date" label="From" density="compact" hide-details
+                    :max="dateTo || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
+                <v-text-field v-model="dateTo" type="date" label="To" density="compact" hide-details
+                    :min="dateFrom || undefined" style="max-width: 160px" @update:model-value="load"></v-text-field>
+                <v-btn variant="text" size="small" @click="resetToday">Today</v-btn>
+                <v-text-field v-model="query" label="Search order # or name" density="compact" hide-details clearable
+                    prepend-inner-icon="mdi-magnify" style="max-width: 280px"
+                    @keyup.enter="load" @click:clear="onClear"></v-text-field>
+                <v-btn @click="load">Search</v-btn>
+            </div>
         </div>
 
         <v-card>
@@ -63,7 +66,7 @@
             <v-card v-if="detail">
                 <v-card-title class="d-flex align-center">
                     <span>Order #{{ detail.orderNumber ?? '—' }}</span>
-                    <v-chip v-if="detail.status === 'refunded'" size="small" color="error" variant="flat" class="ml-2">Refunded</v-chip>
+                    <v-chip v-if="detail.status === 'refunded'" size="small" color="error" variant="tonal" class="ml-2">Refunded</v-chip>
                     <v-spacer></v-spacer>
                     <v-btn v-if="detail.status !== 'refunded' && detail.fulfillmentStatus !== 'completed'"
                         size="small" variant="tonal" prepend-icon="mdi-flash" class="mr-2"

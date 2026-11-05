@@ -1,35 +1,37 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">Payouts</h1>
-        <p class="text-body-2 text-medium-emphasis mb-4">
-            Your sales, fees, and the payouts you've received from RidePass.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Payouts</div>
+                <div class="rp-pagehead-sub">Your sales, fees, and the payouts you've received from RidePass.</div>
+            </div>
+        </div>
 
         <v-row class="mb-4" v-if="balance">
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Available balance</div>
-                    <div class="text-h4">${{ (balance.availableBalanceCents / 100).toFixed(2) }}</div>
-                    <div class="text-caption text-medium-emphasis">unpaid net to you</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Available balance</div>
+                    <div class="rp-kpi-value">${{ (balance.availableBalanceCents / 100).toFixed(2) }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">unpaid net to you</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">This month gross</div>
-                    <div class="text-h4">${{ (balance.currentMonthGrossCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">This month gross</div>
+                    <div class="rp-kpi-value">${{ (balance.currentMonthGrossCents / 100).toFixed(2) }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Lifetime gross</div>
-                    <div class="text-h4">${{ (balance.lifetimeGrossCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Lifetime gross</div>
+                    <div class="rp-kpi-value">${{ (balance.lifetimeGrossCents / 100).toFixed(2) }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Lifetime paid out</div>
-                    <div class="text-h4">${{ (balance.lifetimePaidOutCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Lifetime paid out</div>
+                    <div class="rp-kpi-value">${{ (balance.lifetimePaidOutCents / 100).toFixed(2) }}</div>
+                </v-card>
             </v-col>
         </v-row>
 

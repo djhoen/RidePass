@@ -1,6 +1,6 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-2">Find tracks near you</h1>
+        <h1 class="text-h3 font-display mb-2">Find tracks near you</h1>
         <p class="text-body-2 text-medium-emphasis mb-6">
             Search MX and MTB tracks by city, state, or use your current location.
         </p>
@@ -16,10 +16,10 @@
                         :disabled="!coords"></v-select>
                 </v-col>
                 <v-col cols="12" md="4" class="d-flex ga-2">
-                    <v-btn variant="tonal" :loading="geolocating" @click="useMyLocation" prepend-icon="mdi-crosshairs-gps">
+                    <v-btn variant="outlined" :loading="geolocating" @click="useMyLocation" prepend-icon="mdi-crosshairs-gps">
                         Use my location
                     </v-btn>
-                    <v-btn color="primary" :loading="loading" @click="runSearch">Search</v-btn>
+                    <v-btn color="primary" variant="flat" :loading="loading" @click="runSearch">Search</v-btn>
                 </v-col>
             </v-row>
             <div v-if="resolvedLocationLabel" class="text-caption text-medium-emphasis mt-2">
@@ -31,7 +31,7 @@
         <!-- Track cards: same look as the home page's featured tracks. Featured
              tracks are ordered first when not searching by location. -->
         <div class="d-flex align-center mb-3 ga-2">
-            <h2 class="text-h5 font-weight-bold">Tracks ({{ tracks.length }})</h2>
+            <h2 class="text-h4 font-display">Tracks ({{ tracks.length }})</h2>
             <v-progress-circular v-if="loading" indeterminate size="20" width="2" color="primary"></v-progress-circular>
         </div>
         <TrackCardGrid :tracks="orderedTracks" show-chips :featured-ids="featuredIds"
@@ -39,7 +39,7 @@
             empty-text="No tracks match your search." />
 
         <!-- Map: reuses the same component as the home page. -->
-        <h2 class="text-h5 font-weight-bold mt-10 mb-3">Tracks map</h2>
+        <h2 class="text-h4 font-display mt-10 mb-3">Tracks map</h2>
         <v-card variant="outlined" class="pa-4" style="overflow: visible">
             <TracksMap :tracks="tracks" :highlighted-id="hoveredId" @hover="hoveredId = $event"
                 @select="openTrack" />

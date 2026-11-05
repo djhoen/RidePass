@@ -1,19 +1,23 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-2 flex-wrap ga-3">
-            <h1 class="text-h4">Suppression List</h1>
-            <v-chip v-if="rows.length" size="small" color="grey" variant="tonal">{{ rows.length }}</v-chip>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="load">Refresh</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-email-off" @click="addDialog = true">Suppress address</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="d-flex align-center ga-3 flex-wrap">
+                    <div class="rp-pagehead-title">Suppression List</div>
+                    <v-chip v-if="rows.length" size="small" variant="tonal">{{ rows.length }}</v-chip>
+                </div>
+                <div class="rp-pagehead-sub">
+                    Addresses here are skipped on every marketing send (campaigns, rider email blasts).
+                    Entries come from one-click unsubscribes, spam complaints, hard bounces, or a manual add below.
+                    Receipts and account emails are unaffected. Platform-wide hard bounces are enforced automatically
+                    and aren't shown here.
+                </div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-btn variant="text" @click="load">Refresh</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-email-off" @click="addDialog = true">Suppress address</v-btn>
+            </div>
         </div>
-
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Addresses here are skipped on every marketing send (campaigns, rider email blasts).
-            Entries come from one-click unsubscribes, spam complaints, hard bounces, or a manual add below.
-            Receipts and account emails are unaffected. Platform-wide hard bounces are enforced automatically
-            and aren't shown here.
-        </p>
 
         <v-text-field v-model="search" prepend-inner-icon="mdi-magnify" label="Search" density="compact"
             hide-details class="mb-3"></v-text-field>

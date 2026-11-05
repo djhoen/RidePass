@@ -1,16 +1,16 @@
 <template>
     <v-container class="py-10 signup-page">
-        <h1 class="text-h5 font-weight-bold mb-1">Create your account</h1>
-        <p class="text-body-2 text-medium-emphasis mb-5">
-            Join {{ branding.displayName }} to manage your entries and check in faster at the gate.
-        </p>
-        <v-card variant="flat" class="signup-card pa-5">
+        <div class="signup-card">
+            <h1 class="signup-title font-display mb-1">Create your account</h1>
+            <p class="text-body-2 text-medium-emphasis mb-5">
+                Join {{ branding.displayName }} to manage your entries and check in faster at the gate.
+            </p>
             <AccountSignupForm :prefill="prefill" />
             <div class="text-center text-body-2 text-medium-emphasis mt-4">
                 Already have an account?
                 <router-link to="/Login" class="signup-link">Sign in</router-link>
             </div>
-        </v-card>
+        </div>
     </v-container>
 </template>
 
@@ -35,17 +35,26 @@ const prefill = computed(() => {
 </script>
 
 <style scoped>
+/* Centered card, same "opcard" treatment as Login. A little wider than the 400px
+   sign-in card because the form has side-by-side name fields. */
 .signup-page {
     max-width: 520px;
+    display: flex;
+    justify-content: center;
 }
 .signup-card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 12px;
+    width: 100%;
+    max-width: 460px;
+    background: var(--rp-panel);
+    border: 1px solid var(--rp-line2);
+    border-radius: 18px;
+    padding: 30px 26px;
 }
+.signup-title { font-size: 2rem; }
 .signup-link {
-    color: rgb(var(--v-theme-primary));
+    color: var(--rp-ink);
     text-decoration: none;
-    font-weight: 600;
+    font-weight: 700;
 }
 .signup-link:hover {
     text-decoration: underline;

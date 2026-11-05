@@ -1,13 +1,16 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">
-            Refunds
-            <v-badge v-if="refunds.length > 0" :content="refunds.length" color="error" inline class="ml-2"></v-badge>
-        </h1>
-
-        <div class="d-flex align-center mb-3">
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="loadRefunds">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">
+                    Refunds
+                    <v-badge v-if="refunds.length > 0" :content="refunds.length" color="error" inline class="ml-2"></v-badge>
+                </div>
+                <div class="rp-pagehead-sub">Cancelled passes and tickets waiting on a Stripe refund.</div>
+            </div>
+            <div>
+                <v-btn variant="outlined" @click="loadRefunds">Refresh</v-btn>
+            </div>
         </div>
         <v-card>
             <v-table>
@@ -26,7 +29,7 @@
                 <tbody>
                     <tr v-for="r in refunds" :key="r.kind + ':' + r.id">
                         <td>
-                            <v-chip size="x-small" :color="r.kind === 'pass' ? 'primary' : 'secondary'">
+                            <v-chip size="x-small" variant="tonal" :color="r.kind === 'pass' ? 'info' : undefined">
                                 {{ r.kind === 'pass' ? 'Pass' : 'Ticket' }}
                             </v-chip>
                         </td>
@@ -43,7 +46,7 @@
                             <span v-else class="text-medium-emphasis">—</span>
                         </td>
                         <td class="text-right">
-                            <v-btn v-if="r.stripePaymentIntentId" size="small" color="primary" variant="tonal"
+                            <v-btn v-if="r.stripePaymentIntentId" size="small" color="primary" variant="flat"
                                 :loading="processingId === r.kind + ':' + r.id"
                                 @click="processRefund(r)">
                                 Process Refund

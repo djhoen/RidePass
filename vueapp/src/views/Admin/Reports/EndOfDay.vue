@@ -1,29 +1,32 @@
 <template>
     <div class="eod">
-        <div class="d-flex align-center mb-6 flex-wrap ga-3 no-print">
-            <h2 class="text-h5">End of Day</h2>
-            <v-spacer></v-spacer>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">End of Day</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
 
-            <v-btn icon variant="text" density="comfortable" :disabled="loading" @click="stepDay(-1)">
-                <v-icon>mdi-chevron-left</v-icon>
-                <v-tooltip activator="parent" location="bottom">Previous day</v-tooltip>
-            </v-btn>
-            <v-text-field v-model="businessDate" type="date" label="Business date" density="compact" hide-details
-                style="max-width: 180px" @change="load"></v-text-field>
-            <v-btn icon variant="text" density="comfortable" :disabled="loading || atToday" @click="stepDay(1)">
-                <v-icon>mdi-chevron-right</v-icon>
-                <v-tooltip activator="parent" location="bottom">Next day</v-tooltip>
-            </v-btn>
+                <v-btn icon variant="text" density="comfortable" :disabled="loading" @click="stepDay(-1)">
+                    <v-icon>mdi-chevron-left</v-icon>
+                    <v-tooltip activator="parent" location="bottom">Previous day</v-tooltip>
+                </v-btn>
+                <v-text-field v-model="businessDate" type="date" label="Business date" density="compact" hide-details
+                    style="max-width: 180px" @change="load"></v-text-field>
+                <v-btn icon variant="text" density="comfortable" :disabled="loading || atToday" @click="stepDay(1)">
+                    <v-icon>mdi-chevron-right</v-icon>
+                    <v-tooltip activator="parent" location="bottom">Next day</v-tooltip>
+                </v-btn>
 
-            <v-btn variant="text" :disabled="loading" @click="goToday">Today</v-btn>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-printer" :disabled="loading || !report" @click="print">
-                Print
-            </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :loading="exporting" :disabled="loading || !report" @click="exportCsv">
-                Export CSV
-            </v-btn>
+                <v-btn variant="text" :disabled="loading" @click="goToday">Today</v-btn>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-printer" :disabled="loading || !report" @click="print">
+                    Print
+                </v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :loading="exporting" :disabled="loading || !report" @click="exportCsv">
+                    Export CSV
+                </v-btn>
+            </div>
         </div>
 
         <!-- Print-only header: the toolbar above is hidden on paper, so the page still has to say
@@ -51,36 +54,36 @@
             <!-- Headline tiles -->
             <v-row class="mb-2">
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Net sales</div>
-                        <div class="text-h4">{{ money(report.totals.netSalesCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Net sales</div>
+                        <div class="rp-kpi-value">{{ money(report.totals.netSalesCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">
                             {{ report.totals.transactionCount }} sales, {{ report.totals.refundCount }} refunds
                         </div>
-                    </v-card-text></v-card>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Tax collected</div>
-                        <div class="text-h4">{{ money(report.totals.taxCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">owed to the jurisdiction</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Tax collected</div>
+                        <div class="rp-kpi-value">{{ money(report.totals.taxCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">owed to the jurisdiction</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Tips</div>
-                        <div class="text-h4">{{ money(report.totals.tipsCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">owed to staff</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Tips</div>
+                        <div class="rp-kpi-value">{{ money(report.totals.tipsCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">owed to staff</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Net to you</div>
-                        <div class="text-h4">{{ money(report.totals.netToTenantCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Net to you</div>
+                        <div class="rp-kpi-value">{{ money(report.totals.netToTenantCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">
                             after {{ money(report.totals.stripeFeesCents + report.totals.ridepassFeesCents) }} in fees
                         </div>
-                    </v-card-text></v-card>
+                    </v-card>
                 </v-col>
             </v-row>
 

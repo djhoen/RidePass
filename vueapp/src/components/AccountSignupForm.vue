@@ -56,7 +56,7 @@
 
             <v-alert v-if="errorMessage" type="error" variant="tonal" density="compact" class="mt-4">{{ errorMessage }}</v-alert>
 
-            <v-btn type="submit" color="primary" block size="large" :loading="loading" class="mt-4 text-none">
+            <v-btn type="submit" color="primary" variant="flat" block size="large" :loading="loading" class="mt-4">
                 Create account
             </v-btn>
         </v-form>

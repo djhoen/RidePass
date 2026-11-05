@@ -284,7 +284,7 @@
                                 size="small" :loading="actionBusy" @click="checkOut(openRentalData)">
                                 Check out
                             </v-btn>
-                            <v-btn v-if="openRentalData.status === 'out'" color="secondary" variant="tonal"
+                            <v-btn v-if="openRentalData.status === 'out'" variant="outlined"
                                 size="small" @click="startReturn(openRentalData)">
                                 Return
                             </v-btn>
@@ -1024,8 +1024,9 @@ async function openRental(rentalId: string) {
 }
 
 function statusColor(s: string) {
-    return s === 'paid' ? 'primary' : s === 'out' ? 'indigo' : s === 'returned' ? 'success'
-        : s === 'damaged' ? 'warning' : s === 'pending' ? 'grey' : 'error'
+    // Matches the bar palette below: paid = primary (the tenant's color), out = blue, returned = green, pending = neutral.
+    return s === 'paid' ? 'primary' : s === 'out' ? 'info' : s === 'returned' ? 'success'
+        : s === 'damaged' ? 'warning' : s === 'pending' ? '' : 'error'
 }
 function itemsLabel(r: ShopRental): string {
     return r.lines.map(l => `${l.nameSnapshot}${l.quantity > 1 ? ' ×' + l.quantity : ''}`).join(', ')
@@ -1119,8 +1120,8 @@ onBeforeUnmount(() => {
     position: sticky;
     top: 0;
     z-index: 3;
-    background: rgb(var(--v-theme-surface));
-    border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+    background: var(--rp-card);
+    border-bottom: 1px solid var(--rp-line2);
 }
 
 .row-label {
@@ -1130,17 +1131,19 @@ onBeforeUnmount(() => {
     position: sticky;
     left: 0;
     z-index: 2;
-    background: rgb(var(--v-theme-surface));
-    border-right: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+    background: var(--rp-card);
+    border-right: 1px solid var(--rp-line2);
     overflow: hidden;
 }
 .head-label { display: flex; align-items: center; font-weight: 600; }
 
+/* Lanes sit a step above the card so the hairline hour grid and the bars both read. */
 .row-track {
     position: relative;
     flex: 1 1 auto;
     min-height: 40px;
     cursor: crosshair;
+    background: var(--rp-panel2);
 }
 .head-track { min-height: 30px; }
 
@@ -1149,31 +1152,31 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-left: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+    border-left: 1px solid var(--rp-line2);
 }
 
 .board-row {
-    border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+    border-bottom: 1px solid var(--rp-line);
 }
-.board-row:hover .row-track { background: rgba(var(--v-theme-primary), 0.04); }
+.board-row:hover .row-track { background: var(--rp-raise); }
 
 /* A unit on the bench: hatched track, and the cursor says so before the click does. */
 .row-blocked .row-track {
     cursor: not-allowed;
     background: repeating-linear-gradient(
         45deg,
-        rgba(var(--v-theme-on-surface), 0.05),
-        rgba(var(--v-theme-on-surface), 0.05) 6px,
-        transparent 6px,
-        transparent 12px);
+        var(--rp-line),
+        var(--rp-line) 6px,
+        var(--rp-panel2) 6px,
+        var(--rp-panel2) 12px);
 }
 
 .group-head {
     display: flex;
     align-items: center;
     padding: 6px 12px;
-    background: rgba(var(--v-theme-on-surface), 0.04);
-    border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+    background: var(--rp-panel);
+    border-bottom: 1px solid var(--rp-line2);
     cursor: pointer;
     position: sticky;
     left: 0;
@@ -1186,65 +1189,78 @@ onBeforeUnmount(() => {
     left: 4px;
     font-size: 11px;
     white-space: nowrap;
-    color: rgba(var(--v-theme-on-surface), 0.6);
+    color: var(--rp-muted);
+    font-variant-numeric: tabular-nums;
 }
 .hour-line {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 1px;
-    background: rgba(var(--v-theme-on-surface), 0.08);
+    background: var(--rp-line);
 }
 
+/* Booking blocks: raised surface with a hairline, and a status tint on top.
+   Colors are the semantic set plus the tenant's primary: primary = paid (the same
+   color as the "paid" status chip), blue = out with the rider, green = pool partly
+   booked, red = pool full, neutral = pending. Soft tints, so they hold on white. */
 .bar {
     position: absolute;
     top: 6px;
     bottom: 6px;
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 0 6px;
     display: flex;
     align-items: center;
     cursor: pointer;
     overflow: hidden;
     min-width: 4px;
+    background: var(--rp-raise);
+    border: 1px solid var(--rp-line2);
+    box-sizing: border-box;
 }
 .bar-text {
     font-size: 11px;
+    font-weight: 700;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #fff;
+    color: var(--rp-ink);
 }
 /* Squared-off end = the rental continues past this day. */
-.bar-clip-l { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 3px solid rgba(255, 255, 255, 0.7); }
-.bar-clip-r { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 3px solid rgba(255, 255, 255, 0.7); }
+.bar-clip-l { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 3px solid var(--rp-line3); }
+.bar-clip-r { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 3px solid var(--rp-line3); }
 
-.bar-pending { background: #78909c; }
-.bar-paid    { background: rgb(var(--v-theme-primary)); }
-.bar-out     { background: #3949ab; }
-.bar-partial { background: #f9a825; }
-.bar-full    { background: #c62828; }
+.bar-pending { background: var(--rp-raise); border-color: var(--rp-line2); }
+.bar-pending .bar-text { color: var(--rp-muted); }
+.bar-paid    { background: rgba(var(--v-theme-primary), 0.16); border-color: rgb(var(--v-theme-primary)); }
+.bar-out     { background: var(--rp-blue-soft); border-color: var(--rp-blue); }
+.bar-out .bar-text { color: var(--rp-blue); }
+.bar-partial { background: var(--rp-green-soft); border-color: var(--rp-green); }
+.bar-partial .bar-text { color: var(--rp-green); }
+.bar-full    { background: var(--rp-red-soft); border-color: var(--rp-red); }
+.bar-full .bar-text { color: var(--rp-red-text); }
 
 .ghost {
     position: absolute;
     top: 6px;
     bottom: 6px;
-    border-radius: 4px;
-    background: rgba(var(--v-theme-primary), 0.35);
-    border: 1px dashed rgb(var(--v-theme-primary));
+    border-radius: 6px;
+    background: var(--rp-ink-soft);
+    border: 1px dashed var(--rp-ink);
     display: flex;
     align-items: center;
     padding: 0 6px;
     pointer-events: none;
 }
-.ghost .bar-text { color: rgb(var(--v-theme-on-surface)); }
+.ghost .bar-text { color: var(--rp-ink); }
 
 .now-line {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 2px;
-    background: #e53935;
+    background: var(--rp-red);
     pointer-events: none;
     z-index: 1;
 }
@@ -1254,20 +1270,22 @@ onBeforeUnmount(() => {
     display: inline-block;
     width: 14px;
     height: 10px;
-    border-radius: 2px;
+    border-radius: 3px;
+    border: 1px solid var(--rp-line2);
+    box-sizing: border-box;
 }
 .swatch-blocked {
     background: repeating-linear-gradient(
         45deg,
-        rgba(var(--v-theme-on-surface), 0.35),
-        rgba(var(--v-theme-on-surface), 0.35) 3px,
+        var(--rp-line3),
+        var(--rp-line3) 3px,
         transparent 3px,
         transparent 6px);
 }
 
 .rental-note {
     padding: 6px 0;
-    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-top: 1px solid var(--rp-line);
 }
 .rental-note:first-of-type { border-top: none; }
 </style>

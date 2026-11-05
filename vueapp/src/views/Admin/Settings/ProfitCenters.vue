@@ -1,12 +1,16 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-2">Profit Centers</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Name the parts of your business the way you report on them, and choose which revenue
-            streams roll up into each. Reports and the QuickBooks account mapping group revenue by
-            these buckets. Changes apply going forward; journal entries already posted to
-            QuickBooks are not rewritten.
-        </p>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Profit Centers</div>
+                <div class="rp-pagehead-sub">
+                    Name the parts of your business the way you report on them, and choose which revenue
+                    streams roll up into each. Reports and the QuickBooks account mapping group revenue by
+                    these buckets. Changes apply going forward; journal entries already posted to
+                    QuickBooks are not rewritten.
+                </div>
+            </div>
+        </div>
 
         <div v-if="loading" class="d-flex align-center ga-3 py-4">
             <v-progress-circular indeterminate size="20" />
@@ -91,7 +95,10 @@
 
                 <!-- ── Ungrouped streams ───────────────────────────────────────── -->
                 <v-card class="mb-4" variant="outlined">
-                    <v-card-title class="text-subtitle-1 py-2">Ungrouped streams</v-card-title>
+                    <v-card-title class="rp-section">
+                        <span class="rp-kicker">Profit centers</span>
+                        <span class="rp-section-title">Ungrouped streams</span>
+                    </v-card-title>
                     <v-card-subtitle class="text-caption">
                         These report under their standard group until you drag them into one of your
                         profit centers.
@@ -129,7 +136,10 @@
 
             <!-- ── Event routing ──────────────────────────────────────────────── -->
             <v-card class="mb-4">
-                <v-card-title class="text-subtitle-1">Event revenue routing</v-card-title>
+                <v-card-title class="rp-section">
+                    <span class="rp-kicker">Profit centers</span>
+                    <span class="rp-section-title">Event revenue routing</span>
+                </v-card-title>
                 <v-card-subtitle class="text-caption">
                     Lift days, races, camps and clinics are all events, so their ticket revenue is
                     split by event type. Choose which stream each type's sales post to; the stream's
@@ -450,5 +460,20 @@ export default { name: 'AdminSettingsProfitCenters' }
     height: 14px;
     border-radius: 4px;
     box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.2);
+}
+</style>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
 }
 </style>

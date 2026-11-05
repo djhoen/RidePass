@@ -468,13 +468,18 @@ export async function loadBranding(): Promise<void> {
 
 function applyFavicon(url: string | null): void {
     if (!url) return
-    let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')
-    if (!link) {
-        link = document.createElement('link')
-        link.rel = 'icon'
-        document.head.appendChild(link)
-    }
+    // index.html ships two default icon links (SVG + .ico fallback). Replace them all with a
+    // single link for the tenant icon, typed by its extension, so the browser cannot keep
+    // showing the RidePass default or reject a PNG served under an SVG type.
+    document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]').forEach(l => l.remove())
+    const link = document.createElement('link')
+    link.rel = 'icon'
+    const ext = (url.split('?')[0].split('.').pop() ?? '').toLowerCase()
+    const type = ext === 'svg' ? 'image/svg+xml' : ext === 'ico' ? 'image/x-icon'
+        : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : ''
+    if (type) link.type = type
     link.href = url
+    document.head.appendChild(link)
 }
 
 // Default home-screen install for the tenant: the tenant favicon + name, opening the login page. The

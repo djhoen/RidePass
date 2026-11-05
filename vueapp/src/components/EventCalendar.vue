@@ -2,10 +2,10 @@
     <v-card class="mb-6">
         <div class="d-flex align-center pa-3 ga-2">
             <v-btn icon="mdi-chevron-left" variant="text" size="small" :disabled="!canGoPrev" @click="navigate(-1)"></v-btn>
-            <div class="text-h6" style="min-width: 190px; text-align: center">{{ monthLabel }}</div>
+            <div class="text-h6 font-display-upright" style="min-width: 190px; text-align: center">{{ monthLabel }}</div>
             <v-btn icon="mdi-chevron-right" variant="text" size="small" :disabled="!canGoNext" @click="navigate(1)"></v-btn>
             <v-spacer></v-spacer>
-            <v-btn variant="tonal" size="small" @click="goToday">Today</v-btn>
+            <v-btn variant="outlined" size="small" @click="goToday">Today</v-btn>
         </div>
 
         <div class="cal-weekdays">
@@ -27,7 +27,7 @@
                     <v-tooltip v-for="ev in day.events" :key="ev.id" :text="`${timeLabel(ev)} ${ev.title}`" location="top">
                         <template #activator="{ props }">
                             <button v-bind="props" type="button" class="cal-event"
-                                :style="{ backgroundColor: ev.eventTypeColor || '#1976d2' }" @click="$emit('select', ev)">
+                                :style="{ backgroundColor: ev.eventTypeColor || 'var(--rp-muted2)' }" @click="$emit('select', ev)">
                                 <span class="cal-event-time">{{ timeLabel(ev) }}</span> {{ ev.title }}
                             </button>
                         </template>
@@ -136,10 +136,12 @@ function timeLabel(ev: EventDto): string {
 
 .cal-weekday {
     padding: 6px 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: rgba(0, 0, 0, 0.6);
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--rp-muted2);
+    border-top: 1px solid var(--rp-line);
 }
 
 .cal-cell {
@@ -148,30 +150,30 @@ function timeLabel(ev: EventDto): string {
        or more events). The grid row stretches to its tallest cell, and the embed iframe
        auto-resizes to the taller widget, so growth is safe in both hosts. */
     min-height: 104px;
-    border: 1px solid rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--rp-line);
     padding: 4px;
 }
 
 .cal-cell--muted {
-    background: rgba(0, 0, 0, 0.02);
+    background: var(--rp-panel);
 }
 
 .cal-cell--muted .cal-daynum {
-    color: rgba(0, 0, 0, 0.35);
+    color: var(--rp-muted2);
 }
 
 .cal-cell--today {
-    background: rgba(25, 118, 210, 0.08);
+    background: var(--rp-white-soft);
 }
 
 /* Blacked-out days: subtle red wash + a small label so they read as "closed". */
 .cal-cell--blackout {
     background: repeating-linear-gradient(
         45deg,
-        rgba(211, 47, 47, 0.06),
-        rgba(211, 47, 47, 0.06) 6px,
-        rgba(211, 47, 47, 0.12) 6px,
-        rgba(211, 47, 47, 0.12) 12px
+        rgba(255, 107, 107, 0.06),
+        rgba(255, 107, 107, 0.06) 6px,
+        rgba(255, 107, 107, 0.13) 6px,
+        rgba(255, 107, 107, 0.13) 12px
     );
 }
 
@@ -180,7 +182,7 @@ function timeLabel(ev: EventDto): string {
     align-items: center;
     font-size: 10px;
     font-weight: 600;
-    color: #c62828;
+    color: var(--rp-red-text);
     line-height: 1.3;
     margin-bottom: 2px;
     white-space: nowrap;
@@ -206,7 +208,7 @@ function timeLabel(ev: EventDto): string {
     text-align: left;
     font-size: 11px;
     line-height: 1.35;
-    color: #fff;
+    color: var(--rp-photo-ink); /* white on an arbitrary event-type color, both modes */
     border: none;
     border-radius: 4px;
     padding: 1px 5px;

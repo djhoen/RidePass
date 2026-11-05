@@ -36,7 +36,7 @@
                     <td class="text-caption text-medium-emphasis">{{ t.fitsNote || '—' }}</td>
                     <td class="text-caption text-medium-emphasis">{{ contentsLabel(t) }}</td>
                     <td>
-                        <v-chip size="x-small" :color="t.isActive ? 'success' : 'grey'" variant="tonal">
+                        <v-chip size="x-small" :color="t.isActive ? 'success' : undefined" variant="tonal">
                             {{ t.isActive ? 'Active' : 'Inactive' }}
                         </v-chip>
                     </td>

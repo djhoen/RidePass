@@ -1,76 +1,79 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">F&amp;B Profitability</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">F&amp;B Profitability</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !report" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <template v-if="report">
             <!-- KPI cards -->
             <v-row class="mb-2">
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Net sales</div>
-                        <div class="text-h4">{{ money(report.netSalesCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">pre-tax item revenue</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Net sales</div>
+                        <div class="rp-kpi-value">{{ money(report.netSalesCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">pre-tax item revenue</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Cost of goods</div>
-                        <div class="text-h4">{{ money(report.cogsCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">theoretical, from recipes</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Cost of goods</div>
+                        <div class="rp-kpi-value">{{ money(report.cogsCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">theoretical, from recipes</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Gross profit</div>
-                        <div class="text-h4">{{ money(report.grossProfitCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ report.marginPct.toFixed(1) }}% margin</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Gross profit</div>
+                        <div class="rp-kpi-value">{{ money(report.grossProfitCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">{{ report.marginPct.toFixed(1) }}% margin</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Orders</div>
-                        <div class="text-h4">{{ report.orderCount }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ money(report.avgOrderValueCents) }} avg</div>
-                    </v-card-text></v-card>
+                    <v-card class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Orders</div>
+                        <div class="rp-kpi-value">{{ report.orderCount }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">{{ money(report.avgOrderValueCents) }} avg</div>
+                    </v-card>
                 </v-col>
             </v-row>
             <v-row class="mb-4">
                 <v-col cols="12" sm="6" md="3">
-                    <v-card variant="tonal"><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Gross sales</div>
-                        <div class="text-h6">{{ money(report.grossSalesCents) }}</div>
-                        <div class="text-caption text-medium-emphasis">incl. tax + tips</div>
-                    </v-card-text></v-card>
+                    <v-card variant="tonal" class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Gross sales</div>
+                        <div class="rp-kpi-value">{{ money(report.grossSalesCents) }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">incl. tax + tips</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card variant="tonal"><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Tax collected</div>
-                        <div class="text-h6">{{ money(report.taxCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card variant="tonal" class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Tax collected</div>
+                        <div class="rp-kpi-value">{{ money(report.taxCents) }}</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card variant="tonal"><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Tips</div>
-                        <div class="text-h6">{{ money(report.tipsCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card variant="tonal" class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Tips</div>
+                        <div class="rp-kpi-value">{{ money(report.tipsCents) }}</div>
+                    </v-card>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                    <v-card variant="tonal"><v-card-text>
-                        <div class="text-caption text-medium-emphasis">Refunds</div>
-                        <div class="text-h6">{{ report.refundedCount }} · {{ money(report.refundedAmountCents) }}</div>
-                    </v-card-text></v-card>
+                    <v-card variant="tonal" class="rp-kpi pa-4">
+                        <div class="rp-kpi-label mt-0">Refunds</div>
+                        <div class="rp-kpi-value">{{ report.refundedCount }} · {{ money(report.refundedAmountCents) }}</div>
+                    </v-card>
                 </v-col>
             </v-row>
 
@@ -184,7 +187,7 @@
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { Bar } from 'vue-chartjs'
-import { registerChartJs } from '@/helpers/ChartSetup'
+import { registerChartJs, chartInk, chartMuted, chartGrid } from '@/helpers/ChartSetup'
 import { ReportsService, type ConcessionProfitabilityReport } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
 import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
@@ -287,17 +290,26 @@ const hourChartData = computed(() => {
         datasets: [{
             label: 'Net sales ($)',
             data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#43A047',
+            backgroundColor: chartInk(),
+            borderRadius: 4,
         }],
     }
 })
 
-const hourChartOptions = {
+// Hairline grid + muted ticks per axis (tooltip/legend colors come from ChartSetup defaults). A
+// function, not a constant: the token getters read the live light/dark values, so they are called
+// inside the computed that builds the options, never once at setup.
+const chartScale = () => ({ grid: { color: chartGrid() }, border: { color: chartGrid() }, ticks: { color: chartMuted() } })
+
+const hourChartOptions = computed(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
-    scales: { y: { beginAtZero: true, title: { display: true, text: 'Net sales ($)' } } },
-}
+    scales: {
+        x: { ...chartScale(), grid: { display: false } },
+        y: { ...chartScale(), beginAtZero: true, title: { display: true, text: 'Net sales ($)', color: chartMuted() } },
+    },
+}))
 
 function exportCsv() {
     const r = report.value

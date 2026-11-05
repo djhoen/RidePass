@@ -1,16 +1,18 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-4">
-            Disputes
-            <v-badge v-if="openDisputeCount > 0" :content="openDisputeCount" color="error" inline class="ml-2"></v-badge>
-        </h1>
-
-        <div class="d-flex align-center mb-3">
-            <p class="text-caption text-medium-emphasis mb-0 mr-4">
-                Chargebacks and inquiries captured from Stripe webhooks. Submit evidence in the Stripe Dashboard.
-            </p>
-            <v-spacer></v-spacer>
-            <v-btn variant="text" @click="loadDisputes">Refresh</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">
+                    Disputes
+                    <v-badge v-if="openDisputeCount > 0" :content="openDisputeCount" color="error" inline class="ml-2"></v-badge>
+                </div>
+                <div class="rp-pagehead-sub">
+                    Chargebacks and inquiries captured from Stripe webhooks. Submit evidence in the Stripe Dashboard.
+                </div>
+            </div>
+            <div>
+                <v-btn variant="outlined" @click="loadDisputes">Refresh</v-btn>
+            </div>
         </div>
         <v-card>
             <v-table>
@@ -30,11 +32,11 @@
                 <tbody>
                     <tr v-for="d in disputes" :key="d.id">
                         <td>
-                            <v-chip v-if="d.kind !== 'unlinked'" size="x-small"
-                                :color="d.kind === 'pass' ? 'primary' : 'secondary'">
+                            <v-chip v-if="d.kind !== 'unlinked'" size="x-small" variant="tonal"
+                                :color="d.kind === 'pass' ? 'info' : undefined">
                                 {{ d.kind === 'pass' ? 'Pass' : 'Ticket' }}
                             </v-chip>
-                            <v-chip v-else size="x-small" color="grey">Unlinked</v-chip>
+                            <v-chip v-else size="x-small" variant="tonal">Unlinked</v-chip>
                         </td>
                         <td><code>{{ d.tenantSubdomain }}</code></td>
                         <td>{{ d.itemName || '—' }}</td>
@@ -45,7 +47,7 @@
                         <td>${{ (d.amountCents / 100).toFixed(2) }} {{ d.currency.toUpperCase() }}</td>
                         <td>{{ d.reason || '—' }}</td>
                         <td>
-                            <v-chip size="small" :color="disputeStatusColor(d.status)">{{ d.status }}</v-chip>
+                            <v-chip size="small" variant="tonal" :color="disputeStatusColor(d.status)">{{ d.status }}</v-chip>
                         </td>
                         <td>
                             <span v-if="d.evidenceDueByUtc" :class="evidenceDueClass(d.evidenceDueByUtc)">
@@ -104,7 +106,7 @@ function isOpenDispute(status: string): boolean {
     return status === 'needs_response' || status === 'warning_needs_response'
 }
 
-function disputeStatusColor(status: string): string {
+function disputeStatusColor(status: string): string | undefined {
     switch (status) {
         case 'needs_response':
         case 'warning_needs_response':
@@ -115,12 +117,11 @@ function disputeStatusColor(status: string): string {
         case 'won':
             return 'success'
         case 'lost':
-            return 'grey'
+            return 'error'
         case 'charge_refunded':
         case 'warning_closed':
-            return 'default'
         default:
-            return 'default'
+            return undefined
     }
 }
 

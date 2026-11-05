@@ -1,108 +1,85 @@
 <template>
-    <v-footer class="bg-grey-darken-4 text-white pa-0 d-block">
-        <!-- Apex only: prominent operator CTA band at the top of the footer.
-             Tenant sites get a smaller nudge below the footer instead (see end). -->
-        <div v-if="isApex" class="footer-cta">
-            <v-container class="py-6">
-                <div class="d-flex flex-column flex-sm-row align-center ga-4 text-center text-sm-left">
-                    <div class="flex-grow-1">
-                        <div class="text-h5 font-weight-bold font-display mb-1">Run a track?</div>
-                        <div class="text-body-2" style="opacity: 0.92">
-                            Sell passes and tickets online, check riders in at the gate, and run your
-                            events. All in one place.
-                        </div>
-                    </div>
-                    <v-btn color="white" class="text-primary flex-shrink-0" size="large"
-                        to="/ForTracks">See more</v-btn>
-                </div>
-            </v-container>
-        </div>
-
-        <v-container class="pa-6">
-            <v-row>
-                <!-- Left: address + refund policy link -->
+    <v-footer class="rp-footer pa-0 d-block">
+        <v-container class="rp-footer-inner">
+            <!-- Details row: only rendered when the tenant has something to show here.
+                 The apex site has no address, contact or newsletter, so it collapses to
+                 the single bottom row, matching the landing-page mockup. -->
+            <v-row v-if="showDetails" class="rp-footer-details">
                 <v-col cols="12" md="4">
-                    <h3 class="text-subtitle-1 font-weight-bold mb-2">{{ branding.displayName }}</h3>
-                    <p v-if="branding.tagline" class="text-grey-lighten-1 text-caption mb-2">{{ branding.tagline }}</p>
-                    <div v-if="branding.addressLine" class="text-grey-lighten-2 text-body-2">
-                        {{ branding.addressLine }}
-                    </div>
-                    <div v-if="locationLine" class="text-grey-lighten-2 text-body-2">{{ locationLine }}</div>
+                    <div class="rp-footer-h">{{ branding.displayName }}</div>
+                    <p v-if="branding.tagline" class="rp-footer-text">{{ branding.tagline }}</p>
+                    <div v-if="branding.addressLine" class="rp-footer-text">{{ branding.addressLine }}</div>
+                    <div v-if="locationLine" class="rp-footer-text">{{ locationLine }}</div>
                     <div v-if="branding.refundPolicyHtml" class="mt-3">
-                        <a href="javascript:void(0)" class="footer-link" @click="refundDialog = true">Refund Policy</a>
+                        <a href="javascript:void(0)" class="rp-footer-link" @click="refundDialog = true">Refund policy</a>
                     </div>
                 </v-col>
 
-                <!-- Center: Follow (only when at least one social URL is set) + Contact (email + phone) -->
                 <v-col cols="12" md="4">
-                    <h4 v-if="hasAnySocial" class="text-subtitle-1 font-weight-bold mb-2">Follow</h4>
-                    <div v-if="hasAnySocial" class="d-flex ga-3">
-                        <a v-if="branding.socialFacebookUrl" :href="branding.socialFacebookUrl" target="_blank"
-                            rel="noopener" class="footer-link"><v-icon>mdi-facebook</v-icon></a>
-                        <a v-if="branding.socialInstagramUrl" :href="branding.socialInstagramUrl" target="_blank"
-                            rel="noopener" class="footer-link"><v-icon>mdi-instagram</v-icon></a>
-                        <a v-if="branding.socialTiktokUrl" :href="branding.socialTiktokUrl" target="_blank"
-                            rel="noopener" class="footer-link"><v-icon>mdi-music-note</v-icon></a>
-                        <a v-if="branding.socialYoutubeUrl" :href="branding.socialYoutubeUrl" target="_blank"
-                            rel="noopener" class="footer-link"><v-icon>mdi-youtube</v-icon></a>
-                    </div>
-
-                    <div v-if="branding.contactEmail || branding.phone"
-                        :class="hasAnySocial ? 'mt-4' : ''">
-                        <h4 class="text-subtitle-1 font-weight-bold mb-2">Contact</h4>
+                    <template v-if="hasAnySocial">
+                        <div class="rp-footer-h">Follow</div>
+                        <div class="d-flex ga-3 mb-4">
+                            <a v-if="branding.socialFacebookUrl" :href="branding.socialFacebookUrl" target="_blank"
+                                rel="noopener" class="rp-footer-link" aria-label="Facebook"><v-icon size="20">mdi-facebook</v-icon></a>
+                            <a v-if="branding.socialInstagramUrl" :href="branding.socialInstagramUrl" target="_blank"
+                                rel="noopener" class="rp-footer-link" aria-label="Instagram"><v-icon size="20">mdi-instagram</v-icon></a>
+                            <a v-if="branding.socialTiktokUrl" :href="branding.socialTiktokUrl" target="_blank"
+                                rel="noopener" class="rp-footer-link" aria-label="TikTok"><v-icon size="20">mdi-music-note</v-icon></a>
+                            <a v-if="branding.socialYoutubeUrl" :href="branding.socialYoutubeUrl" target="_blank"
+                                rel="noopener" class="rp-footer-link" aria-label="YouTube"><v-icon size="20">mdi-youtube</v-icon></a>
+                        </div>
+                    </template>
+                    <template v-if="branding.contactEmail || branding.phone">
+                        <div class="rp-footer-h">Contact</div>
                         <div v-if="branding.contactEmail" class="d-flex align-center mb-1">
-                            <v-icon size="small" class="mr-2">mdi-email</v-icon>
-                            <a :href="`mailto:${branding.contactEmail}`" class="footer-link">{{ branding.contactEmail }}</a>
+                            <v-icon size="14" class="mr-2">mdi-email-outline</v-icon>
+                            <a :href="`mailto:${branding.contactEmail}`" class="rp-footer-link">{{ branding.contactEmail }}</a>
                         </div>
                         <div v-if="branding.phone" class="d-flex align-center">
-                            <v-icon size="small" class="mr-2">mdi-phone</v-icon>
-                            <a :href="`tel:${phoneTel}`" class="footer-link">{{ phoneFormatted }}</a>
-                        </div>
-                    </div>
-                </v-col>
-
-                <!-- Right: newsletter signup (apex has no event subscriptions, so we show a links column instead) -->
-                <v-col cols="12" md="4">
-                    <NewsletterSignup v-if="!isApex && !inAccountArea && branding.allowEventSubscriptions"
-                        title="Stay in the loop"
-                        :subtitle="`Event updates and announcements from ${branding.displayName}.`" />
-                    <template v-else>
-                        <h4 class="text-subtitle-1 font-weight-bold mb-2">Links</h4>
-                        <div class="mt-2">
-                            <div><router-link to="/" class="footer-link">Home</router-link></div>
-                            <div v-if="!isApex"><router-link to="/Login" class="footer-link">Sign In</router-link></div>
-                            <div v-if="!isApex"><router-link to="/Feedback" class="footer-link">Send Feedback</router-link></div>
-                            <div v-if="isApex"><router-link to="/Discover" class="footer-link">Find Tracks</router-link></div>
+                            <v-icon size="14" class="mr-2">mdi-phone-outline</v-icon>
+                            <a :href="`tel:${phoneTel}`" class="rp-footer-link">{{ phoneFormatted }}</a>
                         </div>
                     </template>
                 </v-col>
-            </v-row>
 
-            <v-divider class="mt-6 mb-3"></v-divider>
-            <v-row>
-                <v-col class="text-center text-grey-lighten-1">
-                    &copy; {{ new Date().getFullYear() }} {{ branding.displayName }}
-                    <span class="ml-4"><a href="https://ridepass.io" class="footer-link">Powered by RidePass</a></span>
+                <v-col cols="12" md="4">
+                    <NewsletterSignup v-if="showNewsletter"
+                        title="Stay in the loop"
+                        :subtitle="`Event updates and announcements from ${branding.displayName}.`" />
                 </v-col>
             </v-row>
-        </v-container>
 
-        <!-- Tenant only: compact operator CTA below the regular footer. Same
-             gradient as the apex band, just smaller. Links to the apex
-             /ForTracks (cross-host on a tenant subdomain). -->
-        <div v-if="!isApex && !inAccountArea" class="footer-cta">
-            <v-container class="py-3">
-                <div class="d-flex flex-column flex-sm-row align-center justify-center ga-3 text-center">
-                    <span class="text-body-2 font-weight-medium">Run a track? See how RidePass can power yours.</span>
-                    <v-btn color="white" class="text-primary flex-shrink-0" size="small" :href="forTracksUrl">See more</v-btn>
+            <!-- Bottom row: brand, links, copyright. -->
+            <div class="rp-footer-row">
+                <router-link to="/" class="rp-footer-brand">
+                    <img v-if="footerLogo" :src="footerLogo" :alt="branding.displayName" class="rp-footer-logo" />
+                    <BrandLogo v-else-if="isApex" :height="30" class="rp-footer-brand-svg" />
+                    <span v-else class="font-display rp-footer-wordmark">{{ branding.displayName }}</span>
+                </router-link>
+                <div class="rp-footer-links">
+                    <router-link v-if="!isAuthenticated" to="/Login" class="rp-footer-link">Sign in</router-link>
+                    <router-link v-if="isApex" to="/Discover" class="rp-footer-link">Tracks</router-link>
+                    <router-link to="/Events" class="rp-footer-link">Events</router-link>
+                    <router-link v-if="!isApex && !inAccountArea" to="/Feedback" class="rp-footer-link">Feedback</router-link>
+                    <a v-if="!isApex && !inAccountArea" :href="forTracksUrl" class="rp-footer-link">For track owners</a>
+                    <router-link v-if="isApex" to="/ForTracks" class="rp-footer-link">For track owners</router-link>
                 </div>
-            </v-container>
-        </div>
+                <div class="rp-footer-copy">
+                    &copy; {{ new Date().getFullYear() }} {{ branding.displayName }}
+                    <span v-if="!isApex" class="rp-footer-powered">
+                        &nbsp;·&nbsp;<a href="https://ridepass.io" class="rp-footer-link">Powered by RidePass</a>
+                    </span>
+                </div>
+            </div>
+            <p class="rp-footer-note">
+                Season passes, day passes, and event entries are sold through RidePass with secure in-app payment.
+            </p>
+        </v-container>
 
         <v-dialog v-model="refundDialog" max-width="700">
             <v-card>
                 <v-card-title class="d-flex align-center">
-                    <span>Refund Policy</span>
+                    <span>Refund policy</span>
                     <v-spacer></v-spacer>
                     <v-btn icon="mdi-close" variant="text" size="small" @click="refundDialog = false"></v-btn>
                 </v-card-title>
@@ -111,7 +88,7 @@
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
-                    <v-btn @click="refundDialog = false">Close</v-btn>
+                    <v-btn variant="outlined" @click="refundDialog = false">Close</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -122,30 +99,39 @@
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { branding } from '@/stores/branding'
+import { platformBranding, platformImageUrl } from '@/stores/platformBranding'
 import tenantHelper from '@/helpers/TenantHelper'
+import authHelper from '@/helpers/AuthHelper'
 import NewsletterSignup from '@/components/NewsletterSignup.vue'
 import RichTextView from '@/components/RichTextView.vue'
+import BrandLogo from '@/components/BrandLogo.vue'
 
 const isApex = computed(() => !tenantHelper.getSubdomain())
+const isAuthenticated = computed(() => authHelper.isAuthenticated())
 
 // A rider who has signed in to look at their own passes and orders is not an audience for
 // "run your own track", and asking them to subscribe with an email we already have is noise.
-// On mobile these two blocks were most of an otherwise near-empty account page.
 const route = useRoute()
 const inAccountArea = computed(() => route.path.startsWith('/User/'))
 const refundDialog = ref(false)
 
-// The See-more button always targets the apex root /ForTracks, never the
+const showNewsletter = computed(() => !isApex.value && !inAccountArea.value && branding.allowEventSubscriptions)
+const showDetails = computed(() => !isApex.value && (
+    !!branding.tagline || !!branding.addressLine || !!locationLine.value || !!branding.refundPolicyHtml
+    || hasAnySocial.value || !!branding.contactEmail || !!branding.phone || showNewsletter.value))
+
+// Prefer the white/mono logo in the footer (dark surface); fall back to the main logo.
+const footerLogo = computed(() => isApex.value
+    ? platformImageUrl(platformBranding.data?.logoUrl)
+    : (branding.logoWhiteUrl ?? branding.logoUrl))
+
+// The For-track-owners link always targets the apex root /ForTracks, never the
 // tenant's, so the operator marketing page is unambiguously the platform's.
-// We derive the apex host from the ACTUAL current hostname (strip a leading
-// subdomain label) rather than from VITE_ROOT_DOMAIN — that env var isn't set
-// in production and can't be relied on here.
+// Derive the apex host from the ACTUAL hostname (strip a leading subdomain label).
 function computeApexHost(): string {
     const host = window.location.hostname
     if (host === 'localhost' || /^(\d+\.){3}\d+$/.test(host)) return host
     const labels = host.split('.')
-    // 2 labels (ridepass.io, ridepass.local) is already the apex; 3+ means a
-    // tenant subdomain, so keep the last two labels.
     return labels.length <= 2 ? host : labels.slice(-2).join('.')
 }
 const forTracksUrl = computed(() => {
@@ -166,10 +152,7 @@ const hasAnySocial = computed(() => !!(
     || branding.socialTiktokUrl
     || branding.socialYoutubeUrl))
 
-// Phone display: format US-style 10-digit and 11-digit (1+10) numbers as
-// "(555) 123-4567" or "+1 (555) 123-4567". Anything else (international,
-// vanity numbers, already-formatted) shows as the admin entered it.
-// `phoneTel` strips to digits + leading + so the tel: link dials reliably.
+// Phone display: US-style 10/11-digit numbers as "(555) 123-4567"; anything else as entered.
 const phoneFormatted = computed(() => {
     const raw = branding.phone?.trim() ?? ''
     if (!raw) return ''
@@ -185,30 +168,89 @@ const phoneFormatted = computed(() => {
 const phoneTel = computed(() => {
     const raw = branding.phone?.trim() ?? ''
     if (!raw) return ''
-    // Keep a leading + for international, otherwise digits only.
-    const digits = raw.replace(/[^\d+]/g, '')
-    return digits
+    return raw.replace(/[^\d+]/g, '')
 })
 </script>
 
 <style scoped>
-/* Gradient is driven by the active theme primary so it harmonizes with each
-   tenant's brand (App.vue sets theme primary = tenant primaryColor) and shows
-   the RidePass orange on the apex site. The darker end is the same hue mixed
-   toward black. background-color is a solid fallback for browsers without
-   color-mix() support (the gradient image is simply dropped there). */
-.footer-cta {
-    background-color: rgb(var(--v-theme-primary));
-    background-image: linear-gradient(135deg,
-        rgb(var(--v-theme-primary)) 0%,
-        color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, #000) 100%);
+.rp-footer {
+    border-top: 1px solid var(--rp-line);
+    color: var(--rp-muted2);
+    font-size: 12.5px;
 }
-.footer-link {
-    color: #cfcfcf;
+.rp-footer-inner {
+    padding: 34px 22px;
+    max-width: 1140px;
+}
+.rp-footer-details {
+    padding-bottom: 22px;
+    margin-bottom: 22px;
+    border-bottom: 1px solid var(--rp-line);
+}
+.rp-footer-h {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--rp-muted);
+    margin-bottom: 10px;
+}
+.rp-footer-text {
+    color: var(--rp-muted);
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0;
+}
+.rp-footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.rp-footer-brand {
+    display: inline-flex;
+    align-items: center;
+    color: var(--rp-ink);
+}
+.rp-footer-logo {
+    height: 30px;
+    width: auto;
+    opacity: 0.9;
+    display: block;
+}
+.rp-footer-wordmark {
+    font-size: 24px;
+    color: var(--rp-ink);
+}
+.rp-footer-brand-svg {
+    color: var(--rp-ink);
+    opacity: 0.9;
+}
+.rp-footer-links {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 11.5px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+.rp-footer-link {
+    color: var(--rp-muted);
     text-decoration: none;
-    line-height: 2;
+    transition: color 0.15s;
 }
-.footer-link:hover {
-    color: white;
+.rp-footer-link:hover {
+    color: var(--rp-ink);
+}
+.rp-footer-copy {
+    color: var(--rp-muted2);
+}
+.rp-footer-powered a { color: var(--rp-muted); }
+.rp-footer-note {
+    font-size: 11px;
+    color: var(--rp-muted2);
+    margin: 10px 0 0;
 }
 </style>

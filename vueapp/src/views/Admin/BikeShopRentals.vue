@@ -1,10 +1,13 @@
 <template>
     <v-container>
-        <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-            <h1 class="text-h4">Rentals</h1>
-            <v-spacer></v-spacer>
-            <ShopDisplayButton />
-            <v-btn color="primary" prepend-icon="mdi-plus" :loading="openingBook" @click="openBook">New rental</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Rentals</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <ShopDisplayButton />
+                <v-btn color="primary" prepend-icon="mdi-plus" :loading="openingBook" @click="openBook">New rental</v-btn>
+            </div>
         </div>
 
         <v-tabs v-model="tab" class="mb-4">
@@ -406,7 +409,7 @@
                                                 icon="mdi-draw-pen" @click="openSign(r)"></v-btn>
                                         </template>
                                     </v-tooltip>
-                                    <v-btn v-if="r.status === 'out'" size="x-small" color="secondary" variant="tonal"
+                                    <v-btn v-if="r.status === 'out'" size="x-small" variant="tonal"
                                         @click="openReturn(r)">Return</v-btn>
                                     <v-tooltip text="Condition photos" location="top">
                                         <template #activator="{ props }">

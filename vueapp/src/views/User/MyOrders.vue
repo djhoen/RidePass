@@ -1,6 +1,6 @@
 <template>
     <v-container>
-        <h1 class="text-h4 mb-1">My Orders</h1>
+        <h1 class="text-h3 font-display mb-1">My Orders</h1>
         <p class="text-body-2 text-medium-emphasis mb-6">
             Shop purchases from {{ branding.displayName }}. Show your order number at the shop counter to collect.
         </p>
@@ -20,14 +20,14 @@
             <template v-else>
                 <!-- Waiting at the counter: the thing the rider actually needs on screen. -->
                 <template v-if="awaiting.length">
-                    <h2 class="text-h6 mb-3">Ready for pickup</h2>
+                    <h2 class="text-h5 font-display-upright mb-3">Ready for pickup</h2>
                     <v-row class="mb-6">
                         <v-col v-for="o in awaiting" :key="o.saleId" cols="12" md="6" lg="4">
                             <v-card variant="outlined" class="h-100">
                                 <v-card-text>
                                     <v-chip size="small" color="warning" class="mb-3">Ready for pickup</v-chip>
                                     <div class="text-caption text-medium-emphasis">Order number</div>
-                                    <div class="text-h4 font-weight-bold">#{{ o.orderNumber ?? '—' }}</div>
+                                    <div class="text-h3 font-display">#{{ o.orderNumber ?? '—' }}</div>
                                     <p class="text-body-2 text-medium-emphasis mt-2 mb-3">
                                         Show this number at the shop counter to pick up your order.
                                     </p>
@@ -38,7 +38,7 @@
                     </v-row>
                 </template>
 
-                <h2 v-if="awaiting.length" class="text-h6 mb-3">Order history</h2>
+                <h2 v-if="awaiting.length" class="text-h5 font-display-upright mb-3">Order history</h2>
                 <v-row>
                     <v-col v-for="o in history" :key="o.saleId" cols="12" md="6" lg="4">
                         <v-card variant="outlined" class="h-100">
@@ -84,7 +84,7 @@ function statusLabel(o: MyShopOrder): string {
     return 'Paid'
 }
 function statusColor(o: MyShopOrder): string {
-    return o.status === 'refunded' ? 'grey' : o.pickedUpAtUtc ? 'success' : 'primary'
+    return o.status === 'refunded' ? '' : o.pickedUpAtUtc ? 'success' : 'primary'
 }
 
 // Small inline renderer so both sections show identical line detail without a second file.

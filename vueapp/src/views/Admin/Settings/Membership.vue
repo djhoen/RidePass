@@ -1,11 +1,15 @@
 <template>
-    <v-container>
-        <h1 class="text-h4 mb-2">Membership</h1>
-        <p class="text-body-2 text-medium-emphasis mb-6">
-            Configure the membership product riders can buy.
-            Turn the feature on or off in
-            <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
-        </p>
+    <v-container style="max-width: 960px">
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Membership</div>
+                <div class="rp-pagehead-sub">
+                    Configure the membership product riders can buy.
+                    Turn the feature on or off in
+                    <router-link to="/Admin/Settings/Features">Settings → Features</router-link>.
+                </div>
+            </div>
+        </div>
 
         <v-alert v-if="!branding.membershipEnabled" type="info" variant="tonal" class="mb-4">
             Memberships are turned off — the settings below won't apply until you enable the feature.
@@ -53,7 +57,10 @@
         </v-card>
 
         <v-card class="pa-4">
-            <v-card-title>Preview</v-card-title>
+            <v-card-title class="rp-section">
+                <span class="rp-kicker">Membership</span>
+                <span class="rp-section-title">Preview</span>
+            </v-card-title>
             <v-card-text>
                 <p class="text-body-2 text-medium-emphasis mb-2">
                     Riders will see this on the <code>/Membership</code> page:
@@ -67,7 +74,7 @@
                             </div>
                         </div>
                         <v-spacer></v-spacer>
-                        <div class="text-h5">${{ Number(form.priceDollars || 0).toFixed(2) }}</div>
+                        <div class="rp-kpi"><div class="rp-kpi-value">${{ Number(form.priceDollars || 0).toFixed(2) }}</div></div>
                     </div>
                 </v-card>
             </v-card-text>
@@ -144,3 +151,18 @@ onMounted(async () => {
 
 watch(() => branding.loaded, (loaded) => { if (loaded) populateForm() })
 </script>
+
+<style scoped>
+/* Settings section heading: kicker (page name) over an upright display title. */
+.rp-section { white-space: normal; padding-bottom: 4px; }
+.rp-section .rp-kicker { margin-bottom: 2px; }
+.rp-section-title {
+    display: block;
+    font-family: var(--rp-font-display);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+</style>

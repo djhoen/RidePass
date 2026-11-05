@@ -3,7 +3,7 @@
         <v-container v-if="loadError" class="py-6"><v-alert type="error" variant="tonal">{{ loadError }}</v-alert></v-container>
         <v-container v-else-if="notFound" class="py-10 text-center">
             <v-icon icon="mdi-package-variant" size="44" class="text-medium-emphasis mb-3" />
-            <h1 class="text-h5 font-weight-bold mb-2">This package isn't available</h1>
+            <h1 class="text-h4 font-display mb-2">This package isn't available</h1>
             <p class="text-body-2 text-medium-emphasis">It may have been unpublished or the link is out of date.</p>
         </v-container>
         <v-container v-else-if="loading" class="py-6"><v-skeleton-loader type="image, article, actions" /></v-container>
@@ -15,11 +15,11 @@
 
             <!-- Hero (hosted only) -->
             <section v-if="!isEmbed" class="pkg-hero" :style="heroStyle">
-                <div class="pkg-hero-overlay">
+                <div class="pkg-hero-overlay rp-on-photo">
                     <v-container class="pkg-hero-inner">
                         <h1 class="pkg-title font-display text-white">{{ pkg.name }}</h1>
                         <p v-if="pkg.summary" class="pkg-hero-sub text-white">{{ pkg.summary }}</p>
-                        <v-btn color="primary" size="large" class="mt-4" @click="scrollToBook">Book now</v-btn>
+                        <v-btn color="primary" variant="flat" size="large" class="mt-4" @click="scrollToBook">Book now</v-btn>
                     </v-container>
                 </div>
             </section>
@@ -51,7 +51,7 @@
                     <v-col cols="12" md="5" :order="isEmbed ? 1 : undefined">
                         <v-card ref="bookCard" id="pkg-book" class="pkg-book-card" variant="flat">
                             <v-card-text class="pa-5">
-                                <div class="text-subtitle-1 font-weight-bold mb-3">Book your day</div>
+                                <div class="text-h5 font-display-upright mb-3">Book your day</div>
 
                                 <div class="text-caption text-medium-emphasis mb-1">Option</div>
                                 <v-btn-toggle v-model="tierId" mandatory divided density="comfortable" class="d-flex flex-wrap mb-4" @update:model-value="refreshAvailability">
@@ -84,7 +84,7 @@
                                 </v-alert>
 
                                 <div v-if="avail?.available" class="pkg-price-row mb-2">
-                                    <span class="text-h5 font-weight-bold">{{ money(insurance && avail ? avail.priceCents + avail.insuranceCents : avail.priceCents) }}</span>
+                                    <span class="pkg-price font-display">{{ money(insurance && avail ? avail.priceCents + avail.insuranceCents : avail.priceCents) }}</span>
                                     <span v-if="!insurance && avail.depositCents > 0" class="text-caption text-medium-emphasis">
                                         + {{ money(avail.depositCents) }} refundable deposit hold
                                     </span>
@@ -97,7 +97,7 @@
 
                                 <v-alert v-if="bookError" type="error" variant="tonal" density="compact" class="mb-3">{{ bookError }}</v-alert>
 
-                                <v-btn color="primary" size="large" block :loading="booking"
+                                <v-btn color="primary" variant="flat" size="large" block :loading="booking"
                                     :disabled="!canBook" @click="startBooking">Reserve</v-btn>
                                 <p class="text-caption text-medium-emphasis mt-3 mb-0">
                                     Sign the waiver and collect your bike and gear at the shop. Deposit released at return.
@@ -356,27 +356,30 @@ onMounted(async () => {
 
 <style scoped>
 /* Plain theme background (no gray tint) so the widget blends into the host site. */
-.pkg-page { min-height: 60vh; background: rgb(var(--v-theme-background)); }
-.pkg-hero { min-height: 340px; background-size: cover; background-position: center; background-color: #1d1d1d; }
-.pkg-hero-overlay { min-height: 340px; display: flex; align-items: flex-end; background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.1)); }
+.pkg-page { min-height: 60vh; background: var(--rp-bg); }
+.pkg-hero { min-height: 340px; background-size: cover; background-position: center; background-color: var(--rp-panel); }
+.pkg-hero-overlay {
+    min-height: 340px; display: flex; align-items: flex-end;
+    background:
+        linear-gradient(180deg, transparent 50%, var(--rp-bg) 100%),
+        linear-gradient(105deg, rgba(var(--rp-scrim), 0.9) 20%, rgba(var(--rp-scrim), 0.55) 55%, rgba(var(--rp-scrim), 0.35));
+}
 .pkg-hero-inner { padding-bottom: 32px; }
-.pkg-title { font-size: 2.4rem; font-weight: 800; }
+.pkg-title { font-size: clamp(2.75rem, 7vw, 5.25rem); text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55); }
+.pkg-price { font-size: 40px; line-height: 1; }
 .pkg-hero-sub { font-size: 1.05rem; opacity: 0.95; }
 .pkg-body { font-size: 15px; line-height: 1.6; }
 .pkg-checklist { list-style: none; padding: 0; }
 .pkg-checklist li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .pkg-check { color: rgb(var(--v-theme-primary)); }
-/* Booking card = the item-selection container: a very light gray tint on light themes and a
-   slightly-lighter-than-background tint on dark themes (on-surface alpha inverts per theme),
-   lifted with a soft drop shadow. !important beats Vuetify's flat variant surface + no-elevation. */
+/* Booking card = the item-selection container: panel surface with a stronger hairline so it
+   reads as the actionable panel. !important beats Vuetify's flat variant surface. */
 .pkg-book-card {
-    /* Hairline border (0.2 on-surface = #cccccc on a white page) instead of a drop shadow,
-       which looked harsh against the white page. */
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
-    border-radius: 12px;
-    background-color: rgba(var(--v-theme-on-surface), 0.05) !important;
+    border: 1px solid var(--rp-line2) !important;
+    background-color: var(--rp-panel) !important;
 }
-.pkg-date { border: 1px solid rgba(var(--v-theme-on-surface), 0.3); border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%; background: rgb(var(--v-theme-surface)); color: rgb(var(--v-theme-on-surface)); }
+.pkg-date { border: 1px solid var(--rp-line2); border-radius: var(--rp-radius-input); padding: 10px 12px; font-size: 14px; width: 100%; background: var(--rp-panel2); color: var(--rp-ink); }
+.pkg-date:focus { outline: none; border-color: var(--rp-line3); }
 .pkg-price-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .rp-powered { color: rgba(var(--v-theme-on-surface), 0.6); text-decoration: none; font-size: 13px; }
 </style>

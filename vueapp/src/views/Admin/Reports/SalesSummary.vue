@@ -1,47 +1,50 @@
 <template>
     <div>
-        <div class="d-flex align-center mb-6 flex-wrap ga-3">
-            <h2 class="text-h5">Sales Summary</h2>
-            <v-spacer></v-spacer>
-            <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
-                style="max-width: 200px" @update:model-value="applyPreset"></v-select>
-            <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
-                style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
-            <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
-                :disabled="loading || !summary" @click="exportCsv">Export CSV</v-btn>
+        <div class="rp-pagehead">
+            <div>
+                <div class="rp-pagehead-title">Sales Summary</div>
+            </div>
+            <div class="d-flex align-center flex-wrap ga-2">
+                <v-select v-model="preset" :items="presetOptions" label="Range" density="compact" hide-details
+                    style="max-width: 200px" @update:model-value="applyPreset"></v-select>
+                <v-text-field v-model="rangeFrom" type="date" label="From" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-text-field v-model="rangeTo" type="date" label="To" density="compact" hide-details
+                    style="max-width: 160px" @change="preset = 'custom'"></v-text-field>
+                <v-btn color="primary" :loading="loading" @click="load">Refresh</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-file-delimited-outline"
+                    :disabled="loading || !summary" @click="exportCsv">Export CSV</v-btn>
+            </div>
         </div>
 
         <v-row v-if="summary" class="mb-4">
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Revenue</div>
-                    <div class="text-h4">${{ (summary.totalRevenueCents / 100).toFixed(2) }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Revenue</div>
+                    <div class="rp-kpi-value">${{ (summary.totalRevenueCents / 100).toFixed(2) }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Tickets / Season passes</div>
-                    <div class="text-h4">{{ summary.ticketsSold }} / {{ summary.passesSold }}</div>
-                    <div class="text-caption text-medium-emphasis">sold in range</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Tickets / Season passes</div>
+                    <div class="rp-kpi-value">{{ summary.ticketsSold }} / {{ summary.passesSold }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">sold in range</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Unique Riders</div>
-                    <div class="text-h4">{{ summary.uniqueRiders }}</div>
-                </v-card-text></v-card>
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Unique Riders</div>
+                    <div class="rp-kpi-value">{{ summary.uniqueRiders }}</div>
+                </v-card>
             </v-col>
             <v-col cols="12" sm="6" md="3">
-                <v-card><v-card-text>
-                    <div class="text-caption text-medium-emphasis">Refunds / Disputes</div>
-                    <div class="text-h4">{{ summary.refundedCount }} / {{ summary.disputedCount }}</div>
-                    <div class="text-caption text-medium-emphasis">
+                <v-card class="rp-kpi pa-4">
+                    <div class="rp-kpi-label mt-0">Refunds / Disputes</div>
+                    <div class="rp-kpi-value">{{ summary.refundedCount }} / {{ summary.disputedCount }}</div>
+                    <div class="text-caption text-medium-emphasis mt-2">
                         ${{ (summary.refundedAmountCents / 100).toFixed(2) }} refunded
                     </div>
-                </v-card-text></v-card>
+                </v-card>
             </v-col>
         </v-row>
 
@@ -189,13 +192,13 @@
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { Line, Bar } from 'vue-chartjs'
-import { registerChartJs } from '@/helpers/ChartSetup'
+import { registerChartJs, chartInk, chartMuted, chartGrid } from '@/helpers/ChartSetup'
 import { useTheme } from 'vuetify'
 import { ReportsService, type TenantReportSummary } from '@/services/ReportsService'
 import { branding } from '@/stores/branding'
 import { downloadCsvSections, csvMoney, type CsvSection } from '@/helpers/csv'
 import {
-    seriesColor, withAlpha, TOTAL_SERIES_COLOR, TOTAL_SERIES_COLOR_DARK,
+    seriesColor, withAlpha, TOTAL_SERIES_COLOR,
 } from '@/helpers/profitCenterColor'
 
 registerChartJs()
@@ -205,7 +208,12 @@ registerChartJs()
 // dark surface (violet lands at 1.88:1).
 const theme = useTheme()
 const isDark = computed(() => theme.current.value.dark)
-const totalColor = computed(() => isDark.value ? TOTAL_SERIES_COLOR_DARK : TOTAL_SERIES_COLOR)
+// On the dark console the all-revenue line is the ink itself; profit centers keep their own hue.
+const totalColor = computed(() => isDark.value ? chartInk() : TOTAL_SERIES_COLOR)
+// Hairline grid + muted ticks per axis (tooltip/legend colors come from ChartSetup defaults). A
+// function, not a constant: the token getters read the live light/dark values, so they are called
+// inside the computeds that build the options, never once at setup.
+const chartScale = () => ({ grid: { color: chartGrid() }, border: { color: chartGrid() }, ticks: { color: chartMuted() } })
 
 const service = new ReportsService()
 
@@ -427,7 +435,7 @@ const revenueChartOptions = computed(() => ({
         legend: {
             display: true,
             position: 'bottom' as const,
-            labels: { usePointStyle: true, boxWidth: 8, padding: 16 },
+            labels: { usePointStyle: true, boxWidth: 8, padding: 16, color: chartMuted() },
         },
         tooltip: {
             callbacks: {
@@ -436,9 +444,11 @@ const revenueChartOptions = computed(() => ({
         },
     },
     scales: {
+        x: { ...chartScale(), grid: { display: false } },
         y: {
+            ...chartScale(),
             beginAtZero: true,
-            title: { display: true, text: 'Revenue ($)' },
+            title: { display: true, text: 'Revenue ($)', color: chartMuted() },
             position: 'left' as const,
         },
     },
@@ -452,20 +462,22 @@ const eventsChartData = computed(() => {
         datasets: [{
             label: 'Revenue ($)',
             data: rows.map(r => r.revenueCents / 100),
-            backgroundColor: '#43A047',
+            backgroundColor: chartInk(),
+            borderRadius: 4,
         }],
     }
 })
 
-const horizontalBarOptions = {
+const horizontalBarOptions = computed(() => ({
     indexAxis: 'y' as const,
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: {
-        x: { beginAtZero: true },
+        x: { ...chartScale(), beginAtZero: true },
+        y: { ...chartScale(), grid: { display: false } },
     },
-}
+}))
 </script>
 
 <style scoped>

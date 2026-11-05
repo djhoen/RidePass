@@ -1,6 +1,6 @@
 <template>
     <v-container style="max-width: 640px">
-        <h1 class="text-h4 mb-4">Membership</h1>
+        <h1 class="text-h3 font-display mb-4">Membership</h1>
 
         <v-progress-circular v-if="loading" indeterminate color="primary"></v-progress-circular>
 
@@ -9,7 +9,7 @@
 
             <!-- Sales-disabled fallback. -->
             <v-card v-else-if="!status?.enabled" class="pa-6 text-center" variant="outlined">
-                <v-icon size="48" color="grey" class="mb-2">mdi-card-account-details-outline</v-icon>
+                <v-icon size="48" class="mb-2 text-muted2">mdi-card-account-details-outline</v-icon>
                 <p class="text-body-2">This track doesn't sell memberships.</p>
             </v-card>
 
@@ -52,7 +52,7 @@
                         </div>
 
                         <div v-if="!clientSecret">
-                            <v-btn color="primary" :loading="creating" @click="createIntent">
+                            <v-btn color="primary" variant="flat" :loading="creating" @click="createIntent">
                                 Continue to Payment
                             </v-btn>
                         </div>
@@ -174,8 +174,8 @@ function statusColor(s: string): string {
         case 'paid': return 'success'
         case 'pending': return 'warning'
         case 'failed': return 'error'
-        case 'refunded': return 'grey'
-        case 'cancelled': return 'orange'
+        case 'refunded': return ''
+        case 'cancelled': return 'warning'
         default: return 'default'
     }
 }

@@ -6,22 +6,22 @@
     <div class="fortracks-page">
         <!-- ── HERO ──────────────────────────────────────────────────────── -->
         <section class="ft-hero">
-            <div class="ft-hero-overlay">
+            <div class="ft-hero-overlay rp-on-photo">
                 <v-container>
                     <v-row justify="center" class="text-center">
                         <v-col cols="12" md="9" lg="8">
-                            <div class="ft-hero-eyebrow mb-3">{{ heroEyebrow }}</div>
-                            <h1 class="text-h2 font-weight-bold text-white mb-4 ft-hero-headline">
+                            <div class="rp-kicker ft-hero-eyebrow mb-3">{{ heroEyebrow }}</div>
+                            <h1 class="font-display text-white mb-4 ft-hero-headline">
                                 {{ heroHeadline }}
                             </h1>
                             <p class="text-h6 text-white mb-8 mx-auto" style="max-width: 640px; opacity: 0.92">
                                 {{ heroSubhead }}
                             </p>
                             <div class="d-flex flex-wrap ga-3 justify-center">
-                                <v-btn color="primary" size="x-large" @click="scrollToForm">
+                                <v-btn color="primary" variant="flat" size="x-large" @click="scrollToForm">
                                     Request a demo
                                 </v-btn>
-                                <v-btn variant="outlined" color="white" size="x-large" @click="scrollToFeatures">
+                                <v-btn variant="outlined" size="x-large" @click="scrollToFeatures">
                                     See what it does
                                 </v-btn>
                             </div>
@@ -49,7 +49,7 @@
                     moved here from the apex home) ──────────────────────────── -->
             <section v-if="benefitsHtml" class="my-12">
                 <div class="text-center mb-8">
-                    <h2 class="text-h4 font-weight-bold">{{ benefitsTitle }}</h2>
+                    <h2 class="text-h3 font-display">{{ benefitsTitle }}</h2>
                 </div>
                 <v-row align="center">
                     <v-col v-if="benefitsImageUrl" cols="12" md="6">
@@ -64,8 +64,8 @@
             <!-- ── TRACK MANAGEMENT ──────────────────────────────────────── -->
             <section ref="featuresSection" class="my-12">
                 <div class="text-center mb-8">
-                    <div class="ft-section-eyebrow">Track management</div>
-                    <h2 class="text-h4 font-weight-bold">Everything to run the day</h2>
+                    <div class="rp-kicker ft-section-eyebrow">Track management</div>
+                    <h2 class="text-h3 font-display">Everything to run the day</h2>
                 </div>
                 <v-row align="center">
                     <v-col cols="12" md="6">
@@ -91,8 +91,8 @@
             <!-- ── POINT OF SALE ─────────────────────────────────────────── -->
             <section class="my-12">
                 <div class="text-center mb-8">
-                    <div class="ft-section-eyebrow">Point of sale</div>
-                    <h2 class="text-h4 font-weight-bold">Sell anywhere, get paid fast</h2>
+                    <div class="rp-kicker ft-section-eyebrow">Point of sale</div>
+                    <h2 class="text-h3 font-display">Sell anywhere, get paid fast</h2>
                 </div>
                 <v-row align="center">
                     <!-- Image second on desktop (order-md-last) so the two bands alternate. -->
@@ -119,8 +119,8 @@
             <!-- ── SAFE & SECURE ─────────────────────────────────────────── -->
             <section class="my-12">
                 <div class="text-center mb-8">
-                    <div class="ft-section-eyebrow">Safe &amp; secure</div>
-                    <h2 class="text-h4 font-weight-bold">Payments you and your riders can trust</h2>
+                    <div class="rp-kicker ft-section-eyebrow">Safe &amp; secure</div>
+                    <h2 class="text-h3 font-display">Payments you and your riders can trust</h2>
                     <p class="text-body-1 text-medium-emphasis mt-3 mx-auto" style="max-width: 660px">
                         Tap-to-pay runs on Stripe, the same payments platform trusted by millions of businesses.
                         The card is read by the phone's own secure hardware and encrypted straight to Stripe, so
@@ -129,7 +129,7 @@
                 </div>
                 <v-row>
                     <v-col v-for="s in securityPoints" :key="s.title" cols="12" sm="6" md="3">
-                        <v-card variant="tonal" class="h-100 pa-6 text-center">
+                        <v-card class="h-100 pa-6 text-center">
                             <v-icon :icon="s.icon" size="40" color="primary" class="mb-3"></v-icon>
                             <div class="text-h6 font-weight-bold mb-2">{{ s.title }}</div>
                             <div class="text-body-2 text-medium-emphasis">{{ s.text }}</div>
@@ -141,12 +141,12 @@
             <!-- ── PRICING ───────────────────────────────────────────────── -->
             <section class="my-12">
                 <div class="text-center mb-8">
-                    <div class="ft-section-eyebrow">Pricing</div>
-                    <h2 class="text-h4 font-weight-bold">Pricing that scales with you</h2>
+                    <div class="rp-kicker ft-section-eyebrow">Pricing</div>
+                    <h2 class="text-h3 font-display">Pricing that scales with you</h2>
                 </div>
                 <v-row>
                     <v-col v-for="p in pricingPoints" :key="p.title" cols="12" sm="6" md="3">
-                        <v-card variant="tonal" class="h-100 pa-6 text-center">
+                        <v-card class="h-100 pa-6 text-center">
                             <v-icon :icon="p.icon" size="40" color="primary" class="mb-3"></v-icon>
                             <div class="text-h6 font-weight-bold mb-2">{{ p.title }}</div>
                             <div class="text-body-2 text-medium-emphasis">{{ p.text }}</div>
@@ -157,14 +157,14 @@
                     <p class="text-body-1 text-medium-emphasis mb-3">
                         Want the exact numbers for your track?
                     </p>
-                    <v-btn color="primary" size="large" @click="scrollToForm">Talk pricing</v-btn>
+                    <v-btn color="primary" variant="flat" size="large" @click="scrollToForm">Talk pricing</v-btn>
                 </div>
             </section>
 
             <!-- ── HOW IT WORKS ──────────────────────────────────────────── -->
             <section class="my-12">
                 <div class="text-center mb-8">
-                    <h2 class="text-h4 font-weight-bold">Up and running in three steps</h2>
+                    <h2 class="text-h3 font-display">Up and running in three steps</h2>
                 </div>
                 <v-row>
                     <v-col v-for="(s, i) in steps" :key="s.title" cols="12" md="4">
@@ -184,8 +184,8 @@
                 <v-row justify="center">
                     <v-col cols="12" md="8" lg="6">
                         <div class="text-center mb-6">
-                            <h2 class="text-h4 font-weight-bold text-white mb-2">Bring your track online</h2>
-                            <p class="text-body-1 text-white" style="opacity: 0.9">
+                            <h2 class="text-h3 font-display mb-2">Bring your track online</h2>
+                            <p class="text-body-1 text-muted">
                                 Tell us about your track and we'll reach out to get you set up.
                             </p>
                         </div>
@@ -373,36 +373,29 @@ function resetForm() {
 
 <style scoped>
 .fortracks-page {
-    background-color: #f5f5f5;
+    background-color: var(--rp-bg);
 }
 
-/* Hero: dark band with a centered pitch. Gradient gives depth without needing
-   a background image (none is configured for this page yet). */
+/* Hero: dark band with a centered pitch. A soft radial glow gives depth without
+   needing a background image (none is configured for this page yet). It is a
+   photo-style surface: dark with white type in both modes, fading into the page. */
 .ft-hero {
-    background: linear-gradient(135deg, #141820 0%, #20262f 100%);
+    background: radial-gradient(80% 60% at 50% 30%, rgba(61, 61, 61, 0.22), transparent 60%), rgb(var(--rp-scrim));
 }
 .ft-hero-overlay {
     padding: 5rem 0;
+    background: linear-gradient(180deg, transparent 70%, var(--rp-bg) 100%);
 }
 .ft-hero-eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: rgb(var(--v-theme-primary));
+    color: var(--rp-photo-muted);
 }
 .ft-hero-headline {
-    line-height: 1.05;
+    font-size: clamp(48px, 8vw, 96px);
 }
 
 /* Section eyebrow label above each feature band's heading. */
 .ft-section-eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: rgb(var(--v-theme-primary));
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.5rem;
 }
 
 /* Feature list subtitles wrap fully instead of truncating to one line. */
@@ -420,10 +413,10 @@ function resetForm() {
     justify-content: center;
     text-align: center;
     aspect-ratio: 16 / 10;
-    border: 2px dashed rgba(0, 0, 0, 0.18);
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.03);
-    color: rgba(0, 0, 0, 0.5);
+    border: 2px dashed var(--rp-line2);
+    border-radius: 16px;
+    background: var(--rp-card);
+    color: var(--rp-muted2);
     padding: 1.5rem;
 }
 
@@ -432,19 +425,23 @@ function resetForm() {
     height: 44px;
     width: 44px;
     border-radius: 50%;
-    background: rgb(var(--v-theme-primary));
-    color: #fff;
+    background: var(--rp-ink);
+    color: var(--rp-on-ink);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.25rem;
-    font-weight: 700;
+    font-family: var(--rp-font-display);
+    font-size: 1.5rem;
 }
 
-/* Lead form sits on a primary-tinted band so it reads as the page's main CTA. */
+/* Lead form sits on a slightly raised band (the mockup's "passes" band) so it
+   reads as the page's main CTA. */
 .ft-form-band {
-    background: linear-gradient(135deg, #f57c00 0%, #e65100 100%);
+    background: var(--rp-panel);
+    border-top: 1px solid var(--rp-line);
+    border-bottom: 1px solid var(--rp-line);
 }
+:root[data-rp-theme="light"] .ft-form-band { background: var(--rp-panel2); }
 
 /* "Why Tracks love RidePass" benefits band (moved from the apex home). */
 .ft-benefits-photo {
@@ -453,7 +450,7 @@ function resetForm() {
     border-radius: 12px;
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--rp-line);
 }
 .ft-benefits-list :deep(ul) {
     list-style: none;
