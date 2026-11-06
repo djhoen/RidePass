@@ -66,6 +66,9 @@ builder.Services.AddScoped<ISeasonPassRepository, SeasonPassRepository>();
 // One place decides a pass holder's discount, so the five tills that ask can't drift on it.
 builder.Services.AddScoped<Services.Pricing.ISeasonPassPerkResolver, Services.Pricing.SeasonPassPerkResolver>();
 builder.Services.AddScoped<IBikeShopRepository, BikeShopRepository>();
+// The bike shop "Today" sheet's read model (GET BikeShopDay): its own repository so the day
+// view can grow without touching the booking paths in IBikeShopRepository.
+builder.Services.AddScoped<IShopDayRepository, ShopDayRepository>();
 builder.Services.AddScoped<IPlatformPartRepository, PlatformPartRepository>();
 builder.Services.AddScoped<IDistributorCredentialRepository, DistributorCredentialRepository>();
 // Distributor catalog sync. One source per distributor, resolved by slug. The nightly sweep lives

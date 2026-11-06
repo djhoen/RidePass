@@ -11,11 +11,19 @@
         </div>
 
         <v-tabs v-model="tab" class="mb-4">
+            <v-tab value="today">Today</v-tab>
             <v-tab value="board">Board</v-tab>
             <v-tab value="bookings">All Bookings</v-tab>
             <v-tab value="fleet">Rental products</v-tab>
             <v-tab value="settings">Settings</v-tab>
         </v-tabs>
+
+        <!-- ── Today ────────────────────────────────────────────────────── -->
+        <!-- The day sheet: who is coming, grouped by program. Kept alive like the Board so the
+             chosen date and filters survive a trip to another tab; it reloads on return. -->
+        <keep-alive>
+            <RentalDayPanel v-if="tab === 'today'" />
+        </keep-alive>
 
         <!-- ── Board ────────────────────────────────────────────────────── -->
         <!-- Kept alive so flipping to another tab and back doesn't re-fetch the day and lose the
@@ -295,6 +303,62 @@
 
         <!-- ── All Bookings ─────────────────────────────────────────────── -->
         <div v-if="tab === 'bookings'">
+            <!-- A booking opened by id (?open=<rentalId>, from the Today sheet's Open action) is
+                 pinned above the list with the same actions as a row, so it is workable without
+                 first finding it in a paged, filtered list it may not even be on. -->
+            <v-card v-if="openedId" class="pa-3 mb-4 opened-card">
+                <div class="d-flex align-center ga-2 mb-2">
+                    <span class="rp-pill rp-pill--tenant">Opened</span>
+                    <span class="text-body-2 text-medium-emphasis">from the Today sheet</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="closeOpened"></v-btn>
+                </div>
+                <div v-if="openedLoading" class="py-3 text-center">
+                    <v-progress-circular indeterminate size="20"></v-progress-circular>
+                </div>
+                <v-alert v-else-if="openedError" type="error" variant="tonal" density="compact">
+                    {{ openedError }}
+                    <template #append>
+                        <v-btn size="small" variant="text" @click="loadOpened(openedId)">Retry</v-btn>
+                    </template>
+                </v-alert>
+                <div v-else-if="openedRental" class="d-flex ga-4 align-start flex-wrap">
+                    <div style="flex: 1 1 260px">
+                        <div class="d-flex align-center ga-2">
+                            <strong>{{ openedRental.renterName || 'Walk-in' }}</strong>
+                            <span v-if="openedRental.orderNumber != null" class="text-caption text-medium-emphasis">
+                                #{{ openedRental.orderNumber }}
+                            </span>
+                            <v-chip size="x-small" :color="statusColor(openedRental.status)">{{ openedRental.status }}</v-chip>
+                        </div>
+                        <div class="text-caption text-medium-emphasis">
+                            {{ [openedRental.renterPhone, openedRental.renterEmail].filter(Boolean).join(' · ') }}
+                        </div>
+                        <div class="text-caption mt-1">{{ windowLabel(openedRental) }}</div>
+                        <div class="text-caption">{{ itemsLabel(openedRental) || 'No gear on this booking' }}</div>
+                        <div class="text-caption">
+                            {{ money(openedRental.totalCents) }} total ·
+                            {{ money(openedRental.depositCents) }} deposit
+                            <span v-if="openedRental.depositCapturedCents > 0" class="text-error">
+                                (-{{ money(openedRental.depositCapturedCents) }})
+                            </span>
+                        </div>
+                    </div>
+                    <div class="d-flex ga-1 align-center flex-wrap">
+                        <v-btn v-if="openedRental.status === 'paid'" size="small" color="primary" variant="tonal"
+                            :loading="busyId === openedRental.id" @click="checkOut(openedRental)">Check out</v-btn>
+                        <v-btn v-if="openedRental.status === 'paid' || openedRental.status === 'pending'" size="small"
+                            variant="text" prepend-icon="mdi-draw-pen" @click="openSign(openedRental)">Agreement + waiver</v-btn>
+                        <v-btn v-if="openedRental.status === 'out'" size="small" variant="tonal"
+                            @click="openReturn(openedRental)">Return</v-btn>
+                        <v-btn size="small" variant="text" prepend-icon="mdi-camera"
+                            @click="openPhotos(openedRental)">Photos</v-btn>
+                        <v-btn v-if="openedRental.status === 'pending' || openedRental.status === 'paid'" size="small"
+                            variant="text" color="error" @click="cancel(openedRental)">Cancel</v-btn>
+                    </div>
+                </div>
+            </v-card>
+
             <v-card class="pa-3 mb-4">
                 <div class="d-flex ga-3 align-center flex-wrap">
                     <!-- Upcoming first, because "what's coming" is the standing question and
@@ -489,7 +553,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { formatTenantDateTime, tenantWallClockNow, tenantWallClockToMs } from '@/helpers/TenantTime'
 import { BikeShopService, type ShopProduct, type ShopRental, type ShopTaxCategory } from '@/services/BikeShopService'
@@ -500,6 +564,7 @@ import ShopDisplayButton from '@/components/bikeshop/ShopDisplayButton.vue'
 import BookRentalDialog, { type BookRentalPreset } from '@/components/bikeshop/BookRentalDialog.vue'
 import ReturnRentalDialog from '@/components/bikeshop/ReturnRentalDialog.vue'
 import RentalBoardPanel from '@/components/bikeshop/RentalBoardPanel.vue'
+import RentalDayPanel from '@/components/bikeshop/RentalDayPanel.vue'
 import { branding } from '@/stores/branding'
 import { TenantService } from '@/services/TenantService'
 import { useConfirm } from '@/composables/useConfirm'
@@ -733,17 +798,55 @@ async function saveRentalSettings() {
 // ── Fleet tab: rental products with availability + schedule ─────────────────
 // ?tab= opens a specific tab, so links from elsewhere (Shop Settings, the booking dialog's
 // "set the tax rate" prompt) land on the right one instead of dumping you on Bookings.
-// Board first and by default: "what is on the rack right now" is the question the counter opens
-// this screen to answer. The old default (an undated list of every booking) made them read to
-// find it. ?tab= still overrides, which is what the retired /RentalBoard URL redirects into.
-const validTabs = ['board', 'bookings', 'fleet', 'settings'] as const
+// Today first and by default: the counter's opening question is "who is coming today", by name
+// and by program, which is what the day sheet answers. The Board ("which bikes are on the rack at
+// 2pm") was the default before and remains one tap away. The original default, an undated list of
+// every booking, made staff read to find either. ?tab= still overrides, which is what the retired
+// /RentalBoard URL redirects into.
+const validTabs = ['today', 'board', 'bookings', 'fleet', 'settings'] as const
 type RentalTab = typeof validTabs[number]
 const route = useRoute()
+const router = useRouter()
 const tab = ref<RentalTab>(
-    validTabs.includes(route.query.tab as RentalTab) ? route.query.tab as RentalTab : 'board')
+    validTabs.includes(route.query.tab as RentalTab) ? route.query.tab as RentalTab : 'today')
 watch(() => route.query.tab, t => {
     if (validTabs.includes(t as RentalTab)) tab.value = t as RentalTab
 })
+
+// ── ?open=<rentalId>: a booking pinned above the All Bookings list ──────────
+// The Today sheet is read-only and hands off here to work a booking. Fetched by id rather than
+// searched for, because the list below is paged and filtered and the rental may not be on it.
+const openedId = computed(() => typeof route.query.open === 'string' && route.query.open ? route.query.open : null)
+const openedRental = ref<ShopRental | null>(null)
+const openedLoading = ref(false)
+const openedError = ref('')
+
+async function loadOpened(id: string | null) {
+    if (!id) { openedRental.value = null; openedError.value = ''; return }
+    openedLoading.value = true
+    openedError.value = ''
+    try {
+        const r = await service.getRental(id)
+        // Guard against a slower fetch for a booking the user has already moved past.
+        if (openedId.value !== id) return
+        openedRental.value = r.data.data
+    } catch (e: any) {
+        if (openedId.value !== id) return
+        openedRental.value = null
+        openedError.value = e.response?.data?.error
+            || 'Could not open that booking. It may have been removed, or the connection dropped.'
+    } finally {
+        if (openedId.value === id) openedLoading.value = false
+    }
+}
+function closeOpened() {
+    const rest = { ...route.query }
+    delete rest.open
+    router.replace({ path: route.path, query: rest })
+}
+watch([tab, openedId], ([t, id]) => {
+    if (t === 'bookings') loadOpened(id)
+}, { immediate: true })
 // Wall clock AT THE TRACK, not in the browser, matching the Rental Board and the booking dialog.
 // These values are handed straight to the dialog as a preset, so if this seeded browser-local
 // while the dialog read tenant-local, an operator in a different timezone from the track would
@@ -1001,6 +1104,8 @@ async function loadFleet() {
 async function onBookingsChanged() {
     await loadBookings()
     if (fleetLoaded.value) await loadFleet()
+    // The pinned booking shows its own status chip and actions, so it must move with the row.
+    if (openedId.value && tab.value === 'bookings') await loadOpened(openedId.value)
 }
 
 // Each tab loads what it needs the first time it's opened, so landing on the Board doesn't pull
@@ -1032,6 +1137,10 @@ onMounted(() => {
 }
 .fleet-expanded > td {
     background: rgba(var(--v-theme-on-surface), 0.02);
+}
+/* The booking handed over from the Today sheet: an accent edge so it reads as "this one". */
+.opened-card {
+    border-left: 3px solid rgb(var(--v-theme-primary));
 }
 .sp-group-label {
     font-size: 13px;
