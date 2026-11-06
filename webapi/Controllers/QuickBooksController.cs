@@ -29,6 +29,7 @@ namespace webapi.Controllers
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IProfitCenterRepository _profitCenters;
         private readonly IQuickBooksDesktopRepository _desktop;
+        private readonly ICashRepository _cash;
         private readonly ITenantContext _tenantContext;
         private readonly IConfiguration _config;
         private readonly ILogger<QuickBooksController> _logger;
@@ -42,6 +43,7 @@ namespace webapi.Controllers
             ITenantEventTypeRepository eventTypes,
             IProfitCenterRepository profitCenters,
             IQuickBooksDesktopRepository desktop,
+            ICashRepository cash,
             ITenantContext tenantContext,
             IConfiguration config,
             ILogger<QuickBooksController> logger)
@@ -54,6 +56,7 @@ namespace webapi.Controllers
             _eventTypes = eventTypes;
             _profitCenters = profitCenters;
             _desktop = desktop;
+            _cash = cash;
             _tenantContext = tenantContext;
             _config = config;
             _logger = logger;
@@ -672,10 +675,11 @@ namespace webapi.Controllers
         /// turned on, an unmapped slot blocks a day's post, so asking for slots they can't use
         /// would be a permanent, self-inflicted blocker.
         ///
-        /// Mostly a pure read of the tenant's flags, with one database hit: revenue_training is
+        /// Mostly a pure read of the tenant's flags, with two database hits: revenue_training is
         /// required only once the track has actually pointed an event type at it, because that slot
-        /// is opt-in per event type rather than gated by a feature toggle. It is an EXISTS, and the
-        /// two callers are both settings-screen loads.
+        /// is opt-in per event type rather than gated by a feature toggle, and liability_tips_payroll
+        /// only once a manager has actually settled tips through payroll, for the same reason. Both
+        /// are an EXISTS, and the callers are all settings-screen loads.
         /// </summary>
         private async Task<List<string>> RequiredKeys()
         {
@@ -717,7 +721,18 @@ namespace webapi.Controllers
             // Tax and tips can appear on any tenant: admission tax is configured independently of
             // concessions, and a tip can ride any concession sale. Always required.
             keys.Add(QboAccountKeys.LiabilitySalesTax);
-            if (t.ConcessionsEnabled) keys.Add(QboAccountKeys.LiabilityTips);
+            // Tips payable is needed by every tenant that can take a tip (concessions on) and by
+            // every tenant that has ever logged a tip payout, concessions on or off: those rows post
+            // against the slot, so a day holding one cannot post without it even after the feature
+            // is switched off. The payroll slot follows the rows the same way rather than any flag:
+            // tips settled through payroll move out of Tips payable into a wages-payable style
+            // account (Script0296, JournalEntryBuilder), and nothing in the tenant's flags says
+            // whether they ever pay tips that way, so it is demanded exactly when a 'payroll'
+            // tip_payout exists. Asking before the rows exist would block a cash-only track's books
+            // on an account they never use.
+            var tipPayoutSources = await _cash.TipPayoutSources(_tenantContext.TenantId);
+            if (t.ConcessionsEnabled || tipPayoutSources.Count > 0) keys.Add(QboAccountKeys.LiabilityTips);
+            if (tipPayoutSources.Contains("payroll", StringComparer.Ordinal)) keys.Add(QboAccountKeys.LiabilityTipsPayroll);
 
             keys.Add(QboAccountKeys.AssetUndepositedCash);
             keys.Add(QboAccountKeys.ExpenseRidepassFees);

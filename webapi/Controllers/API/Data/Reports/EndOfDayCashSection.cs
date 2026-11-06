@@ -11,5 +11,11 @@ namespace webapi.Controllers.API.Data.Reports
         public long ManagerCountedCents { get; set; }
         /// <summary>Cash tender on the day's sales and refunds, from the ledger: what SHOULD have been in the drawers.</summary>
         public long CashSalesCents { get; set; }
+        /// <summary>
+        /// Cash handed to staff as tips on the date (the ledger's cash 'tip_payout' rows: drawer
+        /// tip-outs at close and manager cash settlements), as a positive figure. Cash that left
+        /// the drawers and is therefore not in the counts above.
+        /// </summary>
+        public long TipsPaidOutCashCents { get; set; }
     }
 }

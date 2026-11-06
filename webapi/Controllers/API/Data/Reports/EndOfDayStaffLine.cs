@@ -11,5 +11,7 @@ namespace webapi.Controllers.API.Data.Reports
         public long GrossCents { get; set; }
         /// <summary>The part of GrossCents taken as cash, which is what this person should be handing in.</summary>
         public long CashCents { get; set; }
+        /// <summary>Tips inside GrossCents, net of refunds. Owed to this person, not revenue.</summary>
+        public long TipCents { get; set; }
     }
 }

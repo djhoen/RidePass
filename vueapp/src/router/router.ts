@@ -582,6 +582,14 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
     },
     {
+        // Tips owed to staff (house-owes balances from shift close) and the manager pay-out log.
+        // Gated on the manager-side cash permission rather than reports.view: paying out moves money.
+        path: '/Admin/Reports/TipsOwed',
+        name: 'AdminReportsTipsOwed',
+        component: () => import('../views/Admin/Reports/TipsOwed.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'cash.reconcile', hideFooter: true }
+    },
+    {
         // Revenue by department. Also a pane in the Reporting hub
         // (/Admin/Reports?report=revenue-by-department); this is the direct-link route, for an
         // owner or bookkeeper who lives on this one page.

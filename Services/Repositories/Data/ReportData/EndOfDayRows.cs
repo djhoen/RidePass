@@ -52,6 +52,8 @@ namespace Services.Repositories.Data.ReportData
         public int RefundCount { get; set; }
         public long GrossCents { get; set; }
         public long CashCents { get; set; }
+        /// <summary>Tips inside GrossCents, net of refunds. The per-seller cut of Totals.TipsCents.</summary>
+        public long TipCents { get; set; }
     }
 
     /// <summary>
@@ -77,6 +79,7 @@ namespace Services.Repositories.Data.ReportData
     public class EndOfDayTurnInRow
     {
         public Guid Id { get; set; }
+        public Guid WorkerUserId { get; set; }
         public string? WorkerName { get; set; }
         public string? ManagerName { get; set; }
         public long? ExpectedCents { get; set; }
@@ -87,6 +90,36 @@ namespace Services.Repositories.Data.ReportData
         public string? Note { get; set; }
         public DateTime SubmittedAt { get; set; }
         public DateTime? ConfirmedAt { get; set; }
+        /// <summary>Shift-close tip snapshot (Script0294): earned, taken from the drawer, and the shortfall the house owes.</summary>
+        public long TipsEarnedCents { get; set; }
+        public long TipsFromDrawerCents { get; set; }
+        public long HouseOwesCents { get; set; }
+    }
+
+    /// <summary>Tips handed to one staff member on the business date, summed per payout source.</summary>
+    public class EndOfDayTipPayoutRow
+    {
+        public Guid UserId { get; set; }
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        /// <summary>drawer | cash | payroll</summary>
+        public string Source { get; set; } = null!;
+        public long AmountCents { get; set; }
+        public int PayoutCount { get; set; }
+    }
+
+    /// <summary>
+    /// Tips one seller earned on the business date, read from their PAID sales by sold_by_user_id.
+    /// A refunded sale has left 'paid' and no longer counts for the seller, which is what keeps a
+    /// refund off the books of whoever happened to process it.
+    /// </summary>
+    public class EndOfDayTipsBySellerRow
+    {
+        public Guid UserId { get; set; }
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        public long TipCents { get; set; }
+        public int SaleCount { get; set; }
     }
 
     /// <summary>

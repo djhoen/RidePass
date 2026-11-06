@@ -817,6 +817,110 @@ namespace UnitTests
             Assert.That(revenue.IsDebit, Is.True, "the day net-refunded, so revenue lands on the debit side");
             Assert.That(revenue.ClassId, Is.EqualTo("food"));
         }
+
+        // ── Tip payouts: cash out of the drawer against Tips payable ─────────────────────
+
+        [Test]
+        public void TipPayout_DischargesTipsPayableFromCash_LiabilityNetsToTipMinusPayout()
+        {
+            // A $50 cash F&B sale carrying a $5 tip, then the cashier takes $3 of it out of the drawer
+            // at shift close. CashController writes the payout row exactly as the Script0294 header
+            // says (entry_kind tip_payout, cash, gross -300, fee/cut/net 0) and Script0295 makes
+            // v_accounting_entries report the whole negative gross as tip_cents.
+            //
+            // No special case was needed in the builder, which is why none was added: AccrueSale's
+            // revenue term is gross - tax - tip = -300 - 0 - (-300) = 0 (so nothing posts to
+            // revenue_other), the -tip term debits Tips payable 300, and the cash term credits Cash on
+            // hand 300. This test is the tripwire that keeps it so.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "concession", gross: 5000, fee: 0, cut: 150, net: -150, tip: 500, paymentMethod: "cash"),
+                    Sale(sourceKind: "tip_payout", entryKind: "tip_payout", gross: -300, tip: -300, paymentMethod: "cash"),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTips), Is.EqualTo(-200), "tips payable nets to the $5 collected less the $3 paid out");
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(4700), "the drawer holds the $50 taken less the $3 handed to staff");
+            Assert.That(Signed(d, QboAccountKeys.RevenueConcession), Is.EqualTo(-4500), "revenue is untouched by the payout");
+            Assert.That(d.Lines.Any(l => l.AccountKey == QboAccountKeys.RevenueOther), Is.False,
+                "a payout row must not surface as a revenue_other line of either sign");
+        }
+
+        [Test]
+        public void TipPayout_Alone_IsDebitTipsPayableCreditCash()
+        {
+            // A manager settling last week's house-owes in cash on a day with no sales: the only
+            // movement is the liability going down and cash going out, and the day still balances.
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "tip_payout", entryKind: "tip_payout", gross: -1250, tip: -1250, paymentMethod: "cash") },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Count, Is.EqualTo(2));
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTips), Is.EqualTo(1250), "liability discharged");
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(-1250), "cash left the drawer");
+        }
+
+        // ── Tip payouts through payroll: a liability moves, no money does ───────────────
+
+        [Test]
+        public void PayrollTipPayout_MovesTipsPayableToPayroll_TouchesNoCashRevenueOrFees()
+        {
+            // A manager settles $4.00 of house-owes through payroll (CashController.PayTipsOwed,
+            // source 'payroll'). The row is the cash payout's shape with payment_method 'payroll'
+            // and no sold_by. The worker is paid by the payroll run, not from a drawer, so Tips
+            // payable goes down and the same amount goes to the wages-payable style slot the
+            // payroll posting clears. Nothing else may move: no cash, no receivable, no fee lines,
+            // and no revenue of either sign.
+            var d = JournalEntryBuilder.Build(
+                new[] { Sale(sourceKind: "tip_payout", entryKind: "tip_payout", gross: -400, tip: -400, paymentMethod: "payroll") },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(d.Lines.Count, Is.EqualTo(2));
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTips), Is.EqualTo(400), "DR Tips payable");
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTipsPayroll), Is.EqualTo(-400), "CR Tips moved to payroll");
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(0), "no cash moved");
+            Assert.That(Signed(d, QboAccountKeys.AssetRidepassReceivable), Is.EqualTo(0), "no platform settlement");
+            Assert.That(Signed(d, QboAccountKeys.ExpenseStripeFees) + Signed(d, QboAccountKeys.ExpenseRidepassFees), Is.EqualTo(0), "no fees");
+            Assert.That(d.Lines.Any(l => l.AccountKey.StartsWith("revenue_")), Is.False, "never revenue");
+        }
+
+        [Test]
+        public void ADayWithCashAndPayrollPayouts_LeavesTipsPayableAtTipsLessBothPayouts()
+        {
+            // $5 tip collected in cash, $3 taken from the drawer at close, the remaining $2 of
+            // house-owes later moved to payroll. Tips payable must net to zero: every cent collected
+            // has been handed over or handed to payroll. Cash on hand drops only by the $3 that
+            // physically left a drawer.
+            var d = JournalEntryBuilder.Build(
+                new[]
+                {
+                    Sale(sourceKind: "concession", gross: 5000, fee: 0, cut: 150, net: -150, tip: 500, paymentMethod: "cash"),
+                    Sale(sourceKind: "tip_payout", entryKind: "tip_payout", gross: -300, tip: -300, paymentMethod: "cash"),
+                    Sale(sourceKind: "tip_payout", entryKind: "tip_payout", gross: -200, tip: -200, paymentMethod: "payroll"),
+                },
+                Day);
+
+            AssertBalanced(d);
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTips), Is.EqualTo(0), "all $5 of tips have left Tips payable");
+            Assert.That(Signed(d, QboAccountKeys.LiabilityTipsPayroll), Is.EqualTo(-200), "the $2 waits in the payroll slot");
+            Assert.That(Signed(d, QboAccountKeys.AssetUndepositedCash), Is.EqualTo(4700), "only the drawer tip-out left the till");
+            Assert.That(Signed(d, QboAccountKeys.RevenueConcession), Is.EqualTo(-4500), "revenue is untouched by either payout");
+        }
+
+        [Test]
+        public void LiabilityTipsPayroll_SitsRightAfterTipsPayable_InTheSettingsOrder()
+        {
+            // QboAccountKeys.All is the settings screen's render order and the journal's line order.
+            // The payroll slot belongs next to the liability it is carved out of; and because keys
+            // are persisted in qbo_account_mapping, the string itself is pinned here.
+            var all = QboAccountKeys.All.ToList();
+            Assert.That(QboAccountKeys.LiabilityTipsPayroll, Is.EqualTo("liability_tips_payroll"));
+            Assert.That(all.IndexOf(QboAccountKeys.LiabilityTipsPayroll), Is.EqualTo(all.IndexOf(QboAccountKeys.LiabilityTips) + 1));
+            Assert.That(QboAccountKeys.Label(QboAccountKeys.LiabilityTipsPayroll), Is.EqualTo("Tips moved to payroll (wages payable)"));
+        }
     }
 }
-

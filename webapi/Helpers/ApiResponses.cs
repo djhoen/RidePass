@@ -22,6 +22,18 @@ namespace Services.Helpers
             return BadRequest(response);
         }
 
+        // 400 that also carries data: for a rejection the client can recover from on its own,
+        // such as "the figures moved; here are the fresh ones". Same envelope, Data filled in.
+        public IActionResult BadRequestResult(string error, object data)
+        {
+            APIResponse response = new APIResponse();
+            response.Status = BadRequest().StatusCode.ToString();
+            response.Message = APIResponseMessage.Fail;
+            response.Error = error ?? "";
+            response.Data = data;
+            return BadRequest(response);
+        }
+
         public IActionResult NotFoundResult(object obj = null)
         {
             APIResponse response = new APIResponse();

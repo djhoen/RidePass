@@ -18,6 +18,15 @@ namespace Services.Helpers.Interfaces
         Task ExecuteBatch(IReadOnlyList<(string Sql, object? Param)> statements, int timeout = 60);
 
         /// <summary>
+        /// Runs <paramref name="work"/> on one open connection inside one transaction, for a unit
+        /// of work whose later statements depend on what earlier ones RETURN (ExecuteBatch can only
+        /// replay a fixed list). Commits when the work returns; rolls back and rethrows when it
+        /// throws, so work that decides to abort simply throws. The work calls Dapper on the
+        /// connection it is given and must pass the transaction to every call.
+        /// </summary>
+        Task<T> WithTransaction<T>(Func<System.Data.IDbConnection, System.Data.IDbTransaction, Task<T>> work);
+
+        /// <summary>
         /// Acquires a session-level Postgres advisory lock on a dedicated connection and
         /// returns a handle that releases it on disposal. Concurrent callers that pass the
         /// same key serialize, which lets a capacity check and the row insert that follows

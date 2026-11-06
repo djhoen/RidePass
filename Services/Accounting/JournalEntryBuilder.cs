@@ -187,7 +187,17 @@ namespace Services.Accounting
             return draft;
         }
 
-        /// <summary>Sales, refunds, chargebacks, and the platform's own charges.</summary>
+        /// <summary>
+        /// Sales, refunds, chargebacks, the platform's own charges, and tip payouts.
+        ///
+        /// A tip payout row (entry_kind 'tip_payout') needs no case of its own on the cash path:
+        /// v_accounting_entries reports its whole negative gross as tip_cents, so the revenue term
+        /// is zero, the -tip term debits Tips payable, and the cash term credits Cash on hand. A
+        /// PAYROLL payout is the one tender that moves no money here: the tips leave Tips payable
+        /// the moment the payout is logged, but the worker is paid by the payroll run, so the
+        /// obligation moves to a wages-payable style account (<see cref="QboAccountKeys.LiabilityTipsPayroll"/>)
+        /// that the tenant's payroll posting clears. No cash, no receivable, no fees.
+        /// </summary>
         private static void AccrueSale(Action<string, long> add, AccountingEntry e)
         {
             // ── Credit side: what was earned (or owed onward) ───────────────────────────
@@ -208,6 +218,14 @@ namespace Services.Accounting
                 add(QboAccountKeys.EffectiveRevenueKey(e.SourceKind, e.RevenueKeyOverride), -revenue);
                 add(QboAccountKeys.LiabilitySalesTax, -e.TaxCents);
                 add(QboAccountKeys.LiabilityTips, -e.TipCents);
+            }
+
+            if (e.PaymentMethod == "payroll")
+            {
+                // Tips moved to payroll: gross is negative, so this is the credit that balances the
+                // Tips payable debit above. Nothing funded it, so no tender or fee line applies.
+                add(QboAccountKeys.LiabilityTipsPayroll, e.GrossCents);
+                return;
             }
 
             // ── Debit side: what funded it ──────────────────────────────────────────────

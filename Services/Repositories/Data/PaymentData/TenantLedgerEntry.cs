@@ -4,8 +4,8 @@
     {
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
-        public string EntryKind { get; set; } = null!;     // sale | refund | dispute_loss | adjustment
-        public string? SourceKind { get; set; }            // pass | event_ticket | null
+        public string EntryKind { get; set; } = null!;     // sale | refund | dispute_loss | dispute_fee | adjustment | sms_charge | email_charge | tip_payout
+        public string? SourceKind { get; set; }            // pass | event_ticket | ... | tip_payout | null
         public Guid? SourceId { get; set; }
         public DateTime OccurredAtUtc { get; set; }
         public int GrossCents { get; set; }
@@ -17,8 +17,8 @@
         public string? StripePaymentIntentId { get; set; }
         public Guid? PayoutId { get; set; }
         public string? Memo { get; set; }
-        public string PaymentMethod { get; set; } = "stripe";    // stripe | cash | voucher
-        public Guid? SoldByUserId { get; set; }                  // cashier (sale) / refunder (refund); null for online sales
+        public string PaymentMethod { get; set; } = "stripe";    // stripe | cash | voucher | ... | payroll (tip_payout only)
+        public Guid? SoldByUserId { get; set; }                  // cashier (sale) / refunder (refund) / whose drawer a tip payout left; null for online sales and payroll
         public DateTime CreatedAt { get; set; }
     }
 

@@ -75,6 +75,7 @@ namespace webapi.Helpers
             csv.Row("Opening floats", CsvWriter.Money(r.Cash.OpeningFloatCents));
             csv.Row("Worker counted", CsvWriter.Money(r.Cash.WorkerCountedCents));
             csv.Row("Manager counted", CsvWriter.Money(r.Cash.ManagerCountedCents));
+            csv.Row("Tips paid out (cash)", CsvWriter.Money(r.Cash.TipsPaidOutCashCents));
             if (r.Cash.Sessions.Count > 0)
             {
                 csv.Blank();
@@ -91,7 +92,7 @@ namespace webapi.Helpers
             {
                 csv.Blank();
                 csv.Row("Turn-ins");
-                csv.Row("Worker", "Manager", "Expected", "Worker counted", "Manager counted", "Variance", "Status", "Submitted (UTC)", "Confirmed (UTC)", "Note");
+                csv.Row("Worker", "Manager", "Expected", "Worker counted", "Manager counted", "Variance", "Tips taken", "House owes", "Status", "Submitted (UTC)", "Confirmed (UTC)", "Note");
                 foreach (var t in r.Cash.TurnIns)
                 {
                     csv.Row(t.WorkerName, t.ManagerName,
@@ -99,10 +100,29 @@ namespace webapi.Helpers
                         CsvWriter.Money(t.WorkerCountedCents),
                         t.ManagerCountedCents.HasValue ? CsvWriter.Money(t.ManagerCountedCents.Value) : "",
                         t.VarianceCents.HasValue ? CsvWriter.Money(t.VarianceCents.Value) : "",
+                        CsvWriter.Money(t.TipsFromDrawerCents),
+                        CsvWriter.Money(t.HouseOwesCents),
                         t.Status,
                         t.SubmittedAtUtc.ToString("yyyy-MM-dd HH:mm:ss"),
                         t.ConfirmedAtUtc.HasValue ? t.ConfirmedAtUtc.Value.ToString("yyyy-MM-dd HH:mm:ss") : "",
                         t.Note);
+                }
+            }
+
+            csv.Blank();
+            csv.Title("Tips");
+            csv.Row("Tips earned", CsvWriter.Money(r.Tips.EarnedCents));
+            csv.Row("Paid from drawers", CsvWriter.Money(r.Tips.PaidFromDrawerCents));
+            csv.Row("Paid by a manager", CsvWriter.Money(r.Tips.PaidByManagerCents));
+            csv.Row("Still owed to staff (all time)", CsvWriter.Money(r.Tips.OwedOutstandingCents));
+            if (r.Tips.ByWorker.Count > 0)
+            {
+                csv.Blank();
+                csv.Row("Worker", "Earned", "From drawer", "House owes", "Settled today");
+                foreach (var w in r.Tips.ByWorker)
+                {
+                    csv.Row(w.Name, CsvWriter.Money(w.EarnedCents), CsvWriter.Money(w.FromDrawerCents),
+                        CsvWriter.Money(w.HouseOwesCents), CsvWriter.Money(w.SettledTodayCents));
                 }
             }
 

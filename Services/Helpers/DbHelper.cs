@@ -89,6 +89,24 @@ namespace Services.Helpers
             }
         }
 
+        public async Task<T> WithTransaction<T>(Func<System.Data.IDbConnection, System.Data.IDbTransaction, Task<T>> work)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+            await using var tx = await conn.BeginTransactionAsync();
+            try
+            {
+                var result = await work(conn, tx);
+                await tx.CommitAsync();
+                return result;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+
         public async Task<IEnumerable<T>> Query<T>(string sql, object? param = null, int timeout = DEFAULT_TIMEOUT)
         {
             using var dbConnection = new NpgsqlConnection(ConnectionString);

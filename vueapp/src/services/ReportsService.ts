@@ -138,6 +138,10 @@ export interface EndOfDayCashTurnIn {
     note: string | null
     submittedAtUtc: string
     confirmedAtUtc: string | null
+    // Shift-close tip figures snapshotted on the turn-in. Optional: absent from an API that
+    // predates tips tracking.
+    tipsFromDrawerCents: number
+    houseOwesCents: number
 }
 export interface EndOfDayCashSection {
     sessions: EndOfDayCashSession[]
@@ -146,6 +150,25 @@ export interface EndOfDayCashSection {
     workerCountedCents: number
     managerCountedCents: number
     cashSalesCents: number
+    // Cash paid out as tips that business day (drawer tip-outs and manager cash payouts).
+    tipsPaidOutCashCents: number
+}
+// Tips for the business day: earned (the same figure as totals.tipsCents), what staff took from
+// their drawers at close, what managers settled, and the all-time house-owes balance as of now.
+export interface EndOfDayTipsWorker {
+    userId: string
+    name: string
+    earnedCents: number
+    fromDrawerCents: number
+    houseOwesCents: number
+    settledTodayCents: number
+}
+export interface EndOfDayTipsSection {
+    earnedCents: number
+    paidFromDrawerCents: number
+    paidByManagerCents: number
+    owedOutstandingCents: number
+    byWorker: EndOfDayTipsWorker[]
 }
 export interface EndOfDayQuickBooksStatus {
     connected: boolean
@@ -169,6 +192,8 @@ export interface EndOfDayReport {
     tenders: EndOfDayTenderLine[]
     staff: EndOfDayStaffLine[]
     cash: EndOfDayCashSection
+    // Optional so the page still renders against an API without the tips block.
+    tips: EndOfDayTipsSection
     quickBooks: EndOfDayQuickBooksStatus
 }
 

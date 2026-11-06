@@ -429,6 +429,7 @@ const allGroups: AdminGroup[] = [
         icon: 'mdi-calculator-variant-outline',
         links: [
             { to: '/Admin/Reports?report=end-of-day', icon: 'mdi-cash-register', title: 'End of Day', perm: Perm.ReportsView, exactQuery: true },
+            { to: '/Admin/Reports/TipsOwed', icon: 'mdi-hand-coin-outline', title: 'Tips owed', perm: Perm.CashReconcile },
             { to: '/Admin/Reports?report=revenue-by-department', icon: 'mdi-office-building-outline', title: 'Revenue by Department', perm: Perm.ReportsView, exactQuery: true },
             { to: '/Admin/Reports?report=tax', icon: 'mdi-receipt-text-outline', title: 'Tax', perm: Perm.ReportsView, exactQuery: true },
             { to: '/Admin/Reports?report=sales-summary', icon: 'mdi-chart-line', title: 'Sales Summary', perm: Perm.ReportsView, exactQuery: true },

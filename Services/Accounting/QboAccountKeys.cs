@@ -49,6 +49,14 @@ namespace Services.Accounting
         /// <summary>Tips collected for staff. Owed out, not earned.</summary>
         public const string LiabilityTips = "liability_tips";
         /// <summary>
+        /// Tips a manager settled through payroll rather than in cash (tip_payout source 'payroll').
+        /// They leave <see cref="LiabilityTips"/> the moment the payout is logged, but no money has
+        /// moved yet: the obligation now sits with the payroll run, so it lands in this
+        /// wages-payable style slot and the tenant's payroll posting clears it. Only asked for once
+        /// a tenant has actually made such a payout (QuickBooksController.RequiredKeys).
+        /// </summary>
+        public const string LiabilityTipsPayroll = "liability_tips_payroll";
+        /// <summary>
         /// Unredeemed gift card value. Credited when a card is SOLD, debited as it's redeemed, which
         /// is what stops a gift card being booked as revenue twice (once on sale, once on redemption).
         /// </summary>
@@ -83,7 +91,7 @@ namespace Services.Accounting
             RevenueEventTicket, RevenueTraining, RevenueEventExtra, RevenueSeasonPass, RevenueMembership,
             RevenueRental, RevenueConcession, RevenueBikeShop, RevenueBikeShopRental,
             RevenueDepositForfeited, RevenueOther,
-            LiabilitySalesTax, LiabilityTips, LiabilityGiftCard, LiabilityRentalDeposit,
+            LiabilitySalesTax, LiabilityTips, LiabilityTipsPayroll, LiabilityGiftCard, LiabilityRentalDeposit,
             AssetRidepassReceivable, AssetStripeClearing, AssetUndepositedCash,
             ExpenseStripeFees, ExpenseRidepassFees,
         };
@@ -156,6 +164,7 @@ namespace Services.Accounting
             RevenueOther            => "Other revenue",
             LiabilitySalesTax       => "Sales tax payable",
             LiabilityTips           => "Tips payable",
+            LiabilityTipsPayroll    => "Tips moved to payroll (wages payable)",
             LiabilityGiftCard       => "Gift card liability",
             LiabilityRentalDeposit  => "Rental deposits held",
             AssetRidepassReceivable => "RidePass receivable (undeposited funds)",

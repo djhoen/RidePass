@@ -1491,23 +1491,15 @@ namespace webapi.Controllers
             catch { return null; }
         }
 
-        private TimeZoneInfo TenantTz()
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById(_tenantContext.Tenant.Timezone ?? "UTC"); }
-            catch { return TimeZoneInfo.Utc; }
-        }
+        private TimeZoneInfo TenantTz() => Services.Helpers.TenantClock.Resolve(_tenantContext.Tenant.Timezone);
 
         // "Today" as a date in the tenant's timezone (for 86 / availability / validity-window checks). The
         // stored 86 sold_out_date is compared by .Date, so this keeps the 86 valid until LOCAL midnight.
         private DateTime TenantToday() => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TenantTz()).Date;
 
         // Start of "today" in the tenant's timezone, as a UTC instant (for daily stats windows).
-        private DateTime TenantTodayStartUtc()
-        {
-            var tz = TenantTz();
-            var localMidnight = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
-            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localMidnight, DateTimeKind.Unspecified), tz);
-        }
+        private DateTime TenantTodayStartUtc() =>
+            Services.Helpers.TenantClock.BusinessDayStartUtc(_tenantContext.Tenant.Timezone, DateTime.UtcNow);
 
         // Is online ordering open right now? Null/empty schedule = always open. Evaluated in tenant tz.
         private bool IsOrderingOpen(List<ConcessionOrderingHoursDay>? hours)

@@ -19,5 +19,11 @@ namespace webapi.Controllers.API.Data.Reports
         public string? Note { get; set; }
         public DateTime SubmittedAtUtc { get; set; }
         public DateTime? ConfirmedAtUtc { get; set; }
+        /// <summary>Tips earned over the shift, as snapshotted at close.</summary>
+        public long TipsEarnedCents { get; set; }
+        /// <summary>Tips the worker took out of the drawer in cash at close.</summary>
+        public long TipsFromDrawerCents { get; set; }
+        /// <summary>TipsEarned minus TipsFromDrawer: what the house still owed them for this shift.</summary>
+        public long HouseOwesCents { get; set; }
     }
 }

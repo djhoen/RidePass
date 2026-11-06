@@ -63,12 +63,21 @@ namespace Services.Repositories
             return (await _db.Query<TenantPayout>(sql, new { externalReference })).FirstOrDefault();
         }
 
+        // Tip payouts (entry_kind 'tip_payout', Script0294) never belong on a platform payout: they
+        // move the tenant's OWN cash (or their payroll) against their own Tips payable, and the
+        // platform never touched that money. They are written with net 0, so they would not change
+        // what is paid, but they would still be attached, listed, and summed into the adjustments
+        // line as if RidePass had collected and remitted them. The same predicate keeps them out
+        // of all three places so an attached payout and its listing can never disagree.
+        private const string NotATipPayout = "entry_kind IS DISTINCT FROM 'tip_payout'";
+
         public async Task<List<TenantLedgerEntry>> ListEntriesForPayout(Guid payoutId)
         {
             var sql = $@"
                 SELECT {LedgerColumns}
                 FROM tenant_ledger_entry
                 WHERE payout_id = @payoutId
+                  AND {NotATipPayout}
                 ORDER BY occurred_at_utc";
             return (await _db.Query<TenantLedgerEntry>(sql, new { payoutId })).ToList();
         }
@@ -95,13 +104,15 @@ namespace Services.Repositories
             // Exclude direct-charge entries: those sales were charged on the tenant's own Stripe
             // account, so the tenant already holds the funds and there is nothing for the platform to
             // pay out. Their ridepass_cut is our application-fee revenue (collected by Stripe
-            // directly), not a payout line.
-            const string sql = @"
+            // directly), not a payout line. Tip payouts are excluded for the reason above
+            // NotATipPayout gives.
+            var sql = $@"
                 UPDATE tenant_ledger_entry
                 SET payout_id = @payoutId
                 WHERE tenant_id = @tenantId
                   AND payout_id IS NULL
                   AND payment_method IS DISTINCT FROM 'stripe_direct'
+                  AND {NotATipPayout}
                   AND occurred_at_utc >= @fromUtc
                   AND occurred_at_utc < @toUtc";
             return await _db.Execute(sql, new { payoutId, tenantId, fromUtc, toUtc });
@@ -109,7 +120,9 @@ namespace Services.Repositories
 
         public async Task RefreshTotals(Guid payoutId)
         {
-            const string sql = @"
+            // Tip payouts are kept out of the sums as well (see NotATipPayout): a stray attached
+            // row must not show up as a negative adjustment on the statement.
+            var sql = $@"
                 UPDATE tenant_payout p
                 SET total_gross_cents = COALESCE(s.total_gross, 0),
                     total_stripe_fee_cents = COALESCE(s.total_stripe, 0),
@@ -125,6 +138,7 @@ namespace Services.Repositories
                         SUM(net_to_tenant_cents)::int AS total_net
                     FROM tenant_ledger_entry
                     WHERE payout_id = @payoutId
+                      AND {NotATipPayout}
                 ) s
                 WHERE p.id = @payoutId";
             await _db.Execute(sql, new { payoutId });

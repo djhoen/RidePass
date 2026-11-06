@@ -65,7 +65,10 @@ namespace Services.Repositories
                        -- turn-in: a counter sale part-funded by a gift card never put that part in
                        -- the till. Same subtraction the cash tender line makes.
                        COALESCE(SUM(v.gross_cents - v.gift_card_applied_cents)
-                                FILTER (WHERE v.payment_method = 'cash'), 0)::bigint AS CashCents
+                                FILTER (WHERE v.payment_method = 'cash'), 0)::bigint AS CashCents,
+                       -- The seller's share of the day's tips, from the same prorated column
+                       -- Totals.TipsCents sums, so the by-worker tips table adds up to it.
+                       COALESCE(SUM(v.tip_cents), 0)::bigint AS TipCents
                 FROM v_accounting_entries v
                 JOIN tenant_ledger_entry l
                       ON l.id = v.ledger_entry_id
@@ -108,6 +111,7 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT t.id                         AS Id,
+                       t.worker_user_id             AS WorkerUserId,
                        NULLIF(TRIM(COALESCE(w.first_name, '') || ' ' || COALESCE(w.last_name, '')), '') AS WorkerName,
                        NULLIF(TRIM(COALESCE(m.first_name, '') || ' ' || COALESCE(m.last_name, '')), '') AS ManagerName,
                        t.expected_cents::bigint         AS ExpectedCents,
@@ -117,7 +121,10 @@ namespace Services.Repositories
                        t.status                     AS Status,
                        t.note                       AS Note,
                        t.submitted_at               AS SubmittedAt,
-                       t.confirmed_at               AS ConfirmedAt
+                       t.confirmed_at               AS ConfirmedAt,
+                       t.tips_earned_cents::bigint      AS TipsEarnedCents,
+                       t.tips_from_drawer_cents::bigint AS TipsFromDrawerCents,
+                       t.house_owes_cents::bigint       AS HouseOwesCents
                 FROM cash_turn_in t
                 LEFT JOIN users w ON w.id = t.worker_user_id
                 LEFT JOIN users m ON m.id = t.manager_user_id
@@ -125,6 +132,54 @@ namespace Services.Repositories
                   AND (t.submitted_at AT TIME ZONE @timezone)::date = @businessDate
                 ORDER BY t.submitted_at";
             return (await _db.Query<EndOfDayTurnInRow>(sql, new { tenantId, businessDate, timezone })).ToList();
+        }
+
+        // Tips handed to staff on the business date, per recipient and source. tip_payout has no
+        // business_date column, so the day is the tenant's local date of created_at, the same
+        // derivation the two cash queries above use. The users join follows an id already scoped
+        // by p.tenant_id, as in GetDayStaff.
+        public async Task<List<EndOfDayTipPayoutRow>> GetDayTipPayouts(Guid tenantId, DateOnly businessDate, string timezone)
+        {
+            const string sql = @"
+                SELECT p.user_id                            AS UserId,
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email                              AS Email,
+                       p.source                             AS Source,
+                       COALESCE(SUM(p.amount_cents), 0)::bigint AS AmountCents,
+                       COUNT(*)::int                        AS PayoutCount
+                FROM tip_payout p
+                LEFT JOIN users u ON u.id = p.user_id
+                WHERE p.tenant_id = @tenantId
+                  AND (p.created_at AT TIME ZONE @timezone)::date = @businessDate
+                GROUP BY p.user_id, u.first_name, u.last_name, u.email, p.source";
+            return (await _db.Query<EndOfDayTipPayoutRow>(sql, new { tenantId, businessDate, timezone })).ToList();
+        }
+
+        // Tips each seller earned on the business date, read from the sales themselves rather than
+        // the ledger: a refund's ledger row is attributed to whoever processed the refund, so the
+        // view's per-seller tip figure would credit the refund to the wrong person. Counting only
+        // PAID sales by sold_by_user_id gets it right by construction (a refunded sale has left
+        // 'paid', so its tip simply no longer counts for the seller who rang it). The day is the
+        // tenant's local date the sale was paid (a tab is tipped when it closes), the same clock the
+        // claim pool and the cash queries above use. The users join follows an id already scoped
+        // by cs.tenant_id, as in GetDayStaff.
+        public async Task<List<EndOfDayTipsBySellerRow>> GetDayTipsBySeller(Guid tenantId, DateOnly businessDate, string timezone)
+        {
+            const string sql = @"
+                SELECT cs.sold_by_user_id                    AS UserId,
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email                              AS Email,
+                       COALESCE(SUM(cs.tip_cents), 0)::bigint AS TipCents,
+                       COUNT(*)::int                        AS SaleCount
+                FROM concession_sale cs
+                LEFT JOIN users u ON u.id = cs.sold_by_user_id
+                WHERE cs.tenant_id = @tenantId
+                  AND cs.status = 'paid'
+                  AND cs.tip_cents > 0
+                  AND cs.sold_by_user_id IS NOT NULL
+                  AND (COALESCE(cs.paid_at, cs.created_at) AT TIME ZONE @timezone)::date = @businessDate
+                GROUP BY cs.sold_by_user_id, u.first_name, u.last_name, u.email";
+            return (await _db.Query<EndOfDayTipsBySellerRow>(sql, new { tenantId, businessDate, timezone })).ToList();
         }
 
         // Ranged on occurred_at_utc rather than business_date so the caller's UTC window (the same

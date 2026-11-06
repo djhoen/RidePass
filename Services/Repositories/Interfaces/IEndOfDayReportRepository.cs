@@ -29,6 +29,16 @@ namespace Services.Repositories.Interfaces
         /// <summary>Turn-ins SUBMITTED on the date, in the tenant's own timezone.</summary>
         Task<List<EndOfDayTurnInRow>> GetDayCashTurnIns(Guid tenantId, DateOnly businessDate, string timezone);
 
+        /// <summary>Tip payouts CREATED on the date, in the tenant's own timezone, summed per recipient and source.</summary>
+        Task<List<EndOfDayTipPayoutRow>> GetDayTipPayouts(Guid tenantId, DateOnly businessDate, string timezone);
+
+        /// <summary>
+        /// Tips per SELLER on the date (paid sales by sold_by_user_id, tenant-local date of
+        /// payment). The source of the End of Day by-worker tips table: unlike the ledger view, a
+        /// refund can never land on whoever processed it instead of whoever rang the sale.
+        /// </summary>
+        Task<List<EndOfDayTipsBySellerRow>> GetDayTipsBySeller(Guid tenantId, DateOnly businessDate, string timezone);
+
         /// <summary>
         /// Sales tax on sale and refund rows in a UTC range, grouped by business date, source kind
         /// and entry kind. Refunds carry negative tax so a plain SUM is the net remittable figure.

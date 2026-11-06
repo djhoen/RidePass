@@ -22,6 +22,8 @@ namespace webapi.Controllers.API.Data.Reports
         public List<EndOfDayTenderLine> Tenders { get; set; } = new();
         public List<EndOfDayStaffLine> Staff { get; set; } = new();
         public EndOfDayCashSection Cash { get; set; } = new();
+        /// <summary>Tips earned, paid out and still owed to staff. See <see cref="EndOfDayTipsSection"/>.</summary>
+        public EndOfDayTipsSection Tips { get; set; } = new();
         public EndOfDayQuickBooksStatus QuickBooks { get; set; } = new();
 
         /// <summary>

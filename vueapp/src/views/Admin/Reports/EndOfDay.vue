@@ -250,6 +250,12 @@
                             <div class="text-caption text-medium-emphasis">Manager counted</div>
                             <div class="text-h6">{{ money(report.cash.managerCountedCents) }}</div>
                         </v-col>
+                        <!-- Cash that left a drawer or the safe as tips today, whether or not the payer had a
+                             session open. Without it a manager paying from the safe would vanish from the day. -->
+                        <v-col cols="6" md="3">
+                            <div class="text-caption text-medium-emphasis">Tips paid out (cash)</div>
+                            <div class="text-h6">{{ money(report.cash.tipsPaidOutCashCents) }}</div>
+                        </v-col>
                     </v-row>
                 </v-card-text>
 
@@ -287,6 +293,8 @@
                                 <th>Worker</th>
                                 <th>Manager</th>
                                 <th class="text-right" style="width: 120px">Counted</th>
+                                <th class="text-right" style="width: 110px">Tips taken</th>
+                                <th class="text-right" style="width: 110px">House owes</th>
                                 <th class="text-right" style="width: 130px">Manager count</th>
                                 <th class="text-right" style="width: 120px">Variance</th>
                                 <th style="width: 110px">Status</th>
@@ -298,6 +306,8 @@
                                 <td>{{ t.workerName }}</td>
                                 <td>{{ t.managerName || '-' }}</td>
                                 <td class="text-right">{{ money(t.workerCountedCents) }}</td>
+                                <td class="text-right">{{ money(t.tipsFromDrawerCents) }}</td>
+                                <td class="text-right">{{ money(t.houseOwesCents) }}</td>
                                 <td class="text-right">
                                     {{ t.managerCountedCents === null ? '-' : money(t.managerCountedCents) }}
                                 </td>
@@ -306,6 +316,66 @@
                                 </td>
                                 <td>{{ t.status }}</td>
                                 <td>{{ formatTenantDateTime(t.submittedAtUtc) }}</td>
+                            </tr>
+                        </tbody>
+                    </v-table>
+                </template>
+            </v-card>
+
+            <!-- Tips: earned, taken from drawers at shift close, settled by managers, and the running
+                 house-owes balance. Hidden, like the Cash card, on a day with nothing to show. -->
+            <v-card v-if="showTips" class="mb-4">
+                <v-card-title class="text-subtitle-1 d-flex align-center">
+                    Tips
+                    <v-spacer></v-spacer>
+                    <v-btn v-if="report.tips.owedOutstandingCents > 0 && canReconcile" class="no-print" variant="text"
+                        color="primary" size="small" to="/Admin/Reports/TipsOwed">Pay out tips owed</v-btn>
+                </v-card-title>
+                <v-card-subtitle class="pb-2">
+                    Staff take their tips in cash from the drawer at shift close; whatever the drawer could not cover is
+                    owed to them until a manager pays it out.
+                </v-card-subtitle>
+                <v-card-text class="pb-0">
+                    <v-row dense>
+                        <v-col cols="6" md="3">
+                            <div class="text-caption text-medium-emphasis">Earned</div>
+                            <div class="text-h6">{{ money(report.tips.earnedCents) }}</div>
+                        </v-col>
+                        <v-col cols="6" md="3">
+                            <div class="text-caption text-medium-emphasis">Paid from drawers</div>
+                            <div class="text-h6">{{ money(report.tips.paidFromDrawerCents) }}</div>
+                        </v-col>
+                        <v-col cols="6" md="3">
+                            <div class="text-caption text-medium-emphasis">Paid by managers</div>
+                            <div class="text-h6">{{ money(report.tips.paidByManagerCents) }}</div>
+                        </v-col>
+                        <v-col cols="6" md="3">
+                            <div class="text-caption text-medium-emphasis">Owed outstanding</div>
+                            <div class="text-h6">{{ money(report.tips.owedOutstandingCents) }}</div>
+                            <div class="text-caption text-medium-emphasis">all shifts, as of now</div>
+                        </v-col>
+                    </v-row>
+                </v-card-text>
+
+                <template v-if="report.tips.byWorker.length">
+                    <v-card-subtitle class="pt-4 pb-2">By worker</v-card-subtitle>
+                    <v-table density="compact">
+                        <thead>
+                            <tr>
+                                <th>Worker</th>
+                                <th class="text-right" style="width: 120px">Earned</th>
+                                <th class="text-right" style="width: 130px">From drawer</th>
+                                <th class="text-right" style="width: 130px">House owes</th>
+                                <th class="text-right" style="width: 140px">Settled today</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="w in report.tips.byWorker" :key="w.userId">
+                                <td>{{ w.name }}</td>
+                                <td class="text-right">{{ money(w.earnedCents) }}</td>
+                                <td class="text-right">{{ money(w.fromDrawerCents) }}</td>
+                                <td class="text-right">{{ money(w.houseOwesCents) }}</td>
+                                <td class="text-right">{{ money(w.settledTodayCents) }}</td>
                             </tr>
                         </tbody>
                     </v-table>
@@ -344,9 +414,13 @@ import { useTheme } from 'vuetify'
 import { formatTenantDateTime, tenantWallClockNow } from '@/helpers/TenantTime'
 import { branding } from '@/stores/branding'
 import { seriesColor } from '@/helpers/profitCenterColor'
+import authHelper from '@/helpers/AuthHelper'
+import { Perm } from '@/helpers/TenantPermissions'
 
 const theme = useTheme()
 const isDark = computed(() => theme.current.value.dark)
+// The "Pay out" link goes to a cash.reconcile page; hide it from anyone the router would bounce.
+const canReconcile = computed(() => authHelper.hasPermission(Perm.CashReconcile))
 
 const service = new ReportsService()
 
@@ -418,7 +492,15 @@ const revenueGroups = computed(() => {
 const showCash = computed(() => {
     const c = report.value?.cash
     if (!c) return false
-    return c.sessions.length > 0 || c.turnIns.length > 0 || c.cashSalesCents !== 0
+    return c.sessions.length > 0 || c.turnIns.length > 0 || c.cashSalesCents !== 0 || c.tipsPaidOutCashCents !== 0
+})
+
+// Like the Cash card: gone on a day with no tip activity and nothing still owed to anyone.
+const showTips = computed(() => {
+    const t = report.value?.tips
+    if (!t) return false
+    return t.earnedCents !== 0 || t.paidFromDrawerCents !== 0 || t.paidByManagerCents !== 0
+        || t.owedOutstandingCents !== 0 || t.byWorker.length > 0
 })
 
 // Everything that moved money without being revenue. Zero rows are dropped so a track that

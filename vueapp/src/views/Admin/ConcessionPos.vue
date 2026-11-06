@@ -31,6 +31,10 @@
                         {{ displayPushFailing ? 'Customer display stopped syncing' : 'No customer display paired' }}
                     </v-tooltip>
                 </v-btn>
+                <v-btn v-if="canTurnIn" variant="tonal" prepend-icon="mdi-cash-register"
+                    @click="drawerSession ? openCloseOut() : openDrawerDialog()">
+                    {{ drawerSession ? 'Close out' : 'Open drawer' }}
+                </v-btn>
                 <v-btn v-if="tabsEnabled" variant="tonal" prepend-icon="mdi-book-open-variant" @click="openTabsDrawer">
                     Tabs ({{ openTabs.length }})
                 </v-btn>
@@ -807,6 +811,124 @@
             </div>
         </v-navigation-drawer>
 
+        <!-- Open drawer: starts this cashier's no-event cash session with whatever float is in the till -->
+        <v-dialog v-model="drawerDialog" max-width="360" :persistent="openingDrawer">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Open drawer
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="openingDrawer" @click="drawerDialog = false" />
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        Count the cash in the drawer before your first sale. You close out against this at the end of your shift.
+                    </p>
+                    <v-text-field v-model.number="openFloatDollars" label="Starting cash" type="number" prefix="$" min="0" step="0.01"
+                        inputmode="decimal" autocomplete="off" density="compact" autofocus hide-details @keyup.enter="openDrawer" />
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" :disabled="openingDrawer" @click="drawerDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="openingDrawer" :disabled="openFloatCents < 0" @click="openDrawer">Open</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Close out: the shift review. Tips come out of the drawer first; whatever the drawer can't
+             cover is recorded as owed to the worker. The count that follows is blind: no expected figure. -->
+        <v-dialog v-model="closeOutDialog" max-width="480" :persistent="submittingCloseOut">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    {{ closeOutResult ? 'Shift closed' : 'Close out' }}
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="submittingCloseOut" @click="finishCloseOut" />
+                </v-card-title>
+
+                <!-- Result -->
+                <template v-if="closeOutResult">
+                    <v-card-text>
+                        <div class="d-flex justify-space-between text-h6 mb-2">
+                            <span>Turned in</span><span>{{ money(closeOutResult.workerCountedCents) }}</span>
+                        </div>
+                        <div class="d-flex justify-space-between mb-2">
+                            <span>Tips taken from the drawer</span><span>{{ money(closeOutResult.tipsFromDrawerCents ?? 0) }}</span>
+                        </div>
+                        <div v-if="(closeOutResult.cashTipsDeclaredCents ?? 0) > 0" class="d-flex justify-space-between mb-2">
+                            <span>Cash tips declared</span><span>{{ money(closeOutResult.cashTipsDeclaredCents) }}</span>
+                        </div>
+                        <template v-if="(closeOutResult.houseOwesCents ?? 0) > 0">
+                            <div class="d-flex justify-space-between text-h6 mt-3">
+                                <span>House owes you</span><span>{{ money(closeOutResult.houseOwesCents) }}</span>
+                            </div>
+                            <p class="text-caption text-medium-emphasis mt-1 mb-0">A manager will pay this out to you in cash or through payroll.</p>
+                        </template>
+                    </v-card-text>
+                    <v-card-actions>
+                        <v-spacer />
+                        <v-btn color="primary" @click="finishCloseOut">Done</v-btn>
+                    </v-card-actions>
+                </template>
+
+                <!-- Review + count -->
+                <template v-else>
+                    <v-card-text>
+                        <div v-if="reviewLoading" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
+                        <template v-else>
+                            <v-alert v-if="reviewError" type="warning" variant="tonal" density="compact" class="mb-3" :text="reviewError" />
+
+                            <!-- 1. Shift summary -->
+                            <div class="closeout-summary mb-4">
+                                <div class="d-flex justify-space-between text-h6">
+                                    <span>Tips to settle</span><span>{{ money(tipsEarnedCents) }}</span>
+                                </div>
+                                <div class="text-caption text-medium-emphasis">
+                                    {{ money(review?.cardTipsCents ?? 0) }} on card · {{ money(review?.cashSaleTipsCents ?? 0) }} on cash sales ·
+                                    {{ review?.saleCount ?? 0 }} sale{{ (review?.saleCount ?? 0) === 1 ? '' : 's' }}
+                                </div>
+                                <!-- A tab opened last shift and closed after that turn-in settles here, not nowhere. -->
+                                <div v-if="(review?.tipsFromEarlierShiftsCents ?? 0) > 0" class="text-caption text-medium-emphasis">
+                                    Includes {{ money(review?.tipsFromEarlierShiftsCents ?? 0) }} from tabs closed after your last close-out.
+                                </div>
+                                <div v-if="(review?.owedToYouCents ?? 0) > 0" class="d-flex justify-space-between mt-2">
+                                    <span>Owed to you from earlier shifts</span><span>{{ money(review?.owedToYouCents ?? 0) }}</span>
+                                </div>
+                            </div>
+
+                            <!-- 2. Tips from the drawer (default: everything earned) -->
+                            <v-text-field v-model.number="tipsFromDrawerDollars" label="Tips you're taking from the drawer" type="number"
+                                prefix="$" min="0" step="0.01" :max="tipsEarnedCents / 100" inputmode="decimal" autocomplete="off"
+                                density="compact" :disabled="tipsEarnedCents <= 0" :error-messages="tipsFromDrawerError" />
+                            <div class="mb-3">
+                                <p class="text-caption text-medium-emphasis mb-1">
+                                    Take your tips in cash from the drawer. If the drawer can't cover them, take what's there;
+                                    the rest is recorded as owed to you.
+                                </p>
+                                <div v-if="!tipsFromDrawerError && houseOwesLiveCents > 0" class="d-flex justify-space-between font-weight-medium">
+                                    <span>House owes you</span><span>{{ money(houseOwesLiveCents) }}</span>
+                                </div>
+                            </div>
+
+                            <!-- 3. Declared cash tips (not from the register) -->
+                            <v-text-field v-model.number="cashTipsDeclaredDollars" label="Cash tips you received outside the register (optional)"
+                                type="number" prefix="$" min="0" step="0.01" inputmode="decimal" autocomplete="off" density="compact" class="mb-3" />
+
+                            <!-- 4. Blind count -->
+                            <v-text-field v-model.number="drawerCountDollars" label="Count the cash left in the drawer" type="number"
+                                prefix="$" min="0" step="0.01" inputmode="decimal" autocomplete="off" density="compact" class="mb-3"
+                                :error-messages="drawerCountError" />
+                            <v-text-field v-model="closeNote" label="Note (optional)" autocomplete="off" density="compact" hide-details />
+                        </template>
+                    </v-card-text>
+                    <v-card-actions>
+                        <v-spacer />
+                        <v-btn variant="text" :disabled="submittingCloseOut" @click="closeOutDialog = false">Cancel</v-btn>
+                        <v-btn color="primary" :loading="submittingCloseOut" :disabled="reviewLoading || !canSubmitCloseOut"
+                            @click="submitCloseOut">Turn in {{ money(drawerCountCents) }}</v-btn>
+                    </v-card-actions>
+                </template>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snack.show" :color="snack.color" timeout="5000">{{ snack.text }}</v-snackbar>
     </v-container>
 </template>
@@ -829,6 +951,9 @@ import { printReceipt, type Receipt, type ReceiptLine } from '@/helpers/ReceiptP
 import { printKitchenTicket, type KitchenTicket, type KitchenTicketLine } from '@/helpers/KitchenTicketPrinter'
 import { branding } from '@/stores/branding'
 import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
+import authHelper from '@/helpers/AuthHelper'
+import { Perm } from '@/helpers/TenantPermissions'
+import { CashService, houseOwesCents, type CashSession, type CashTurnIn, type ShiftReview } from '@/services/CashService'
 
 interface CartLine {
     input: ConcessionSaleLineInput
@@ -871,6 +996,118 @@ const selectedTab = ref<ConcessionTabDetail | null>(null)
 // Closing: the confirm + cash dialogs settle this tab (its rounds, its totals) instead of the cart.
 const closingTab = ref<ConcessionTabDetail | null>(null)
 const tabBusy = ref(false)
+
+// ── Drawer: open + close-out (shift review) ──────────────────────────
+// The cashier's no-event cash session. Tips come out of the drawer at close; whatever the drawer
+// can't cover is recorded as owed to them and a manager settles it from Reports > Tips owed.
+// The server recomputes every tip figure; what we send is only what the cashier decided to take.
+const cashSvc = new CashService()
+const canTurnIn = computed(() => authHelper.hasPermission(Perm.CashTurnIn))
+const drawerSession = ref<CashSession | null>(null)
+const drawerDialog = ref(false)
+const openFloatDollars = ref<number | null>(0)
+const openingDrawer = ref(false)
+const closeOutDialog = ref(false)
+const review = ref<ShiftReview | null>(null)
+const reviewLoading = ref(false)
+const reviewError = ref('')
+const tipsFromDrawerDollars = ref<number | null>(null)
+const cashTipsDeclaredDollars = ref<number | null>(null)
+const drawerCountDollars = ref<number | null>(null)
+const closeNote = ref('')
+const submittingCloseOut = ref(false)
+const closeOutResult = ref<CashTurnIn | null>(null)
+
+// Dollars in the field, cents everywhere else (same as the cash-received input).
+// A cleared v-model.number field holds '' rather than null, so "has the cashier typed an amount"
+// must be checked explicitly: an empty count or tips field is never silently sent as $0.00.
+function hasAmount(d: unknown): d is number { return typeof d === 'number' && Number.isFinite(d) }
+function dollarsToCents(d: unknown) { return hasAmount(d) ? Math.round(d * 100) : 0 }
+const openFloatCents = computed(() => dollarsToCents(openFloatDollars.value))
+const tipsEarnedCents = computed(() => review.value?.tipsEarnedCents ?? 0)
+const tipsFromDrawerCents = computed(() => dollarsToCents(tipsFromDrawerDollars.value))
+const tipsFromDrawerError = computed(() => {
+    if (tipsEarnedCents.value > 0 && !hasAmount(tipsFromDrawerDollars.value)) return 'Enter how much you\'re taking ($0 is fine).'
+    if (tipsFromDrawerCents.value < 0) return 'Tips taken can\'t be negative.'
+    if (tipsFromDrawerCents.value > tipsEarnedCents.value) return `You have ${money(tipsEarnedCents.value)} in tips to settle; take at most that.`
+    return ''
+})
+const houseOwesLiveCents = computed(() => houseOwesCents(tipsEarnedCents.value, tipsFromDrawerCents.value))
+const cashTipsDeclaredCents = computed(() => dollarsToCents(cashTipsDeclaredDollars.value))
+const drawerCountCents = computed(() => dollarsToCents(drawerCountDollars.value))
+const drawerCountError = computed(() =>
+    hasAmount(drawerCountDollars.value) ? (drawerCountCents.value < 0 ? 'The count can\'t be negative.' : '') : '')
+const canSubmitCloseOut = computed(() => hasAmount(drawerCountDollars.value) && drawerCountCents.value >= 0
+    && cashTipsDeclaredCents.value >= 0 && !tipsFromDrawerError.value)
+
+async function refreshDrawerSession() {
+    if (!canTurnIn.value) return
+    try { drawerSession.value = (await cashSvc.currentSession(null)).data.data ?? null }
+    catch { /* best-effort; the button simply reads "Open drawer" */ }
+}
+function openDrawerDialog() { openFloatDollars.value = 0; drawerDialog.value = true }
+async function openDrawer() {
+    if (openFloatCents.value < 0) return
+    openingDrawer.value = true
+    try {
+        drawerSession.value = (await cashSvc.openSession({ eventId: null, openingFloatCents: openFloatCents.value })).data.data
+        drawerDialog.value = false
+        flash(`Drawer open with ${money(openFloatCents.value)} starting cash.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not open the drawer. Please try again.')
+    } finally {
+        openingDrawer.value = false
+    }
+}
+async function openCloseOut() {
+    closeOutResult.value = null
+    review.value = null
+    reviewError.value = ''
+    tipsFromDrawerDollars.value = null
+    cashTipsDeclaredDollars.value = null
+    drawerCountDollars.value = null
+    closeNote.value = ''
+    closeOutDialog.value = true
+    await loadReview()
+}
+// Pulls the worker's tips to settle and resets the drawer-tips field to "take all of it". Called when
+// the dialog opens and again if the server reports the figures moved while the dialog was open.
+async function loadReview() {
+    reviewLoading.value = true
+    reviewError.value = ''
+    try {
+        review.value = (await cashSvc.shiftReview(null)).data.data
+        // Default to taking every tip; the cashier lowers it when the drawer is short.
+        tipsFromDrawerDollars.value = tipsEarnedCents.value / 100
+    } catch (err: any) {
+        // A hiccup must not strand the drawer: the blind count still works, tips simply read as -e.
+        reviewError.value = err.response?.data?.error || 'Could not load your shift summary. You can still count and turn in the drawer.'
+    } finally {
+        reviewLoading.value = false
+    }
+}
+async function submitCloseOut() {
+    if (!canSubmitCloseOut.value) return
+    submittingCloseOut.value = true
+    try {
+        closeOutResult.value = (await cashSvc.turnIn({
+            eventId: null,
+            workerCountedCents: drawerCountCents.value,
+            note: closeNote.value.trim(),
+            tipsFromDrawerCents: tipsFromDrawerCents.value,
+            cashTipsDeclaredCents: cashTipsDeclaredCents.value,
+        })).data.data
+        drawerSession.value = null
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not turn in the drawer. Please try again.')
+        // The server rolled the close-out back because a tab closed or a refund landed mid-dialog.
+        // Refresh the figures so the field defaults to the real amount instead of the stale one.
+        if (err.response?.status === 400 && err.response?.data?.data?.tipsEarnedCents != null) await loadReview()
+    } finally {
+        submittingCloseOut.value = false
+    }
+}
+function finishCloseOut() { closeOutDialog.value = false; closeOutResult.value = null }
 
 function flash(text: string, color: 'error' | 'success' = 'error') { snack.value = { show: true, text, color } }
 function money(cents: number) { return `$${(cents / 100).toFixed(2)}` }
@@ -1036,6 +1273,7 @@ onMounted(() => {
     load()
     loadKitchenPrinters()
     refreshOnlineStatus()
+    refreshDrawerSession()
     // Keep the Open/Busy chip and the Tabs (n) count current; another register may open or close a tab.
     onlineTimer = window.setInterval(() => { refreshOnlineStatus(); refreshTabs() }, 10000)
 })
@@ -2422,6 +2660,9 @@ async function printLast() {
 .confirm-body { overflow-y: auto; min-height: 0; }
 .confirm-inner { max-width: 640px; margin: 0 auto; }
 .confirm-footer { flex: 0 0 auto; border-top: 1px solid var(--rp-line); }
+
+/* Shift-review summary block at the top of Close out: a quiet panel so the figures read before the inputs. */
+.closeout-summary { padding: 12px 14px; border-radius: var(--rp-radius-sm); background: var(--rp-panel2); }
 
 /* Stack to a single column on phones / small tablets so nothing gets cramped. */
 @media (max-width: 960px) {

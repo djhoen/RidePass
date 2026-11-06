@@ -33,6 +33,7 @@ namespace webapi.Controllers
         private readonly IQuickBooksRepository _quickBooks;
         private readonly IQuickBooksDesktopRepository _quickBooksDesktop;
         private readonly IProfitCenterRepository _profitCenters;
+        private readonly ICashRepository _cash;
 
         public ReportsController(
             IReportsRepository reports,
@@ -52,9 +53,11 @@ namespace webapi.Controllers
             IQuickBooksRepository quickBooks,
             IQuickBooksDesktopRepository quickBooksDesktop,
             IProfitCenterRepository profitCenters,
+            ICashRepository cash,
             Services.Audit.IAuditLogger audit)
         {
             _audit = audit;
+            _cash = cash;
             _reports = reports;
             _concessions = concessions;
             _events = events;
@@ -487,19 +490,18 @@ namespace webapi.Controllers
                 {
                     Id = s.Id,
                     UserId = s.UserId,
-                    UserName = string.IsNullOrWhiteSpace(s.UserName) ? "Unknown" : s.UserName,
+                    UserName = UserDisplayName.Of(s.UserName, null),
                     EventTitle = s.EventTitle,
                     DeviceId = s.DeviceId,
                     OpeningFloatCents = s.OpeningFloatCents,
                     Status = s.Status,
-                    OpenedAtUtc = DateTime.SpecifyKind(s.OpenedAt.ToUniversalTime(), DateTimeKind.Utc),
-                    ClosedAtUtc = s.ClosedAt.HasValue
-                        ? DateTime.SpecifyKind(s.ClosedAt.Value.ToUniversalTime(), DateTimeKind.Utc) : null,
+                    OpenedAtUtc = TenantClock.AsUtc(s.OpenedAt),
+                    ClosedAtUtc = s.ClosedAt.HasValue ? TenantClock.AsUtc(s.ClosedAt.Value) : null,
                 }).ToList(),
                 TurnIns = turnIns.Select(t => new EndOfDayCashTurnInDto
                 {
                     Id = t.Id,
-                    WorkerName = string.IsNullOrWhiteSpace(t.WorkerName) ? "Unknown" : t.WorkerName,
+                    WorkerName = UserDisplayName.Of(t.WorkerName, null),
                     ManagerName = t.ManagerName,
                     ExpectedCents = t.ExpectedCents,
                     WorkerCountedCents = t.WorkerCountedCents,
@@ -507,15 +509,72 @@ namespace webapi.Controllers
                     VarianceCents = t.VarianceCents,
                     Status = t.Status,
                     Note = t.Note,
-                    SubmittedAtUtc = DateTime.SpecifyKind(t.SubmittedAt.ToUniversalTime(), DateTimeKind.Utc),
-                    ConfirmedAtUtc = t.ConfirmedAt.HasValue
-                        ? DateTime.SpecifyKind(t.ConfirmedAt.Value.ToUniversalTime(), DateTimeKind.Utc) : null,
+                    SubmittedAtUtc = TenantClock.AsUtc(t.SubmittedAt),
+                    ConfirmedAtUtc = t.ConfirmedAt.HasValue ? TenantClock.AsUtc(t.ConfirmedAt.Value) : null,
+                    TipsEarnedCents = t.TipsEarnedCents,
+                    TipsFromDrawerCents = t.TipsFromDrawerCents,
+                    HouseOwesCents = t.HouseOwesCents,
                 }).ToList(),
                 OpeningFloatCents = sessions.Sum(s => s.OpeningFloatCents),
                 WorkerCountedCents = turnIns.Sum(t => t.WorkerCountedCents),
                 ManagerCountedCents = turnIns.Sum(t => t.ManagerCountedCents ?? 0),
                 CashSalesCents = saleAndRefund.Where(b => b.PaymentMethod == "cash")
                                               .Sum(b => b.GrossCents - b.GiftCardAppliedCents),
+                // Cash that left the drawers as tips (drawer tip-outs at close, manager cash
+                // settlements). The ledger writes these with a negative gross, so the sign is
+                // flipped for a plain "paid out" figure. From the same view and business date as
+                // every other number here, so it is on the tenant's own day like the rest.
+                TipsPaidOutCashCents = -Sum(b => b.EntryKind == "tip_payout" && b.PaymentMethod == "cash", b => b.GrossCents),
+            };
+
+            // ── Tips: earned today, handed out today, and what the house still owes ─────
+            // Per-worker earned comes from the SALES (paid rows by sold_by_user_id), not the ledger
+            // buckets: a refund's ledger row carries the refunder, not the seller, so the view would
+            // hand the refund's negative tip to whoever processed it. The headline EarnedCents is
+            // the sum of those rows, so the table always adds up to it; on a day with refunds it can
+            // differ slightly from Totals.TipsCents, which is the ledger's own net figure. Payouts
+            // come from the tip_payout log, and the outstanding balance is all-time as of NOW rather
+            // than as of the business date: a shortfall from last week is still owed today whichever
+            // day the report is for. A worker with no tips but a payout today still gets a line.
+            var tipsBySeller = await _endOfDay.GetDayTipsBySeller(tenantId, businessDate, tz);
+            var tipPayouts = await _endOfDay.GetDayTipPayouts(tenantId, businessDate, tz);
+            // One aggregate over the same CTEs the Tips owed page reads, so the headline here is
+            // the sum of exactly the balances that page shows.
+            var owedOutstanding = await _cash.SumOutstandingOwed(tenantId);
+            var tipsByWorker = new Dictionary<Guid, EndOfDayTipsWorkerLine>();
+            EndOfDayTipsWorkerLine TipLine(Guid userId, string? name, string? email)
+            {
+                if (!tipsByWorker.TryGetValue(userId, out var line))
+                {
+                    line = new EndOfDayTipsWorkerLine
+                    {
+                        UserId = userId,
+                        Name = UserDisplayName.Of(name, email),
+                    };
+                    tipsByWorker[userId] = line;
+                }
+                return line;
+            }
+            foreach (var r in tipsBySeller)
+                TipLine(r.UserId, r.Name, r.Email).EarnedCents += r.TipCents;
+            foreach (var t in turnIns.Where(t => t.HouseOwesCents > 0))
+                TipLine(t.WorkerUserId, t.WorkerName, null).HouseOwesCents += t.HouseOwesCents;
+            foreach (var p in tipPayouts)
+            {
+                var line = TipLine(p.UserId, p.Name, p.Email);
+                if (p.Source == "drawer") line.FromDrawerCents += p.AmountCents;
+                else line.SettledTodayCents += p.AmountCents;
+            }
+            var tipsSection = new EndOfDayTipsSection
+            {
+                EarnedCents = tipsBySeller.Sum(r => r.TipCents),
+                PaidFromDrawerCents = tipPayouts.Where(p => p.Source == "drawer").Sum(p => p.AmountCents),
+                PaidByManagerCents = tipPayouts.Where(p => p.Source != "drawer").Sum(p => p.AmountCents),
+                OwedOutstandingCents = owedOutstanding,
+                ByWorker = tipsByWorker.Values
+                    .OrderByDescending(l => l.EarnedCents)
+                    .ThenBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
             };
 
             // F&B tabs still open are money not yet taken, so they are outside the ledger-derived
@@ -537,14 +596,15 @@ namespace webapi.Controllers
                 Staff = staffRows.Select(s => new EndOfDayStaffLine
                 {
                     UserId = s.UserId,
-                    Name = !string.IsNullOrWhiteSpace(s.Name) ? s.Name!
-                         : !string.IsNullOrWhiteSpace(s.Email) ? s.Email! : "Unknown",
+                    Name = UserDisplayName.Of(s.Name, s.Email),
                     SaleCount = s.SaleCount,
                     RefundCount = s.RefundCount,
                     GrossCents = s.GrossCents,
                     CashCents = s.CashCents,
+                    TipCents = s.TipCents,
                 }).ToList(),
                 Cash = cash,
+                Tips = tipsSection,
                 QuickBooks = await BuildQuickBooksStatus(tenantId, businessDate),
             };
         }
