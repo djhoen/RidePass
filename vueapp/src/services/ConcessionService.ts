@@ -946,8 +946,8 @@ export class ConcessionService {
     // order does not have to tap each line and cannot leave it half-bumped.
     // `round` scopes the bump to one tab round; omitted for plain orders (bumps the whole ticket).
     markAllReady(saleId: string, round?: number | null) {
-        const q = round ? `?round=` : ''
-        return axios.post(`/Concession/Kitchen/Sale//AllReady`, {})
+        const q = round ? `?round=${round}` : ''
+        return axios.post(`${this.apiUrl}/Concession/Kitchen/Sale/${saleId}/AllReady${q}`, {})
     }
     setRush(saleId: string, rush: boolean) {
         return axios.post(`${this.apiUrl}/Concession/Sale/${saleId}/Rush`, { rush })
