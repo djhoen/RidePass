@@ -103,7 +103,7 @@
                                         <v-btn v-bind="tp" size="x-small" variant="text" :icon="isEditable(l) ? 'mdi-pencil' : 'mdi-eye-outline'" @click="edit(l)"></v-btn>
                                     </template>
                                 </v-tooltip>
-                                <v-tooltip v-if="isEditable(l)" text="Unlist: back to the rental fleet" location="top">
+                                <v-tooltip v-if="isEditable(l)" :text="`Unlist: ${unlistDestination(l.priorStatus)}`" location="top">
                                     <template #activator="{ props: tp }">
                                         <v-btn v-bind="tp" size="x-small" variant="text" icon="mdi-undo-variant"
                                             :loading="unlistingId === l.id" @click="unlist(l)"></v-btn>
@@ -116,13 +116,15 @@
             </v-card>
         </template>
 
-        <ListingDialog v-model="dialogOpen" :listing="editing" @saved="onSaved" @unlisted="onUnlisted" @flash="(t, c) => emit('flash', t, c)" />
+        <!-- The dialog refreshes the row from GET ShopListing/{id} on open; @refreshed keeps the table in step. -->
+        <ListingDialog v-model="dialogOpen" :listing="editing" @saved="onSaved" @refreshed="onSaved" @unlisted="onUnlisted"
+            @flash="(t, c) => emit('flash', t, c)" />
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { ShopListingService, isMissingEndpoint, gradeLabel, type ShopListing, type ListingState, type ListingConditionGrade } from '@/services/ShopListingService'
+import { ShopListingService, isMissingEndpoint, gradeLabel, unlistDestination, type ShopListing, type ListingState, type ListingConditionGrade } from '@/services/ShopListingService'
 import ListingDialog from '@/components/bikeshop/ListingDialog.vue'
 import { absoluteUrl } from '@/helpers/ImageUrl'
 import { formatTenantDate } from '@/helpers/TenantTime'
@@ -215,9 +217,10 @@ async function togglePublished(l: ShopListing) {
 }
 
 async function unlist(l: ShopListing) {
+    // Where it goes is where it was listed from (priorStatus): the fleet, the bench, or retirement.
     const ok = await confirm({
         title: 'Unlist this bike?',
-        message: `${l.title} comes off the sales floor and the store, and the unit goes back to the rental fleet as available.`,
+        message: `${l.title} comes off the sales floor and the store, and the unit goes ${unlistDestination(l.priorStatus)}.`,
         confirmText: 'Unlist',
         confirmColor: 'error',
     })
@@ -225,8 +228,9 @@ async function unlist(l: ShopListing) {
     unlistingId.value = l.id
     try {
         const r = await service.unlist(l.id)
-        replace({ ...l, ...(r ?? {}), state: 'unlisted' })
-        emit('flash', 'Unlisted. The unit is back in the fleet.')
+        const after: ShopListing = { ...l, ...(r ?? {}), state: 'unlisted' }
+        replace(after)
+        emit('flash', `Unlisted: ${unlistDestination(after.priorStatus)}.`)
         emit('changed')
     } catch (e: any) {
         emit('flash', e.response?.data?.error

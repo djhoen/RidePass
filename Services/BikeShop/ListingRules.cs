@@ -63,9 +63,36 @@ namespace Services.BikeShop
             return string.IsNullOrWhiteSpace(unitLabel) ? head : $"{head} · {unitLabel.Trim()}";
         }
 
-        /// <summary>A sale in one of these states holds nothing: it can never be paid.</summary>
+        /// <summary>A sale in one of these states holds nothing on its own row. Whether it can still be
+        /// PAID is a separate question for its PaymentIntent (see <see cref="MustCancelIntent"/>).</summary>
         public static bool IsDeadSaleStatus(string? saleStatus) =>
             saleStatus is "cancelled" or "failed" or "abandoned" or "refunded";
+
+        /// <summary>
+        /// Before a sale lets go of a unit, its PaymentIntent must be confirmed dead at Stripe whenever
+        /// it has one, whatever the sale row says: a sale the webhook marked 'failed' still has an intent
+        /// in requires_payment_method that the buyer's browser can confirm. Only 'paid' (the unit is
+        /// theirs) and 'refunded' (the intent succeeded and the money went back) skip the check.
+        /// </summary>
+        public static bool MustCancelIntent(string? saleStatus, string? paymentIntentId) =>
+            !string.IsNullOrEmpty(paymentIntentId) && saleStatus is not ("paid" or "refunded");
+
+        /// <summary>What a cancel attempt's reported status means for the unit: 'canceled' frees it,
+        /// 'succeeded' means the buyer paid, anything else (null when Stripe could not be reached or
+        /// isn't configured, 'processing', ...) keeps it held.</summary>
+        public static ReservationRelease CancelOutcome(string? reportedStatus) => reportedStatus switch
+        {
+            "canceled" => ReservationRelease.Released,
+            "succeeded" => ReservationRelease.AlreadyPaid,
+            _ => ReservationRelease.Blocked,
+        };
+
+        /// <summary>SQLSTATE of Script0303's trigger refusing to move a listed unit off the floor.</summary>
+        public const string ListedUnitSqlState = "RPL01";
+        public const string ListedUnitMessage = "This unit is listed for sale. Unlist it first.";
+
+        /// <summary>A listing whose details may still be edited: open, with the unit on the floor.</summary>
+        public static bool IsEditable(string state) => state is "active" or "reserved";
 
         /// <summary>
         /// A reservation is live when it points at a sale that is not dead AND was taken less than

@@ -51,13 +51,19 @@
                         <p class="text-body-2 mb-0" style="white-space: pre-line">{{ listing.conditionNotes }}</p>
                     </div>
 
-                    <v-alert v-if="listing.reserved" type="info" variant="tonal" density="compact" class="mt-4">
+                    <!-- Their own checkout holds it: Buy resumes that checkout (the Order call answers
+                         409 held_by_you with the same PaymentIntent), so it stays enabled. -->
+                    <v-alert v-if="heldByYou" type="info" variant="tonal" density="compact" class="mt-4">
+                        You started checking out this bike. Finish paying to make it yours.
+                    </v-alert>
+                    <v-alert v-else-if="listing.reserved" type="info" variant="tonal" density="compact" class="mt-4">
                         Someone else is checking out this bike right now; try again in a few minutes.
                     </v-alert>
 
-                    <v-btn color="primary" block size="large" class="mt-5" prepend-icon="mdi-storefront-outline"
-                        :loading="ordering" :disabled="listing.reserved" @click="buy">
-                        Buy, pick up at the shop
+                    <v-btn color="primary" block size="large" class="mt-5"
+                        :prepend-icon="heldByYou ? 'mdi-credit-card-outline' : 'mdi-storefront-outline'"
+                        :loading="ordering" :disabled="listing.reserved && !heldByYou" @click="buy">
+                        {{ heldByYou ? 'Finish paying' : 'Buy, pick up at the shop' }}
                     </v-btn>
                     <p class="text-caption text-muted mt-2 mb-0">
                         Pay now, pick up at the shop counter. You'll get an order number by email.
@@ -74,7 +80,7 @@
                 <v-card-title class="d-flex align-center">
                     <span>Payment</span>
                     <v-spacer></v-spacer>
-                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="paying" @click="payOpen = false"></v-btn>
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="paying" @click="closePay"></v-btn>
                 </v-card-title>
                 <v-card-text>
                     <div class="text-h6 mb-3">{{ money(pendingDue) }}</div>
@@ -110,7 +116,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { ShopListingService, gradeLabel, type PublicListing } from '@/services/ShopListingService'
+import { ShopListingService, gradeLabel, type PublicListing, type UsedOrderConflict } from '@/services/ShopListingService'
 import { BikeShopService } from '@/services/BikeShopService'
 import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import { absoluteUrl } from '@/helpers/ImageUrl'
@@ -128,6 +134,10 @@ const loading = ref(true)
 const gone = ref(false)
 const loadError = ref('')
 const isAuthed = ref(authHelper.isAuthenticated())
+// The viewer's own checkout holds the bike: from the server (heldByYou on the GET, when signed in),
+// or known here because they just closed the payment dialog without paying.
+const heldLocally = ref(false)
+const heldByYou = computed(() => listing.value?.heldByYou === true || heldLocally.value)
 
 function money(cents: number): string { return `$${(cents / 100).toFixed(2)}` }
 
@@ -220,20 +230,30 @@ async function placeOrder() {
         }
     } catch (e: any) {
         const status = e.response?.status
-        const conflict = e.response?.data?.data as { reason?: string; clientSecret?: string; saleId?: string } | undefined
-        // Their own checkout is still open (they closed the payment dialog): pick it back up instead
-        // of telling them a stranger has the bike.
+        const conflict = e.response?.data?.data as UsedOrderConflict | undefined
+        // Their own checkout is still open (they closed the payment dialog, or reloaded): pick it
+        // back up on the same PaymentIntent instead of telling them a stranger has the bike.
         if (status === 409 && conflict?.reason === 'held_by_you' && conflict.clientSecret) {
             pendingSaleId.value = conflict.saleId ?? null
+            pendingDue.value = conflict.dueCents ?? conflict.totalCents ?? listing.value?.askingPriceCents ?? 0
             payOpen.value = true
             await nextTick()
             await mountPayment(conflict.clientSecret)
             return
         }
+        // Their checkout exists but can't be resumed from here: the card is already processing or
+        // the sale has settled. Point them at the email rather than at a retry.
+        const settling = conflict?.reason === 'held_by_you'
+            && (conflict.saleStatus === 'paid' || conflict.paymentStatus === 'processing' || conflict.paymentStatus === 'succeeded')
+        if (status === 409 && conflict?.reason === 'held_by_other' && listing.value) listing.value.reserved = true
         orderError.value = status === 409
-            ? (conflict?.reason === 'held_by_you'
-                ? (e.response?.data?.error || 'You already started checking out this bike. Finish that payment, or try again in a few minutes.')
-                : 'Someone else is checking out this bike right now; try again in a few minutes.')
+            ? (settling
+                ? 'Your payment for this bike is already going through. Watch your email for the order number.'
+                : conflict?.reason === 'held_by_you'
+                    ? (e.response?.data?.error || 'You already started checking out this bike. Finish that payment, or try again in a few minutes.')
+                    : conflict?.reason === 'sold'
+                        ? 'This bike was just sold.'
+                        : 'Someone else is checking out this bike right now; try again in a few minutes.')
             : status === 404
                 ? 'This bike has just been sold or taken off the floor.'
                 : status === 401
@@ -288,10 +308,18 @@ async function pollOrderNumber(saleId: string | null): Promise<number | null> {
     return null
 }
 
+// Closing the dialog doesn't cancel anything: the bike stays held for them until the hold lapses,
+// so the page switches to "Finish paying" and the next click resumes the same checkout.
+function closePay() {
+    payOpen.value = false
+    if (pendingSaleId.value && !doneOpen.value) heldLocally.value = true
+}
+
 function finishOrder(orderNumber: number | null) {
     doneOrderNumber.value = orderNumber
     doneOpen.value = true
     payOpen.value = false
+    heldLocally.value = false
 }
 
 onMounted(load)

@@ -270,5 +270,40 @@ namespace UnitTests
         {
             Assert.That(ListingRules.IsResumable(status), Is.EqualTo(expected));
         }
+
+        // ── Releasing a unit from a sale: the intent decides, not the sale row ────
+
+        [TestCase("pending", "pi_1", true)]
+        [TestCase("failed", "pi_1", true)]      // webhook-failed: the intent can still be confirmed
+        [TestCase("abandoned", "pi_1", true)]
+        [TestCase("cancelled", "pi_1", true)]
+        [TestCase("paid", "pi_1", false)]       // the unit is theirs; nothing to cancel
+        [TestCase("refunded", "pi_1", false)]   // the intent succeeded and the money went back
+        [TestCase("failed", null, false)]       // never got an intent (payment could not start)
+        [TestCase("pending", "", false)]
+        public void MustCancelIntent_WheneverAConfirmableIntentExists(string status, string? pi, bool expected)
+        {
+            Assert.That(ListingRules.MustCancelIntent(status, pi), Is.EqualTo(expected));
+        }
+
+        [TestCase("canceled", ReservationRelease.Released)]
+        [TestCase("succeeded", ReservationRelease.AlreadyPaid)]
+        [TestCase(null, ReservationRelease.Blocked)]                    // Stripe unreachable / not configured
+        [TestCase("processing", ReservationRelease.Blocked)]
+        [TestCase("requires_payment_method", ReservationRelease.Blocked)]
+        [TestCase("requires_capture", ReservationRelease.Blocked)]
+        public void CancelOutcome_OnlyAConfirmedCancelFreesTheUnit(string? reported, ReservationRelease expected)
+        {
+            Assert.That(ListingRules.CancelOutcome(reported), Is.EqualTo(expected));
+        }
+
+        [TestCase("active", true)]
+        [TestCase("reserved", true)]
+        [TestCase("sold", false)]
+        [TestCase("unlisted", false)]
+        public void IsEditable_OnlyWhileOnTheFloor(string state, bool expected)
+        {
+            Assert.That(ListingRules.IsEditable(state), Is.EqualTo(expected));
+        }
     }
 }

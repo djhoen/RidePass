@@ -31,6 +31,7 @@ namespace webapi.Controllers
         private readonly IShopListingRepository _listings;
         private readonly IBikeShopRepository _shop;
         private readonly IListingReservationService _reservations;
+        private readonly IListingSaleGuard _saleGuard;
         private readonly IUserRepository _users;
         private readonly IChargeRouter _chargeRouter;
         private readonly IPaymentProvider _payments;
@@ -38,12 +39,13 @@ namespace webapi.Controllers
         private readonly ITenantContext _tenantContext;
 
         public ShopStoreUsedController(IShopListingRepository listings, IBikeShopRepository shop,
-            IListingReservationService reservations, IUserRepository users,
+            IListingReservationService reservations, IListingSaleGuard saleGuard, IUserRepository users,
             IChargeRouter chargeRouter, IPaymentProvider payments, IDbHelper db, ITenantContext tenantContext)
         {
             _listings = listings;
             _shop = shop;
             _reservations = reservations;
+            _saleGuard = saleGuard;
             _users = users;
             _chargeRouter = chargeRouter;
             _payments = payments;
@@ -69,14 +71,18 @@ namespace webapi.Controllers
             var rows = await _listings.ListPublic(TenantId);
             var listings = rows
                 .Where(r => !ListingRules.IsReservationLive(r.ReservedSaleId, r.ReservedAt, r.ReservedSaleStatus, now))
-                .Select(r => ToPublic(r, reserved: false))
+                .Select(r => ToPublic(r, reserved: false, heldByYou: false))
                 .ToList();
             var usedProductIds = await _listings.ListUsedProductIds(TenantId);
             return new ApiResponses().OkResult(new { listings, usedProductIds });
         }
 
-        /// <summary>One listing's page. 404 unless it is active and published; a listing held by
-        /// someone else's checkout is still returned, with reserved = true, so the page can say so.</summary>
+        /// <summary>
+        /// One listing's page. 404 unless it is active and published. A listing held by someone
+        /// else's checkout is still returned, with reserved = true, so the page can say so. Anonymous,
+        /// but when the caller is signed in and the live hold is THEIR own checkout it reads
+        /// reserved = false, heldByYou = true, so the page offers to resume rather than turn them away.
+        /// </summary>
         [HttpGet("Listings/{id:guid}")]
         public async Task<IActionResult> Listing(Guid id)
         {
@@ -85,7 +91,10 @@ namespace webapi.Controllers
             var row = await _listings.Get(id, TenantId);
             if (row is null || !IsOnTheFloor(row)) return new ApiResponses().NotFoundResult("Listing not found.");
             var live = ListingRules.IsReservationLive(row.ReservedSaleId, row.ReservedAt, row.ReservedSaleStatus, DateTime.UtcNow);
-            return new ApiResponses().OkResult(ToPublic(row, reserved: live));
+            var heldByYou = live
+                && Guid.TryParse(User.FindFirst("UserId")?.Value, out var userId)
+                && ListingRules.HoldReason(row.ReservedBuyerUserId, userId) == ListingRules.HeldByYou;
+            return new ApiResponses().OkResult(ToPublic(row, reserved: live && !heldByYou, heldByYou: heldByYou));
         }
 
         /// <summary>
@@ -202,6 +211,16 @@ namespace webapi.Controllers
                 PaymentMethod = "stripe",
                 OrderChannel = "online",
             };
+            // Right before the sale that names the unit: let go of any dead sale still naming it (a
+            // declined register attempt, an abandoned checkout, a refund), each only once its
+            // PaymentIntent can never be confirmed.
+            var freed = await _saleGuard.FreeUnit(listing.ItemId, TenantId, "online_order", ct);
+            if (freed == ReservationRelease.AlreadyPaid)
+                return new ApiResponses().ConflictResult("This bike was just sold.", new { reason = "sold" });
+            if (freed == ReservationRelease.Blocked)
+                return new ApiResponses().ConflictResult(
+                    "This bike isn't available to buy online right now. Try again in a few minutes.", new { reason = "unavailable" });
+
             Guid saleId, receipt;
             try
             {
@@ -218,7 +237,7 @@ namespace webapi.Controllers
                 // Taken down between the read and the hold: nothing holds the unit for this sale,
                 // so there is no reservation to release; the sale just dies and lets go of the unit.
                 await _listings.MarkSaleDead(saleId, TenantId, "abandoned");
-                await _listings.DetachDeadSaleLine(saleId, listing.ItemId, TenantId);
+                await _saleGuard.DetachLine(saleId, "abandoned", listing.ItemId, TenantId, "online_order_not_held");
                 return new ApiResponses().NotFoundResult("This bike is no longer for sale.");
             }
 
@@ -237,12 +256,15 @@ namespace webapi.Controllers
                 intent = await _payments.CreatePaymentIntentAsync(due, "usd", metadata, user.Email,
                     connectedAccountId: plan.ConnectedAccountId, applicationFeeCents: plan.ApplicationFeeCents, ct: ct);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception)
             {
-                // Nothing was charged and no intent exists: release this checkout's own hold the one
-                // way holds are released (sale 'failed', line detached, hold cleared).
-                await _reservations.Release(listing.Id, listing.ItemId, TenantId, saleId, "failed", ct);
-                return new ApiResponses().BadRequestResult(ex.Message);
+                // Whatever went wrong starting the payment (Stripe refused or was unreachable, the
+                // key is missing, the request was cut off), no intent is attached to this sale and the
+                // buyer never got a client secret, so nothing can be charged. Release this checkout's
+                // own hold the one way holds are released (sale 'failed', line detached, hold cleared),
+                // on a token of its own so a disconnected client cannot leave the hold behind.
+                await _reservations.Release(listing.Id, listing.ItemId, TenantId, saleId, "failed", CancellationToken.None);
+                return new ApiResponses().BadGatewayResult("Payment couldn't start. Nothing was charged; try again.");
             }
             await _listings.SetSalePaymentIntent(saleId, TenantId, intent.IntentId);
             if (plan.IsDirect) await _shop.MarkSaleDirectCharge(saleId, TenantId, plan.ConnectedAccountId!);
@@ -315,7 +337,7 @@ namespace webapi.Controllers
             && r.ProductIsActive && r.VariantIsActive;
 
         /// <summary>PublicListingDto (docs: USED_SALES contract). No costs, no serials, no who-listed-it.</summary>
-        private static object ToPublic(ShopListingRow r, bool reserved)
+        private static object ToPublic(ShopListingRow r, bool reserved, bool heldByYou)
         {
             var photos = r.Photos.Select(p => new { url = p.ImageUrl, caption = p.Caption }).ToList();
             return new
@@ -332,6 +354,8 @@ namespace webapi.Controllers
                 coverUrl = photos.FirstOrDefault()?.url ?? r.ProductImageUrl,
                 specs = new { size = r.Size, color = r.Color },
                 reserved,
+                // The caller's own checkout holds it (signed-in callers only): offer to resume.
+                heldByYou,
                 listedAtUtc = DateTime.SpecifyKind(r.ListedAt, DateTimeKind.Utc),
             };
         }

@@ -67,7 +67,7 @@
         </v-card>
 
         <ListingDialog v-model="listingDialog" :item="listingItem" :variant="variant" :product-name="productName"
-            :listing="editingListing" @saved="onListingChanged" @unlisted="onListingChanged"
+            :listing-id="editingListingId" @saved="onListingChanged" @unlisted="onListingChanged"
             @flash="(t, c) => emit('flash', t, c)" />
     </v-dialog>
 </template>
@@ -75,7 +75,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { BikeShopService, type ShopVariant, type ShopItem, type ShopItemStatus } from '@/services/BikeShopService'
-import { ShopListingService, ITEM_STATUS_FOR_SALE, isMissingEndpoint, gradeLabel, type ListingForItem, type ShopListing } from '@/services/ShopListingService'
+import { ShopListingService, ITEM_STATUS_FOR_SALE, isMissingEndpoint, gradeLabel, type ListingForItem } from '@/services/ShopListingService'
 import ListingDialog from '@/components/bikeshop/ListingDialog.vue'
 
 const props = defineProps<{ modelValue: boolean; variant: ShopVariant | null; productName?: string | null }>()
@@ -155,7 +155,8 @@ const listingsByItem = ref<Record<string, ListingForItem>>({})
 const listingsAvailable = ref(true)
 const listingDialog = ref(false)
 const listingItem = ref<ShopItem | null>(null)
-const editingListing = ref<ShopListing | null>(null)
+/** Set = edit that listing (ListingDialog loads it from GET ShopListing/{id}); null = create. */
+const editingListingId = ref<string | null>(null)
 const openingListingFor = ref<string | null>(null)
 
 function listingFor(i: ShopItem): ListingForItem | null { return listingsByItem.value[i.id] ?? null }
@@ -174,23 +175,29 @@ async function loadListingInfo() {
 
 function listForSale(i: ShopItem) {
     listingItem.value = i
-    editingListing.value = null
+    editingListingId.value = null
     listingDialog.value = true
 }
 
-// No GET ShopListing/{id}: the active list is short and carries the full DTO (photos included).
+// ForItems already gave each listed unit's listing id, and the dialog loads that one listing from
+// GET ShopListing/{id} itself. Ask ForItems again only when that first call failed.
 async function editListing(i: ShopItem) {
-    openingListingFor.value = i.id
-    try {
-        const active = await listingService.list('active')
-        const l = active.find(x => x.itemId === i.id)
-        if (!l) { emit('flash', 'Could not find the listing for that unit. Refresh and try again.', 'error'); return }
-        listingItem.value = i
-        editingListing.value = l
-        listingDialog.value = true
-    } catch (e: any) {
-        emit('flash', e.response?.data?.error || (isMissingEndpoint(e) ? 'Used sales are not available on this server yet.' : 'Could not load the listing.'), 'error')
-    } finally { openingListingFor.value = null }
+    let id = listingsByItem.value[i.id]?.listingId ?? null
+    if (!id) {
+        openingListingFor.value = i.id
+        try {
+            const byItem = await listingService.forItems([i.id])
+            listingsByItem.value = { ...listingsByItem.value, ...byItem }
+            id = byItem[i.id]?.listingId ?? null
+        } catch (e: any) {
+            emit('flash', e.response?.data?.error || (isMissingEndpoint(e) ? 'Used sales are not available on this server yet.' : 'Could not load the listing.'), 'error')
+            return
+        } finally { openingListingFor.value = null }
+    }
+    if (!id) { emit('flash', 'Could not find the listing for that unit. Refresh and try again.', 'error'); return }
+    listingItem.value = i
+    editingListingId.value = id
+    listingDialog.value = true
 }
 
 // Listing created / changed / unlisted: the unit's status moved, so both this table and the

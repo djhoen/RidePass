@@ -43,6 +43,7 @@ namespace webapi.Controllers
         private readonly Services.BikeShop.IPartLookupProvider _partLookup;
         private readonly IShopListingRepository _listings;
         private readonly Services.BikeShop.IListingReservationService _reservations;
+        private readonly Services.BikeShop.IListingSaleGuard _saleGuard;
         private readonly ILogger<BikeShopRegisterController> _logger;
 
         public BikeShopRegisterController(IBikeShopRepository shop, IChargeRouter chargeRouter,
@@ -62,12 +63,14 @@ namespace webapi.Controllers
             IDiscountPresetRepository discounts,
             webapi.Security.IManagerPinService managerPin,
             IShopListingRepository listings,
-            Services.BikeShop.IListingReservationService reservations)
+            Services.BikeShop.IListingReservationService reservations,
+            Services.BikeShop.IListingSaleGuard saleGuard)
         {
             _platformParts = platformParts;
             _partLookup = partLookup;
             _listings = listings;
             _reservations = reservations;
+            _saleGuard = saleGuard;
             _logger = logger;
             _audit = audit;
             _discounts = discounts;
@@ -277,6 +280,12 @@ namespace webapi.Controllers
                 if (!infos.TryGetValue(line.VariantId, out var info))
                     return new ApiResponses().BadRequestResult("An item in the cart is no longer available.");
                 var listing = line.ItemId is Guid listedItemId ? listingsByItem.GetValueOrDefault(listedItemId) : null;
+                // A listing prices exactly one serialized unit of its own variant. The listing row
+                // (read tenant-scoped from ShopListingRepository) names the unit's variant, so an
+                // ItemId on a pool line, or on another variant's line, cannot borrow its price.
+                if (listing is not null && (info.TrackingKind != "serialized" || listing.VariantId != line.VariantId))
+                    return new ApiResponses().BadRequestResult(
+                        $"That unit isn't a \"{info.ProductName}\". Pick the unit again from its own item.");
                 if (info.SalePriceCents is null && listing is null)
                     return new ApiResponses().BadRequestResult($"\"{info.ProductName}\" isn't set up for sale.");
 
@@ -551,6 +560,20 @@ namespace webapi.Controllers
                 PaymentMethod = isCard ? "stripe" : "cash",
                 SoldByUserId = UserId,
             };
+
+            // Right before the sale that names each unit: let go of any dead sale still naming it (a
+            // declined card attempt, an abandoned online checkout, a refund), each only once its
+            // PaymentIntent can never be confirmed. Otherwise uk_shop_sale_line_item fails this sale.
+            foreach (var unitId in saleLines.Where(l => l.ItemId is not null).Select(l => l.ItemId!.Value))
+            {
+                var freed = await _saleGuard.FreeUnit(unitId, TenantId, "register_sale", ct);
+                if (freed == Services.BikeShop.ReservationRelease.Released) continue;
+                await RestoreGiftCard();
+                return new ApiResponses().ConflictResult(freed == Services.BikeShop.ReservationRelease.AlreadyPaid
+                    ? "An earlier payment for this bike went through. Check that sale before selling it again."
+                    : "An earlier card payment for this bike hasn't been confirmed cancelled yet. Try again in a few minutes.");
+            }
+
             Guid saleId; Guid receipt;
             try
             {

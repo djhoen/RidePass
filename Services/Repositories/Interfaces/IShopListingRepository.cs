@@ -35,6 +35,8 @@ namespace Services.Repositories.Interfaces
         Task<ShopListingItemContext?> GetItemContext(Guid itemId, Guid tenantId);
         /// <summary>Products the storefront badges as used: sellable, published, active, condition 'used'.</summary>
         Task<List<Guid>> ListUsedProductIds(Guid tenantId);
+        /// <summary>Every product at the tenant marked 'used', active or not, published or not: { id: "used" }.</summary>
+        Task<Dictionary<Guid, string>> ListProductConditions(Guid tenantId);
 
         // ── Listing writes ────────────────────────────────────────────────────────
         /// <summary>
@@ -45,7 +47,8 @@ namespace Services.Repositories.Interfaces
         /// the unit's status as prior_status; move the unit to 'for_sale'.
         /// </summary>
         Task<ListingWriteResult> Create(ShopItemListing listing);
-        /// <summary>Price, grade, notes, title and published; never the unit or the reservation.</summary>
+        /// <summary>Price, grade, notes, title and published; never the unit or the reservation. Only an
+        /// open listing whose unit is on the floor: 0 rows when sold, unlisted, stranded or not found.</summary>
         Task<int> Update(ShopItemListing listing);
         /// <summary>
         /// One transaction: lock the listing and unit; refuse when the unit is sold or the row still
@@ -61,11 +64,15 @@ namespace Services.Repositories.Interfaces
         /// Called by IListingReservationService only, after the checkout is released.</summary>
         Task<int> ClearReservation(Guid listingId, Guid tenantId, Guid saleId);
         /// <summary>
-        /// Null the unit on a DEAD (failed / abandoned) sale's line so the unit can be sold again:
-        /// uk_shop_sale_line_item is unique over every line that names a unit, paid or not. Touches
-        /// nothing on a pending, paid or refunded sale.
+        /// Null the unit on a DEAD (failed / abandoned / cancelled / refunded) sale's line so the unit
+        /// can be sold again: uk_shop_sale_line_item is unique over every line that names a unit, paid
+        /// or not. Only item_id changes. Touches nothing on a pending or paid sale. Callers go through
+        /// IListingSaleGuard, which first makes sure the sale's PaymentIntent can never be confirmed
+        /// and writes the audit entry.
         /// </summary>
         Task<int> DetachDeadSaleLine(Guid saleId, Guid itemId, Guid tenantId);
+        /// <summary>Lines naming the unit whose sale is failed / abandoned / cancelled / refunded (scoped through the sale).</summary>
+        Task<List<ShopDeadSaleLine>> ListDeadSaleLinesForItem(Guid itemId, Guid tenantId);
 
         // ── Sale status, tenant-scoped (IBikeShopRepository's MarkSaleFailed / SetSalePaymentIntent are by id only) ──
         /// <summary>pending -> failed | abandoned, at this tenant only. Rows affected (0 when the sale moved on).</summary>
@@ -75,8 +82,9 @@ namespace Services.Repositories.Interfaces
         // ── Photos ────────────────────────────────────────────────────────────────
         Task<List<ShopListingPhoto>> ListPhotos(Guid listingId, Guid tenantId);
         Task<int> CountPhotos(Guid listingId, Guid tenantId);
-        /// <summary>Inserts at the end of the gallery; null when the listing is not this tenant's.</summary>
-        Task<ShopListingPhoto?> AddPhoto(ShopListingPhoto photo);
+        /// <summary>Inserts at the end of the gallery under the listing row lock, refusing past
+        /// <paramref name="maxPhotos"/> atomically. (null, false) when the listing is not this tenant's.</summary>
+        Task<(ShopListingPhoto? Photo, bool LimitReached)> AddPhoto(ShopListingPhoto photo, int maxPhotos);
         /// <summary>Deletes the row and returns its url (for the blob), or null when not found.</summary>
         Task<string?> DeletePhoto(Guid photoId, Guid listingId, Guid tenantId);
         /// <summary>Positions in the order given; ids not on this listing are ignored.</summary>

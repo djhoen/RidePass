@@ -2,7 +2,7 @@
     <v-dialog :model-value="modelValue" max-width="640" scrollable @update:model-value="$emit('update:modelValue', $event)">
         <v-card>
             <v-card-title class="d-flex align-center">
-                <span>{{ current ? 'Edit listing' : 'List for sale' }}</span>
+                <span>{{ editMode ? 'Edit listing' : 'List for sale' }}</span>
                 <v-spacer></v-spacer>
                 <v-btn icon="mdi-close" variant="text" size="small" :disabled="saving" @click="close"></v-btn>
             </v-card-title>
@@ -24,9 +24,18 @@
                 </div>
 
                 <v-alert v-if="readOnly" type="info" variant="tonal" density="compact" class="mb-4">
-                    {{ current?.state === 'sold' ? 'This unit has been sold. The listing is kept for the record.' : 'This listing was unlisted. The unit is back in the rental fleet.' }}
+                    {{ current?.state === 'sold'
+                        ? 'This unit has been sold. The listing is kept for the record.'
+                        : `This listing was unlisted and the unit went ${unlistDestination(current?.priorStatus)}.` }}
                 </v-alert>
 
+                <!-- Opened from the Units dialog with just a listing id: wait for GET ShopListing/{id}
+                     rather than showing a create form that would try to list the unit twice. -->
+                <div v-if="waitingForListing" class="text-center py-6">
+                    <v-progress-circular v-if="loadingListing" indeterminate size="28" color="primary"></v-progress-circular>
+                    <div v-else class="text-error text-body-2">{{ error || 'Could not load the listing.' }}</div>
+                </div>
+                <template v-else>
                 <v-text-field v-model="form.title" label="Title" density="compact" :disabled="readOnly"
                     hint="What the buyer sees. Leave as is for the default." persistent-hint class="mb-3"></v-text-field>
 
@@ -104,15 +113,20 @@
                     </div>
                     <div v-if="photoError" class="text-error text-caption mt-2">{{ photoError }}</div>
                 </template>
+                </template>
             </v-card-text>
 
             <v-card-actions class="flex-wrap">
-                <v-btn v-if="current && canUnlist" variant="text" color="error" :loading="unlisting" :disabled="saving"
-                    @click="unlist">Unlist</v-btn>
+                <v-tooltip v-if="current && canUnlist" :text="`Unlist: ${unlistDestination(current.priorStatus)}`" location="top">
+                    <template #activator="{ props: tp }">
+                        <v-btn v-bind="tp" variant="text" color="error" :loading="unlisting" :disabled="saving"
+                            @click="unlist">Unlist</v-btn>
+                    </template>
+                </v-tooltip>
                 <v-spacer></v-spacer>
                 <v-btn variant="text" :disabled="saving" @click="close">{{ current ? 'Done' : 'Cancel' }}</v-btn>
-                <v-btn v-if="!readOnly" color="primary" :loading="saving" @click="save">
-                    {{ current ? 'Save changes' : 'List for sale' }}
+                <v-btn v-if="!readOnly" color="primary" :loading="saving" :disabled="waitingForListing" @click="save">
+                    {{ editMode ? 'Save changes' : 'List for sale' }}
                 </v-btn>
             </v-card-actions>
         </v-card>
@@ -123,25 +137,30 @@
 import { ref, reactive, computed, watch } from 'vue'
 import type { ShopItem, ShopVariant } from '@/services/BikeShopService'
 import {
-    ShopListingService, CONDITION_GRADES, type ShopListing, type ListingPhoto, type ListingConditionGrade, type ListingState,
+    ShopListingService, CONDITION_GRADES, unlistDestination,
+    type ShopListing, type ListingPhoto, type ListingConditionGrade, type ListingState,
 } from '@/services/ShopListingService'
 import { absoluteUrl } from '@/helpers/ImageUrl'
 import { useConfirm } from '@/composables/useConfirm'
 
-// Create mode: `item` (+ `variant`, `productName`) and no `listing`. Edit mode: `listing`.
-// After a successful create the dialog flips into edit mode on the returned listing so photos
-// can be added without reopening (the upload needs the listing id).
+// Create mode: `item` (+ `variant`, `productName`), no `listing` / `listingId`. Edit mode: either
+// `listing` (a row already on screen, refreshed from GET ShopListing/{id} on open) or `listingId`
+// alone (loaded from GET ShopListing/{id}). After a successful create the dialog flips into edit
+// mode on the returned listing so photos can be added without reopening (the upload needs the id).
 const props = defineProps<{
     modelValue: boolean
     item?: ShopItem | null
     variant?: ShopVariant | null
     productName?: string | null
     listing?: ShopListing | null
+    listingId?: string | null
 }>()
 const emit = defineEmits<{
     (e: 'update:modelValue', v: boolean): void
     (e: 'saved', listing: ShopListing): void
     (e: 'unlisted', listing: ShopListing): void
+    /** The open-time GET returned a fresher copy than the caller passed in (no write happened). */
+    (e: 'refreshed', listing: ShopListing): void
     (e: 'flash', text: string, color?: 'success' | 'error'): void
 }>()
 
@@ -160,6 +179,10 @@ const form = ref<{
     published: boolean
 }>({ title: '', askingDollars: null, conditionGrade: 'good', conditionNotes: '', published: true })
 
+const loadingListing = ref(false)
+const editMode = computed(() => current.value != null || !!props.listing || !!props.listingId)
+/** Edit mode with nothing loaded yet (still loading, or the load failed). */
+const waitingForListing = computed(() => editMode.value && current.value == null)
 const readOnly = computed(() => current.value != null && (current.value.state === 'sold' || current.value.state === 'unlisted'))
 const canUnlist = computed(() => current.value != null && (current.value.state === 'active' || current.value.state === 'reserved'))
 
@@ -194,8 +217,11 @@ function statePillClass(s: ListingState): string {
     return s === 'active' ? 'rp-pill--green' : s === 'reserved' ? 'rp-pill--blue' : s === 'sold' ? 'rp-pill--solid' : ''
 }
 
-// Prefill: acquired cost rounded UP to the nearest $5 is a sane floor for an ex-rental; blank
-// otherwise so nobody lists at an accidental $0.
+// Prefill only, to save typing: the server's ListingRules is authoritative. It writes
+// DefaultTitle when the title comes back blank and runs ValidatePrice on every save, so these
+// two helpers never decide anything. The price starts at the acquired cost rounded UP to the
+// nearest $5 (a sane floor for an ex-rental), and stays blank when the cost is unknown so nobody
+// lists at an accidental $0.
 function defaultDollars(): number | null {
     const cost = props.item?.acquiredCostCents
     if (cost == null || cost <= 0) return null
@@ -205,7 +231,27 @@ function defaultTitle(): string {
     return [props.productName, variantLabel.value].filter(Boolean).join(' ') + (props.item ? ` · ${props.item.label}` : '')
 }
 
+function sortPhotos(list: ListingPhoto[] | null | undefined): ListingPhoto[] {
+    return [...(list ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
+}
+// The form as last seeded from a listing: a refresh only reseeds fields the user hasn't edited.
+let seededForm = ''
+function seedForm(l: ShopListing) {
+    form.value = {
+        title: l.title,
+        askingDollars: l.askingPriceCents / 100,
+        conditionGrade: l.conditionGrade,
+        conditionNotes: l.conditionNotes ?? '',
+        published: l.published,
+    }
+    seededForm = JSON.stringify(form.value)
+}
+
+// Bumped on every open and close, so a GET that lands after the dialog moved on is dropped.
+let openSeq = 0
+
 function reset() {
+    const seq = ++openSeq
     error.value = ''
     photoError.value = ''
     priceTouched.value = false
@@ -213,24 +259,54 @@ function reset() {
     captionForNew.value = ''
     current.value = props.listing ?? null
     if (current.value) {
-        form.value = {
-            title: current.value.title,
-            askingDollars: current.value.askingPriceCents / 100,
-            conditionGrade: current.value.conditionGrade,
-            conditionNotes: current.value.conditionNotes ?? '',
-            published: current.value.published,
-        }
-        photos.value = [...(current.value.photos ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
+        seedForm(current.value)
+        photos.value = sortPhotos(current.value.photos)
     } else {
-        form.value = { title: defaultTitle(), askingDollars: defaultDollars(), conditionGrade: 'good', conditionNotes: '', published: true }
+        form.value = props.listingId
+            ? { title: '', askingDollars: null, conditionGrade: 'good', conditionNotes: '', published: true }
+            : { title: defaultTitle(), askingDollars: defaultDollars(), conditionGrade: 'good', conditionNotes: '', published: true }
+        seededForm = ''
         photos.value = []
     }
+    const id = props.listing?.id ?? props.listingId ?? null
+    if (id) void refresh(id, seq)
 }
-watch(() => props.modelValue, open => { if (open) reset() })
+watch(() => props.modelValue, open => { if (open) reset(); else openSeq++ })
+
+/**
+ * Load or refresh one listing from GET ShopListing/{id}. On open it loads a listing given only by
+ * id (from the Units dialog) or brings a table row up to date (state, priorStatus, photos); after a
+ * thin upload reply it re-syncs the photos. Fields the user already edited are left alone.
+ */
+async function refresh(id: string, seq = openSeq) {
+    const waiting = current.value == null
+    if (waiting) loadingListing.value = true
+    try {
+        const fresh = await service.get(id)
+        if (seq !== openSeq) return
+        const untouched = JSON.stringify(form.value) === seededForm
+        current.value = fresh
+        photos.value = sortPhotos(fresh.photos)
+        if (waiting || untouched) seedForm(fresh)
+        emit('refreshed', fresh)
+    } catch (e: any) {
+        if (seq !== openSeq) return
+        // Refreshing a listing already on screen fails quietly (keep what we have); a load by id
+        // that fails leaves nothing to edit, so say why.
+        if (waiting) {
+            error.value = e.response?.status === 404
+                ? 'That listing no longer exists. Close this and refresh.'
+                : (e.response?.data?.error || 'Could not load the listing. Close this and try again.')
+        }
+    } finally { if (seq === openSeq) loadingListing.value = false }
+}
 
 function close() { emit('update:modelValue', false) }
 
 async function save() {
+    // Edit mode before the listing has loaded: never fall through to a create (that would try to
+    // list the unit a second time).
+    if (waitingForListing.value) return
     error.value = ''
     priceTouched.value = true
     if (askingCents.value <= 0) return
@@ -253,8 +329,8 @@ async function save() {
             if (!props.item) { error.value = 'Pick a unit first.'; return }
             const created = await service.create({ itemId: props.item.id, ...body })
             current.value = created
-            form.value.title = created.title
-            photos.value = [...(created.photos ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
+            seedForm(created)
+            photos.value = sortPhotos(created.photos)
             emit('saved', created)
             emit('flash', created.published ? 'Listed for sale. It is live online now; add photos below.' : 'Listed at the counter. Add photos below.')
         }
@@ -269,9 +345,10 @@ async function save() {
 
 async function unlist() {
     if (!current.value) return
+    // Where it goes is where it was listed from (priorStatus): the fleet, the bench, or retirement.
     const ok = await confirm({
         title: 'Unlist this bike?',
-        message: 'It comes off the sales floor and the store, and the unit goes back to the rental fleet as available.',
+        message: `It comes off the sales floor and the store, and the unit goes ${unlistDestination(current.value.priorStatus)}.`,
         confirmText: 'Unlist',
         confirmColor: 'error',
     })
@@ -282,7 +359,7 @@ async function unlist() {
         const r = await service.unlist(current.value.id)
         const after: ShopListing = { ...current.value, ...(r ?? {}), state: 'unlisted' }
         emit('unlisted', after)
-        emit('flash', 'Unlisted. The unit is back in the fleet.')
+        emit('flash', `Unlisted: ${unlistDestination(after.priorStatus)}.`)
         close()
     } catch (e: any) {
         error.value = e.response?.data?.error
@@ -303,19 +380,6 @@ const reordering = ref(false)
 let uploadKey = 0
 
 function pickFiles() { fileInput.value?.click() }
-
-/** No GET /ShopListing/{id}: the list endpoint is the source of truth when a reply is thin. */
-async function reloadPhotos() {
-    if (!current.value) return
-    try {
-        const all = await service.list('all')
-        const mine = all.find(l => l.id === current.value!.id)
-        if (mine) {
-            current.value = mine
-            photos.value = [...(mine.photos ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
-        }
-    } catch { /* keep what we have */ }
-}
 
 async function onFilesPicked(ev: Event) {
     const input = ev.target as HTMLInputElement
@@ -345,7 +409,8 @@ async function onFilesPicked(ev: Event) {
             photoError.value = e.response?.data?.error || 'That photo could not be uploaded. Try again.'
         }
     }
-    if (needReload) await reloadPhotos()
+    // A reply without the photo DTO: re-sync this one listing from GET ShopListing/{id}.
+    if (needReload && current.value) await refresh(current.value.id)
     if (landed > 0) {
         captionForNew.value = ''
         if (current.value) emit('saved', { ...current.value, photos: photos.value, coverUrl: photos.value[0]?.url ?? current.value.coverUrl })

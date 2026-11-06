@@ -88,6 +88,17 @@ namespace Services.Repositories.Data.BikeShopData
         public string ProductName { get; set; } = null!;
     }
 
+    /// <summary>A sale line still naming a unit although its sale is failed / abandoned / cancelled /
+    /// refunded: it blocks the unit from ever selling again (uk_shop_sale_line_item) until detached.</summary>
+    public class ShopDeadSaleLine
+    {
+        public Guid SaleId { get; set; }
+        public Guid LineId { get; set; }
+        public string SaleStatus { get; set; } = null!;
+        public string? StripePaymentIntentId { get; set; }
+        public string? StripeConnectedAccountId { get; set; }
+    }
+
     public enum ListingWriteOutcome
     {
         Ok,

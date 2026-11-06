@@ -46,13 +46,13 @@ namespace Services.BikeShop
     {
         private readonly IShopListingRepository _listings;
         private readonly IBikeShopRepository _shop;
-        private readonly IPaymentProvider _payments;
+        private readonly IListingSaleGuard _guard;
 
-        public ListingReservationService(IShopListingRepository listings, IBikeShopRepository shop, IPaymentProvider payments)
+        public ListingReservationService(IShopListingRepository listings, IBikeShopRepository shop, IListingSaleGuard guard)
         {
             _listings = listings;
             _shop = shop;
-            _payments = payments;
+            _guard = guard;
         }
 
         public Task<ReservationRelease> Release(ShopListingRow listing, CancellationToken ct = default) =>
@@ -71,26 +71,27 @@ namespace Services.BikeShop
             }
             if (sale.Status == "paid") return ReservationRelease.AlreadyPaid;
 
-            if (sale.Status == "pending")
+            // Whatever the row says (pending, or a 'failed' the webhook wrote while the intent still
+            // sits in requires_payment_method), an intent that could still be confirmed is cancelled
+            // first. Not confirmed cancelled: keep the hold, detach nothing.
+            var safe = await _guard.MakeUnpayable(sale.Status, sale.StripePaymentIntentId, sale.StripeConnectedAccountId, ct);
+            if (safe != ReservationRelease.Released) return safe;
+
+            var status = sale.Status;
+            if (status == "pending")
             {
-                if (!string.IsNullOrEmpty(sale.StripePaymentIntentId))
-                {
-                    var outcome = await _payments.CancelPaymentIntentAsync(
-                        sale.StripePaymentIntentId, sale.StripeConnectedAccountId, ct);
-                    if (outcome == "succeeded") return ReservationRelease.AlreadyPaid;
-                    if (outcome != "canceled") return ReservationRelease.Blocked;
-                }
                 if (await _listings.MarkSaleDead(saleId, tenantId, deadStatus) == 0)
                 {
                     // It left 'pending' under us: the webhook settled it, or another release won.
                     var now = await _shop.GetSale(saleId, tenantId);
                     if (now?.Status == "paid") return ReservationRelease.AlreadyPaid;
+                    status = now?.Status ?? status;
                 }
+                else status = deadStatus == "failed" ? "failed" : "abandoned";
             }
 
-            // A refunded sale was a real sale; its line keeps the unit as the record. Only a sale
-            // that never collected money lets go of the unit.
-            await _listings.DetachDeadSaleLine(saleId, itemId, tenantId);
+            // The sale can never be paid now; its line lets go of the unit (audited), then the hold.
+            await _guard.DetachLine(saleId, status, itemId, tenantId, "release_hold");
             await _listings.ClearReservation(listingId, tenantId, saleId);
             return ReservationRelease.Released;
         }

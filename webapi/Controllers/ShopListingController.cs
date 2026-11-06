@@ -37,19 +37,32 @@ namespace webapi.Controllers
 
         private readonly IShopListingRepository _listings;
         private readonly IListingReservationService _reservations;
+        private readonly IListingSaleGuard _saleGuard;
         private readonly Services.Helpers.Interfaces.IDbHelper _db;
         private readonly IImageStorage _imageStorage;
         private readonly ITenantContext _tenantContext;
 
         public ShopListingController(IShopListingRepository listings, IListingReservationService reservations,
-            Services.Helpers.Interfaces.IDbHelper db, IImageStorage imageStorage, ITenantContext tenantContext)
+            IListingSaleGuard saleGuard, Services.Helpers.Interfaces.IDbHelper db, IImageStorage imageStorage,
+            ITenantContext tenantContext)
         {
             _listings = listings;
             _reservations = reservations;
+            _saleGuard = saleGuard;
             _db = db;
             _imageStorage = imageStorage;
             _tenantContext = tenantContext;
         }
+
+        private const string EarlierPaymentUnconfirmedMessage =
+            "An earlier card payment for this bike hasn't been confirmed cancelled yet. Try again in a few minutes.";
+        private const string EarlierPaymentWentThroughMessage =
+            "An earlier payment for this bike went through. Check that sale before listing it again.";
+
+        /// <summary>Script0303's trigger (a listed unit moved off the floor outside the listing code)
+        /// surfaces as a 409 with its own copy rather than a 500.</summary>
+        private static bool IsListedUnitGuard(Exception ex) =>
+            ex is Npgsql.PostgresException pg && pg.SqlState == ListingRules.ListedUnitSqlState;
 
         // The same per-listing lock the online checkout takes, so a hold cannot be placed between
         // this request's release and its write.
@@ -106,6 +119,17 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(byItem);
         }
 
+        /// <summary>
+        /// Every product at the tenant marked used, active or not, published or not, as
+        /// { "productId": "used" }, for the admin's Used pill. Products not in the map are new.
+        /// </summary>
+        [HttpGet("ProductConditions")]
+        public async Task<IActionResult> ProductConditions()
+        {
+            if (NoTenant) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            return new ApiResponses().OkResult(await _listings.ListProductConditions(TenantId));
+        }
+
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> Get(Guid id)
         {
@@ -147,17 +171,36 @@ namespace webapi.Controllers
                 if (release == ReservationRelease.Blocked) return new ApiResponses().ConflictResult(PaymentInFlightMessage);
             }
 
-            var result = await _listings.Create(new ShopItemListing
+            // Sales that died naming this unit (a declined register card sale, an abandoned checkout,
+            // a refund) would make its next sale fail on uk_shop_sale_line_item: let them go first,
+            // each one only once its PaymentIntent can never be confirmed. Only for a unit the create
+            // will accept; a rented-out or sold unit is refused below without touching its history.
+            if (ListingRules.CanList(ctx.ItemStatus))
             {
-                TenantId = TenantId,
-                ItemId = req.ItemId,
-                Title = title,
-                AskingPriceCents = req.AskingPriceCents,
-                ConditionGrade = grade!,
-                ConditionNotes = Blank(req.ConditionNotes),
-                Published = req.Published,
-                ListedByUserId = UserId,
-            });
+                var freed = await _saleGuard.FreeUnit(req.ItemId, TenantId, "list", HttpContext.RequestAborted);
+                if (freed == ReservationRelease.AlreadyPaid) return new ApiResponses().ConflictResult(EarlierPaymentWentThroughMessage);
+                if (freed == ReservationRelease.Blocked) return new ApiResponses().ConflictResult(EarlierPaymentUnconfirmedMessage);
+            }
+
+            ListingWriteResult result;
+            try
+            {
+                result = await _listings.Create(new ShopItemListing
+                {
+                    TenantId = TenantId,
+                    ItemId = req.ItemId,
+                    Title = title,
+                    AskingPriceCents = req.AskingPriceCents,
+                    ConditionGrade = grade!,
+                    ConditionNotes = Blank(req.ConditionNotes),
+                    Published = req.Published,
+                    ListedByUserId = UserId,
+                });
+            }
+            catch (Exception ex) when (IsListedUnitGuard(ex))
+            {
+                return new ApiResponses().ConflictResult(ListingRules.ListedUnitMessage);
+            }
             return await Respond(result);
         }
 
@@ -183,9 +226,13 @@ namespace webapi.Controllers
 
             var existing = await _listings.Get(id, TenantId);
             if (existing is null) return new ApiResponses().NotFoundResult("Listing not found.");
+            var refusal = UpdateRefusal(existing);
+            if (refusal is not null) return new ApiResponses().ConflictResult(refusal);
 
             var title = Blank(req.Title) ?? ListingRules.DefaultTitle(
                 existing.ProductName, ListingRules.VariantLabel(existing.Size, existing.Color, existing.Gender), existing.UnitLabel);
+            // The repository re-checks the same condition in its WHERE, so a sale or an unlist that
+            // lands between the read above and this write still wins.
             var n = await _listings.Update(new ShopItemListing
             {
                 Id = id,
@@ -196,8 +243,22 @@ namespace webapi.Controllers
                 ConditionNotes = Blank(req.ConditionNotes),
                 Published = req.Published,
             });
-            if (n == 0) return new ApiResponses().NotFoundResult("Listing not found.");
-            return new ApiResponses().OkResult(ToDto((await _listings.Get(id, TenantId))!, DateTime.UtcNow));
+            var after = await _listings.Get(id, TenantId);
+            if (after is null) return new ApiResponses().NotFoundResult("Listing not found.");
+            if (n == 0) return new ApiResponses().ConflictResult(UpdateRefusal(after) ?? "This listing changed; reload and try again.");
+            return new ApiResponses().OkResult(ToDto(after, DateTime.UtcNow));
+        }
+
+        /// <summary>Null when the listing's details may be edited; otherwise the 409 copy.</summary>
+        private static string? UpdateRefusal(ShopListingRow r)
+        {
+            var live = ListingRules.IsReservationLive(r.ReservedSaleId, r.ReservedAt, r.ReservedSaleStatus, DateTime.UtcNow);
+            return ListingRules.State(r.UnlistedAt, r.ItemStatus, live) switch
+            {
+                "sold" => "This bike has been sold; the listing is the record of that sale and can't be edited.",
+                "unlisted" => "This listing is closed. List the bike again to change its price or details.",
+                _ => null,
+            };
         }
 
         /// <summary>
@@ -223,7 +284,15 @@ namespace webapi.Controllers
                 if (release == ReservationRelease.Blocked) return new ApiResponses().ConflictResult(PaymentInFlightMessage);
             }
 
-            var result = await _listings.Unlist(id, TenantId);
+            ListingWriteResult result;
+            try
+            {
+                result = await _listings.Unlist(id, TenantId);
+            }
+            catch (Exception ex) when (IsListedUnitGuard(ex))
+            {
+                return new ApiResponses().ConflictResult(ListingRules.ListedUnitMessage);
+            }
             return await Respond(result);
         }
 
@@ -262,32 +331,38 @@ namespace webapi.Controllers
             if (!AllowedTypes.TryGetValue(file.ContentType, out var ext))
                 return new ApiResponses().BadRequestResult($"Photos must be PNG, JPEG, or WebP (got {file.ContentType}).");
 
-            // Cap BEFORE storing the file, so a rejected upload never leaves an orphan blob.
+            // Cheap early-out before storing a file that cannot fit. The authoritative check is the
+            // atomic count-and-insert under the listing row lock below; a file stored for an upload
+            // that loses that race is deleted again.
+            var limitMessage = $"That's the limit of {MaxPhotos} photos. Delete one to add another.";
             if (await _listings.CountPhotos(id, TenantId) >= MaxPhotos)
-                return new ApiResponses().BadRequestResult($"That's the limit of {MaxPhotos} photos. Delete one to add another.");
+                return new ApiResponses().BadRequestResult(limitMessage);
 
             await using var stream = file.OpenReadStream();
             var url = await _imageStorage.SaveAsync(stream, TenantId, "shop-listing", ext, ct);
-            ShopListingPhoto? saved;
+            (ShopListingPhoto? Photo, bool LimitReached) added;
             try
             {
-                saved = await _listings.AddPhoto(new ShopListingPhoto
+                added = await _listings.AddPhoto(new ShopListingPhoto
                 {
                     TenantId = TenantId,
                     ListingId = id,
                     ImageUrl = url,
                     Caption = Blank(caption),
-                });
+                }, MaxPhotos);
             }
             catch
             {
                 await SafeDeleteFile(url, ct);
                 throw;
             }
+            var saved = added.Photo;
             if (saved is null)
             {
                 await SafeDeleteFile(url, ct);
-                return new ApiResponses().NotFoundResult("Listing not found.");
+                return added.LimitReached
+                    ? new ApiResponses().BadRequestResult(limitMessage)
+                    : new ApiResponses().NotFoundResult("Listing not found.");
             }
             return new ApiResponses().OkResult(new { id = saved.Id, url = saved.ImageUrl, caption = saved.Caption, sortOrder = saved.SortOrder });
         }

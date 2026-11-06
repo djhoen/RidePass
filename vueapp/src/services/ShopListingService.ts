@@ -9,6 +9,8 @@ import axios, { type AxiosProgressEvent } from 'axios'
 export type ListingConditionGrade = 'excellent' | 'good' | 'fair'
 export type ListingState = 'active' | 'reserved' | 'sold' | 'unlisted'
 export type ProductCondition = 'new' | 'used'
+/** The unit status a listing was taken from, and so where it goes back to when unlisted. */
+export type ListingRestoreStatus = 'available' | 'maintenance' | 'retired'
 
 export interface ListingPhoto {
     id: string
@@ -42,6 +44,15 @@ export interface ShopListing {
     photos: ListingPhoto[]
     /** First listing photo, else the product image. */
     coverUrl: string | null
+    // Additive fields the server sends beyond the contract's ListingDto.
+    /** Where the unit goes if this listing comes down; for an unlisted row, where it went. The
+     *  server reads anything unknown as 'available' (the rental fleet). */
+    priorStatus?: ListingRestoreStatus | null
+    /** The unit's status right now ('for_sale' while it is on the floor). */
+    unitStatus?: string | null
+    /** When a live online hold lapses; null when nothing holds it. */
+    reservedUntilUtc?: string | null
+    productCondition?: ProductCondition | null
 }
 
 export interface UpsertListingBody {
@@ -61,6 +72,9 @@ export interface ListingForItem {
     askingPriceCents: number
     conditionGrade: ListingConditionGrade
     title: string
+    published?: boolean
+    /** A live online checkout holds the unit. */
+    reserved?: boolean
 }
 
 export interface PublicListingPhoto { url: string; caption: string | null }
@@ -76,7 +90,23 @@ export interface PublicListing {
     photos: PublicListingPhoto[]
     coverUrl: string | null
     specs: { size: string | null; color: string | null }
+    /** Held by someone else's live checkout. */
     reserved: boolean
+    /** The signed-in viewer's own live checkout holds it (reserved is false then): offer to finish paying. */
+    heldByYou?: boolean
+    listedAtUtc?: string
+}
+
+/** `data` of the Order 409. reason 'held_by_you' carries what is needed to resume the checkout. */
+export interface UsedOrderConflict {
+    reason?: 'held_by_you' | 'held_by_other' | 'sold' | 'unavailable' | string
+    saleId?: string | null
+    clientSecret?: string | null
+    paymentStatus?: string | null
+    saleStatus?: string | null
+    totalCents?: number | null
+    dueCents?: number | null
+    reservedUntilUtc?: string | null
 }
 export interface PublicListings {
     listings: PublicListing[]
@@ -109,6 +139,14 @@ export function gradeLabel(g: ListingConditionGrade | string | null | undefined)
 /** Unit status is owned by the listing while it's on the floor; the status select never offers it. */
 export const ITEM_STATUS_FOR_SALE = 'for_sale'
 
+/** Where an unlisted unit lands, in words, from the listing's priorStatus. Anything unknown reads
+ *  as the rental fleet, matching the server's ListingRules.RestoreStatusOnUnlist. */
+export function unlistDestination(priorStatus: string | null | undefined): string {
+    return priorStatus === 'maintenance' ? 'back on the bench'
+        : priorStatus === 'retired' ? 'back to retired'
+        : 'back in the rental fleet'
+}
+
 /**
  * The backend ships in parallel with this UI. Until its endpoints exist every read 404s, which
  * must read as "nothing listed" rather than an error: no used section on /Shop, an info line on
@@ -137,6 +175,11 @@ export class ShopListingService {
         const d = unwrap<{ listings?: ShopListing[] } | ShopListing[]>(r.data)
         return Array.isArray(d) ? d : (d?.listings ?? [])
     }
+    /** One listing in any state (404 when it isn't this tenant's). */
+    async get(id: string): Promise<ShopListing> {
+        const r = await axios.get(`${this.apiUrl}/ShopListing/${id}`)
+        return unwrap<ShopListing>(r.data)
+    }
     async create(body: CreateListingBody): Promise<ShopListing> {
         const r = await axios.post(`${this.apiUrl}/ShopListing`, body)
         return unwrap<ShopListing>(r.data)
@@ -145,7 +188,7 @@ export class ShopListingService {
         const r = await axios.put(`${this.apiUrl}/ShopListing/${id}`, body)
         return unwrap<ShopListing>(r.data)
     }
-    /** Unlist: the unit returns to the rental fleet (`available`). 409 when sold or live-reserved. */
+    /** Unlist: the unit goes back to the status it was listed from (priorStatus). 409 when sold or live-reserved. */
     async unlist(id: string): Promise<ShopListing | null> {
         const r = await axios.post(`${this.apiUrl}/ShopListing/${id}/Unlist`, {})
         // A bare OK (no DTO) is fine: callers already know the listing and just flip its state.
@@ -172,6 +215,12 @@ export class ShopListingService {
     /** CatalogManage: the used badge + filter on the store, "Used" pill in Inventory. */
     setProductCondition(productId: string, condition: ProductCondition) {
         return axios.put(`${this.apiUrl}/ShopListing/Products/${productId}/Condition`, { condition })
+    }
+    /** Every product flagged used, active or not, as { productId: 'used' }; a product not in the
+     *  map is new. Admin side; the store reads usedProductIds from the public listings instead. */
+    async productConditions(): Promise<Record<string, ProductCondition>> {
+        const r = await axios.get(`${this.apiUrl}/ShopListing/ProductConditions`)
+        return unwrap<Record<string, ProductCondition>>(r.data) ?? {}
     }
     /** Active listings keyed by unit id, for the register's unit picker. Empty map for no ids. */
     async forItems(itemIds: string[]): Promise<Record<string, ListingForItem>> {

@@ -357,7 +357,7 @@ import StockTakesTab from '@/components/bikeshop/StockTakesTab.vue'
 import ImportCsvDialog from '@/components/bikeshop/ImportCsvDialog.vue'
 import MatrixDialog from '@/components/bikeshop/MatrixDialog.vue'
 import ListingsTab from '@/components/bikeshop/ListingsTab.vue'
-import { ShopListingService, isMissingEndpoint } from '@/services/ShopListingService'
+import { ShopListingService, isMissingEndpoint, type ProductCondition } from '@/services/ShopListingService'
 
 const service = new BikeShopService()
 const listingService = new ShopListingService()
@@ -546,22 +546,21 @@ function openAdjust(v: ShopVariant) { adjustVariant.value = v; adjustDialog.valu
 function openItems(p: ShopProduct, v: ShopVariant) { itemsVariant.value = v; itemsProductName.value = p.name; itemsDialog.value = true }
 
 // ── Product condition (new / used) ───────────────────────────────────────────
-// The flag lives on shop_product. It is read from the product DTO when that carries `condition`;
-// until it does, the store's usedProductIds (sellable + published only) is the fallback, and a
-// toggle made here is remembered locally so the pill reacts without waiting on either.
-const usedFallback = ref<Set<string>>(new Set())
+// The flag lives on shop_product. GET ShopListing/ProductConditions returns every used product,
+// active or not, as { productId: 'used' }; anything absent is new. A 404 (endpoint not deployed)
+// or any other failure just means no pills. A toggle made here is remembered for the session so
+// the pill flips at once instead of waiting on a refetch.
+const productConditions = ref<Record<string, ProductCondition>>({})
 const conditionOverride = ref<Map<string, boolean>>(new Map())
 const conditionBusy = ref<string | null>(null)
 function isUsed(p: ShopProduct): boolean {
     const o = conditionOverride.value.get(p.id)
     if (o !== undefined) return o
-    const c = (p as unknown as { condition?: string }).condition
-    if (c) return c === 'used'
-    return usedFallback.value.has(p.id)
+    return productConditions.value[p.id] === 'used'
 }
-async function loadUsedFallback() {
-    try { usedFallback.value = new Set((await listingService.publicListings()).usedProductIds) }
-    catch { /* backend not there yet: no pills, nothing else changes */ }
+async function loadProductConditions() {
+    try { productConditions.value = await listingService.productConditions() }
+    catch { productConditions.value = {} }
 }
 async function toggleCondition(p: ShopProduct) {
     const next = !isUsed(p)
@@ -626,7 +625,7 @@ onMounted(async () => {
     const moved = movedAway[requestedTab]
     if (moved) { router.replace(moved); return }
 
-    await Promise.all([reloadProducts(), reloadAllProducts(), reloadCategories(), reloadSuppliers(), loadUsedFallback()])
+    await Promise.all([reloadProducts(), reloadAllProducts(), reloadCategories(), reloadSuppliers(), loadProductConditions()])
 })
 </script>
 

@@ -65,6 +65,17 @@ namespace Services.Helpers
             response.Data = data;
             return Conflict(response);
         }
+
+        // 502: an upstream we depend on (the payment processor) failed, and nothing was done on our
+        // side either. Same envelope, so clients read .error.
+        public IActionResult BadGatewayResult(object obj = null)
+        {
+            APIResponse response = new APIResponse();
+            response.Status = "502";
+            response.Message = APIResponseMessage.Fail;
+            response.Error = obj != null ? obj.ToString() : "";
+            return StatusCode(502, response);
+        }
     }
 
     public class APIResponse

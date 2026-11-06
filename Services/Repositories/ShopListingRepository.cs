@@ -125,6 +125,11 @@ namespace Services.Repositories
                 JOIN shop_product p ON p.id = v.product_id AND p.tenant_id = i.tenant_id
                 WHERE i.id = @itemId AND i.tenant_id = @tenantId", new { itemId, tenantId })).FirstOrDefault();
 
+        public async Task<Dictionary<Guid, string>> ListProductConditions(Guid tenantId) =>
+            (await _db.Query<Guid>(@"
+                SELECT id FROM shop_product WHERE tenant_id = @tenantId AND condition = 'used'", new { tenantId }))
+            .ToDictionary(id => id, _ => "used");
+
         public async Task<List<Guid>> ListUsedProductIds(Guid tenantId) =>
             (await _db.Query<Guid>(@"
                 SELECT id FROM shop_product
@@ -157,8 +162,15 @@ namespace Services.Repositories
             public Guid? ReservedSaleId { get; set; }
         }
 
+        // Script0303's trigger refuses any move of a 'for_sale' unit off the floor unless this
+        // transaction-local setting is on; only the listing's own transactions turn it on.
+        private const string AllowListingChange = "SELECT set_config('ridepass.listing_change', 'on', true)";
+
+        // Lock order, both writes: the unit (shop_item) FIRST, then its listing row(s), so Create and
+        // Unlist on the same unit queue behind each other instead of deadlocking.
         public Task<ListingWriteResult> Create(ShopItemListing listing) => _db.WithTransaction(async (conn, tx) =>
         {
+            await conn.ExecuteAsync(AllowListingChange, transaction: tx);
             var p = new { itemId = listing.ItemId, tenantId = listing.TenantId };
             // Row lock on the unit: a second List click, or a rental going out at the same moment,
             // waits here and then sees the new status.
@@ -226,11 +238,16 @@ namespace Services.Repositories
             return ListingWriteResult.Ok(id);
         });
 
+        // Only an open listing whose unit is still on the floor takes edits: a sold listing is the
+        // record of that sale, and an unlisted (or stranded) one is history. 0 rows = not editable or
+        // not found; the caller tells them apart.
         public Task<int> Update(ShopItemListing listing) => _db.Execute(@"
-            UPDATE shop_item_listing
+            UPDATE shop_item_listing l
             SET title = @Title, asking_price_cents = @AskingPriceCents, condition_grade = @ConditionGrade,
                 condition_notes = @ConditionNotes, published = @Published
-            WHERE id = @Id AND tenant_id = @TenantId", listing);
+            WHERE l.id = @Id AND l.tenant_id = @TenantId AND l.unlisted_at IS NULL
+              AND EXISTS (SELECT 1 FROM shop_item i
+                          WHERE i.id = l.item_id AND i.tenant_id = @TenantId AND i.status = 'for_sale')", listing);
 
         private sealed class UnlistLock
         {
@@ -244,6 +261,15 @@ namespace Services.Repositories
 
         public Task<ListingWriteResult> Unlist(Guid id, Guid tenantId) => _db.WithTransaction(async (conn, tx) =>
         {
+            await conn.ExecuteAsync(AllowListingChange, transaction: tx);
+            // Same lock order as Create: the unit first (found through the listing, unlocked), then
+            // the listing row.
+            var itemLocked = await conn.QueryFirstOrDefaultAsync<Guid?>(@"
+                SELECT i.id FROM shop_item i
+                WHERE i.tenant_id = @tenantId
+                  AND i.id = (SELECT l.item_id FROM shop_item_listing l WHERE l.id = @id AND l.tenant_id = @tenantId)
+                FOR UPDATE", new { id, tenantId }, tx);
+            if (itemLocked is null) return ListingWriteResult.NotFound("Listing not found.");
             var row = await conn.QueryFirstOrDefaultAsync<UnlistLock>(@"
                 SELECT l.id, l.item_id AS ItemId, l.unlisted_at AS UnlistedAt,
                        l.reserved_sale_id AS ReservedSaleId, l.prior_status AS PriorStatus,
@@ -251,7 +277,7 @@ namespace Services.Repositories
                 FROM shop_item_listing l
                 JOIN shop_item i ON i.id = l.item_id AND i.tenant_id = l.tenant_id
                 WHERE l.id = @id AND l.tenant_id = @tenantId
-                FOR UPDATE OF l, i", new { id, tenantId }, tx);
+                FOR UPDATE OF l", new { id, tenantId }, tx);
             if (row is null) return ListingWriteResult.NotFound("Listing not found.");
             if (row.UnlistedAt is not null) return ListingWriteResult.Ok(row.Id);
             if (row.ItemStatus == "sold")
@@ -285,12 +311,24 @@ namespace Services.Repositories
             WHERE id = @listingId AND tenant_id = @tenantId AND reserved_sale_id = @saleId",
             new { listingId, tenantId, saleId });
 
+        // Only item_id is nulled; the line, its price and the sale's history stay exactly as they were.
         public Task<int> DetachDeadSaleLine(Guid saleId, Guid itemId, Guid tenantId) => _db.Execute(@"
             UPDATE shop_sale_line sl SET item_id = NULL
             FROM shop_sale s
             WHERE s.id = sl.sale_id AND s.tenant_id = @tenantId AND s.id = @saleId
-              AND sl.item_id = @itemId AND s.status IN ('failed', 'abandoned')",
+              AND sl.item_id = @itemId AND s.status IN ('failed', 'abandoned', 'cancelled', 'refunded')",
             new { saleId, itemId, tenantId });
+
+        public async Task<List<ShopDeadSaleLine>> ListDeadSaleLinesForItem(Guid itemId, Guid tenantId) =>
+            (await _db.Query<ShopDeadSaleLine>(@"
+                SELECT s.id AS SaleId, sl.id AS LineId, s.status AS SaleStatus,
+                       s.stripe_payment_intent_id AS StripePaymentIntentId,
+                       s.stripe_connected_account_id AS StripeConnectedAccountId
+                FROM shop_sale_line sl
+                JOIN shop_sale s ON s.id = sl.sale_id AND s.tenant_id = @tenantId
+                WHERE sl.item_id = @itemId
+                  AND s.status IN ('failed', 'abandoned', 'cancelled', 'refunded')
+                ORDER BY s.created_at", new { itemId, tenantId })).ToList();
 
         // ── Sale status, tenant-scoped ────────────────────────────────────────────
         public Task<int> MarkSaleDead(Guid saleId, Guid tenantId, string status) => _db.Execute(@"
@@ -314,19 +352,26 @@ namespace Services.Repositories
             "SELECT count(*) FROM shop_listing_photo WHERE listing_id = @listingId AND tenant_id = @tenantId",
             new { listingId, tenantId });
 
-        public async Task<ShopListingPhoto?> AddPhoto(ShopListingPhoto photo)
-        {
-            // Position is computed server-side (max + 10) so two uploads at once can't both claim
-            // the same slot; the WHERE EXISTS ties the row to a listing of this tenant.
-            var saved = (await _db.Query<ShopListingPhoto>($@"
-                INSERT INTO shop_listing_photo (tenant_id, listing_id, image_url, caption, sort_order)
-                SELECT @TenantId, @ListingId, @ImageUrl, @Caption,
-                       COALESCE((SELECT max(sort_order) FROM shop_listing_photo
-                                 WHERE tenant_id = @TenantId AND listing_id = @ListingId), 0) + 10
-                WHERE EXISTS (SELECT 1 FROM shop_item_listing WHERE id = @ListingId AND tenant_id = @TenantId)
-                RETURNING {PhotoCols}", photo)).FirstOrDefault();
-            return saved;
-        }
+        public Task<(ShopListingPhoto? Photo, bool LimitReached)> AddPhoto(ShopListingPhoto photo, int maxPhotos) =>
+            _db.WithTransaction<(ShopListingPhoto?, bool)>(async (conn, tx) =>
+            {
+                // The listing row lock serializes uploads to one listing, so the count and the insert
+                // below are one decision: two uploads at once cannot both take the twelfth slot.
+                var listing = await conn.QueryFirstOrDefaultAsync<Guid?>(
+                    "SELECT id FROM shop_item_listing WHERE id = @ListingId AND tenant_id = @TenantId FOR UPDATE", photo, tx);
+                if (listing is null) return (null, false);
+                var count = await conn.ExecuteScalarAsync<int>(
+                    "SELECT count(*) FROM shop_listing_photo WHERE listing_id = @ListingId AND tenant_id = @TenantId", photo, tx);
+                if (count >= maxPhotos) return (null, true);
+                // Position is computed server-side (max + 10), under the same lock.
+                var saved = await conn.QuerySingleAsync<ShopListingPhoto>($@"
+                    INSERT INTO shop_listing_photo (tenant_id, listing_id, image_url, caption, sort_order)
+                    SELECT @TenantId, @ListingId, @ImageUrl, @Caption,
+                           COALESCE((SELECT max(sort_order) FROM shop_listing_photo
+                                     WHERE tenant_id = @TenantId AND listing_id = @ListingId), 0) + 10
+                    RETURNING {PhotoCols}", photo, tx);
+                return (saved, false);
+            });
 
         public async Task<string?> DeletePhoto(Guid photoId, Guid listingId, Guid tenantId) =>
             (await _db.Query<string>(@"
