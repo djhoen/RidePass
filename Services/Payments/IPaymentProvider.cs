@@ -121,6 +121,14 @@ namespace Services.Payments
         Task<string?> GetPaymentIntentStatusAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
 
         /// <summary>
+        /// Reads a PaymentIntent's status AND client secret, so a buyer who already started paying
+        /// can resume on the intent this server created for them instead of being sent a new one.
+        /// Only ever hand the secret back to the buyer the intent belongs to. Returns null when
+        /// Stripe credentials aren't configured or the PI can't be fetched.
+        /// </summary>
+        Task<PaymentIntentSnapshot?> GetPaymentIntentSnapshotAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
+
+        /// <summary>
         /// Cancels a PaymentIntent so it can no longer be charged, returning its resulting status
         /// ("canceled"). If Stripe rejects the cancel because the PI already reached a terminal
         /// state, returns that actual status instead (most importantly "succeeded", meaning the
@@ -217,6 +225,8 @@ namespace Services.Payments
     public record BalanceSummary(int Count, long GrossCents, long FeeCents, long NetCents);
 
     public record PaymentIntentCreated(string IntentId, string ClientSecret);
+
+    public record PaymentIntentSnapshot(string IntentId, string Status, string? ClientSecret, long AmountCents);
 
     public record PaymentWebhookEvent(
         string Type,

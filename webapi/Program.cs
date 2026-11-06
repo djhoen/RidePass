@@ -69,6 +69,11 @@ builder.Services.AddScoped<IBikeShopRepository, BikeShopRepository>();
 // The bike shop "Today" sheet's read model (GET BikeShopDay): its own repository so the day
 // view can grow without touching the booking paths in IBikeShopRepository.
 builder.Services.AddScoped<IShopDayRepository, ShopDayRepository>();
+// Used & ex-rental listings (Script0302): a fleet unit on the sales floor at its own asking price.
+// Its own repository; the reservation service releases a stale online hold (cancels the dead
+// PaymentIntent, detaches the unit from the dead sale line) before another buyer takes the bike.
+builder.Services.AddScoped<IShopListingRepository, ShopListingRepository>();
+builder.Services.AddScoped<Services.BikeShop.IListingReservationService, Services.BikeShop.ListingReservationService>();
 builder.Services.AddScoped<IPlatformPartRepository, PlatformPartRepository>();
 builder.Services.AddScoped<IDistributorCredentialRepository, DistributorCredentialRepository>();
 // Distributor catalog sync. One source per distributor, resolved by slug. The nightly sweep lives

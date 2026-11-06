@@ -421,6 +421,13 @@ const routes = [
         component: () => import('../views/Shop.vue'),
     },
     {
+        // Public: one used / ex-rental bike (shop_item_listing). Browse anonymously; "Buy" signs in
+        // inline and the order is enforced server-side, same posture as /Shop.
+        path: '/Shop/Used/:id',
+        name: 'ShopUsedListing',
+        component: () => import('../views/UsedListing.vue'),
+    },
+    {
         // Public: emailed work-order deposit payment link (token is the credential).
         // Public rental signing, reached from the emailed link. No auth: the token is the
         // credential, same posture as /PayDeposit.

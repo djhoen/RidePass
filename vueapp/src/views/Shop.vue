@@ -10,13 +10,55 @@
 
         <v-card v-if="loading" class="pa-8 text-center"><v-progress-circular indeterminate color="primary" /></v-card>
         <v-alert v-else-if="loadError" type="error" variant="tonal">{{ loadError }}</v-alert>
-        <v-card v-else-if="catalog.products.length === 0" class="pa-8 text-center text-medium-emphasis">
+        <v-card v-else-if="catalog.products.length === 0 && used.listings.length === 0" class="pa-8 text-center text-medium-emphasis">
             The shop shelves are being stocked. Check back soon!
         </v-card>
         <template v-else>
-            <v-chip-group v-model="categoryFilter" class="mb-3">
-                <v-chip v-for="c in visibleCategories" :key="c.id" :value="c.id" filter variant="tonal">{{ c.name }}</v-chip>
-            </v-chip-group>
+            <!-- ── Used and ex-rental: one-of-a-kind units, each bought on its own page ──────
+                 Loaded beside the catalog; an empty (or 404) reply simply hides the section. -->
+            <section v-if="used.listings.length > 0 && !(isEmbed && detailProduct)" class="mb-6">
+                <div class="d-flex align-center ga-2 mb-1 flex-wrap">
+                    <h2 class="text-h5 font-display">Used and ex-rental</h2>
+                    <span class="rp-pill">{{ used.listings.length }} {{ used.listings.length === 1 ? 'bike' : 'bikes' }}</span>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-3">
+                    Serviced fleet bikes and used gear, sold as-is. Each one is unique: buy it online, pick it up at the shop.
+                </div>
+                <v-row>
+                    <v-col v-for="l in used.listings" :key="l.id" cols="12" sm="6" md="4" lg="3">
+                        <v-card class="d-flex flex-column shop-card used-card" height="100%" @click="openUsed(l)">
+                            <v-img v-if="l.coverUrl" :src="absoluteUrl(l.coverUrl)!" height="160" cover></v-img>
+                            <div v-else class="used-noimage d-flex align-center justify-center">
+                                <v-icon size="40" class="text-muted2">mdi-bike</v-icon>
+                            </div>
+                            <v-card-text class="flex-grow-1">
+                                <div class="d-flex align-center ga-2 flex-wrap">
+                                    <span class="rp-pill rp-pill--solid">Used</span>
+                                    <span class="rp-pill" :class="gradePillClass(l.conditionGrade)">{{ gradeLabel(l.conditionGrade) }}</span>
+                                </div>
+                                <div class="font-weight-medium mt-2">{{ l.title }}</div>
+                                <div v-if="l.categoryName" class="text-caption text-medium-emphasis">{{ l.categoryName }}</div>
+                                <div class="text-primary font-weight-bold mt-1">{{ money(l.askingPriceCents) }}</div>
+                            </v-card-text>
+                            <v-card-actions>
+                                <span class="text-caption text-medium-emphasis px-2">Pick up at the shop</span>
+                                <v-spacer></v-spacer>
+                                <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-eye-outline" @click.stop="openUsed(l)">View</v-btn>
+                            </v-card-actions>
+                        </v-card>
+                    </v-col>
+                </v-row>
+            </section>
+
+            <template v-if="catalog.products.length > 0">
+            <div class="d-flex align-center flex-wrap ga-2 mb-3">
+                <v-chip-group v-model="categoryFilter">
+                    <v-chip v-for="c in visibleCategories" :key="c.id" :value="c.id" filter variant="tonal">{{ c.name }}</v-chip>
+                </v-chip-group>
+                <!-- Independent of the category filter: "used" cuts across categories. -->
+                <v-chip v-if="usedIds.size > 0" :variant="usedOnly ? 'flat' : 'tonal'" :color="usedOnly ? 'primary' : undefined"
+                    :prepend-icon="usedOnly ? 'mdi-check' : 'mdi-tag-outline'" @click="usedOnly = !usedOnly">Used</v-chip>
+            </div>
 
             <!-- Embedded widget: the detail REPLACES the grid (see isEmbed in the script). -->
             <v-card v-if="isEmbed && detailProduct" variant="outlined" class="mb-4">
@@ -24,12 +66,18 @@
             </v-card>
 
             <v-row v-if="!(isEmbed && detailProduct)">
+                <v-col v-if="filteredProducts.length === 0" cols="12">
+                    <v-card class="pa-6 text-center text-medium-emphasis">Nothing matches that filter.</v-card>
+                </v-col>
                 <v-col v-for="p in filteredProducts" :key="p.id" cols="12" sm="6" md="4" lg="3">
                     <v-card class="d-flex flex-column shop-card" height="100%" @click="openDetail(p)">
                         <v-img v-if="p.imageUrl" :src="absoluteUrl(p.imageUrl)!" height="160" cover></v-img>
                         <v-card-text class="flex-grow-1">
                             <div class="text-caption text-medium-emphasis">{{ p.brand || '' }}</div>
-                            <div class="font-weight-medium">{{ p.name }}</div>
+                            <div class="font-weight-medium d-flex align-center ga-2 flex-wrap">
+                                <span>{{ p.name }}</span>
+                                <span v-if="usedIds.has(p.id)" class="rp-pill rp-pill--solid">Used</span>
+                            </div>
                             <div class="text-primary font-weight-bold mt-1">{{ priceRange(p) }}</div>
                             <div v-if="p.description" class="text-caption text-medium-emphasis mt-1 shop-desc">{{ p.description }}</div>
                         </v-card-text>
@@ -52,6 +100,7 @@
                     </v-card>
                 </v-col>
             </v-row>
+            </template>
         </template>
 
         <!-- ── Cart / checkout ──────────────────────────────────────────── -->
@@ -151,8 +200,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { BikeShopService, type StoreCatalog, type StoreCatalogProduct, type StoreCatalogVariant } from '@/services/BikeShopService'
+import { ShopListingService, gradeLabel, type PublicListings, type PublicListing, type ListingConditionGrade } from '@/services/ShopListingService'
 import InlineAuthDialog from '@/components/InlineAuthDialog.vue'
 import ProductDetail from '@/components/bikeshop/ProductDetail.vue'
 import { absoluteUrl } from '@/helpers/ImageUrl'
@@ -164,7 +214,9 @@ import { getStripe } from '@/helpers/StripeHelper'
 type CatalogProduct = StoreCatalogProduct
 
 const service = new BikeShopService()
+const listingService = new ShopListingService()
 const route = useRoute()
+const router = useRouter()
 
 // Embedded widget: the iframe is sized to its content and cannot scroll itself, so a
 // fixed-position dialog would center against the full iframe height and land off the
@@ -187,7 +239,29 @@ const visibleCategories = computed(() => {
 const filteredProducts = computed(() =>
     catalog.value.products
         .filter(p => !categoryFilter.value || p.categoryId === categoryFilter.value)
+        .filter(p => !usedOnly.value || usedIds.value.has(p.id))
         .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)))
+
+// ── Used & ex-rental ───────────────────────────────────────────────────────
+// Listings are one-of-a-kind units with their own page (no cart). usedProductIds badges and
+// filters ordinary products flagged "used" without touching the Catalog endpoint.
+const used = ref<PublicListings>({ listings: [], usedProductIds: [] })
+const usedIds = computed(() => new Set(used.value.usedProductIds))
+const usedOnly = ref(false)
+function gradePillClass(g: ListingConditionGrade): string {
+    return g === 'excellent' ? 'rp-pill--green' : g === 'fair' ? 'rp-pill--red' : ''
+}
+function openUsed(l: PublicListing) {
+    // The embedded widget can't host a second route inside its content-sized iframe; open the
+    // listing on the hosted site instead.
+    if (isEmbed.value) window.open(`${window.location.origin}/Shop/Used/${l.id}`, '_blank', 'noopener')
+    else router.push(`/Shop/Used/${l.id}`)
+}
+async function reloadUsed() {
+    // Quiet by design: a 404 (backend not deployed yet) or any failure just means no used section.
+    try { used.value = await listingService.publicListings() }
+    catch { used.value = { listings: [], usedProductIds: [] } }
+}
 
 function isSerialized(p: CatalogProduct): boolean {
     return p.variants.every(v => v.trackingKind === 'serialized')
@@ -386,7 +460,8 @@ function finishOrder(orderNumber: number | null, creditUsed: number) {
 
 async function reload() {
     try {
-        catalog.value = (await service.storeCatalog()).data.data
+        const [cat] = await Promise.all([service.storeCatalog(), reloadUsed()])
+        catalog.value = cat.data.data
     } catch (e: any) {
         loadError.value = e.response?.data?.error || 'Could not load the shop. Refresh to try again.'
     } finally { loading.value = false }
@@ -411,4 +486,10 @@ onMounted(async () => {
 }
 /* The whole card opens the detail view; the option select and Add button stop the click. */
 .shop-card { cursor: pointer; }
+.used-card { border: 1px solid var(--rp-line); }
+.used-noimage {
+    height: 160px;
+    background: var(--rp-card2);
+    border-bottom: 1px solid var(--rp-line);
+}
 </style>

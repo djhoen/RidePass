@@ -53,6 +53,18 @@ namespace Services.Helpers
             response.Error = obj != null ? obj.ToString() : "";
             return Conflict(response);
         }
+
+        // 409 that also carries data, for a refusal the client acts on rather than just shows: which
+        // case it is (a reason code) and anything needed to recover, such as the checkout to resume.
+        public IActionResult ConflictResult(string error, object data)
+        {
+            APIResponse response = new APIResponse();
+            response.Status = Conflict().StatusCode.ToString();
+            response.Message = APIResponseMessage.Fail;
+            response.Error = error ?? "";
+            response.Data = data;
+            return Conflict(response);
+        }
     }
 
     public class APIResponse

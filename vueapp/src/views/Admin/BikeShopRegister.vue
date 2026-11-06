@@ -117,8 +117,15 @@
                     <div v-if="pickerLoading" class="text-center py-4"><v-progress-circular indeterminate></v-progress-circular></div>
                     <v-list v-else lines="one">
                         <v-list-item v-for="it in pickerItems" :key="it.id" :title="it.label"
-                            :subtitle="it.serial || undefined" @click="addSerialized(it)">
-                            <template #append><v-icon>mdi-plus</v-icon></template>
+                            :subtitle="pickerSubtitle(it)" @click="addSerialized(it)">
+                            <template #append>
+                                <!-- A listed ex-rental rings at its asking price; the server is authoritative,
+                                     this just shows what it will charge. -->
+                                <span v-if="pickerListings[it.id]" class="text-body-2 font-weight-medium mr-2">
+                                    {{ money(pickerListings[it.id].askingPriceCents) }}
+                                </span>
+                                <v-icon>mdi-plus</v-icon>
+                            </template>
                         </v-list-item>
                         <div v-if="pickerItems.length === 0" class="text-medium-emphasis text-center py-3">No available units.</div>
                     </v-list>
@@ -238,6 +245,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { BikeShopService, type ShopProduct, type ShopVariant, type ShopItem, type ShopScanResolution, type ShopDisplayState } from '@/services/BikeShopService'
+import { ShopListingService, ITEM_STATUS_FOR_SALE, gradeLabel, type ListingForItem } from '@/services/ShopListingService'
 import ShopDisplayButton from '@/components/bikeshop/ShopDisplayButton.vue'
 import { shopDisplayPaired, pushShopDisplayState, idleShopDisplayState } from '@/helpers/ShopDisplay'
 import { useRouter } from 'vue-router'
@@ -480,8 +488,10 @@ onUnmounted(() => {
 })
 
 function addVariant(v: Tile) {
-    if (v.availableCount <= 0 || v.salePriceCents == null) return
+    // A serialized variant can show 0 available and still hold a listed (for_sale) unit, so the
+    // picker decides what is sellable; pool stock is gated here.
     if (v.trackingKind === 'serialized') { openUnitPicker(v); return }
+    if (v.availableCount <= 0 || v.salePriceCents == null) return
     const existing = cart.value.find(l => l.variantId === v.variantId && !l.itemId)
     if (existing) {
         if (existing.qty < existing.availableCount) existing.qty++
@@ -503,14 +513,32 @@ const unitPickerOpen = ref(false)
 const pickerVariant = ref<Tile | null>(null)
 const pickerItems = ref<ShopItem[]>([])
 const pickerLoading = ref(false)
+// Active listings for the for_sale units in the picker (asking price + grade), keyed by unit id.
+const listingService = new ShopListingService()
+const pickerListings = ref<Record<string, ListingForItem>>({})
+function isForSale(it: ShopItem): boolean { return (it.status as string) === ITEM_STATUS_FOR_SALE }
+function pickerSubtitle(it: ShopItem): string | undefined {
+    const l = pickerListings.value[it.id]
+    const tail = it.serial ? ` · ${it.serial}` : ''
+    if (l) return `For sale · ${money(l.askingPriceCents)} · ${gradeLabel(l.conditionGrade)}${tail}`
+    if (isForSale(it)) return `For sale${tail}`
+    return it.serial || undefined
+}
 async function openUnitPicker(v: Tile) {
     pickerVariant.value = v
     unitPickerOpen.value = true
     pickerLoading.value = true
+    pickerListings.value = {}
     try {
         const all = (await service.listItems(v.variantId)).data.data
         const inCart = new Set(cart.value.filter(l => l.itemId).map(l => l.itemId))
-        pickerItems.value = all.filter(it => it.status === 'available' && !inCart.has(it.id))
+        // A listed ex-rental (for_sale) is sellable here too; it rings at its asking price.
+        pickerItems.value = all.filter(it => (it.status === 'available' || isForSale(it)) && !inCart.has(it.id))
+        const listed = pickerItems.value.filter(isForSale).map(it => it.id)
+        if (listed.length) {
+            try { pickerListings.value = await listingService.forItems(listed) }
+            catch { /* no listing info (endpoint not there yet): the row still says "For sale"; the server prices the sale */ }
+        }
     } catch (e: any) {
         flash(e.response?.data?.error || 'Could not load units.', 'error')
         unitPickerOpen.value = false
@@ -518,10 +546,15 @@ async function openUnitPicker(v: Tile) {
 }
 function addSerialized(it: ShopItem) {
     const v = pickerVariant.value!
+    const listing = pickerListings.value[it.id]
+    const price = listing?.askingPriceCents ?? v.salePriceCents
+    if (price == null) { flash('That unit has no price yet. List it for sale, or give the variant a sale price.', 'error'); return }
     cart.value.push({
-        variantId: v.variantId, productName: v.productName, label: v.label,
-        salePriceCents: v.salePriceCents!, qty: 1, availableCount: 1, trackingKind: 'serialized',
-        itemId: it.id, itemLabel: `${it.label}${it.serial ? ' · ' + it.serial : ''}`,
+        // The name snapshot the server writes for a listed unit is the listing title, so show that.
+        variantId: v.variantId, productName: listing ? listing.title : v.productName, label: listing ? '' : v.label,
+        salePriceCents: price, qty: 1, availableCount: 1, trackingKind: 'serialized',
+        itemId: it.id,
+        itemLabel: `${listing ? `For sale · ${gradeLabel(listing.conditionGrade)} · ` : ''}${it.label}${it.serial ? ' · ' + it.serial : ''}`,
     })
     unitPickerOpen.value = false
 }

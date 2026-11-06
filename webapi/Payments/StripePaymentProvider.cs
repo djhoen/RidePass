@@ -361,6 +361,22 @@ namespace webapi.Payments
             }
         }
 
+        public async Task<PaymentIntentSnapshot?> GetPaymentIntentSnapshotAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            try
+            {
+                var service = new PaymentIntentService();
+                var intent = await service.GetAsync(paymentIntentId, requestOptions: BuildRequestOptions(connectedAccountId), cancellationToken: ct);
+                return new PaymentIntentSnapshot(intent.Id, intent.Status, intent.ClientSecret, intent.Amount);
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch PaymentIntent {IntentId}.", paymentIntentId);
+                return null;
+            }
+        }
+
         public async Task<string?> CancelPaymentIntentAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(_secretKey)) return null;

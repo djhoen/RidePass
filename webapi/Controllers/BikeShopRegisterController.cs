@@ -41,6 +41,8 @@ namespace webapi.Controllers
         private readonly ITenantContext _tenantContext;
         private readonly IPlatformPartRepository _platformParts;
         private readonly Services.BikeShop.IPartLookupProvider _partLookup;
+        private readonly IShopListingRepository _listings;
+        private readonly Services.BikeShop.IListingReservationService _reservations;
         private readonly ILogger<BikeShopRegisterController> _logger;
 
         public BikeShopRegisterController(IBikeShopRepository shop, IChargeRouter chargeRouter,
@@ -58,10 +60,14 @@ namespace webapi.Controllers
             ILogger<BikeShopRegisterController> logger,
             Services.Audit.IAuditLogger audit,
             IDiscountPresetRepository discounts,
-            webapi.Security.IManagerPinService managerPin)
+            webapi.Security.IManagerPinService managerPin,
+            IShopListingRepository listings,
+            Services.BikeShop.IListingReservationService reservations)
         {
             _platformParts = platformParts;
             _partLookup = partLookup;
+            _listings = listings;
+            _reservations = reservations;
             _logger = logger;
             _audit = audit;
             _discounts = discounts;
@@ -250,6 +256,13 @@ namespace webapi.Controllers
             var infos = (await _shop.GetVariantsForSale(req.Lines.Select(l => l.VariantId), TenantId))
                 .ToDictionary(v => v.Id);
 
+            // Units on the sales floor (used & ex-rental listings, Script0302) ring at the
+            // listing's asking price under the listing's title: the listing, not the variant, is
+            // what was priced, and a fleet bike often has no retail price on its variant at all.
+            var listingsByItem = (await _listings.ListActiveForItems(
+                    req.Lines.Where(l => l.ItemId is not null).Select(l => l.ItemId!.Value), TenantId))
+                .ToDictionary(l => l.ItemId);
+
             // Requested quantity per variant, to check against available stock as a whole (the same
             // variant may appear on more than one line).
             var wantByVariant = req.Lines.GroupBy(l => l.VariantId)
@@ -263,7 +276,8 @@ namespace webapi.Controllers
             {
                 if (!infos.TryGetValue(line.VariantId, out var info))
                     return new ApiResponses().BadRequestResult("An item in the cart is no longer available.");
-                if (info.SalePriceCents is null)
+                var listing = line.ItemId is Guid listedItemId ? listingsByItem.GetValueOrDefault(listedItemId) : null;
+                if (info.SalePriceCents is null && listing is null)
                     return new ApiResponses().BadRequestResult($"\"{info.ProductName}\" isn't set up for sale.");
 
                 // COGS snapshot for the margin report: a serialized unit's own acquired cost when
@@ -278,8 +292,30 @@ namespace webapi.Controllers
                     if (!usedItemIds.Add(line.ItemId.Value))
                         return new ApiResponses().BadRequestResult("The same unit is on the cart twice.");
                     var item = await _shop.GetItem(line.ItemId.Value, TenantId);
-                    if (item is null || item.VariantId != line.VariantId || item.Status != "available")
+                    // From the fleet ('available') or the sales floor ('for_sale'); never a unit
+                    // that is out, sold, on the bench or retired.
+                    if (item is null || item.VariantId != line.VariantId
+                        || !Services.BikeShop.ListingRules.IsSellableAtRegister(item.Status))
                         return new ApiResponses().BadRequestResult($"That \"{info.ProductName}\" unit isn't available to sell.");
+                    if (listing is not null)
+                    {
+                        // An online checkout holding the bike wins for twenty minutes; a stale hold
+                        // is released (its PaymentIntent cancelled, its line detached) before the
+                        // counter sells the same unit.
+                        if (Services.BikeShop.ListingRules.IsReservationLive(
+                                listing.ReservedSaleId, listing.ReservedAt, listing.ReservedSaleStatus, DateTime.UtcNow))
+                            return new ApiResponses().BadRequestResult(
+                                $"\"{listing.Title}\" is being checked out online right now. Try again in a few minutes.");
+                        if (listing.ReservedSaleId is not null)
+                        {
+                            var release = await _reservations.Release(listing, ct);
+                            if (release == Services.BikeShop.ReservationRelease.AlreadyPaid)
+                                return new ApiResponses().BadRequestResult($"\"{listing.Title}\" was just sold online.");
+                            if (release == Services.BikeShop.ReservationRelease.Blocked)
+                                return new ApiResponses().BadRequestResult(
+                                    $"\"{listing.Title}\" has an online payment in flight. Try again in a few minutes.");
+                        }
+                    }
                     unitCost = item.AcquiredCostCents ?? info.CostCents;
                 }
                 else if (wantByVariant[line.VariantId] > info.Available)
@@ -288,7 +324,7 @@ namespace webapi.Controllers
                         $"Only {info.Available} of \"{info.ProductName}\" in stock.");
                 }
 
-                var unit = info.SalePriceCents.Value;
+                var unit = listing?.AskingPriceCents ?? info.SalePriceCents!.Value;
                 subtotal += unit * line.Quantity;
 
                 // Tax + discount are filled in after discounts resolve (tax applies to the net).
@@ -297,7 +333,7 @@ namespace webapi.Controllers
                     VariantId = line.VariantId,
                     ItemId = info.TrackingKind == "serialized" ? line.ItemId : null,
                     Quantity = line.Quantity,
-                    NameSnapshot = info.ProductName,
+                    NameSnapshot = listing?.Title ?? info.ProductName,
                     VariantLabel = VariantLabel(info),
                     UnitPriceCents = unit,
                     TaxRateBps = info.TaxRateBps,
@@ -519,6 +555,13 @@ namespace webapi.Controllers
             try
             {
                 (saleId, receipt) = await _shop.CreateSale(sale, saleLines);
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505" && ex.ConstraintName == "uk_shop_sale_line_item")
+            {
+                // Another sale (an online checkout, another register) already names one of these
+                // units. The whole sale rolled back; hand the gift balance back and say so.
+                await RestoreGiftCard();
+                return new ApiResponses().ConflictResult("That bike is already on another order. Refresh and try again.");
             }
             catch
             {

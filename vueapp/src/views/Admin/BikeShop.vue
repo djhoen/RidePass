@@ -18,6 +18,7 @@
 
         <v-tabs v-model="tab" class="mb-4">
             <v-tab value="products">Products</v-tab>
+            <v-tab value="forsale">For sale</v-tab>
             <v-tab value="supply">Supply Chain</v-tab>
             <v-tab value="stocktakes">Stock takes</v-tab>
         </v-tabs>
@@ -110,7 +111,7 @@
                             <th style="width: 200px">Category</th>
                             <th style="width: 120px" class="text-right">Inventory</th>
                             <th style="width: 110px">Variants</th>
-                            <th style="width: 90px"></th>
+                            <th style="width: 110px"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -149,6 +150,7 @@
                                                     </template>
                                                 </v-tooltip>
                                                 <v-chip v-if="p.isRentable" size="x-small" variant="tonal">Also rented</v-chip>
+                                                <span v-if="isUsed(p)" class="rp-pill rp-pill--solid">Used</span>
                                             </div>
                                             <div v-if="p.brand" class="text-caption text-medium-emphasis">{{ p.brand }}</div>
                                         </div>
@@ -161,13 +163,25 @@
                                     <v-chip v-else-if="totalInventory(p) <= 0" size="x-small" color="error" class="ml-1">Out</v-chip>
                                 </td>
                                 <td class="text-caption text-medium-emphasis">{{ p.variants.length }}</td>
-                                <td class="text-right">
+                                <td class="text-right text-no-wrap">
                                     <v-tooltip text="Edit product" location="top">
                                         <template #activator="{ props }">
                                             <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-pencil"
                                                 @click.stop="openProduct(p)"></v-btn>
                                         </template>
                                     </v-tooltip>
+                                    <!-- Condition is a store-facing flag (Used badge + filter), separate from the
+                                         product form so it can be flipped without reopening the whole dialog. -->
+                                    <v-menu>
+                                        <template #activator="{ props: mp }">
+                                            <v-btn v-bind="mp" size="x-small" variant="text" icon="mdi-dots-vertical" @click.stop></v-btn>
+                                        </template>
+                                        <v-list density="compact">
+                                            <v-list-item :prepend-icon="isUsed(p) ? 'mdi-tag-off-outline' : 'mdi-tag-outline'"
+                                                :title="isUsed(p) ? 'Mark as new' : 'Mark as used'"
+                                                :disabled="conditionBusy === p.id" @click="toggleCondition(p)"></v-list-item>
+                                        </v-list>
+                                    </v-menu>
                                 </td>
                             </tr>
                             <tr v-if="expanded.has(p.id)" class="expanded-row">
@@ -234,7 +248,7 @@
                                                         <v-tooltip v-else text="Manage units" location="top">
                                                             <template #activator="{ props }">
                                                                 <v-btn v-bind="props" size="x-small" variant="text" icon="mdi-format-list-numbered"
-                                                                    @click="openItems(v)"></v-btn>
+                                                                    @click="openItems(p, v)"></v-btn>
                                                             </template>
                                                         </v-tooltip>
                                                     </td>
@@ -265,6 +279,11 @@
                     <template #cols="{ row }"><td>{{ row.name }}</td></template>
                 </SimpleCrud>
             </div>
+        </div>
+
+        <!-- ── For sale: ex-rental / used units on the sales floor and in the store ─── -->
+        <div v-else-if="tab === 'forsale'">
+            <ListingsTab @flash="flash" @changed="onStockChanged" />
         </div>
 
         <!-- ── Supply chain: who you buy from, and what's on order ──────── -->
@@ -309,7 +328,7 @@
             :prefill="scannedPrefill" @saved="onStockChanged" @flash="flash" />
         <AdjustStockDialog v-model="adjustDialog" :variant="adjustVariant" @saved="onStockChanged" @flash="flash" />
         <BarcodeLabelDialog v-model="labelDialog" :variant="labelVariant" :product-name="labelProductName" />
-        <ItemsDialog v-model="itemsDialog" :variant="itemsVariant" @changed="onStockChanged" @flash="flash" />
+        <ItemsDialog v-model="itemsDialog" :variant="itemsVariant" :product-name="itemsProductName" @changed="onStockChanged" @flash="flash" />
         <CategoryDialog v-model="categoryDialog" :category="editingCategory" @saved="reloadCategories" @flash="flash" />
         <SupplierDialog v-model="supplierDialog" :supplier="editingSupplier" @saved="reloadSuppliers" @flash="flash" />
         <ImportCsvDialog v-model="importDialog" @imported="onImported" @flash="flash" />
@@ -337,8 +356,11 @@ import ReorderTab from '@/components/bikeshop/ReorderTab.vue'
 import StockTakesTab from '@/components/bikeshop/StockTakesTab.vue'
 import ImportCsvDialog from '@/components/bikeshop/ImportCsvDialog.vue'
 import MatrixDialog from '@/components/bikeshop/MatrixDialog.vue'
+import ListingsTab from '@/components/bikeshop/ListingsTab.vue'
+import { ShopListingService, isMissingEndpoint } from '@/services/ShopListingService'
 
 const service = new BikeShopService()
+const listingService = new ShopListingService()
 
 // Uploaded images come back as a relative /uploads/... path. That only resolves against the
 // SPA origin, which is wrong whenever the API is a different origin (local dev, or a split
@@ -351,7 +373,7 @@ function absoluteUrl(u: string): string {
 // instead of telling the user to go hunt for it.
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['products','supply','stocktakes']
+const validTabs = ['products','forsale','supply','stocktakes']
 const requestedTab = String(route.query.tab ?? '')
 
 // Tabs that used to live here. Suppliers/Purchasing merged into Supply Chain and Categories moved
@@ -480,7 +502,7 @@ const productDialog = ref(false); const editingProduct = ref<ShopProduct | null>
 const variantDialog = ref(false); const variantProduct = ref<ShopProduct | null>(null); const editingVariant = ref<ShopVariant | null>(null)
 const adjustDialog = ref(false); const adjustVariant = ref<ShopVariant | null>(null)
 const labelDialog = ref(false); const labelVariant = ref<ShopVariant | null>(null); const labelProductName = ref('')
-const itemsDialog = ref(false); const itemsVariant = ref<ShopVariant | null>(null)
+const itemsDialog = ref(false); const itemsVariant = ref<ShopVariant | null>(null); const itemsProductName = ref('')
 const categoryDialog = ref(false); const editingCategory = ref<ShopCategory | null>(null)
 const supplierDialog = ref(false); const editingSupplier = ref<ShopSupplier | null>(null)
 const importDialog = ref(false)
@@ -521,7 +543,39 @@ function onImported() { onStockChanged(); reloadCategories(); reloadSuppliers() 
 function openVariant(p: ShopProduct, v: ShopVariant | null = null) { variantProduct.value = p; editingVariant.value = v; variantDialog.value = true }
 function openLabel(p: ShopProduct, v: ShopVariant) { labelVariant.value = v; labelProductName.value = p.name; labelDialog.value = true }
 function openAdjust(v: ShopVariant) { adjustVariant.value = v; adjustDialog.value = true }
-function openItems(v: ShopVariant) { itemsVariant.value = v; itemsDialog.value = true }
+function openItems(p: ShopProduct, v: ShopVariant) { itemsVariant.value = v; itemsProductName.value = p.name; itemsDialog.value = true }
+
+// ── Product condition (new / used) ───────────────────────────────────────────
+// The flag lives on shop_product. It is read from the product DTO when that carries `condition`;
+// until it does, the store's usedProductIds (sellable + published only) is the fallback, and a
+// toggle made here is remembered locally so the pill reacts without waiting on either.
+const usedFallback = ref<Set<string>>(new Set())
+const conditionOverride = ref<Map<string, boolean>>(new Map())
+const conditionBusy = ref<string | null>(null)
+function isUsed(p: ShopProduct): boolean {
+    const o = conditionOverride.value.get(p.id)
+    if (o !== undefined) return o
+    const c = (p as unknown as { condition?: string }).condition
+    if (c) return c === 'used'
+    return usedFallback.value.has(p.id)
+}
+async function loadUsedFallback() {
+    try { usedFallback.value = new Set((await listingService.publicListings()).usedProductIds) }
+    catch { /* backend not there yet: no pills, nothing else changes */ }
+}
+async function toggleCondition(p: ShopProduct) {
+    const next = !isUsed(p)
+    conditionBusy.value = p.id
+    try {
+        await listingService.setProductCondition(p.id, next ? 'used' : 'new')
+        conditionOverride.value = new Map(conditionOverride.value).set(p.id, next)
+        flash(next ? `${p.name} is marked used. Shoppers see a Used badge and can filter on it.` : `${p.name} is marked new.`)
+        reloadProducts()
+    } catch (e: any) {
+        flash(e.response?.data?.error
+            || (isMissingEndpoint(e) ? 'Used sales are not available on this server yet.' : 'Could not update the product.'), 'error')
+    } finally { conditionBusy.value = null }
+}
 function openCategory(c: ShopCategory | null = null) { editingCategory.value = c; categoryDialog.value = true }
 function openSupplier(s: ShopSupplier | null = null) { editingSupplier.value = s; supplierDialog.value = true }
 
@@ -572,7 +626,7 @@ onMounted(async () => {
     const moved = movedAway[requestedTab]
     if (moved) { router.replace(moved); return }
 
-    await Promise.all([reloadProducts(), reloadAllProducts(), reloadCategories(), reloadSuppliers()])
+    await Promise.all([reloadProducts(), reloadAllProducts(), reloadCategories(), reloadSuppliers(), loadUsedFallback()])
 })
 </script>
 
