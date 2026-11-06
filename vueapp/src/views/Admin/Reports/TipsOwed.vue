@@ -4,8 +4,8 @@
             <div>
                 <div class="rp-pagehead-title">Tips owed</div>
                 <div class="rp-pagehead-sub">
-                    Tips staff could not take from their drawer at shift close. Paying out logs the payment and
-                    clears the balance; payroll payouts are recorded here but leave the cash drawer alone.
+                    Card tips from each person's shift report that have not been paid to them yet. Paying out logs the
+                    payment and clears the balance; payroll payouts are recorded here but leave the cash drawer alone.
                 </div>
             </div>
             <div class="d-flex align-center flex-wrap ga-2">
@@ -86,6 +86,60 @@
                 </v-table>
             </v-card>
 
+            <!-- Tip jar: cash outside the register, split among the people who worked and handed out on
+                 the spot. Recorded for the daily tips sheet only: no liability, no ledger row. -->
+            <v-card class="mb-4">
+                <v-card-title class="text-subtitle-1 d-flex align-center flex-wrap ga-2">
+                    Tip jar
+                    <v-spacer></v-spacer>
+                    <v-text-field v-model="jarDate" type="date" label="Date" density="compact" hide-details style="max-width: 180px"></v-text-field>
+                    <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" :disabled="!jar" @click="openRecordJar">Record tip jar</v-btn>
+                </v-card-title>
+                <v-card-subtitle class="pb-2">
+                    Cash from the jar, split evenly among the people who worked and taken right after the shift. It shows
+                    on the End of Day tips sheet for the date.
+                </v-card-subtitle>
+                <v-alert v-if="jarError" type="warning" variant="tonal" density="compact" class="mx-4 mb-3" :text="jarError"></v-alert>
+                <v-table density="compact">
+                    <thead>
+                        <tr>
+                            <th style="width: 160px">Recorded</th>
+                            <th class="text-right" style="width: 110px">Total</th>
+                            <th>Split</th>
+                            <th style="width: 160px">By</th>
+                            <th>Note</th>
+                            <th style="width: 56px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="s in jar?.splits ?? []" :key="s.id">
+                            <td>{{ formatTenantDateTime(s.createdAtUtc) }}</td>
+                            <td class="text-right">{{ money(s.totalCents) }}</td>
+                            <td>
+                                <div class="d-flex flex-wrap ga-1 py-1">
+                                    <span v-for="sh in s.shares" :key="sh.userId" class="rp-pill">{{ sh.name }} · {{ money(sh.amountCents) }}</span>
+                                </div>
+                            </td>
+                            <td>{{ s.createdByName }}</td>
+                            <td class="text-medium-emphasis">{{ s.note || '' }}</td>
+                            <td class="text-right">
+                                <v-btn icon size="small" variant="text" :loading="deletingJarId === s.id"
+                                    :disabled="!!deletingJarId" aria-label="Remove this split" @click="deleteJar(s)">
+                                    <v-icon>mdi-delete-outline</v-icon>
+                                    <v-tooltip activator="parent" location="top">Remove this split</v-tooltip>
+                                </v-btn>
+                            </td>
+                        </tr>
+                        <tr v-if="jarLoading && !jar">
+                            <td colspan="6" class="text-center py-4"><v-progress-circular indeterminate size="20" width="2"></v-progress-circular></td>
+                        </tr>
+                        <tr v-else-if="jar && jar.splits.length === 0">
+                            <td colspan="6" class="text-center text-medium-emphasis py-4">No tip jar recorded for {{ prettyJarDate }}.</td>
+                        </tr>
+                    </tbody>
+                </v-table>
+            </v-card>
+
             <!-- History -->
             <v-card class="mb-4">
                 <v-card-title class="text-subtitle-1">Payout history</v-card-title>
@@ -160,16 +214,62 @@
             </v-card>
         </v-dialog>
 
+        <!-- Record tip jar -->
+        <v-dialog v-model="jarDialog" max-width="520" :persistent="savingJar">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Record tip jar · {{ prettyJarDate }}
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="savingJar" @click="jarDialog = false" />
+                </v-card-title>
+                <v-card-text>
+                    <v-text-field v-model.number="jarDollars" label="Total in the jar" type="number" prefix="$" min="0" step="0.01"
+                        inputmode="decimal" autocomplete="off" density="compact" autofocus :error-messages="jarAmountError" class="mb-3" />
+                    <div class="text-caption text-medium-emphasis mb-2">Split between</div>
+                    <div class="d-flex flex-wrap ga-2 mb-1">
+                        <v-chip v-for="p in jarPeople" :key="p.userId" :variant="jarSelectedIds.includes(p.userId) ? 'flat' : 'outlined'"
+                            :color="jarSelectedIds.includes(p.userId) ? 'primary' : undefined"
+                            :prepend-icon="jarSelectedIds.includes(p.userId) ? 'mdi-check' : undefined"
+                            @click="toggleJarPerson(p.userId)">{{ p.name }}</v-chip>
+                        <span v-if="jarPeople.length === 0" class="text-caption text-medium-emphasis">No counter staff found.</span>
+                    </div>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        Everyone who closed a shift that day is pre-selected. Tap a name to add or remove them.
+                    </p>
+                    <div v-if="jarShares.length" class="jar-preview mb-3">
+                        <div v-for="sh in jarShares" :key="sh.userId" class="d-flex justify-space-between">
+                            <span>{{ sh.name }}</span><span>{{ money(sh.amountCents) }}</span>
+                        </div>
+                        <div class="text-caption text-medium-emphasis mt-1">
+                            Even split{{ jarRemainderCents ? `; the leftover ${jarRemainderCents}¢ goes one cent each to the first names listed` : '' }}.
+                        </div>
+                    </div>
+                    <v-text-field v-model="jarNote" label="Note (optional)" autocomplete="off" density="compact" hide-details />
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" :disabled="savingJar" @click="jarDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingJar" :disabled="!canSaveJar" @click="saveJar">Save {{ money(jarCents) }}</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snack.show" :color="snack.color" :timeout="5000">{{ snack.text }}</v-snackbar>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { CashService, type TipsOwedResponse, type TipsOwedRow, type TipPayoutSource } from '@/services/CashService'
-import { formatTenantDateTime } from '@/helpers/TenantTime'
+import { ref, computed, watch, onMounted } from 'vue'
+import dayjs from 'dayjs'
+import {
+    CashService, splitEvenly,
+    type TipsOwedResponse, type TipsOwedRow, type TipPayoutSource, type TipJarResponse, type TipJarSplit,
+} from '@/services/CashService'
+import { formatTenantDateTime, tenantWallClockNow } from '@/helpers/TenantTime'
+import { useConfirm } from '@/composables/useConfirm'
 
 const service = new CashService()
+const confirm = useConfirm()
 
 const data = ref<TipsOwedResponse | null>(null)
 const loading = ref(false)
@@ -253,9 +353,113 @@ async function confirmPay() {
     }
 }
 
-onMounted(load)
+// ── Tip jar ──────────────────────────────────────────────────────────
+// The date is a tenant calendar date (yyyy-MM-dd): "today" at the track, never the laptop's, and
+// never run through the UTC converters.
+const jarDate = ref(tenantWallClockNow('YYYY-MM-DD'))
+const jar = ref<TipJarResponse | null>(null)
+const jarLoading = ref(false)
+const jarError = ref('')
+const prettyJarDate = computed(() => dayjs(jarDate.value).isValid() ? dayjs(jarDate.value).format('ddd, MMM D') : jarDate.value)
+
+async function loadJar() {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(jarDate.value)) return   // the date input is mid-edit
+    jarLoading.value = true
+    jarError.value = ''
+    try {
+        jar.value = (await service.tipJar(jarDate.value)).data.data
+    } catch (err: any) {
+        jar.value = null
+        jarError.value = err.response?.data?.error || 'Could not load the tip jar for this date.'
+    } finally {
+        jarLoading.value = false
+    }
+}
+watch(jarDate, loadJar)
+
+const jarDialog = ref(false)
+const jarDollars = ref<number | null>(null)
+// Ordered: the server hands any leftover cents to the first ids, so the preview lists them the same way.
+const jarSelectedIds = ref<string[]>([])
+const jarNote = ref('')
+const savingJar = ref(false)
+const deletingJarId = ref<string | null>(null)
+
+// A cleared v-model.number field holds '' rather than null; only a real number counts as an amount.
+function hasAmount(d: unknown): d is number { return typeof d === 'number' && Number.isFinite(d) }
+const jarCents = computed(() => hasAmount(jarDollars.value) ? Math.round(jarDollars.value * 100) : 0)
+const jarAmountError = computed(() => hasAmount(jarDollars.value) && jarCents.value <= 0 ? 'Enter an amount greater than $0.00.' : '')
+// Every counter staff member, the people who closed a shift that day first.
+const jarPeople = computed(() => {
+    const j = jar.value
+    if (!j) return []
+    const worked = new Set(j.suggestedUserIds)
+    return [...j.staff].sort((a, b) => Number(worked.has(b.userId)) - Number(worked.has(a.userId)) || a.name.localeCompare(b.name))
+})
+const jarShares = computed(() => {
+    const names = new Map(jarPeople.value.map(p => [p.userId, p.name]))
+    const amounts = splitEvenly(jarCents.value, jarSelectedIds.value.length)
+    return jarSelectedIds.value.map((id, i) => ({ userId: id, name: names.get(id) ?? 'Staff', amountCents: amounts[i] }))
+})
+const jarRemainderCents = computed(() => jarSelectedIds.value.length ? jarCents.value % jarSelectedIds.value.length : 0)
+const canSaveJar = computed(() => jarCents.value > 0 && jarSelectedIds.value.length > 0 && !jarAmountError.value)
+
+function openRecordJar() {
+    const j = jar.value
+    if (!j) return
+    jarDollars.value = null
+    jarSelectedIds.value = j.suggestedUserIds.filter(id => j.staff.some(s => s.userId === id))
+    jarNote.value = ''
+    jarDialog.value = true
+}
+function toggleJarPerson(userId: string) {
+    const i = jarSelectedIds.value.indexOf(userId)
+    if (i >= 0) jarSelectedIds.value.splice(i, 1)
+    else jarSelectedIds.value.push(userId)
+}
+async function saveJar() {
+    if (!canSaveJar.value) return
+    savingJar.value = true
+    try {
+        await service.recordTipJar({
+            date: jarDate.value,
+            totalCents: jarCents.value,
+            userIds: [...jarSelectedIds.value],
+            note: jarNote.value.trim(),
+        })
+        flash(`Recorded ${money(jarCents.value)} from the tip jar.`, 'success')
+        jarDialog.value = false
+        loadJar()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not record the tip jar. Refresh and try again.')
+    } finally {
+        savingJar.value = false
+    }
+}
+async function deleteJar(s: TipJarSplit) {
+    if (!await confirm({
+        title: 'Remove this tip jar split?',
+        message: `${money(s.totalCents)} split ${s.shares.length} way${s.shares.length === 1 ? '' : 's'} comes off the ${prettyJarDate.value} tips sheet. The cash itself is not affected.`,
+        confirmText: 'Remove',
+        confirmColor: 'error',
+    })) return
+    deletingJarId.value = s.id
+    try {
+        await service.deleteTipJar(s.id)
+        flash('Tip jar split removed.', 'success')
+        loadJar()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not remove the split.')
+    } finally {
+        deletingJarId.value = null
+    }
+}
+
+onMounted(() => { load(); loadJar() })
 </script>
 
 <style scoped>
 .owed-cell { font-weight: 600; }
+/* The live split, boxed like the POS shift summary so the figures read before the Save button. */
+.jar-preview { padding: 10px 12px; border-radius: var(--rp-radius-sm); background: var(--rp-panel2); }
 </style>

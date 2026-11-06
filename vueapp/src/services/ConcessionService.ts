@@ -277,8 +277,27 @@ export interface ConcessionMenuSettings {
     requireManagerForManualDiscount: boolean    // true = an arbitrary manual discount needs a manager PIN
     tabsEnabled: boolean                        // cashiers may open tabs (deferred payment; rounds fire to the kitchen)
     tabHoldCents: number                        // card-present authorization held when a tab is opened on a card (5000 = $50)
+    staffCodeMode: StaffCodeMode                // who the register rings as: the signed-in account, or whoever punched a code
+    tipsPayoutMode: TipsPayoutMode              // where card tips come from at shift close
     starterSeeded: boolean                      // server-managed; true once the starter catalog was loaded
     orderingOpenNow: boolean
+}
+// off = the register runs as the signed-in account; per_shift = someone punches in and stays
+// active until they switch or close their shift; per_order = the cashier is cleared after every
+// completed sale / tab action, so the next order asks for a code again.
+export type StaffCodeMode = 'off' | 'per_shift' | 'per_order'
+// manager_later = shift close records every card tip as house-owes and a manager pays it out;
+// drawer_at_close = the person takes tips from the drawer at close, remainder owed.
+export type TipsPayoutMode = 'manager_later' | 'drawer_at_close'
+
+// A verified staff code. cashierToken is opaque and short-lived; it rides on every sale / tab
+// call so the sale is attributed to this person rather than the terminal account.
+export interface StaffCodeVerifyResult {
+    userId: string
+    name: string
+    isManager: boolean
+    cashierToken: string
+    expiresAtUtc: string
 }
 
 // ── Online-order capacity / throttle ──────────────────────────────────
@@ -427,6 +446,8 @@ export interface ConcessionSaleRequest {
     // Store credit as a tender (server re-verifies the balance and caps at the total).
     creditAccountId?: string
     creditCents?: number
+    // Who rang it (staff sign-in). Required by the server when staffCodeMode is not 'off'.
+    cashierToken?: string | null
 }
 
 export interface ConcessionSaleResult {
@@ -542,6 +563,7 @@ export interface ConcessionOpenTabRequest {
     discount?: ConcessionDiscountInput | null
     managerPin?: string | null
     holdCard: boolean                  // authorize the tenant's hold amount on the reader now
+    cashierToken?: string | null       // who opened it (staff sign-in)
 }
 export interface ConcessionTabResponse {
     saleId: string
@@ -556,6 +578,7 @@ export interface ConcessionTabRoundRequest {
     items: ConcessionSaleLineInput[]   // non-empty
     discount?: ConcessionDiscountInput | null
     managerPin?: string | null
+    cashierToken?: string | null       // who rang the round (staff sign-in)
 }
 export interface ConcessionTabSummary {
     saleId: string
@@ -589,6 +612,7 @@ export interface ConcessionCloseTabRequest {
     creditCents: number
     discount?: ConcessionDiscountInput | null   // order-level, applied across every round at close
     managerPin?: string | null
+    cashierToken?: string | null                // who closed it (staff sign-in); tips go to them
 }
 
 // ── Rider online ordering ────────────────────────────────────────────
@@ -826,18 +850,23 @@ export class ConcessionService {
         return axios.delete(`${this.apiUrl}/Concession/CompReasons/${id}`)
     }
 
-    // ── Manager PIN + member discount lookup ─────────────────────────
-    // Set/clear the current user's own POS manager PIN (must be a manager/admin). Empty pin clears it.
+    // ── POS code (manager PIN / staff sign-in) + member discount lookup ─────────────────
+    // Set/clear the current user's own POS code. For managers it authorizes comps and voids; for
+    // every counter staff member it signs them into the register. Empty pin clears it.
     setManagerPin(pin: string) {
         return axios.put(`${this.apiUrl}/Concession/ManagerPin`, { pin })
     }
-    // Whether the signed-in user is a manager/admin and has a PIN set (drives the forced-setup prompt).
+    // isManager/hasPin drive the forced-setup prompt for managers; hasCode = any staff member's code.
     managerPinStatus() {
-        return axios.get<{ data: { isManager: boolean; hasPin: boolean } }>(`${this.apiUrl}/Concession/ManagerPin/Status`)
+        return axios.get<{ data: { isManager: boolean; hasPin: boolean; hasCode?: boolean } }>(`${this.apiUrl}/Concession/ManagerPin/Status`)
     }
     // Confirm a manager PIN authorizes a gated action; returns the approving manager (or 400 on a bad PIN).
     verifyManagerPin(pin: string) {
         return axios.post<{ data: ConcessionManagerPinResult }>(`${this.apiUrl}/Concession/VerifyManagerPin`, { pin })
+    }
+    // Staff sign-in at the register: any staff member's code -> a short-lived cashier token.
+    verifyStaffCode(code: string) {
+        return axios.post<{ data: StaffCodeVerifyResult }>(`${this.apiUrl}/Concession/StaffCode/Verify`, { code })
     }
     // Look up a customer by email/phone for member-perk discounts (season pass / loampass).
     memberLookup(query: string) {

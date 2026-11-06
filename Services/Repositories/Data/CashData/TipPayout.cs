@@ -6,7 +6,7 @@ namespace Services.Repositories.Data.CashData
     // a 'tip_payout' ledger row behind it (LedgerEntryId): cash tender for the two cash kinds,
     // 'payroll' tender for a payroll one, which moves no cash but still has to leave Tips payable
     // in the books. What a worker is still owed is never stored: it is
-    // SUM(cash_turn_in.house_owes_cents) minus the 'cash' + 'payroll' rows here. PaidByUserId goes
+    // SUM(tip_shift.house_owes_cents) minus the 'cash' + 'payroll' rows here. PaidByUserId goes
     // null if the payer's account is deleted (Script0296); the payout itself stays, because the
     // balance is derived from it.
     public class TipPayout
@@ -14,7 +14,8 @@ namespace Services.Repositories.Data.CashData
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public Guid UserId { get; set; }                 // recipient
-        public Guid? CashTurnInId { get; set; }          // the close this came out of, for 'drawer'
+        public Guid? CashTurnInId { get; set; }          // pre-Script0298 'drawer' rows: the turn-in they were taken on
+        public Guid? TipShiftId { get; set; }            // the shift report this came out of, for 'drawer' (Script0298)
         public int AmountCents { get; set; }
         public string Source { get; set; } = "drawer";   // drawer | cash | payroll
         public Guid? PaidByUserId { get; set; }          // worker (drawer) or manager; null once removed

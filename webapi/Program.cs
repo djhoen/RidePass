@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -298,6 +299,15 @@ else
 // Password hashing
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<webapi.Security.IManagerPinService, webapi.Security.ManagerPinService>();
+
+// Cashier tokens (Script0298 staff codes) are ASP.NET Data Protection payloads. Keys live in the
+// framework's default ring for the process user: %LOCALAPPDATA%\ASP.NET\DataProtection-Keys on
+// Windows, ~/.aspnet/DataProtection-Keys on Linux. With no writable profile the ring is held in
+// memory only and every restart invalidates outstanding tokens, which costs a cashier one
+// re-entry of their code (the token is good for 14 hours at most anyway). A shared folder or
+// store is needed only once the API runs on more than one host.
+builder.Services.AddDataProtection().SetApplicationName("ridepass");
+builder.Services.AddSingleton<webapi.Security.ICashierTokenService, webapi.Security.CashierTokenService>();
 
 // Tenant context (same instance via both interface and concrete type per request)
 builder.Services.AddScoped<TenantContext>();

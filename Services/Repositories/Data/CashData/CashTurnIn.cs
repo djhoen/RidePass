@@ -21,9 +21,10 @@ namespace Services.Repositories.Data.CashData
         public DateTime SubmittedAt { get; set; }
         public DateTime? ConfirmedAt { get; set; }
 
-        // Shift-close tip numbers, snapshotted at submit (Script0294). Recomputed server-side from
-        // the worker's paid sales that no earlier turn-in had claimed (Script0296: this turn-in
-        // claims them, concession_sale.tip_turn_in_id); the client's figures are never trusted.
+        // Pre-Script0298 history only: tips were once settled on the turn-in (Script0294/0296).
+        // Since Script0298 they are settled on tip_shift and every new turn-in carries 0 here;
+        // moved rows keep tips_earned / house_owes for the record, and their tips_from_drawer was
+        // zeroed because the reconciliation reads that figure from tip_shift now.
         public int TipsEarnedCents { get; set; }
         public int CardTipsCents { get; set; }
         // Cash tips the worker says they received outside the register. Informational only.

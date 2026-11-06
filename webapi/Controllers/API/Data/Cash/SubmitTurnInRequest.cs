@@ -1,5 +1,7 @@
 namespace webapi.Controllers.API.Data.Cash
 {
+    // A blind-count drawer turn-in and nothing else (Script0298): tips are settled on the
+    // person's shift close (POST Cash/ShiftClose), whichever drawer they were rung on.
     public class SubmitTurnInRequest
     {
         // Identifies which open session to turn in (matched by worker + event).
@@ -7,12 +9,11 @@ namespace webapi.Controllers.API.Data.Cash
         // Blind count: the worker enters their counted cash without seeing the expected total.
         public int WorkerCountedCents { get; set; }
         public string? Note { get; set; }
-        // Tips the worker is taking out of the drawer in cash. The server recomputes tips earned
-        // (every unclaimed tip on their paid sales) and rejects anything outside 0..earned; the
-        // remainder is recorded as house-owes. Older clients omit both fields, which reads as
-        // "took none".
+        // Kept so a client built against the tips release still deserializes; the server ignores
+        // both. Tips taken from a drawer are declared on ShiftClose now.
+        [Obsolete("Ignored since Script0298: send tipsFromDrawerCents on Cash/ShiftClose instead.")]
         public int TipsFromDrawerCents { get; set; }
-        // Cash tips received outside the register (a jar, a hand-over). Informational.
+        [Obsolete("Ignored since Script0298: send cashTipsDeclaredCents on Cash/ShiftClose instead.")]
         public int CashTipsDeclaredCents { get; set; }
     }
 }

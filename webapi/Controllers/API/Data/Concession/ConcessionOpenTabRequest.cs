@@ -14,5 +14,7 @@ namespace webapi.Controllers.API.Data.Concession
         public string? ManagerPin { get; set; }
         // Place a card-present hold (capture_method manual) for the tenant's configured hold amount.
         public bool HoldCard { get; set; }
+        // Who is opening the tab when staff sign-in is on (see ConcessionSaleRequest.CashierToken).
+        public string? CashierToken { get; set; }
     }
 }

@@ -21,6 +21,9 @@
         public Guid? CreditAccountId { get; set; }
         public int CreditCents { get; set; }
 
+        // The cashier token from StaffCode/Verify: who is ringing this sale when staff sign-in is
+        // on. Omitted = the signed-in terminal account (only allowed while staff_code_mode is off).
+        public string? CashierToken { get; set; }
 
         public class SaleLine
         {

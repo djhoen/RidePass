@@ -2,20 +2,27 @@ using Microsoft.AspNetCore.Identity;
 using Services.Notifications;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
+using webapi.AuthPolicies;
 
 namespace webapi.Security
 {
-    // Shared manager-PIN authorization used by both the F&B POS and the gate (admission) overrides, so a
-    // single per-manager PIN identifies who authorized any gated action. Salted PIN hashes live on
-    // users.pos_pin_hash; this verifies an entered PIN against the tenant's managers/admins and enforces a
-    // brute-force lockout keyed by the staff member doing the entering.
+    // Shared POS-code authorization. One salted hash per person on users.pos_pin_hash serves two
+    // jobs: for managers/admins it is the PIN that approves comps, voids and gate overrides
+    // (VerifyAsync, which only probes managers); for everyone who works the register it is the
+    // staff code that signs them in at a shared terminal (VerifyStaffCodeAsync, Script0298, which
+    // probes every counter staff member). Both enforce the same brute-force lockout keyed by the
+    // account doing the entering (the terminal), and codes are unique across ALL staff at the
+    // tenant so a code always names exactly one person.
     public interface IManagerPinService
     {
-        // Verify a PIN entered by `requestingUserId`. Resets the failure counter on success; increments and
-        // eventually locks out on failure.
+        // Verify a manager PIN entered by `requestingUserId`. Resets the failure counter on success;
+        // increments and eventually locks out on failure. Managers/admins only.
         Task<ManagerPinVerifyResult> VerifyAsync(Guid tenantId, Guid requestingUserId, string? pin);
-        // True if no OTHER manager at the tenant already uses this PIN (so attribution stays unambiguous).
-        Task<bool> IsPinAvailableAsync(Guid tenantId, Guid excludeUserId, string pin);
+        // Verify a staff code entered at the register by `requestingUserId` (the terminal account),
+        // against every active counter staff member who holds one. Same lockout.
+        Task<ManagerPinVerifyResult> VerifyStaffCodeAsync(Guid tenantId, Guid requestingUserId, string? code);
+        // True if no OTHER user at the tenant (any role, active or not) already uses this code.
+        Task<bool> IsCodeAvailableAsync(Guid tenantId, Guid excludeUserId, string code);
         Task<bool> HasPinAsync(Guid userId);
     }
 
@@ -24,6 +31,8 @@ namespace webapi.Security
         public bool Authorized { get; set; }
         public Guid? AuthorizedUserId { get; set; }
         public string? AuthorizedName { get; set; }
+        // Whether the matched person holds a manager/admin role (comps and voids).
+        public bool IsManager { get; set; }
         public bool Locked { get; set; }
         public DateTime? LockedUntilUtc { get; set; }
         public string? Error { get; set; }
@@ -45,7 +54,15 @@ namespace webapi.Security
             _notifications = notifications;
         }
 
-        public async Task<ManagerPinVerifyResult> VerifyAsync(Guid tenantId, Guid requestingUserId, string? pin)
+        public Task<ManagerPinVerifyResult> VerifyAsync(Guid tenantId, Guid requestingUserId, string? pin) =>
+            VerifyAgainst(tenantId, requestingUserId, pin, "manager PIN", () => _users.ListTenantManagerPins(tenantId));
+
+        public Task<ManagerPinVerifyResult> VerifyStaffCodeAsync(Guid tenantId, Guid requestingUserId, string? code) =>
+            VerifyAgainst(tenantId, requestingUserId, code, "staff code",
+                () => _users.ListTenantStaffPins(tenantId, TenantPermissions.CounterStaffRoles));
+
+        private async Task<ManagerPinVerifyResult> VerifyAgainst(Guid tenantId, Guid requestingUserId, string? pin, string noun,
+            Func<Task<List<TenantManagerPin>>> candidates)
         {
             var now = DateTime.UtcNow;
             var attempt = await _users.GetPinAttempt(tenantId, requestingUserId);
@@ -53,11 +70,11 @@ namespace webapi.Security
                 return Locked(until);
 
             if (string.IsNullOrWhiteSpace(pin))
-                return new ManagerPinVerifyResult { Authorized = false, Error = "Enter a manager PIN." };
+                return new ManagerPinVerifyResult { Authorized = false, Error = $"Enter a {noun}." };
 
-            // Salted hashes can't be queried by value, so each candidate manager is checked in code.
+            // Salted hashes can't be queried by value, so each candidate is checked in code.
             var probe = new User();
-            foreach (var c in await _users.ListTenantManagerPins(tenantId))
+            foreach (var c in await candidates())
             {
                 if (_hasher.VerifyHashedPassword(probe, c.PinHash, pin) != PasswordVerificationResult.Failed)
                 {
@@ -67,6 +84,7 @@ namespace webapi.Security
                         Authorized = true,
                         AuthorizedUserId = c.Id,
                         AuthorizedName = $"{c.FirstName} {c.LastName}".Trim(),
+                        IsManager = IsManagerOrAdmin(c),
                     };
                 }
             }
@@ -85,23 +103,28 @@ namespace webapi.Security
             return new ManagerPinVerifyResult
             {
                 Authorized = false,
-                Error = $"That manager PIN wasn't recognized. {left} attempt{(left == 1 ? "" : "s")} left before a temporary lockout.",
+                Error = $"That {noun} wasn't recognized. {left} attempt{(left == 1 ? "" : "s")} left before a temporary lockout.",
             };
         }
 
-        public async Task<bool> IsPinAvailableAsync(Guid tenantId, Guid excludeUserId, string pin)
+        public async Task<bool> IsCodeAvailableAsync(Guid tenantId, Guid excludeUserId, string code)
         {
+            // Every holder at the tenant, whatever their role or status: a disabled account that is
+            // re-enabled, or a cashier promoted to manager, must not suddenly share a code.
             var probe = new User();
-            foreach (var c in await _users.ListTenantManagerPins(tenantId))
+            foreach (var c in await _users.ListTenantStaffPins(tenantId, roles: null, activeOnly: false))
             {
                 if (c.Id == excludeUserId) continue;
-                if (_hasher.VerifyHashedPassword(probe, c.PinHash, pin) != PasswordVerificationResult.Failed)
+                if (_hasher.VerifyHashedPassword(probe, c.PinHash, code) != PasswordVerificationResult.Failed)
                     return false;
             }
             return true;
         }
 
         public Task<bool> HasPinAsync(Guid userId) => _users.HasPosPin(userId);
+
+        private static bool IsManagerOrAdmin(TenantManagerPin c) =>
+            TenantPermissions.IsManagerOrAdmin(c.Role, c.Roles);
 
         private static ManagerPinVerifyResult Locked(DateTime untilUtc)
         {

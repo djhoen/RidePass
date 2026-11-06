@@ -122,12 +122,24 @@ namespace Services.Repositories
                        t.note                       AS Note,
                        t.submitted_at               AS SubmittedAt,
                        t.confirmed_at               AS ConfirmedAt,
-                       t.tips_earned_cents::bigint      AS TipsEarnedCents,
-                       t.tips_from_drawer_cents::bigint AS TipsFromDrawerCents,
-                       t.house_owes_cents::bigint       AS HouseOwesCents
+                       COALESCE(ts.tips_earned_cents, 0)::bigint      AS TipsEarnedCents,
+                       COALESCE(ts.tips_from_drawer_cents, 0)::bigint AS TipsFromDrawerCents,
+                       COALESCE(ts.house_owes_cents, 0)::bigint       AS HouseOwesCents
                 FROM cash_turn_in t
                 LEFT JOIN users w ON w.id = t.worker_user_id
                 LEFT JOIN users m ON m.id = t.manager_user_id
+                -- The shift reports that drew on this drawer (Script0298): what left it as tips
+                -- and what the house still owed on those shifts. cash_turn_in's own tip columns
+                -- are dead since 0298 (0 on new rows, tip-out zeroed on moved ones).
+                LEFT JOIN (
+                    SELECT cash_session_id,
+                           SUM(tips_earned_cents)      AS tips_earned_cents,
+                           SUM(tips_from_drawer_cents) AS tips_from_drawer_cents,
+                           SUM(house_owes_cents)       AS house_owes_cents
+                    FROM tip_shift
+                    WHERE tenant_id = @tenantId AND cash_session_id IS NOT NULL
+                    GROUP BY cash_session_id
+                ) ts ON ts.cash_session_id = t.cash_session_id
                 WHERE t.tenant_id = @tenantId
                   AND (t.submitted_at AT TIME ZONE @timezone)::date = @businessDate
                 ORDER BY t.submitted_at";
@@ -180,6 +192,47 @@ namespace Services.Repositories
                   AND (COALESCE(cs.paid_at, cs.created_at) AT TIME ZONE @timezone)::date = @businessDate
                 GROUP BY cs.sold_by_user_id, u.first_name, u.last_name, u.email";
             return (await _db.Query<EndOfDayTipsBySellerRow>(sql, new { tenantId, businessDate, timezone })).ToList();
+        }
+
+        // Shift reports closed on the date (Script0298). tip_shift carries its own business_date,
+        // stamped at close in the tenant's timezone, so no AT TIME ZONE here. The users join
+        // follows an id already scoped by s.tenant_id.
+        public async Task<List<EndOfDayTipShiftRow>> GetDayTipShifts(Guid tenantId, DateOnly businessDate)
+        {
+            const string sql = @"
+                SELECT s.user_id                             AS UserId,
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email                               AS Email,
+                       COALESCE(SUM(s.tips_earned_cents), 0)::bigint        AS TipsEarnedCents,
+                       COALESCE(SUM(s.tips_from_drawer_cents), 0)::bigint   AS TipsFromDrawerCents,
+                       COALESCE(SUM(s.house_owes_cents), 0)::bigint         AS HouseOwesCents,
+                       COALESCE(SUM(s.cash_tips_declared_cents), 0)::bigint AS CashTipsDeclaredCents,
+                       COUNT(*)::int                         AS ShiftCount
+                FROM tip_shift s
+                LEFT JOIN users u ON u.id = s.user_id
+                WHERE s.tenant_id = @tenantId
+                  AND s.business_date = @businessDate
+                GROUP BY s.user_id, u.first_name, u.last_name, u.email";
+            return (await _db.Query<EndOfDayTipShiftRow>(sql, new { tenantId, businessDate })).ToList();
+        }
+
+        // Tip jar shares for the date (Script0298), per person. The split carries the business
+        // date; the share's own tenant_id is filtered as well so the row is scoped on its own
+        // terms and not only through its parent.
+        public async Task<List<EndOfDayTipJarShareRow>> GetDayTipJarShares(Guid tenantId, DateOnly businessDate)
+        {
+            const string sql = @"
+                SELECT h.user_id                             AS UserId,
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email                               AS Email,
+                       COALESCE(SUM(h.amount_cents), 0)::bigint AS AmountCents
+                FROM tip_jar_share h
+                JOIN tip_jar_split j ON j.id = h.split_id AND j.tenant_id = h.tenant_id
+                LEFT JOIN users u ON u.id = h.user_id
+                WHERE h.tenant_id = @tenantId
+                  AND j.business_date = @businessDate
+                GROUP BY h.user_id, u.first_name, u.last_name, u.email";
+            return (await _db.Query<EndOfDayTipJarShareRow>(sql, new { tenantId, businessDate })).ToList();
         }
 
         // Ranged on occurred_at_utc rather than business_date so the caller's UTC window (the same

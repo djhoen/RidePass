@@ -30,5 +30,9 @@ namespace Services.Helpers
             var localMidnight = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tz).Date;
             return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localMidnight, DateTimeKind.Unspecified), tz);
         }
+
+        /// <summary>The tenant's local calendar date at <paramref name="nowUtc"/>: the business date a shift closes on.</summary>
+        public static DateOnly LocalDate(string? timezoneId, DateTime nowUtc) =>
+            DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(nowUtc, Resolve(timezoneId)));
     }
 }

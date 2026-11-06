@@ -102,6 +102,12 @@ export class UserService {
     resetTenantUserPassword(id: string) {
         return axios.post<{ data: { temporaryPassword: string } }>(`${this.apiUrl}/User/Tenant/${id}/ResetPassword`)
     }
+
+    // Admin sets (4-8 digits) or clears ('') a staff member's POS code: the code they sign into the
+    // register with, and for managers the PIN that approves comps and voids. Never echoed back.
+    setPosCode(id: string, code: string) {
+        return axios.put(`${this.apiUrl}/User/Tenant/${id}/PosCode`, { code })
+    }
 }
 
 export interface TenantUserListItem {
@@ -113,6 +119,7 @@ export interface TenantUserListItem {
     roles: string[]
     status: string
     createdAtUtc: string
+    hasPosCode?: boolean    // optional: absent from an API that predates staff codes
 }
 
 export interface CreateTenantUserResponse {

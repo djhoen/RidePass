@@ -265,6 +265,15 @@
         // cashier can place on a tab (capture_method manual; captured for the real total at close).
         public bool TabsEnabled { get; set; } = true;
         public int TabHoldCents { get; set; } = 5000;
+        // Staff sign-in at the register (Script0298). 'off' = the register runs as the signed-in
+        // account; 'per_shift' = someone punches their code and stays the active cashier until they
+        // switch or close their shift; 'per_order' = the active cashier is cleared after every
+        // completed sale / tab action, so the next order asks for a code again.
+        public string StaffCodeMode { get; set; } = "off";
+        // How card tips reach staff (Script0298). 'manager_later' = the shift close records every
+        // tip as house-owes and a manager pays it later (Tips owed); 'drawer_at_close' = the person
+        // takes their tips in cash out of the drawer at close, the remainder owed.
+        public string TipsPayoutMode { get; set; } = "manager_later";
         // When the tenant first loaded the starter catalog; NULL = never. Hides the "Load starter content"
         // button once used.
         public DateTime? SeededAt { get; set; }
@@ -387,6 +396,9 @@
         // Connected account a direct card sale was charged on (NULL = platform/cash).
         public string? StripeConnectedAccountId { get; set; }
         public Guid? SoldByUserId { get; set; }
+        // The account signed in on the terminal that rang it (Script0298). Equal to SoldByUserId
+        // unless a staff code attributed the sale to someone else; null for online orders.
+        public Guid? RungByTerminalUserId { get; set; }
         // 'counter' (anonymous in-venue sale) or 'online' (a logged-in rider ordered from the web app).
         public string OrderChannel { get; set; } = "counter";
         public Guid? PurchaserUserId { get; set; }

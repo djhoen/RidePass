@@ -51,11 +51,17 @@ namespace Services.Repositories.Interfaces
         Task<string?> GetDashboardConfig(Guid userId);
         Task SetDashboardConfig(Guid userId, string? jsonOrNull);
 
-        // POS manager PIN. SetPosPinHash stores a salted hash (or null to clear). ListTenantManagerPins
-        // returns the tenant's active managers/admins who have a PIN, so an entered PIN can be verified.
+        // POS code (users.pos_pin_hash). SetPosPinHash stores a salted hash (or null to clear).
+        // ListTenantManagerPins returns the tenant's active managers/admins who have one, so an
+        // entered manager PIN can be verified; ListTenantStaffPins returns every tenant user with a
+        // code, narrowed to the given roles when a list is passed (null = everyone, for the
+        // uniqueness check) and to active accounts unless told otherwise.
         Task SetPosPinHash(Guid userId, string? pinHash);
         Task<List<TenantManagerPin>> ListTenantManagerPins(Guid tenantId);
+        Task<List<TenantManagerPin>> ListTenantStaffPins(Guid tenantId, IReadOnlyCollection<string>? roles = null, bool activeOnly = true);
         Task<bool> HasPosPin(Guid userId);
+        /// <summary>Ids of the tenant's users who hold a POS code, for the staff list's key icon.</summary>
+        Task<HashSet<Guid>> ListUserIdsWithPosPin(Guid tenantId);
 
         // Manager-PIN brute-force lockout state, keyed by the staff member entering the PIN.
         Task<ManagerPinAttempt?> GetPinAttempt(Guid tenantId, Guid userId);

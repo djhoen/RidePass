@@ -38,5 +38,9 @@ namespace webapi.Controllers.API.Data.Concession
         // Open tabs: offer "Open tab" on the POS, and the card-present hold amount placed on a tab.
         public bool TabsEnabled { get; set; } = true;
         [Range(50, 1_000_000)] public int TabHoldCents { get; set; } = 5000;
+        // Staff sign-in at the register: off | per_shift | per_order. Anything else is a 400.
+        public string StaffCodeMode { get; set; } = "off";
+        // How card tips are paid out: manager_later | drawer_at_close. Anything else is a 400.
+        public string TipsPayoutMode { get; set; } = "manager_later";
     }
 }

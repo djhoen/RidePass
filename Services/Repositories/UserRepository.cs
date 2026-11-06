@@ -427,17 +427,44 @@ namespace Services.Repositories
         public async Task<List<TenantManagerPin>> ListTenantManagerPins(Guid tenantId)
         {
             const string sql = @"
-                SELECT id AS Id, first_name AS FirstName, last_name AS LastName, pos_pin_hash AS PinHash
+                SELECT id AS Id, first_name AS FirstName, last_name AS LastName, pos_pin_hash AS PinHash,
+                       role AS Role, roles AS Roles
                 FROM users
                 WHERE tenant_id = @tenantId AND status = 'active' AND pos_pin_hash IS NOT NULL
                   AND roles && ARRAY['tenant_admin','tenant_manager']";
             return (await _db.Query<TenantManagerPin>(sql, new { tenantId })).ToList();
         }
 
+        // Every tenant user holding a POS code (Script0298: any staff member who works the register
+        // may have one, not just managers). The caller names the roles that qualify so the rule
+        // lives with the permission catalog in webapi; no list means everyone with a code, which is
+        // what the uniqueness check wants, since a code must stay unambiguous whatever role its
+        // holder moves to.
+        public async Task<List<TenantManagerPin>> ListTenantStaffPins(Guid tenantId, IReadOnlyCollection<string>? roles = null, bool activeOnly = true)
+        {
+            // Either column may carry the role: the array is the full set, but an older row's
+            // primary role can lead its array, and the gate that allowed the code to be set reads
+            // both, so the candidate list must too.
+            var roleClause = roles is null ? "" : "AND (role = ANY(@roles) OR roles && @roles)";
+            var statusClause = activeOnly ? "AND status = 'active'" : "";
+            var sql = $@"
+                SELECT id AS Id, first_name AS FirstName, last_name AS LastName, pos_pin_hash AS PinHash,
+                       role AS Role, roles AS Roles
+                FROM users
+                WHERE tenant_id = @tenantId AND pos_pin_hash IS NOT NULL {statusClause} {roleClause}";
+            return (await _db.Query<TenantManagerPin>(sql, new { tenantId, roles = roles?.ToArray() })).ToList();
+        }
+
         public async Task<bool> HasPosPin(Guid userId)
         {
             const string sql = "SELECT pos_pin_hash IS NOT NULL FROM users WHERE id = @userId";
             return (await _db.Query<bool>(sql, new { userId })).FirstOrDefault();
+        }
+
+        public async Task<HashSet<Guid>> ListUserIdsWithPosPin(Guid tenantId)
+        {
+            const string sql = "SELECT id FROM users WHERE tenant_id = @tenantId AND pos_pin_hash IS NOT NULL";
+            return (await _db.Query<Guid>(sql, new { tenantId })).ToHashSet();
         }
 
         public async Task<ManagerPinAttempt?> GetPinAttempt(Guid tenantId, Guid userId)

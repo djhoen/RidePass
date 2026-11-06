@@ -12,5 +12,9 @@ namespace webapi.Controllers.API.Data.Concession
         public int CreditCents { get; set; }
         public ConcessionDiscountInput? Discount { get; set; }
         public string? ManagerPin { get; set; }
+        // Who is closing the tab when staff sign-in is on (see ConcessionSaleRequest.CashierToken).
+        // The tip on a tab is given at close, so a token here moves the tab, and its tip, to the
+        // person closing it.
+        public string? CashierToken { get; set; }
     }
 }

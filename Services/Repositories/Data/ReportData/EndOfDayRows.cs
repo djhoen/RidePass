@@ -122,6 +122,29 @@ namespace Services.Repositories.Data.ReportData
         public int SaleCount { get; set; }
     }
 
+    /// <summary>One person's shift reports (tip_shift, Script0298) closed on the business date, summed.</summary>
+    public class EndOfDayTipShiftRow
+    {
+        public Guid UserId { get; set; }
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        public long TipsEarnedCents { get; set; }
+        public long TipsFromDrawerCents { get; set; }
+        public long HouseOwesCents { get; set; }
+        /// <summary>Cash tips the person declared receiving outside the register.</summary>
+        public long CashTipsDeclaredCents { get; set; }
+        public int ShiftCount { get; set; }
+    }
+
+    /// <summary>One person's share of the tip jar splits recorded for the business date.</summary>
+    public class EndOfDayTipJarShareRow
+    {
+        public Guid UserId { get; set; }
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        public long AmountCents { get; set; }
+    }
+
     /// <summary>
     /// Earned revenue in a range, grouped only as finely as it has to be to resolve a QuickBooks
     /// revenue slot: the source kind, the event type's override, and whether it was a sale or a

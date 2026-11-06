@@ -118,11 +118,12 @@ namespace webapi.Helpers
             if (r.Tips.ByWorker.Count > 0)
             {
                 csv.Blank();
-                csv.Row("Worker", "Earned", "From drawer", "House owes", "Settled today");
+                csv.Row("Worker", "Earned", "From drawer", "House owes", "Settled today", "Tip jar", "Declared cash");
                 foreach (var w in r.Tips.ByWorker)
                 {
                     csv.Row(w.Name, CsvWriter.Money(w.EarnedCents), CsvWriter.Money(w.FromDrawerCents),
-                        CsvWriter.Money(w.HouseOwesCents), CsvWriter.Money(w.SettledTodayCents));
+                        CsvWriter.Money(w.HouseOwesCents), CsvWriter.Money(w.SettledTodayCents),
+                        CsvWriter.Money(w.JarShareCents), CsvWriter.Money(w.DeclaredCashTipsCents));
                 }
             }
 

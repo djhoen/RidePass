@@ -12,10 +12,10 @@
         </v-alert>
 
         <v-alert v-if="needsPin" type="warning" variant="tonal" class="mb-4" icon="mdi-shield-key-outline">
-            You're a manager but haven't set an authorization PIN. Every manager needs their own PIN so comps,
+            You're a manager but haven't set a POS code. Every manager needs their own code so comps,
             discounts, and gate overrides record who approved them.
             <template #append>
-                <v-btn size="small" variant="flat" color="warning" @click="tab = 'settings'">Set PIN</v-btn>
+                <v-btn size="small" variant="flat" color="warning" @click="tab = 'settings'">Set code</v-btn>
             </template>
         </v-alert>
 
@@ -498,20 +498,21 @@
                                 </div>
                             </v-card>
 
-                            <!-- Manager PIN (sets the signed-in user's own PIN; saved by its own button) -->
+                            <!-- Your POS code (sets the signed-in user's own code; saved by its own button) -->
                             <v-card variant="outlined" class="pa-4 mb-4">
                                 <div class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center ga-2">
-                                    <v-icon size="small" color="primary">mdi-lock-outline</v-icon> Manager PIN
+                                    <v-icon size="small" color="primary">mdi-dialpad</v-icon> Your POS code
                                 </div>
                                 <p class="text-caption text-medium-emphasis mb-3">
-                                    Set or change the PIN you use to authorize comps and manual discounts at the POS.
-                                    Only managers and admins can set a PIN.
+                                    Managers use it to approve comps and voids at the POS; everyone uses it to sign in at the
+                                    register when staff sign-in is on. One code per person, unique across your staff. Admins can
+                                    set anyone's code from Users &rarr; Actions &rarr; Set POS code.
                                 </p>
-                                <v-text-field v-model="managerPin" label="New PIN (4 to 8 digits)" type="password"
-                                    inputmode="numeric" density="compact" hide-details style="max-width: 240px"
+                                <v-text-field v-model="managerPin" label="New code (4 to 8 digits)" type="password"
+                                    inputmode="numeric" autocomplete="one-time-code" density="compact" hide-details style="max-width: 240px"
                                     placeholder="Leave blank to clear"></v-text-field>
                                 <v-btn color="primary" variant="tonal" size="small" class="mt-4"
-                                    :loading="savingPin" @click="saveManagerPin">Save PIN</v-btn>
+                                    :loading="savingPin" @click="saveManagerPin">Save code</v-btn>
                             </v-card>
 
                             <!-- Online ordering: when riders can place orders -->
@@ -592,6 +593,42 @@
                                 <v-switch v-model="menuStyle.tipsEnabled" label="Accept tips" color="primary"
                                     density="compact" hide-details
                                     messages="When on, customers can add a tip on the confirmation screen and online. When off, no tip is shown or charged."></v-switch>
+
+                                <div class="text-subtitle-2 font-weight-bold mt-4 mb-1">How card tips are paid out</div>
+                                <v-radio-group v-model="menuStyle.tipsPayoutMode" density="compact" hide-details :disabled="!menuStyle.tipsEnabled">
+                                    <v-radio value="manager_later" label="Later by a manager (shift report, Tips owed)"></v-radio>
+                                    <div class="text-caption text-medium-emphasis radio-help mb-2">
+                                        Each person closes their shift at the register; their card tips are recorded as owed to them and a
+                                        manager pays them in cash or through payroll from Reports &rarr; Tips owed. Nothing comes out of the drawer.
+                                    </div>
+                                    <v-radio value="drawer_at_close" label="From the drawer at shift close"></v-radio>
+                                    <div class="text-caption text-medium-emphasis radio-help">
+                                        The person takes their tips in cash from the drawer when they close their shift; whatever the
+                                        drawer can't cover is owed to them.
+                                    </div>
+                                </v-radio-group>
+                            </v-card>
+
+                            <!-- Staff sign-in: who a sale (and its tip) is credited to on a shared register -->
+                            <v-card variant="outlined" class="pa-4 mb-4">
+                                <div class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center ga-2">
+                                    <v-icon size="small" color="primary">mdi-account-key-outline</v-icon> Staff sign-in at the register
+                                </div>
+                                <p class="text-caption text-medium-emphasis mb-2">
+                                    On a shared register each person punches their POS code, so sales and tips are credited to them
+                                    rather than to the account the tablet is logged in as.
+                                </p>
+                                <v-radio-group v-model="menuStyle.staffCodeMode" density="compact" hide-details>
+                                    <v-radio value="off" label="Off"></v-radio>
+                                    <div class="text-caption text-medium-emphasis radio-help mb-2">The register rings everything as the signed-in account.</div>
+                                    <v-radio value="per_shift" label="Per shift"></v-radio>
+                                    <div class="text-caption text-medium-emphasis radio-help mb-2">Someone punches in and stays signed in until they switch or close their shift.</div>
+                                    <v-radio value="per_order" label="Per order"></v-radio>
+                                    <div class="text-caption text-medium-emphasis radio-help">Every order asks for a code before payment or a tab action. Items can be added first.</div>
+                                </v-radio-group>
+                                <p class="text-caption text-medium-emphasis mt-3 mb-0">
+                                    Codes are set in Users &rarr; Actions &rarr; Set POS code, or by each person under "Your POS code" above.
+                                </p>
                             </v-card>
 
                             <!-- Open tabs (deferred payment; each round fires to the kitchen) -->
@@ -1840,6 +1877,7 @@ const menuStyle = ref<ConcessionMenuSettings>({
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0,
     requireManagerForManualDiscount: false,
     tabsEnabled: true, tabHoldCents: 5000,
+    staffCodeMode: 'off', tipsPayoutMode: 'manager_later',
     starterSeeded: false, orderingOpenNow: true,
 })
 // Card hold amount is edited in dollars and stored in cents.
@@ -1933,10 +1971,10 @@ async function saveManagerPin() {
     savingPin.value = true
     try {
         await service.setManagerPin(pin)
-        flash(pin ? 'Manager PIN updated.' : 'Manager PIN cleared.', 'success')
+        flash(pin ? 'POS code updated.' : 'POS code cleared.', 'success')
         managerPin.value = ''
     } catch (err: any) {
-        flash(err.response?.data?.error || 'Could not update the manager PIN. Please try again.', 'error')
+        flash(err.response?.data?.error || 'Could not update your POS code. Please try again.', 'error')
     } finally {
         savingPin.value = false
     }
@@ -2007,6 +2045,9 @@ const previewSettings = computed(() => menuStyle.value)
 async function loadMenuStyle() {
     try {
         menuStyle.value = (await service.menuSettings() as any).data.data
+        // An API without the staff-code fields must still leave a radio selected.
+        if (!menuStyle.value.staffCodeMode) menuStyle.value.staffCodeMode = 'off'
+        if (!menuStyle.value.tipsPayoutMode) menuStyle.value.tipsPayoutMode = 'manager_later'
         starterSeeded.value = menuStyle.value.starterSeeded
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not load the menu board style.', 'error')
@@ -2107,6 +2148,8 @@ async function saveMenuStyle() {
             tabsEnabled: s.tabsEnabled,
             // A $0 hold would make "Hold a card" a no-op; keep at least a dollar on it.
             tabHoldCents: Math.max(100, Math.round(s.tabHoldCents || 5000)),
+            staffCodeMode: s.staffCodeMode || 'off',
+            tipsPayoutMode: s.tipsPayoutMode || 'manager_later',
         })
         flash('Menu board style saved.', 'success')
     } catch (err: any) { flash(err.response?.data?.error || 'Save failed.', 'error') }
@@ -2142,6 +2185,8 @@ function flash(text: string, color: 'success' | 'error') {
 .drag-handle:active { cursor: grabbing; }
 .drag-ghost { opacity: 0.35; background: var(--rp-white-soft); }
 .hours-input { border: 1px solid var(--rp-line2); border-radius: 6px; padding: 2px 6px; font-size: 0.85rem; }
+/* Help line under a radio option, indented to its label. */
+.radio-help { margin-left: 40px; }
 
 /* Settings sections pack into columns so they fill the width and minimize scrolling. Cards keep their
    mb-4 for vertical spacing within a column; break-inside keeps each card whole. */

@@ -155,6 +155,7 @@ export interface EndOfDayCashSection {
 }
 // Tips for the business day: earned (the same figure as totals.tipsCents), what staff took from
 // their drawers at close, what managers settled, and the all-time house-owes balance as of now.
+// byWorker is the daily tips sheet: one line per person with a shift report, jar share or tips.
 export interface EndOfDayTipsWorker {
     userId: string
     name: string
@@ -162,6 +163,8 @@ export interface EndOfDayTipsWorker {
     fromDrawerCents: number
     houseOwesCents: number
     settledTodayCents: number
+    jarShareCents: number            // their share of the day's tip jar splits
+    declaredCashTipsCents: number    // cash tips they declared on their shift report
 }
 export interface EndOfDayTipsSection {
     earnedCents: number

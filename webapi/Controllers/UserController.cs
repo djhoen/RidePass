@@ -32,6 +32,8 @@ namespace webapi.Controllers
         private readonly IEventSubscriptionRepository _eventSubs;
         private readonly INewsletterRepository _newsletter;
         private readonly ILogger<UserController> _logger;
+        private readonly webapi.Security.IManagerPinService _posCodes;
+        private readonly Services.Audit.IAuditLogger _audit;
 
         public UserController(
             IUserRepository userRepository,
@@ -44,7 +46,9 @@ namespace webapi.Controllers
             IImageStorage imageStorage,
             IEventSubscriptionRepository eventSubs,
             INewsletterRepository newsletter,
-            ILogger<UserController> logger)
+            ILogger<UserController> logger,
+            webapi.Security.IManagerPinService posCodes,
+            Services.Audit.IAuditLogger audit)
         {
             _userRepository = userRepository;
             _resetTokens = resetTokens;
@@ -57,6 +61,8 @@ namespace webapi.Controllers
             _eventSubs = eventSubs;
             _newsletter = newsletter;
             _logger = logger;
+            _posCodes = posCodes;
+            _audit = audit;
         }
 
         [HttpPost("Login")]
@@ -545,6 +551,7 @@ namespace webapi.Controllers
         public async Task<IActionResult> ListTenantUsers()
         {
             var users = await _userRepository.ListByTenant(_tenantContext.TenantId);
+            var withCode = await _userRepository.ListUserIdsWithPosPin(_tenantContext.TenantId);
             var items = users.Select(u => new TenantUserListItem
             {
                 Id = u.Id,
@@ -555,8 +562,47 @@ namespace webapi.Controllers
                 Roles = u.Roles,
                 Status = u.Status,
                 CreatedAtUtc = DateTime.SpecifyKind(u.CreatedAt, DateTimeKind.Utc),
+                HasPosCode = withCode.Contains(u.Id),
             });
             return new ApiResponses().OkResult(items);
+        }
+
+        // An admin setting (or clearing) a staff member's POS code (Script0298): the same
+        // users.pos_pin_hash the person could set for themselves under Manager PIN, with the same
+        // shape rule and the same tenant-wide uniqueness. Only someone whose role works the
+        // register (or a manager/admin) may hold one. Audit-logged either way; the code itself is
+        // never written anywhere but the hash. Rate-limited because the uniqueness check is an
+        // oracle on other people's codes.
+        [Authorize(Policy = TenantPermissions.Policy.UsersManage)]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
+        [HttpPut("Tenant/{id:guid}/PosCode")]
+        public async Task<IActionResult> SetTenantUserPosCode(Guid id, [FromBody] SetTenantUserPosCodeRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var target = await _userRepository.GetById(id);
+            if (target is null || target.TenantId != _tenantContext.TenantId)
+            {
+                return new ApiResponses().NotFoundResult("User not found on this tenant.");
+            }
+            var name = $"{target.FirstName} {target.LastName}".Trim();
+            var code = request.Code?.Trim();
+            if (string.IsNullOrEmpty(code))
+            {
+                await _userRepository.SetPosPinHash(id, null);
+                await _audit.Log("users.pos_code_cleared", $"Cleared the POS code for {name}",
+                    targetKind: "user", targetId: id, tenantId: _tenantContext.TenantId);
+                return new ApiResponses().OkResult(new { id, hasPosCode = false });
+            }
+            var error = ConcessionController.ValidatePosCode(code);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+            if (!TenantPermissions.MayHoldPosCode(target.Role, target.Roles))
+                return new ApiResponses().BadRequestResult("Only register staff and managers hold a POS code. Change their role first.");
+            if (!await _posCodes.IsCodeAvailableAsync(_tenantContext.TenantId, id, code))
+                return new ApiResponses().BadRequestResult(ConcessionController.PosCodeTakenMessage);
+            await _userRepository.SetPosPinHash(id, _passwordHasher.HashPassword(target, code));
+            await _audit.Log("users.pos_code_set", $"Set the POS code for {name}",
+                targetKind: "user", targetId: id, tenantId: _tenantContext.TenantId);
+            return new ApiResponses().OkResult(new { id, hasPosCode = true });
         }
 
         [Authorize(Policy = TenantPermissions.Policy.UsersManage)]

@@ -39,6 +39,12 @@ namespace Services.Repositories.Interfaces
         /// </summary>
         Task<List<EndOfDayTipsBySellerRow>> GetDayTipsBySeller(Guid tenantId, DateOnly businessDate, string timezone);
 
+        /// <summary>Shift reports (tip_shift) closed on the business date, one row per person, summed.</summary>
+        Task<List<EndOfDayTipShiftRow>> GetDayTipShifts(Guid tenantId, DateOnly businessDate);
+
+        /// <summary>Tip jar shares recorded for the business date, summed per person.</summary>
+        Task<List<EndOfDayTipJarShareRow>> GetDayTipJarShares(Guid tenantId, DateOnly businessDate);
+
         /// <summary>
         /// Sales tax on sale and refund rows in a UTC range, grouped by business date, source kind
         /// and entry kind. Refunds carry negative tax so a plain SUM is the net remittable figure.

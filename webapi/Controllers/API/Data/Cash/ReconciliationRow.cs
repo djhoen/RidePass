@@ -19,9 +19,12 @@ namespace webapi.Controllers.API.Data.Cash
         public int? WorkerCountedCents { get; set; }
         public int? ManagerCountedCents { get; set; }
         public long? VarianceCents { get; set; }      // (manager ?? worker) counted minus expected
-        // Shift-close tips. Null on a still-open session (no turn-in yet). TipsFromDrawerCents is
-        // an INPUT to ExpectedCents: it is what left the drawer as tips, and the reconciliation
-        // subtracts it (CashController.BuildReconciliation). HouseOwesCents is context.
+        // Tips taken out of THIS drawer at shift closes (Script0298: SUM of
+        // tip_shift.tips_from_drawer_cents for the session, whoever's shift it was). An INPUT to
+        // ExpectedCents: it is cash that left the drawer, and the reconciliation subtracts it
+        // (CashController.BuildReconciliation). Set on open sessions too, since a shift can close
+        // against a drawer before it is counted. HouseOwesCents is the turn-in's own pre-0298
+        // figure, kept for history (0 on new rows) and null on an open session.
         public int? TipsFromDrawerCents { get; set; }
         public int? HouseOwesCents { get; set; }
     }

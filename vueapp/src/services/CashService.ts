@@ -1,7 +1,9 @@
 import axios from 'axios'
+import type { StaffCodeMode, TipsPayoutMode } from '@/services/ConcessionService'
 
-// Cash sessions, blind-count turn-ins and the F&B tips flow (shift review, house-owes, manager
-// pay-out). Mirrors webapi/Controllers/CashController.cs; every call is tenant-scoped server side.
+// Cash sessions, blind-count turn-ins and the F&B tips flow (shift review, shift close, house-owes,
+// manager pay-out, tip jar). Mirrors webapi/Controllers/CashController.cs; every call is
+// tenant-scoped server side.
 
 export interface CashSession {
     id: string
@@ -51,9 +53,17 @@ export interface ShiftReview {
     saleCount: number
     cashSaleCount: number
     owedToYouCents: number          // outstanding house-owes from earlier shifts
-    // tipsEarnedCents is every tip not yet settled on a turn-in. A tab opened on an earlier
+    // tipsEarnedCents is every tip not yet settled on a shift close. A tab opened on an earlier
     // shift and closed after it was turned in lands here; this is that older part.
     tipsFromEarlierShiftsCents: number
+    // The drawer the terminal has open (eventId, else no-event), the one tips come out of in
+    // drawer_at_close mode. When false the shift report still works, nothing is taken.
+    drawerOpen: boolean
+    drawerSessionId: string | null
+    // Tenant settings echoed so the close dialog knows whether to ask for a drawer amount.
+    // Optional only so a POS talking to an API without them still renders (defaults apply).
+    tipsPayoutMode?: TipsPayoutMode
+    staffCodeMode?: StaffCodeMode
 }
 
 export interface OpenCashSessionRequest {
@@ -62,12 +72,70 @@ export interface OpenCashSessionRequest {
     deviceId?: string | null
 }
 
+// A pure blind-count drawer turn-in. Tips are settled by shiftClose() now; the two tip fields are
+// kept for compatibility and ignored by the server.
 export interface SubmitTurnInRequest {
     eventId: string | null
     workerCountedCents: number
     note: string
-    tipsFromDrawerCents: number
+    /** @deprecated settled by shiftClose(); ignored if sent */
+    tipsFromDrawerCents?: number
+    /** @deprecated settled by shiftClose(); ignored if sent */
+    cashTipsDeclaredCents?: number
+}
+
+// One person's shift report. cashierToken names the person when staff codes are on; null means
+// the signed-in account. In manager_later mode tipsFromDrawerCents must be 0.
+export interface ShiftCloseRequest {
+    cashierToken: string | null
     cashTipsDeclaredCents: number
+    tipsFromDrawerCents: number
+    note: string
+    // Fresh per dialog open. A retry after a timed-out success returns the same shift instead of a second one.
+    clientRequestId: string
+    eventId?: string | null
+}
+
+// The tip_shift row: the unit of "a person's shift report". Figures are snapshotted at close.
+export interface TipShift {
+    id: string
+    tenantId: string
+    userId: string
+    name: string
+    closedByUserId: string | null       // terminal account
+    cashSessionId: string | null        // drawer the tips came out of (drawer_at_close only)
+    businessDate: string                // yyyy-MM-dd, tenant calendar date
+    closedAt: string
+    tipsEarnedCents: number
+    cardTipsCents: number
+    cashTipsDeclaredCents: number
+    tipsFromDrawerCents: number
+    houseOwesCents: number
+    note: string | null
+}
+
+// ── Tip jar (cash outside the register, split and taken right after the shift) ──────────
+export interface TipJarStaff { userId: string; name: string }
+export interface TipJarShare { userId: string; name: string; amountCents: number }
+export interface TipJarSplit {
+    id: string
+    totalCents: number
+    note: string | null
+    createdByName: string
+    createdAtUtc: string
+    shares: TipJarShare[]
+}
+export interface TipJarResponse {
+    date: string
+    suggestedUserIds: string[]          // people with a shift report that day
+    staff: TipJarStaff[]                // every counter staff member
+    splits: TipJarSplit[]
+}
+export interface RecordTipJarRequest {
+    date: string                        // yyyy-MM-dd
+    totalCents: number
+    userIds: string[]                   // order matters: remainder cents go to the first ones
+    note: string
 }
 
 export type TipPayoutSource = 'drawer' | 'cash' | 'payroll'
@@ -118,6 +186,14 @@ export function clampTipsFromDrawer(tipsFromDrawerCents: number, tipsEarnedCents
 export function houseOwesCents(tipsEarnedCents: number, tipsFromDrawerCents: number): number {
     return Math.max(0, tipsEarnedCents - clampTipsFromDrawer(tipsFromDrawerCents, tipsEarnedCents))
 }
+// Even tip-jar split, same rule as the server: whole cents each, and the remainder goes one cent
+// each to the first people in the order given. [] when there is nobody to split between.
+export function splitEvenly(totalCents: number, count: number): number[] {
+    if (count <= 0 || !Number.isFinite(totalCents) || totalCents <= 0) return Array(Math.max(0, count)).fill(0)
+    const each = Math.floor(totalCents / count)
+    const remainder = totalCents - each * count
+    return Array.from({ length: count }, (_, i) => each + (i < remainder ? 1 : 0))
+}
 
 export class CashService {
     private apiUrl: string
@@ -140,10 +216,19 @@ export class CashService {
             params: { eventId: eventId || undefined },
         })
     }
-    shiftReview(eventId: string | null = null) {
+    // With a cashier token the review is for the token's person; without, the signed-in account.
+    shiftReview(cashierToken: string | null = null, eventId: string | null = null) {
+        // The token travels as a header, never in the query string: a 14-hour attribution credential
+        // must not land in access logs, proxies or the tablet's browser history.
         return axios.get<{ data: ShiftReview }>(`${this.apiUrl}/Cash/ShiftReview`, {
             params: { eventId: eventId || undefined },
+            headers: cashierToken ? { 'X-Cashier-Token': cashierToken } : undefined,
         })
+    }
+    // Claims the person's unsettled tips and writes their shift report in one transaction. A 400
+    // carrying fresh `data.tipsEarnedCents` means the figures moved mid-dialog: reload and retry.
+    shiftClose(req: ShiftCloseRequest) {
+        return axios.post<{ data: TipShift }>(`${this.apiUrl}/Cash/ShiftClose`, req)
     }
     turnIn(req: SubmitTurnInRequest) {
         return axios.post<{ data: CashTurnIn }>(`${this.apiUrl}/Cash/TurnIn`, req)
@@ -156,5 +241,16 @@ export class CashService {
     // Returns the recipient's updated TipsOwed row.
     payTipsOwed(req: PayTipsOwedRequest) {
         return axios.post<{ data: TipsOwedRow }>(`${this.apiUrl}/Cash/TipsOwed/Pay`, req)
+    }
+    // Tip jar for one tenant calendar date (yyyy-MM-dd): who worked, all staff, the day's splits.
+    tipJar(date: string) {
+        return axios.get<{ data: TipJarResponse }>(`${this.apiUrl}/Cash/TipJar`, { params: { date } })
+    }
+    // Records an even split; no ledger row or liability (the cash was already handed out).
+    recordTipJar(req: RecordTipJarRequest) {
+        return axios.post<{ data: TipJarSplit }>(`${this.apiUrl}/Cash/TipJar`, req)
+    }
+    deleteTipJar(id: string) {
+        return axios.delete(`${this.apiUrl}/Cash/TipJar/${id}`)
     }
 }

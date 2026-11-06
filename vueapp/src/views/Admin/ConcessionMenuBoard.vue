@@ -39,6 +39,7 @@ const settings = ref<ConcessionMenuSettings>({
     seasonPassDiscountEnabled: false, seasonPassDiscountKind: 'percent', seasonPassDiscountValue: 0,
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0, requireManagerForManualDiscount: true,
     tabsEnabled: true, tabHoldCents: 5000,
+    staffCodeMode: 'off', tipsPayoutMode: 'manager_later',
     starterSeeded: false, orderingOpenNow: true,
 })
 const loading = ref(true)

@@ -26,14 +26,29 @@ namespace Services.Repositories
             cash_tips_declared_cents AS CashTipsDeclaredCents,
             tips_from_drawer_cents AS TipsFromDrawerCents, house_owes_cents AS HouseOwesCents";
 
-        // The pool a close-out settles: the worker's PAID sales carrying a tip that no turn-in has
-        // claimed yet (Script0296), tipped on or after the tenant's claims cutover (Script0297:
-        // anything before it was paid out by hand before RidePass tracked tips, and a NULL cutover
-        // means a tenant whose whole history is post-feature). The first predicate matches
-        // idx_concession_sale_unclaimed_tips exactly; both expect the sale aliased cs and the tenant
-        // row aliased t, and every reader uses these same two strings so the three can never drift.
+        private const string SelectTipShiftColumns = @"
+            s.id, s.tenant_id AS TenantId, s.user_id AS UserId, s.closed_by_user_id AS ClosedByUserId,
+            s.cash_session_id AS CashSessionId, s.business_date AS BusinessDate, s.closed_at AS ClosedAt,
+            s.tips_earned_cents AS TipsEarnedCents, s.card_tips_cents AS CardTipsCents,
+            s.cash_tips_declared_cents AS CashTipsDeclaredCents,
+            s.tips_from_drawer_cents AS TipsFromDrawerCents, s.house_owes_cents AS HouseOwesCents, s.note,
+            s.client_request_id AS ClientRequestId";
+
+        private const string SelectTipJarSplitColumns = @"
+            j.id, j.tenant_id AS TenantId, j.business_date AS BusinessDate, j.total_cents AS TotalCents,
+            j.note, j.created_by_user_id AS CreatedByUserId, j.created_at AS CreatedAt,
+            NULLIF(TRIM(COALESCE(b.first_name, '') || ' ' || COALESCE(b.last_name, '')), '') AS CreatedByName,
+            b.email AS CreatedByEmail";
+
+        // The pool a shift close settles: the person's PAID sales carrying a tip that no shift
+        // close has claimed yet (Script0298, tip_shift_id), tipped on or after the tenant's claims
+        // cutover (Script0297: anything before it was paid out by hand before RidePass tracked
+        // tips, and a NULL cutover means a tenant whose whole history is post-feature). The first
+        // predicate matches idx_concession_sale_unsettled_tips exactly; both expect the sale
+        // aliased cs and the tenant row aliased t, and every reader uses these same two strings so
+        // the three can never drift.
         private const string UnclaimedTipPredicate =
-            "cs.status = 'paid' AND cs.tip_turn_in_id IS NULL AND cs.tip_cents > 0";
+            "cs.status = 'paid' AND cs.tip_shift_id IS NULL AND cs.tip_cents > 0";
         private const string TipsClaimCutoverPredicate =
             "COALESCE(cs.paid_at, cs.created_at) >= COALESCE(t.tips_claims_from_utc, '-infinity'::timestamptz)";
 
@@ -43,7 +58,7 @@ namespace Services.Repositories
         }
 
         // What the house owes each worker is DERIVED, never stored: house-owes accrued on their
-        // turn-ins minus what a manager has since paid them. This query hands back the two RAW
+        // shift closes minus what a manager has since paid them. This query hands back the two RAW
         // sides (plus the drawer payouts, which already came out of house-owes at close and are
         // only reported) and ShiftCloseMath.OutstandingOwed is the single place that turns them
         // into a balance, so the Tips owed page, the worker's own "owed to you" line and the End
@@ -51,30 +66,30 @@ namespace Services.Repositories
         // still waiting for a close-out.
         //
         // With a user, the predicate is pushed into every CTE so the lookup walks
-        // idx_cash_turn_in_worker / idx_tip_payout_tenant_user / idx_concession_sale_unclaimed_tips
+        // idx_tip_shift_tenant_user / idx_tip_payout_tenant_user / idx_concession_sale_unclaimed_tips
         // instead of aggregating the whole tenant to read one row. Callers append a WHERE.
         //
         // The CTEs are a separate string so SumOutstandingOwed (the End of Day headline) reads the
         // very same definitions of "house owes" and "paid by a manager" as the per-worker rows.
         //
         // The users join is not tenant-filtered on purpose: every user_id here comes from a
-        // cash_turn_in, tip_payout or concession_sale row already constrained to @tenantId, so it
-        // is a name lookup along a scoped FK, the same shape as EndOfDayReportRepository.GetDayStaff.
+        // tip_shift, tip_payout or concession_sale row already constrained to @tenantId, so it is
+        // a name lookup along a scoped FK, the same shape as EndOfDayReportRepository.GetDayStaff.
         private static string TipsOwedCtes(bool singleUser)
         {
-            var shiftUser = singleUser ? "AND worker_user_id = @userId" : "";
+            var shiftUser = singleUser ? "AND user_id = @userId" : "";
             var payoutUser = singleUser ? "AND user_id = @userId" : "";
             var saleUser = singleUser ? "AND cs.sold_by_user_id = @userId" : "";
             return $@"
             WITH shifts AS (
-                SELECT worker_user_id                   AS user_id,
+                SELECT user_id,
                        SUM(tips_earned_cents)::bigint   AS earned_cents,
                        SUM(house_owes_cents)::bigint    AS house_owes_cents,
-                       MAX(submitted_at)                AS last_shift_at,
-                       MAX(submitted_at) FILTER (WHERE tips_earned_cents > 0 OR house_owes_cents > 0) AS last_tip_shift_at
-                FROM cash_turn_in
+                       MAX(closed_at)                   AS last_shift_at,
+                       MAX(closed_at) FILTER (WHERE tips_earned_cents > 0 OR house_owes_cents > 0) AS last_tip_shift_at
+                FROM tip_shift
                 WHERE tenant_id = @tenantId {shiftUser}
-                GROUP BY worker_user_id
+                GROUP BY user_id
             ),
             paid AS (
                 SELECT user_id,
@@ -185,67 +200,19 @@ namespace Services.Repositories
 
         // ── Turn-ins ─────────────────────────────────────────────────────────────
 
-        // The whole close in one transaction: the turn-in, the tips it CLAIMS, the snapshot of those
-        // very tips, its session leaving 'open', and (when the worker took tips out of the drawer)
-        // the payout and its ledger row. The snapshot is read off the claim's own RETURNING rows,
-        // not off a query made moments earlier, so a tab closed, refunded or re-rung between the
-        // shift review and the submit can never leave tips_earned_cents disagreeing with what was
-        // actually settled. If that movement means the drawer take no longer fits, the exception
-        // rolls everything back and the worker reviews again. None of these rows may land without
-        // the others: a turn-in that says tips were taken but has no payout behind it, or that
-        // settled tips it never counted, would misstate money forever.
-        public async Task<Guid> SubmitTurnIn(CashTurnIn turnIn, DateTime claimAsOfUtc, TipPayout? drawerPayout, TenantLedgerEntry? payoutLedgerRow)
+        // The blind count and its session leaving 'open', together or not at all. The tip
+        // columns on cash_turn_in are history from before Script0298 and take their 0 defaults;
+        // tips are settled on a tip_shift (CloseShift), whichever drawer they were rung on.
+        public async Task<Guid> SubmitTurnIn(CashTurnIn turnIn)
         {
             if (turnIn.Id == Guid.Empty) turnIn.Id = Guid.NewGuid();
             return await _db.WithTransaction(async (conn, tx) =>
             {
-                // The tip snapshot columns land as 0 and are filled from the claim below.
-                turnIn.TipsEarnedCents = 0;
-                turnIn.CardTipsCents = 0;
-                turnIn.HouseOwesCents = 0;
                 await conn.ExecuteAsync(@"
                     INSERT INTO cash_turn_in (id, tenant_id, cash_session_id, event_id, worker_user_id,
-                                              expected_cents, worker_counted_cents, status, note,
-                                              tips_earned_cents, card_tips_cents, cash_tips_declared_cents,
-                                              tips_from_drawer_cents, house_owes_cents)
+                                              expected_cents, worker_counted_cents, status, note)
                     VALUES (@Id, @TenantId, @CashSessionId, @EventId, @WorkerUserId,
-                            @ExpectedCents, @WorkerCountedCents, @Status, @Note,
-                            @TipsEarnedCents, @CardTipsCents, @CashTipsDeclaredCents,
-                            @TipsFromDrawerCents, @HouseOwesCents)", turnIn, tx);
-
-                // Claim the tips this close settles, cut at the caller's instant: a sale paid after
-                // it stays unclaimed for the next close-out rather than being settled unseen.
-                var claimed = (await conn.QueryAsync<ClaimedTip>($@"
-                    UPDATE concession_sale cs
-                    SET tip_turn_in_id = @turnInId
-                    FROM tenant t
-                    WHERE t.id = cs.tenant_id
-                      AND cs.tenant_id = @tenantId
-                      AND cs.sold_by_user_id = @workerId
-                      AND {UnclaimedTipPredicate}
-                      AND {TipsClaimCutoverPredicate}
-                      AND COALESCE(cs.paid_at, cs.created_at) < @asOfUtc
-                    RETURNING cs.tip_cents AS TipCents, cs.payment_method AS PaymentMethod",
-                    new { turnInId = turnIn.Id, tenantId = turnIn.TenantId, workerId = turnIn.WorkerUserId, asOfUtc = claimAsOfUtc },
-                    tx)).ToList();
-
-                // Card = the two Stripe rails; the total also carries any other tender.
-                var earned = claimed.Sum(c => (long)c.TipCents);
-                var card = claimed
-                    .Where(c => c.PaymentMethod is "stripe" or "stripe_direct")
-                    .Sum(c => (long)c.TipCents);
-                if (!ShiftCloseMath.IsValidTipsFromDrawer(turnIn.TipsFromDrawerCents, checked((int)earned)))
-                    throw new TipsChangedDuringCloseException(earned, card);   // rolls the whole close back
-
-                turnIn.TipsEarnedCents = checked((int)earned);
-                turnIn.CardTipsCents = checked((int)card);
-                turnIn.HouseOwesCents = ShiftCloseMath.HouseOwes(turnIn.TipsEarnedCents, turnIn.TipsFromDrawerCents);
-                await conn.ExecuteAsync(@"
-                    UPDATE cash_turn_in
-                    SET tips_earned_cents = @TipsEarnedCents,
-                        card_tips_cents = @CardTipsCents,
-                        house_owes_cents = @HouseOwesCents
-                    WHERE id = @Id AND tenant_id = @TenantId", turnIn, tx);
+                            @ExpectedCents, @WorkerCountedCents, @Status, @Note)", turnIn, tx);
 
                 // closed_at stamps when the session leaves 'open'; reopening is not a flow. Exactly
                 // one row must flip: zero means the drawer was already closed out underneath this
@@ -256,22 +223,172 @@ namespace Services.Repositories
                     WHERE id = @sessionId AND tenant_id = @tenantId AND status = 'open'",
                     new { sessionId = turnIn.CashSessionId, tenantId = turnIn.TenantId }, tx);
                 if (flipped != 1) throw new DrawerAlreadyClosedException(turnIn.CashSessionId);
-
-                if (drawerPayout is not null)
-                {
-                    drawerPayout.CashTurnInId = turnIn.Id;
-                    foreach (var (sql, param) in TipPayoutStatements(drawerPayout, payoutLedgerRow))
-                        await conn.ExecuteAsync(sql, param, tx);
-                }
                 return turnIn.Id;
             });
         }
 
-        // One claimed sale's tip, as the close-out's UPDATE ... RETURNING hands it back.
+        // ── Shift close ──────────────────────────────────────────────────────────
+
+        // The whole shift close in one transaction: the drawer it draws on (row-locked), the
+        // tip_shift, the tips it CLAIMS, the snapshot of those very tips, and (when tips were taken
+        // out of the drawer) the payout and its ledger row. The snapshot is read off the claim's
+        // own RETURNING rows, not off a query made moments earlier, so a tab closed, refunded or
+        // re-rung between the shift review and the submit can never leave tips_earned_cents
+        // disagreeing with what was actually settled. If that movement means the drawer take no
+        // longer fits, the exception rolls everything back and the person reviews again. None of
+        // these rows may land without the others: a shift that says tips were taken but has no
+        // payout behind it, or that settled tips it never counted, would misstate money forever.
+        public async Task<Guid> CloseShift(TipShift shift, DateTime claimAsOfUtc, TipPayout? drawerPayout, TenantLedgerEntry? payoutLedgerRow)
+        {
+            if (shift.Id == Guid.Empty) shift.Id = Guid.NewGuid();
+            return await _db.WithTransaction(async (conn, tx) =>
+            {
+                // Replay: the register's submit id already wrote a shift for this person (a retry
+                // after a timeout, or a double tap). Hand that one back; nothing is claimed or
+                // written. Checked here, inside the lock and the transaction, so two copies of
+                // one submit can never both get past it.
+                if (shift.ClientRequestId is { } clientRequestId)
+                {
+                    var replay = await conn.ExecuteScalarAsync<Guid?>(@"
+                        SELECT id FROM tip_shift
+                        WHERE tenant_id = @tenantId AND user_id = @userId AND client_request_id = @clientRequestId",
+                        new { tenantId = shift.TenantId, userId = shift.UserId, clientRequestId }, tx);
+                    if (replay is { } existingId) return existingId;
+                }
+
+                // The drawer the tips come out of must still be open, and it is row-locked for the
+                // rest of the close so a turn-in cannot flip it underneath the payout. No row means
+                // it was closed out (or is not this tenant's) and nothing lands.
+                if (shift.CashSessionId is { } drawerId)
+                {
+                    var open = await conn.ExecuteScalarAsync<Guid?>(@"
+                        SELECT id FROM cash_session
+                        WHERE id = @drawerId AND tenant_id = @tenantId AND status = 'open'
+                        FOR UPDATE",
+                        new { drawerId, tenantId = shift.TenantId }, tx);
+                    if (open is null) throw new DrawerAlreadyClosedException(drawerId);
+                }
+
+                // The tip snapshot columns land as 0 and are filled from the claim below.
+                shift.TipsEarnedCents = 0;
+                shift.CardTipsCents = 0;
+                shift.HouseOwesCents = 0;
+                await conn.ExecuteAsync(@"
+                    INSERT INTO tip_shift (id, tenant_id, user_id, closed_by_user_id, cash_session_id, business_date,
+                                           tips_earned_cents, card_tips_cents, cash_tips_declared_cents,
+                                           tips_from_drawer_cents, house_owes_cents, note, client_request_id)
+                    VALUES (@Id, @TenantId, @UserId, @ClosedByUserId, @CashSessionId, @BusinessDate,
+                            @TipsEarnedCents, @CardTipsCents, @CashTipsDeclaredCents,
+                            @TipsFromDrawerCents, @HouseOwesCents, @Note, @ClientRequestId)", shift, tx);
+
+                // Claim the tips this close settles, cut at the caller's instant: a sale paid after
+                // it stays unclaimed for the next close rather than being settled unseen.
+                var claimed = (await conn.QueryAsync<ClaimedTip>($@"
+                    UPDATE concession_sale cs
+                    SET tip_shift_id = @shiftId
+                    FROM tenant t
+                    WHERE t.id = cs.tenant_id
+                      AND cs.tenant_id = @tenantId
+                      AND cs.sold_by_user_id = @userId
+                      AND {UnclaimedTipPredicate}
+                      AND {TipsClaimCutoverPredicate}
+                      AND COALESCE(cs.paid_at, cs.created_at) < @asOfUtc
+                    RETURNING cs.tip_cents AS TipCents, cs.payment_method AS PaymentMethod",
+                    new { shiftId = shift.Id, tenantId = shift.TenantId, userId = shift.UserId, asOfUtc = claimAsOfUtc },
+                    tx)).ToList();
+
+                // No tip to settle and nothing declared is no report at all; roll back rather than
+                // write an empty shift. A declared jar/cash amount on its own is still a report.
+                if (claimed.Count == 0 && shift.CashTipsDeclaredCents == 0)
+                    throw new NothingToSettleException();
+
+                // Card = the two Stripe rails; the total also carries any other tender.
+                var earned = claimed.Sum(c => (long)c.TipCents);
+                var card = claimed
+                    .Where(c => c.PaymentMethod is "stripe" or "stripe_direct")
+                    .Sum(c => (long)c.TipCents);
+                if (!ShiftCloseMath.IsValidTipsFromDrawer(shift.TipsFromDrawerCents, checked((int)earned)))
+                    throw new TipsChangedDuringCloseException(earned, card);   // rolls the whole close back
+
+                shift.TipsEarnedCents = checked((int)earned);
+                shift.CardTipsCents = checked((int)card);
+                shift.HouseOwesCents = ShiftCloseMath.HouseOwes(shift.TipsEarnedCents, shift.TipsFromDrawerCents);
+                await conn.ExecuteAsync(@"
+                    UPDATE tip_shift
+                    SET tips_earned_cents = @TipsEarnedCents,
+                        card_tips_cents = @CardTipsCents,
+                        house_owes_cents = @HouseOwesCents
+                    WHERE id = @Id AND tenant_id = @TenantId", shift, tx);
+
+                if (drawerPayout is not null)
+                {
+                    drawerPayout.TipShiftId = shift.Id;
+                    foreach (var (sql, param) in TipPayoutStatements(drawerPayout, payoutLedgerRow))
+                        await conn.ExecuteAsync(sql, param, tx);
+                }
+                return shift.Id;
+            });
+        }
+
+        // One claimed sale's tip, as the close's UPDATE ... RETURNING hands it back.
         private sealed class ClaimedTip
         {
             public int TipCents { get; set; }
             public string PaymentMethod { get; set; } = "";
+        }
+
+        public async Task<TipShiftRow?> GetTipShiftByClientRequestId(Guid tenantId, Guid userId, Guid clientRequestId)
+        {
+            // uk_tip_shift_client_request makes this at most one row. The users join follows an
+            // id already scoped by s.tenant_id.
+            var sql = $@"
+                SELECT {SelectTipShiftColumns},
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email AS Email
+                FROM tip_shift s
+                LEFT JOIN users u ON u.id = s.user_id
+                WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.client_request_id = @clientRequestId
+                LIMIT 1";
+            return (await _db.Query<TipShiftRow>(sql, new { tenantId, userId, clientRequestId })).FirstOrDefault();
+        }
+
+        public async Task<TipShiftRow?> GetTipShiftById(Guid id, Guid tenantId)
+        {
+            // The users join follows an id already scoped by s.tenant_id (see TipsOwedCtes).
+            var sql = $@"
+                SELECT {SelectTipShiftColumns},
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email AS Email
+                FROM tip_shift s
+                LEFT JOIN users u ON u.id = s.user_id
+                WHERE s.id = @id AND s.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<TipShiftRow>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<Dictionary<Guid, long>> SumTipsFromDrawerBySession(Guid tenantId, IReadOnlyCollection<Guid> sessionIds)
+        {
+            if (sessionIds.Count == 0) return new Dictionary<Guid, long>();
+            // Npgsql binds the array as one parameter (Dapper leaves arrays alone for it), so this
+            // is a single indexed read over idx_tip_shift_session.
+            const string sql = @"
+                SELECT cash_session_id                          AS CashSessionId,
+                       COALESCE(SUM(tips_from_drawer_cents), 0)::bigint AS TipsFromDrawerCents
+                FROM tip_shift
+                WHERE tenant_id = @tenantId
+                  AND cash_session_id = ANY(@sessionIds)
+                GROUP BY cash_session_id";
+            var rows = await _db.Query<SessionTipOutRow>(sql, new { tenantId, sessionIds = sessionIds.ToArray() });
+            return rows.ToDictionary(r => r.CashSessionId, r => r.TipsFromDrawerCents);
+        }
+
+        public async Task<List<Guid>> ListTipShiftUserIds(Guid tenantId, DateOnly businessDate)
+        {
+            const string sql = @"
+                SELECT DISTINCT user_id
+                FROM tip_shift
+                WHERE tenant_id = @tenantId AND business_date = @businessDate";
+            return (await _db.Query<Guid>(sql, new { tenantId, businessDate })).ToList();
         }
 
         public async Task<CashTurnIn?> GetTurnInById(Guid id, Guid tenantId)
@@ -394,8 +511,8 @@ namespace Services.Repositories
             if (payout.Id == Guid.Empty) payout.Id = Guid.NewGuid();
             var statements = new List<(string Sql, object? Param)>
             {
-                (@"INSERT INTO tip_payout (id, tenant_id, user_id, cash_turn_in_id, amount_cents, source, paid_by_user_id, note)
-                   VALUES (@Id, @TenantId, @UserId, @CashTurnInId, @AmountCents, @Source, @PaidByUserId, @Note)", payout),
+                (@"INSERT INTO tip_payout (id, tenant_id, user_id, cash_turn_in_id, tip_shift_id, amount_cents, source, paid_by_user_id, note)
+                   VALUES (@Id, @TenantId, @UserId, @CashTurnInId, @TipShiftId, @AmountCents, @Source, @PaidByUserId, @Note)", payout),
             };
             if (ledgerRow is null) return statements;
 
@@ -525,6 +642,75 @@ namespace Services.Repositories
                 FROM tip_payout
                 WHERE tenant_id = @tenantId";
             return (await _db.Query<string>(sql, new { tenantId })).ToList();
+        }
+
+        // ── Tip jar ──────────────────────────────────────────────────────────────
+
+        public async Task<Guid> CreateTipJarSplit(TipJarSplit split, IReadOnlyList<TipJarShare> shares)
+        {
+            if (split.Id == Guid.Empty) split.Id = Guid.NewGuid();
+            var statements = new List<(string Sql, object? Param)>
+            {
+                (@"INSERT INTO tip_jar_split (id, tenant_id, business_date, total_cents, note, created_by_user_id)
+                   VALUES (@Id, @TenantId, @BusinessDate, @TotalCents, @Note, @CreatedByUserId)", split),
+            };
+            foreach (var share in shares)
+            {
+                if (share.Id == Guid.Empty) share.Id = Guid.NewGuid();
+                share.SplitId = split.Id;
+                share.TenantId = split.TenantId;
+                statements.Add((@"INSERT INTO tip_jar_share (id, tenant_id, split_id, user_id, amount_cents)
+                                  VALUES (@Id, @TenantId, @SplitId, @UserId, @AmountCents)", share));
+            }
+            await _db.ExecuteBatch(statements);
+            return split.Id;
+        }
+
+        public async Task<TipJarSplitRow?> GetTipJarSplit(Guid id, Guid tenantId)
+        {
+            // The users join follows created_by_user_id on a row already scoped by j.tenant_id.
+            var sql = $@"
+                SELECT {SelectTipJarSplitColumns}
+                FROM tip_jar_split j
+                LEFT JOIN users b ON b.id = j.created_by_user_id
+                WHERE j.id = @id AND j.tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<TipJarSplitRow>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<List<TipJarSplitRow>> ListTipJarSplits(Guid tenantId, DateOnly businessDate)
+        {
+            var sql = $@"
+                SELECT {SelectTipJarSplitColumns}
+                FROM tip_jar_split j
+                LEFT JOIN users b ON b.id = j.created_by_user_id
+                WHERE j.tenant_id = @tenantId AND j.business_date = @businessDate
+                ORDER BY j.created_at";
+            return (await _db.Query<TipJarSplitRow>(sql, new { tenantId, businessDate })).ToList();
+        }
+
+        public async Task<List<TipJarShareRow>> ListTipJarShares(Guid tenantId, DateOnly businessDate)
+        {
+            // Scoped on the share's own tenant_id and through its split, so a share can never be
+            // read under another tenant's date. The users join follows a scoped id.
+            const string sql = @"
+                SELECT h.id, h.tenant_id AS TenantId, h.split_id AS SplitId, h.user_id AS UserId,
+                       h.amount_cents AS AmountCents,
+                       NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS Name,
+                       u.email AS Email
+                FROM tip_jar_share h
+                JOIN tip_jar_split j ON j.id = h.split_id AND j.tenant_id = h.tenant_id
+                LEFT JOIN users u ON u.id = h.user_id
+                WHERE h.tenant_id = @tenantId AND j.business_date = @businessDate
+                ORDER BY j.created_at, h.amount_cents DESC";
+            return (await _db.Query<TipJarShareRow>(sql, new { tenantId, businessDate })).ToList();
+        }
+
+        public async Task<bool> DeleteTipJarSplit(Guid id, Guid tenantId)
+        {
+            // Shares go with it (ON DELETE CASCADE).
+            const string sql = "DELETE FROM tip_jar_split WHERE id = @id AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { id, tenantId }) > 0;
         }
     }
 }

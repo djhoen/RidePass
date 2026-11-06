@@ -88,6 +88,11 @@
             // allowed to press, and the list is configuration rather than customer data. Managing
             // discounts is SettingsManage, which is a different question entirely.
             public const string AnyCounter = "TenantPermAny:sales.counter|concessions.counter|shop.counter";
+            // A person's shift review / shift close (Script0298): reached from the F&B register by
+            // whoever punched in (concessions.counter) and by anyone who handles a drawer
+            // (cash.turnin). The close only settles the caller's (or the punched-in person's) own
+            // tips, so neither side needs the other's permission to do it.
+            public const string ShiftClose = "TenantPermAny:concessions.counter|cash.turnin";
         }
 
         /// <summary>Any-of policies, as (policy name, permissions) so Program.cs registers exactly
@@ -96,7 +101,51 @@
         {
             (Policy.CatalogRead, new[] { CatalogManage, ShopCounter }),
             (Policy.AnyCounter, new[] { SalesCounter, ConcessionsCounter, ShopCounter }),
+            (Policy.ShiftClose, new[] { ConcessionsCounter, CashTurnIn }),
         };
+
+        /// <summary>Every tenant staff role ForRole knows (the legacy alias included).</summary>
+        public static readonly string[] StaffRoles =
+        {
+            "tenant_admin", "tenant_manager", "tenant_cashier", "tenant_fnb_cashier",
+            "tenant_shop_cashier", "tenant_scanner", "tenant_accountant", "tenant_staff",
+        };
+
+        /// <summary>The roles whose permission set includes <paramref name="permission"/>.</summary>
+        public static string[] RolesGranting(string permission) =>
+            StaffRoles.Where(r => ForRole(r).Contains(permission)).ToArray();
+
+        /// <summary>
+        /// The one gate for holding a POS code and taking a share of the tip jar (Script0298):
+        /// works the F&B register, or is a manager/admin. Every caller that sets, verifies or
+        /// lists codes goes through this (or CounterStaffRoles, which is this applied to each role).
+        /// </summary>
+        public static bool MayHoldPosCode(string? role, string[]? roles) =>
+            IsCounterStaff(role, roles) || IsManagerOrAdmin(role, roles);
+
+        /// <summary>
+        /// MayHoldPosCode as a role list, for SQL that has to filter by role. Derived from the
+        /// predicate so the two can never disagree. Lazy because the role sets are static fields
+        /// declared further down, and a field initializer here would run before them.
+        /// </summary>
+        public static string[] CounterStaffRoles => _counterStaffRoles.Value;
+        private static readonly Lazy<string[]> _counterStaffRoles = new(() =>
+            StaffRoles.Where(r => MayHoldPosCode(r, null)).ToArray());
+        private static readonly Lazy<string[]> _registerRoles = new(() => RolesGranting(ConcessionsCounter));
+
+        // The one vocabulary for "is this person a manager" and "does this person work the F&B
+        // register", read off a user's primary role and roles array (either may carry it: the
+        // array is the full set, the primary is kept in lock-step for older rows). Every caller
+        // that gates a POS code, a staff code, a comp approval or a jar share goes through these.
+        public static bool IsManagerOrAdmin(string? role, string[]? roles) =>
+            HasAny(role, roles, r => r is "tenant_admin" or "tenant_manager");
+
+        /// <summary>Holds a role whose permission set grants concessions.counter (admins and managers included).</summary>
+        public static bool IsCounterStaff(string? role, string[]? roles) =>
+            HasAny(role, roles, r => _registerRoles.Value.Contains(r));
+
+        private static bool HasAny(string? role, string[]? roles, Func<string, bool> test) =>
+            (roles ?? System.Array.Empty<string>()).Any(test) || (role is not null && test(role));
 
         public static readonly string[] All =
         {

@@ -15,6 +15,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Services\Services.csproj" />
+    <!-- webapi.Security.CashierTokenService (Data Protection round-trip tests). -->
+    <ProjectReference Include="..\webapi\webapi.csproj" />
   </ItemGroup>
 
 </Project>

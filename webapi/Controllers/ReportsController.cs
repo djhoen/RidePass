@@ -538,6 +538,10 @@ namespace webapi.Controllers
             // day the report is for. A worker with no tips but a payout today still gets a line.
             var tipsBySeller = await _endOfDay.GetDayTipsBySeller(tenantId, businessDate, tz);
             var tipPayouts = await _endOfDay.GetDayTipPayouts(tenantId, businessDate, tz);
+            // The daily tips sheet (Script0298): house-owes and declared cash tips come from the
+            // day's shift reports (tip_shift), the jar from the day's splits.
+            var tipShifts = await _endOfDay.GetDayTipShifts(tenantId, businessDate);
+            var jarShares = await _endOfDay.GetDayTipJarShares(tenantId, businessDate);
             // One aggregate over the same CTEs the Tips owed page reads, so the headline here is
             // the sum of exactly the balances that page shows.
             var owedOutstanding = await _cash.SumOutstandingOwed(tenantId);
@@ -557,8 +561,14 @@ namespace webapi.Controllers
             }
             foreach (var r in tipsBySeller)
                 TipLine(r.UserId, r.Name, r.Email).EarnedCents += r.TipCents;
-            foreach (var t in turnIns.Where(t => t.HouseOwesCents > 0))
-                TipLine(t.WorkerUserId, t.WorkerName, null).HouseOwesCents += t.HouseOwesCents;
+            foreach (var s in tipShifts)
+            {
+                var line = TipLine(s.UserId, s.Name, s.Email);
+                line.HouseOwesCents += s.HouseOwesCents;
+                line.DeclaredCashTipsCents += s.CashTipsDeclaredCents;
+            }
+            foreach (var j in jarShares)
+                TipLine(j.UserId, j.Name, j.Email).JarShareCents += j.AmountCents;
             foreach (var p in tipPayouts)
             {
                 var line = TipLine(p.UserId, p.Name, p.Email);

@@ -48,7 +48,13 @@
                         </td>
                     </tr>
                     <tr v-for="u in visibleUsers" :key="u.id">
-                        <td>{{ u.firstName }} {{ u.lastName }}</td>
+                        <td>
+                            {{ u.firstName }} {{ u.lastName }}
+                            <v-icon v-if="u.hasPosCode" size="x-small" class="ml-1 text-medium-emphasis">
+                                mdi-key-variant
+                                <v-tooltip activator="parent" location="top">Has a POS code</v-tooltip>
+                            </v-icon>
+                        </td>
                         <td>{{ u.email }}</td>
                         <td>
                             <div class="d-flex flex-wrap ga-1">
@@ -83,6 +89,10 @@
                                     <v-list-item @click="resetPassword(u)">
                                         <template #prepend><v-icon icon="mdi-key-change"></v-icon></template>
                                         <v-list-item-title>Reset Password</v-list-item-title>
+                                    </v-list-item>
+                                    <v-list-item @click="openPosCode(u)">
+                                        <template #prepend><v-icon icon="mdi-dialpad"></v-icon></template>
+                                        <v-list-item-title>Set POS code</v-list-item-title>
                                     </v-list-item>
                                 </v-list>
                             </v-menu>
@@ -149,6 +159,35 @@
                     <v-spacer></v-spacer>
                     <v-btn :disabled="savingRole" @click="roleDialog = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="savingRole" @click="saveRole">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- POS code: signs them into the register; for managers it also approves comps and voids.
+             Never shown back, so the field is always blank; Clear removes the code outright. -->
+        <v-dialog v-model="posCodeDialog" max-width="440" :persistent="savingPosCode">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <span>Set POS code</span>
+                    <v-spacer></v-spacer>
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="savingPosCode" @click="posCodeDialog = false"></v-btn>
+                </v-card-title>
+                <v-card-text>
+                    <p class="mb-3">{{ posCodeTarget?.firstName }} {{ posCodeTarget?.lastName }} — {{ posCodeTarget?.email }}</p>
+                    <v-text-field v-model="posCodeInput" label="POS code (4 to 8 digits)" type="password" inputmode="numeric"
+                        autocomplete="one-time-code" density="compact" :error-messages="posCodeError"
+                        style="max-width: 260px" @keyup.enter="savePosCode"></v-text-field>
+                    <p class="text-caption text-medium-emphasis">
+                        They punch this code at the register to ring sales under their name. Codes are unique across
+                        your staff. Managers also use it to approve comps and voids.
+                    </p>
+                </v-card-text>
+                <v-card-actions>
+                    <v-btn v-if="posCodeTarget?.hasPosCode !== false" variant="text" color="error" :disabled="savingPosCode"
+                        @click="clearPosCode">Clear code</v-btn>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="savingPosCode" @click="posCodeDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="savingPosCode" :disabled="!!posCodeError || !posCodeInput" @click="savePosCode">Save</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -344,6 +383,51 @@ async function resetPassword(u: TenantUserListItem) {
     } catch (err: any) {
         flash(err.response?.data?.error || 'Failed to reset password.', 'error')
     }
+}
+
+// ── POS code ──────────────────────────────────────────────────────────────────────────
+const posCodeDialog = ref(false)
+const posCodeTarget = ref<TenantUserListItem | null>(null)
+const posCodeInput = ref('')
+const savingPosCode = ref(false)
+const posCodeError = computed(() =>
+    posCodeInput.value && !/^\d{4,8}$/.test(posCodeInput.value) ? 'Use 4 to 8 digits, numbers only.' : '')
+
+function openPosCode(u: TenantUserListItem) {
+    posCodeTarget.value = u
+    posCodeInput.value = ''
+    posCodeDialog.value = true
+}
+
+async function submitPosCode(code: string) {
+    const u = posCodeTarget.value
+    if (!u) return
+    savingPosCode.value = true
+    try {
+        await service.setPosCode(u.id, code)
+        posCodeDialog.value = false
+        flash(code ? `POS code set for ${u.firstName} ${u.lastName}.` : `POS code cleared for ${u.firstName} ${u.lastName}.`, 'success')
+        await load()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Failed to update the POS code.', 'error')
+    } finally {
+        savingPosCode.value = false
+    }
+}
+function savePosCode() {
+    if (!posCodeInput.value || posCodeError.value) return
+    submitPosCode(posCodeInput.value)
+}
+async function clearPosCode() {
+    const u = posCodeTarget.value
+    if (!u) return
+    if (!await confirm({
+        title: 'Clear POS code?',
+        message: `${u.firstName} ${u.lastName} will no longer be able to sign in at the register with it.`,
+        confirmText: 'Clear',
+        confirmColor: 'error',
+    })) return
+    submitPosCode('')
 }
 
 function roleTitle(role: string): string {

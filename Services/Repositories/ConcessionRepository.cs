@@ -56,6 +56,7 @@ namespace Services.Repositories
             require_manager_for_manual_discount AS RequireManagerForManualDiscount,
             customer_display_enabled AS CustomerDisplayEnabled,
             tabs_enabled AS TabsEnabled, tab_hold_cents AS TabHoldCents,
+            staff_code_mode AS StaffCodeMode, tips_payout_mode AS TipsPayoutMode,
             seeded_at AS SeededAt, updated_at AS UpdatedAt";
 
         private const string VariantCols = @"
@@ -73,7 +74,8 @@ namespace Services.Repositories
             total_cents AS TotalCents, payment_method AS PaymentMethod,
             stripe_payment_intent_id AS StripePaymentIntentId,
             stripe_connected_account_id AS StripeConnectedAccountId,
-            sold_by_user_id AS SoldByUserId, order_channel AS OrderChannel,
+            sold_by_user_id AS SoldByUserId, rung_by_terminal_user_id AS RungByTerminalUserId,
+            order_channel AS OrderChannel,
             purchaser_user_id AS PurchaserUserId, purchaser_email AS PurchaserEmail,
             purchaser_name AS PurchaserName, is_rush AS IsRush,
             credit_applied_cents AS CreditAppliedCents, credit_account_id AS CreditAccountId,
@@ -452,11 +454,13 @@ namespace Services.Repositories
                     (tenant_id, logo_url, background_color, text_color, accent_color, show_carousel, carousel_seconds, tips_enabled, prep_warn_minutes, prep_late_minutes, ordering_hours, ordering_seasons, require_event_day, prices_include_tax,
                      season_pass_discount_enabled, season_pass_discount_kind, season_pass_discount_value,
                      loampass_discount_enabled, loampass_discount_kind, loampass_discount_value,
-                     require_manager_for_manual_discount, customer_display_enabled, tabs_enabled, tab_hold_cents, updated_at)
+                     require_manager_for_manual_discount, customer_display_enabled, tabs_enabled, tab_hold_cents,
+                     staff_code_mode, tips_payout_mode, updated_at)
                 VALUES (@TenantId, @LogoUrl, @BackgroundColor, @TextColor, @AccentColor, @ShowCarousel, @CarouselSeconds, @TipsEnabled, @PrepWarnMinutes, @PrepLateMinutes, @OrderingHoursJson::jsonb, @OrderingSeasonsJson::jsonb, @RequireEventDay, @PricesIncludeTax,
                      @SeasonPassDiscountEnabled, @SeasonPassDiscountKind, @SeasonPassDiscountValue,
                      @LoampassDiscountEnabled, @LoampassDiscountKind, @LoampassDiscountValue,
-                     @RequireManagerForManualDiscount, @CustomerDisplayEnabled, @TabsEnabled, @TabHoldCents, now())
+                     @RequireManagerForManualDiscount, @CustomerDisplayEnabled, @TabsEnabled, @TabHoldCents,
+                     @StaffCodeMode, @TipsPayoutMode, now())
                 ON CONFLICT (tenant_id) DO UPDATE SET
                     logo_url = @LogoUrl, background_color = @BackgroundColor, text_color = @TextColor,
                     accent_color = @AccentColor, show_carousel = @ShowCarousel, carousel_seconds = @CarouselSeconds,
@@ -469,7 +473,8 @@ namespace Services.Repositories
                     loampass_discount_value = @LoampassDiscountValue,
                     require_manager_for_manual_discount = @RequireManagerForManualDiscount,
                     customer_display_enabled = @CustomerDisplayEnabled,
-                    tabs_enabled = @TabsEnabled, tab_hold_cents = @TabHoldCents, updated_at = now()";
+                    tabs_enabled = @TabsEnabled, tab_hold_cents = @TabHoldCents,
+                    staff_code_mode = @StaffCodeMode, tips_payout_mode = @TipsPayoutMode, updated_at = now()";
             await _db.Execute(sql, s);
         }
 
@@ -666,14 +671,16 @@ namespace Services.Repositories
                     (id, tenant_id, status, fulfillment_status, order_number, subtotal_cents, tip_cents, tax_cents,
                      prices_include_tax, discount_cents, discount_kind, discount_label,
                      comp_reason_id, comp_reason_label, authorized_by_user_id, authorized_by_name, total_cents,
-                     payment_method, stripe_payment_intent_id, stripe_connected_account_id, sold_by_user_id, paid_at,
+                     payment_method, stripe_payment_intent_id, stripe_connected_account_id, sold_by_user_id,
+                     rung_by_terminal_user_id, paid_at,
                      order_channel, purchaser_user_id, purchaser_email, purchaser_name,
                      credit_applied_cents, credit_account_id, tab_name, tab_opened_at)
                 VALUES (CASE WHEN @Id = '00000000-0000-0000-0000-000000000000'::uuid THEN gen_random_uuid() ELSE @Id END,
                      @TenantId, @Status, @FulfillmentStatus, @OrderNumber, @SubtotalCents, @TipCents, @TaxCents,
                      @PricesIncludeTax, @DiscountCents, @DiscountKind, @DiscountLabel,
                      @CompReasonId, @CompReasonLabel, @AuthorizedByUserId, @AuthorizedByName, @TotalCents,
-                     @PaymentMethod, @StripePaymentIntentId, @StripeConnectedAccountId, @SoldByUserId, @PaidAt,
+                     @PaymentMethod, @StripePaymentIntentId, @StripeConnectedAccountId, @SoldByUserId,
+                     @RungByTerminalUserId, @PaidAt,
                      @OrderChannel, @PurchaserUserId, @PurchaserEmail, @PurchaserName,
                      @CreditAppliedCents, @CreditAccountId, @TabName, @TabOpenedAt)
                 RETURNING id";
@@ -1056,6 +1063,9 @@ namespace Services.Repositories
                 total_cents = @TotalCents, credit_applied_cents = @CreditAppliedCents, credit_account_id = @CreditAccountId,
                 credit_redeem_ref = @CreditRedeemRef,
                 purchaser_user_id = @PurchaserUserId, purchaser_email = @PurchaserEmail, purchaser_name = @PurchaserName,
+                -- Who is ringing the tab now (Script0298): a staff code at close moves the tip to
+                -- the person closing it; the terminal account is always the one signed in.
+                sold_by_user_id = @SoldByUserId, rung_by_terminal_user_id = @RungByTerminalUserId,
                 fulfillment_status = CASE WHEN fulfillment_status = 'completed' THEN 'active' ELSE fulfillment_status END
             WHERE id = @Id AND tenant_id = @TenantId AND status = 'open'
               AND stripe_payment_intent_id IS NOT DISTINCT FROM @StripePaymentIntentId::text";

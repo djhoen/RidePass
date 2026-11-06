@@ -47,6 +47,7 @@ namespace webapi.Controllers
         private readonly INotificationService _notifications;
         private readonly IEventRepository _events;
         private readonly webapi.Security.IManagerPinService _managerPin;
+        private readonly webapi.Security.ICashierTokenService _cashierTokens;
         private readonly ITenantCreditRepository _credit;
         private readonly ILogger<ConcessionController> _logger;
         private readonly Services.Audit.IAuditLogger _audit;
@@ -80,9 +81,11 @@ namespace webapi.Controllers
             Services.Audit.IAuditLogger audit,
             IDiscountPresetRepository discounts,
             Services.Pricing.ISeasonPassPerkResolver perks,
-            IDbHelper db)
+            IDbHelper db,
+            webapi.Security.ICashierTokenService cashierTokens)
         {
             _db = db;
+            _cashierTokens = cashierTokens;
             _discounts = discounts;
             _perks = perks;
             _audit = audit;
@@ -746,16 +749,27 @@ namespace webapi.Controllers
                 RequireManagerForManualDiscount = s?.RequireManagerForManualDiscount ?? true,
                 TabsEnabled = s?.TabsEnabled ?? true,
                 TabHoldCents = s?.TabHoldCents ?? 5000,
+                StaffCodeMode = s?.StaffCodeMode ?? "off",
+                TipsPayoutMode = s?.TipsPayoutMode ?? "manager_later",
                 StarterSeeded = s?.SeededAt != null,
                 OrderingOpenNow = (await EvaluateOrderingStatus(s)).OpenNow,
             });
         }
+
+        private static readonly string[] StaffCodeModes = { "off", "per_shift", "per_order" };
+        private static readonly string[] TipsPayoutModes = { "manager_later", "drawer_at_close" };
 
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
         [HttpPut("MenuSettings")]
         public async Task<IActionResult> UpdateMenuSettings([FromBody] ConcessionMenuSettingsRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var staffCodeMode = (req.StaffCodeMode ?? "off").Trim().ToLowerInvariant();
+            if (!StaffCodeModes.Contains(staffCodeMode))
+                return new ApiResponses().BadRequestResult("Staff sign-in must be off, per_shift or per_order.");
+            var tipsPayoutMode = (req.TipsPayoutMode ?? "manager_later").Trim().ToLowerInvariant();
+            if (!TipsPayoutModes.Contains(tipsPayoutMode))
+                return new ApiResponses().BadRequestResult("Tip payout must be manager_later or drawer_at_close.");
             await _concessions.UpsertMenuSettings(new ConcessionMenuSettings
             {
                 TenantId = _tenantContext.TenantId,
@@ -783,6 +797,8 @@ namespace webapi.Controllers
                 TabsEnabled = req.TabsEnabled,
                 // Stripe's card minimum at the bottom; nobody needs a five-figure bar hold.
                 TabHoldCents = Math.Clamp(req.TabHoldCents, 50, 1_000_000),
+                StaffCodeMode = staffCodeMode,
+                TipsPayoutMode = tipsPayoutMode,
             });
             return new ApiResponses().OkResult();
         }
@@ -931,12 +947,14 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
-        // ── Manager PIN ───────────────────────────────────────────────────────────────
-        // A staff member sets/clears their own POS authorization PIN. Only managers/admins may hold one;
-        // a cashier-only account is rejected. Stored as a salted hash.
-        // Rate-limited like VerifyManagerPin: the uniqueness check below is an oracle ("that PIN is
-        // taken" confirms a hit), so without a throttle a manager could enumerate the 4-digit space to
-        // learn a colleague's PIN and forge their comp/void approvals.
+        // ── POS code (manager PIN / staff code) ────────────────────────────────────────
+        // A staff member sets/clears their own POS code (Script0298: one code per person). For a
+        // manager/admin it is the PIN that approves comps and voids; for everyone who works the
+        // register it signs them in at a shared terminal when staff sign-in is on. Stored as a
+        // salted hash, unique across every staff member at the tenant. The path keeps its old name.
+        // Rate-limited like the verifiers: the uniqueness check below is an oracle ("that code is
+        // taken" confirms a hit), so without a throttle anyone could enumerate the 4-digit space to
+        // learn a colleague's code and ring sales, or forge comp/void approvals, in their name.
         [Authorize]
         [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
         [HttpPut("ManagerPin")]
@@ -948,8 +966,10 @@ namespace webapi.Controllers
             var user = await _users.GetById(uid);
             if (user is null || user.TenantId != _tenantContext.TenantId)
                 return new ApiResponses().BadRequestResult("User not found.");
-            if (!IsManagerOrAdmin(user))
-                return new ApiResponses().BadRequestResult("Only managers and admins can set an authorization PIN.");
+            // The same gate the admin endpoint applies: a code only means something to someone the
+            // register lets in, or who approves comps and voids.
+            if (!TenantPermissions.MayHoldPosCode(user.Role, user.Roles))
+                return new ApiResponses().BadRequestResult("Only register staff and managers hold a POS code.");
 
             var pin = req.Pin?.Trim();
             if (string.IsNullOrEmpty(pin))
@@ -957,17 +977,25 @@ namespace webapi.Controllers
                 await _users.SetPosPinHash(uid, null);   // clear
                 return new ApiResponses().OkResult();
             }
-            if (pin.Length < 4 || pin.Length > 8 || !pin.All(char.IsDigit))
-                return new ApiResponses().BadRequestResult("PIN must be 4 to 8 digits.");
-            // Every manager has a distinct PIN so the authorizer on a comp/override is unambiguous.
-            if (!await _managerPin.IsPinAvailableAsync(_tenantContext.TenantId, uid, pin))
-                return new ApiResponses().BadRequestResult("Another manager already uses that PIN. Choose a different one.");
+            var error = ValidatePosCode(pin);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+            // Every person has a distinct code so the cashier on a sale, or the authorizer on a
+            // comp/override, is unambiguous.
+            if (!await _managerPin.IsCodeAvailableAsync(_tenantContext.TenantId, uid, pin))
+                return new ApiResponses().BadRequestResult(PosCodeTakenMessage);
             await _users.SetPosPinHash(uid, _passwordHasher.HashPassword(user, pin));
             return new ApiResponses().OkResult();
         }
 
-        // Whether the signed-in user is a manager/admin and (if so) has set a PIN. Drives the forced
-        // PIN-setup prompt so every manager carries one.
+        public const string PosCodeTakenMessage = "Someone else already uses that code. Choose a different one.";
+
+        // The one rule for a POS code's shape, shared with the admin endpoint (UserController).
+        public static string? ValidatePosCode(string code) =>
+            code.Length < 4 || code.Length > 8 || !code.All(char.IsDigit) ? "Your POS code must be 4 to 8 digits." : null;
+
+        // Whether the signed-in user is a manager/admin, has a manager PIN (managers only), and
+        // holds a POS code at all (anyone). hasPin drives the forced PIN-setup prompt so every
+        // manager carries one; hasCode tells the register whether this account can punch in.
         [Authorize]
         [HttpGet("ManagerPin/Status")]
         public async Task<IActionResult> ManagerPinStatus()
@@ -976,9 +1004,48 @@ namespace webapi.Controllers
             if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid))
                 return new ApiResponses().BadRequestResult("Not signed in.");
             var user = await _users.GetById(uid);
-            var isManager = user is not null && user.TenantId == _tenantContext.TenantId && IsManagerOrAdmin(user);
-            var hasPin = isManager && await _managerPin.HasPinAsync(uid);
-            return new ApiResponses().OkResult(new { isManager, hasPin });
+            var atTenant = user is not null && user.TenantId == _tenantContext.TenantId;
+            var isManager = atTenant && IsManagerOrAdmin(user!);
+            var hasCode = atTenant && await _managerPin.HasPinAsync(uid);
+            var hasPin = isManager && hasCode;
+            return new ApiResponses().OkResult(new { isManager, hasPin, hasCode });
+        }
+
+        // A staff member punching their code at a shared register (Script0298). Probes every
+        // counter staff member's code, not just managers; a miss is a 400 with a generic message
+        // and counts toward the TERMINAL account's lockout, the same as a bad manager PIN. On a
+        // hit the register gets the cashier token it attaches to every sale this person rings.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
+        [HttpPost("StaffCode/Verify")]
+        public async Task<IActionResult> VerifyStaffCode([FromBody] ConcessionStaffCodeVerifyRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+            var result = await _managerPin.VerifyStaffCodeAsync(_tenantContext.TenantId, uid, req.Code);
+            if (!result.Authorized)
+            {
+                // Failures only, as for the manager PIN: repeated misses from one terminal account
+                // are what code guessing looks like. The code is never recorded.
+                await _audit.Log(
+                    "concession.staff_code_failed",
+                    "Staff code verification failed",
+                    targetKind: "user",
+                    targetId: uid,
+                    tenantId: _tenantContext.TenantId,
+                    metadata: new { error = result.Error });
+                return new ApiResponses().BadRequestResult(result.Error ?? "That staff code wasn't recognized.");
+            }
+            var (token, expiresAt) = _cashierTokens.Issue(_tenantContext.TenantId, result.AuthorizedUserId!.Value);
+            return new ApiResponses().OkResult(new ConcessionStaffCodeVerifyResponse
+            {
+                UserId = result.AuthorizedUserId!.Value,
+                Name = result.AuthorizedName!,
+                IsManager = result.IsManager,
+                CashierToken = token,
+                ExpiresAtUtc = expiresAt,
+            });
         }
 
         // The POS confirms a PIN authorizes a gated action and shows whose approval it is. A bad PIN is a
@@ -1152,9 +1219,33 @@ namespace webapi.Controllers
             return null;
         }
 
-        private static bool IsManagerOrAdmin(User u) =>
-            (u.Roles ?? Array.Empty<string>()).Any(r => r is "tenant_admin" or "tenant_manager")
-            || u.Role is "tenant_admin" or "tenant_manager";
+        private static bool IsManagerOrAdmin(User u) => TenantPermissions.IsManagerOrAdmin(u.Role, u.Roles);
+
+        // The account signed in on the terminal making this request.
+        private Guid? TerminalUserId() =>
+            Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+
+        // Who a sale / tab action is attributed to (sold_by_user_id, and so whose tips they are),
+        // the same rule on every ringing path (Script0298). A cashier token names the person who
+        // punched in; it must be this tenant's and unexpired, and the person it names is re-read
+        // (one lookup per request) and must still be here and active, since a token outlives a
+        // disable. Without a token, the terminal account rings as itself only while staff sign-in
+        // is off: once a venue turns it on, an untokened sale is a sale with no owner and is
+        // refused rather than silently handed to the terminal.
+        private async Task<(Guid? SoldBy, string? Error)> ResolveSoldBy(string? cashierToken, ConcessionMenuSettings? settings, Guid? terminalUserId)
+        {
+            if (!string.IsNullOrWhiteSpace(cashierToken))
+            {
+                var token = _cashierTokens.Validate(cashierToken, _tenantContext.TenantId);
+                if (!token.IsValid) return (null, webapi.Security.ICashierTokenService.InvalidTokenMessage);
+                var person = await _users.GetById(token.UserId!.Value);
+                if (person is null || person.TenantId != _tenantContext.TenantId || person.Status != "active")
+                    return (null, webapi.Security.ICashierTokenService.InvalidTokenMessage);
+                return (person.Id, null);
+            }
+            var mode = settings?.StaffCodeMode ?? "off";
+            return mode == "off" ? (terminalUserId, null) : (null, "Enter your staff code first.");
+        }
 
         // Discount cents for a kind against a base. 'percent' = basis points, 'amount' = cents (capped at
         // base), 'full' = the whole base. Never exceeds the base. Half-up rounding for percents.
@@ -2072,13 +2163,16 @@ namespace webapi.Controllers
             var (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
             if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
 
-            // The signed-in cashier: attributes the sale and is the subject of the manager-PIN lockout.
-            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            // The terminal account is the subject of the manager-PIN lockout; the sale is attributed
+            // to whoever punched in (or the terminal itself while staff sign-in is off).
+            var terminalUserId = TerminalUserId();
+            var (soldBy, soldByError) = await ResolveSoldBy(req.CashierToken, menuSettings, terminalUserId);
+            if (soldByError is not null) return new ApiResponses().BadRequestResult(soldByError);
 
             // Apply any discounts/comps server-side: this mutates the lines to NET totals + recomputed tax,
             // gates manual discounts/comps behind a manager PIN, and returns the summary to stamp on the sale.
             var requestedItems = req.Items.Where(i => i.Quantity > 0).ToList();
-            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, req, menuSettings, pricesIncludeTax);
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, terminalUserId ?? Guid.Empty, lines, requestedItems, req, menuSettings, pricesIncludeTax);
             if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
 
             // Inclusive: tax is already inside the line totals (subtotal); exclusive: it's added on top.
@@ -2142,6 +2236,7 @@ namespace webapi.Controllers
                     CreditAccountId = creditApplied > 0 ? creditAccount!.Id : null,
                     PaymentMethod = "cash",
                     SoldByUserId = soldBy,
+                    RungByTerminalUserId = terminalUserId,
                     PurchaserUserId = disc.PurchaserUserId,
                     PurchaserEmail = disc.PurchaserEmail,
                     PurchaserName = customerName,
@@ -2219,6 +2314,7 @@ namespace webapi.Controllers
                 PaymentMethod = string.IsNullOrEmpty(connectedAccountId) ? "stripe" : "stripe_direct",
                 StripeConnectedAccountId = connectedAccountId,
                 SoldByUserId = soldBy,
+                RungByTerminalUserId = terminalUserId,
                 PurchaserUserId = disc.PurchaserUserId,
                 PurchaserEmail = disc.PurchaserEmail,
                 PurchaserName = customerName,
@@ -2861,7 +2957,9 @@ namespace webapi.Controllers
             if (name is null && !req.HoldCard)
                 return new ApiResponses().BadRequestResult("Give the tab a name, or hold a card to name it from the card.");
 
-            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            var terminalUserId = TerminalUserId();
+            var (soldBy, soldByError) = await ResolveSoldBy(req.CashierToken, menuSettings, terminalUserId);
+            if (soldByError is not null) return new ApiResponses().BadRequestResult(soldByError);
             var saleReq = AsSaleRequest(req.Items, req.Discount, req.ManagerPin, req.CustomerName);
             var requestedItems = req.Items.Where(i => i.Quantity > 0).ToList();
 
@@ -2875,7 +2973,7 @@ namespace webapi.Controllers
                 (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
                 if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
             }
-            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, terminalUserId ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
             if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
 
             // Card hold prerequisites are checked before anything is written.
@@ -2921,6 +3019,7 @@ namespace webapi.Controllers
                 PaymentMethod = "cash",
                 StripeConnectedAccountId = connectedAccountId,
                 SoldByUserId = soldBy,
+                RungByTerminalUserId = terminalUserId,
                 PurchaserUserId = disc.PurchaserUserId,
                 PurchaserEmail = disc.PurchaserEmail,
                 PurchaserName = disc.PurchaserName ?? Blank(req.CustomerName),
@@ -3161,12 +3260,18 @@ namespace webapi.Controllers
 
             var menuSettings = await _concessions.GetMenuSettings(tenantId);
             var pricesIncludeTax = menuSettings?.PricesIncludeTax ?? false;
-            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            // A round needs a ringing person like any sale, but the tab keeps its owner: the tip
+            // is given at close, and that is where the token moves it (CloseTab). The terminal
+            // that rang this round is stamped.
+            var terminalUserId = TerminalUserId();
+            var (_, soldByError) = await ResolveSoldBy(req.CashierToken, menuSettings, terminalUserId);
+            if (soldByError is not null) return new ApiResponses().BadRequestResult(soldByError);
+            sale.RungByTerminalUserId = terminalUserId;
 
             var (lines, _, cartError) = await ResolveCartLines(tenantId, req.Items);
             if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
             var saleReq = AsSaleRequest(req.Items, req.Discount, req.ManagerPin, null);
-            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, terminalUserId ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
             if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
 
             // Sale-level money is rebuilt from EVERY round's lines (tip stays 0 until close): the rounds
@@ -3252,7 +3357,14 @@ namespace webapi.Controllers
             var menuSettings = await _concessions.GetMenuSettings(tenantId);
             var pricesIncludeTax = menuSettings?.PricesIncludeTax ?? false;
             var tipCents = (menuSettings?.TipsEnabled ?? false) ? Math.Max(0, req.TipCents) : 0;
-            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            // The tip on a tab is given at close, so a staff code here moves the tab, and its tip,
+            // to the person closing it; without one the tab keeps whoever opened it (staff sign-in
+            // off) or is refused (staff sign-in on), exactly like a counter sale.
+            var terminalUserId = TerminalUserId();
+            var (soldBy, soldByError) = await ResolveSoldBy(req.CashierToken, menuSettings, terminalUserId);
+            if (soldByError is not null) return new ApiResponses().BadRequestResult(soldByError);
+            if (!string.IsNullOrWhiteSpace(req.CashierToken)) sale.SoldByUserId = soldBy;
+            sale.RungByTerminalUserId = terminalUserId;
             var tender = (req.PaymentMethod ?? "").Trim().ToLowerInvariant();
 
             var lines = await _concessions.GetSaleLines(sale.Id);
@@ -3293,7 +3405,7 @@ namespace webapi.Controllers
             if (req.Discount is not null && !string.IsNullOrEmpty(req.Discount.Kind))
             {
                 var saleReq = AsSaleRequest(new(), req.Discount, req.ManagerPin, null);
-                var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, new(), saleReq, menuSettings, pricesIncludeTax);
+                var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, terminalUserId ?? Guid.Empty, lines, new(), saleReq, menuSettings, pricesIncludeTax);
                 if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
                 MergeDiscountOutcome(sale, disc);
             }

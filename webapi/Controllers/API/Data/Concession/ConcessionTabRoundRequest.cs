@@ -7,5 +7,7 @@ namespace webapi.Controllers.API.Data.Concession
         public List<ConcessionSaleRequest.SaleLine> Items { get; set; } = new();
         public ConcessionDiscountInput? Discount { get; set; }
         public string? ManagerPin { get; set; }
+        // Who is ringing the round when staff sign-in is on (see ConcessionSaleRequest.CashierToken).
+        public string? CashierToken { get; set; }
     }
 }

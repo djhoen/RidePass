@@ -12,6 +12,14 @@ namespace webapi.Controllers.API.Data.User
         public string[] Roles { get; set; } = System.Array.Empty<string>();  // full set
         public string Status { get; set; } = null!;
         public DateTime CreatedAtUtc { get; set; }
+        // Whether they hold a POS code (manager PIN / register sign-in). Never the code itself.
+        public bool HasPosCode { get; set; }
+    }
+
+    // PUT Tenant/{id}/PosCode: 4-8 digits sets the person's POS code, blank clears it.
+    public class SetTenantUserPosCodeRequest
+    {
+        [MaxLength(8)] public string? Code { get; set; }
     }
 
     public class CreateTenantUserRequest

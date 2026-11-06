@@ -32,6 +32,10 @@ namespace webapi.Controllers.API.Data.Concession
         // Open tabs: offer "Open tab" on the POS, and the card-present hold amount placed on a tab.
         public bool TabsEnabled { get; set; } = true;
         public int TabHoldCents { get; set; } = 5000;
+        // Staff sign-in at the register: off | per_shift | per_order. The POS reads it with the rest.
+        public string StaffCodeMode { get; set; } = "off";
+        // How card tips are paid out: manager_later | drawer_at_close.
+        public string TipsPayoutMode { get; set; } = "manager_later";
         // Whether the tenant has already loaded the starter catalog (hides the "Load starter content" button).
         public bool StarterSeeded { get; set; }
         // Combined gate: in open season AND (event today OR not required) AND within today's hours.

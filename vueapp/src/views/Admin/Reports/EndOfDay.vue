@@ -332,8 +332,8 @@
                         color="primary" size="small" to="/Admin/Reports/TipsOwed">Pay out tips owed</v-btn>
                 </v-card-title>
                 <v-card-subtitle class="pb-2">
-                    Staff take their tips in cash from the drawer at shift close; whatever the drawer could not cover is
-                    owed to them until a manager pays it out.
+                    The daily tips sheet: what each person earned on their sales, declared in cash, took from a drawer or
+                    the tip jar, and what the house still owes them until a manager pays it out.
                 </v-card-subtitle>
                 <v-card-text class="pb-0">
                     <v-row dense>
@@ -363,10 +363,15 @@
                         <thead>
                             <tr>
                                 <th>Worker</th>
-                                <th class="text-right" style="width: 120px">Earned</th>
-                                <th class="text-right" style="width: 130px">From drawer</th>
-                                <th class="text-right" style="width: 130px">House owes</th>
-                                <th class="text-right" style="width: 140px">Settled today</th>
+                                <th class="text-right" style="width: 110px">Earned</th>
+                                <th class="text-right" style="width: 120px">From drawer</th>
+                                <th class="text-right" style="width: 110px">Tip jar</th>
+                                <th class="text-right" style="width: 130px">
+                                    Declared cash
+                                    <v-tooltip activator="parent" location="top">Cash tips they declared on their shift report</v-tooltip>
+                                </th>
+                                <th class="text-right" style="width: 120px">House owes</th>
+                                <th class="text-right" style="width: 130px">Settled today</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -374,6 +379,8 @@
                                 <td>{{ w.name }}</td>
                                 <td class="text-right">{{ money(w.earnedCents) }}</td>
                                 <td class="text-right">{{ money(w.fromDrawerCents) }}</td>
+                                <td class="text-right">{{ money(w.jarShareCents ?? 0) }}</td>
+                                <td class="text-right">{{ money(w.declaredCashTipsCents ?? 0) }}</td>
                                 <td class="text-right">{{ money(w.houseOwesCents) }}</td>
                                 <td class="text-right">{{ money(w.settledTodayCents) }}</td>
                             </tr>
