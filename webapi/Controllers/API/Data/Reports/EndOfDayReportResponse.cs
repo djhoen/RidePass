@@ -23,5 +23,13 @@ namespace webapi.Controllers.API.Data.Reports
         public List<EndOfDayStaffLine> Staff { get; set; } = new();
         public EndOfDayCashSection Cash { get; set; } = new();
         public EndOfDayQuickBooksStatus QuickBooks { get; set; } = new();
+
+        /// <summary>
+        /// F&amp;B tabs still open right now (count and running total). Not in the ledger yet — an
+        /// open tab has taken no money — so they sit outside Totals as a "still to settle" note.
+        /// Only populated when the report is for today at the track; a past day's close has none.
+        /// </summary>
+        public int OpenTabsCount { get; set; }
+        public long OpenTabsTotalCents { get; set; }
     }
 }

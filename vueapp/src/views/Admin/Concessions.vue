@@ -594,6 +594,26 @@
                                     messages="When on, customers can add a tip on the confirmation screen and online. When off, no tip is shown or charged."></v-switch>
                             </v-card>
 
+                            <!-- Open tabs (deferred payment; each round fires to the kitchen) -->
+                            <v-card variant="outlined" class="pa-4 mb-4">
+                                <div class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center ga-2">
+                                    <v-icon size="small" color="primary">mdi-book-open-variant</v-icon> Open tabs
+                                </div>
+                                <p class="text-caption text-medium-emphasis mb-3">
+                                    A cashier opens a tab by name, optionally holding a card on the reader, and sends
+                                    rounds to the kitchen as the group orders. The tab is paid once at close, with the
+                                    card on file, another card, cash, store credit or a comp.
+                                </p>
+                                <v-switch v-model="menuStyle.tabsEnabled" label="Allow open tabs at the POS" color="primary"
+                                    density="compact" hide-details
+                                    messages="Off hides the Open tab button and the Tabs drawer on the cashier screen."></v-switch>
+                                <v-text-field v-model.number="tabHoldDollars" type="number" min="1" step="5" prefix="$"
+                                    label="Card hold amount" density="compact" class="mt-4" style="max-width: 220px"
+                                    :disabled="!menuStyle.tabsEnabled"
+                                    hint="Authorized on the card when a tab opens. If the tab total ends up higher, the cashier collects the card again at close."
+                                    persistent-hint></v-text-field>
+                            </v-card>
+
                             <!-- Customer-facing display -->
                             <v-card variant="outlined" class="pa-4 mb-4">
                                 <div class="text-subtitle-1 font-weight-bold mb-3 d-flex align-center ga-2">
@@ -1819,7 +1839,13 @@ const menuStyle = ref<ConcessionMenuSettings>({
     seasonPassDiscountEnabled: false, seasonPassDiscountKind: 'percent', seasonPassDiscountValue: 0,
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0,
     requireManagerForManualDiscount: false,
+    tabsEnabled: true, tabHoldCents: 5000,
     starterSeeded: false, orderingOpenNow: true,
+})
+// Card hold amount is edited in dollars and stored in cents.
+const tabHoldDollars = computed({
+    get: () => Math.round((menuStyle.value.tabHoldCents ?? 0)) / 100,
+    set: (v: number | null) => { menuStyle.value.tabHoldCents = Math.max(0, Math.round((v || 0) * 100)) },
 })
 
 // Online order capacity (throttle + quote). onlinePaused is server-managed; not edited here.
@@ -2078,6 +2104,9 @@ async function saveMenuStyle() {
             loampassDiscountKind: s.loampassDiscountKind,
             loampassDiscountValue: Math.max(0, Math.round(s.loampassDiscountValue || 0)),
             requireManagerForManualDiscount: s.requireManagerForManualDiscount,
+            tabsEnabled: s.tabsEnabled,
+            // A $0 hold would make "Hold a card" a no-op; keep at least a dollar on it.
+            tabHoldCents: Math.max(100, Math.round(s.tabHoldCents || 5000)),
         })
         flash('Menu board style saved.', 'success')
     } catch (err: any) { flash(err.response?.data?.error || 'Save failed.', 'error') }

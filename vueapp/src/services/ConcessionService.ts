@@ -275,6 +275,8 @@ export interface ConcessionMenuSettings {
     loampassDiscountKind: 'percent' | 'amount'
     loampassDiscountValue: number
     requireManagerForManualDiscount: boolean    // true = an arbitrary manual discount needs a manager PIN
+    tabsEnabled: boolean                        // cashiers may open tabs (deferred payment; rounds fire to the kitchen)
+    tabHoldCents: number                        // card-present authorization held when a tab is opened on a card (5000 = $50)
     starterSeeded: boolean                      // server-managed; true once the starter catalog was loaded
     orderingOpenNow: boolean
 }
@@ -468,8 +470,12 @@ export interface KitchenOrder {
     fulfillmentStatus: 'active' | 'ready' | 'completed'
     customerName: string | null   // online orders only
     isRush: boolean
-    queuedAtUtc: string   // when the order was paid / entered the kitchen
+    queuedAtUtc: string   // when the order was paid / entered the kitchen (a tab round: when it was fired)
     lines: KitchenLine[]
+    // Open tabs fire one ticket per round, so a tab shows up here once per (sale, round).
+    isTab: boolean
+    tabName?: string | null
+    roundNumber?: number | null
 }
 
 // ── Pickup number board (in-venue display) ───────────────────────────
@@ -486,7 +492,8 @@ export interface ConcessionBoard {
 export interface OrderSummary {
     saleId: string
     orderNumber: number | null
-    status: 'paid' | 'refunded'
+    // 'open' = a tab still running; 'voided' = a tab cancelled by a manager before it was paid.
+    status: 'paid' | 'refunded' | 'open' | 'voided'
     fulfillmentStatus: 'active' | 'ready' | 'completed'
     paymentMethod: 'stripe' | 'stripe_direct' | 'cash'
     orderChannel: 'counter' | 'online'
@@ -503,6 +510,10 @@ export interface OrderSummary {
     isRush: boolean
     createdAtUtc: string
     paidAtUtc: string | null
+    // Tabs only.
+    tabName?: string | null
+    voidReason?: string | null
+    voidedAtUtc?: string | null
 }
 export interface OrderDetailLine {
     lineId: string
@@ -517,9 +528,67 @@ export interface OrderDetailLine {
     isCombo: boolean
     comboTier: string | null
     parentLineId: string | null
+    roundNumber?: number   // which tab round fired this line (1 for a normal order)
 }
 export interface OrderDetail extends OrderSummary {
     lines: OrderDetailLine[]
+}
+
+// ── Open tabs (deferred payment; every round fires to the kitchen immediately) ──
+export interface ConcessionOpenTabRequest {
+    name?: string                      // required unless holdCard (then auto-named from the card)
+    customerName?: string
+    items: ConcessionSaleLineInput[]   // round 1; may be empty
+    discount?: ConcessionDiscountInput | null
+    managerPin?: string | null
+    holdCard: boolean                  // authorize the tenant's hold amount on the reader now
+}
+export interface ConcessionTabResponse {
+    saleId: string
+    orderNumber: number | null
+    tabName: string | null
+    totalCents: number
+    rounds: number
+    holdClientSecret?: string | null     // present when holdCard: run the reader on it, then call tabHoldConfirmed
+    holdPaymentIntentId?: string | null
+}
+export interface ConcessionTabRoundRequest {
+    items: ConcessionSaleLineInput[]   // non-empty
+    discount?: ConcessionDiscountInput | null
+    managerPin?: string | null
+}
+export interface ConcessionTabSummary {
+    saleId: string
+    orderNumber: number | null
+    tabName: string
+    customerName?: string | null
+    openedAtUtc: string
+    lastRoundAtUtc: string
+    rounds: number
+    itemCount: number
+    totalCents: number
+    holdCardLabel?: string | null      // "Visa ••4242" when a card is on file
+}
+export interface ConcessionTabRound {
+    roundNumber: number
+    firedAtUtc: string
+    lines: OrderDetailLine[]
+}
+export interface ConcessionTabDetail extends OrderDetail {
+    tabName: string | null
+    openedAtUtc: string
+    closedAtUtc?: string | null
+    holdCardLabel?: string | null
+    holdAmountCents?: number | null
+    rounds: ConcessionTabRound[]
+}
+export interface ConcessionCloseTabRequest {
+    paymentMethod: 'cash' | 'card' | 'hold'   // 'hold' = capture the card on file
+    tipCents: number
+    creditAccountId?: string
+    creditCents: number
+    discount?: ConcessionDiscountInput | null   // order-level, applied across every round at close
+    managerPin?: string | null
 }
 
 // ── Rider online ordering ────────────────────────────────────────────
@@ -875,8 +944,10 @@ export class ConcessionService {
     }
     // Bump every outstanding line on one ticket in a single call, so a cook who plated the whole
     // order does not have to tap each line and cannot leave it half-bumped.
-    markAllReady(saleId: string) {
-        return axios.post(`${this.apiUrl}/Concession/Kitchen/Sale/${saleId}/AllReady`, {})
+    // `round` scopes the bump to one tab round; omitted for plain orders (bumps the whole ticket).
+    markAllReady(saleId: string, round?: number | null) {
+        const q = round ? `?round=` : ''
+        return axios.post(`/Concession/Kitchen/Sale//AllReady`, {})
     }
     setRush(saleId: string, rush: boolean) {
         return axios.post(`${this.apiUrl}/Concession/Sale/${saleId}/Rush`, { rush })
@@ -898,6 +969,41 @@ export class ConcessionService {
     }
     order(saleId: string) {
         return axios.get<{ data: OrderDetail }>(`${this.apiUrl}/Concession/Orders/${saleId}`)
+    }
+
+    // ── Open tabs ────────────────────────────────────────────────────
+    // Open a tab (round 1 fires to the kitchen at once; payment is deferred to closeTab).
+    openTab(req: ConcessionOpenTabRequest) {
+        return axios.post<{ data: ConcessionTabResponse }>(`${this.apiUrl}/Concession/Tab`, req)
+    }
+    // After the reader authorized the hold: records the card (brand/last4/name) and auto-names a blank tab.
+    tabHoldConfirmed(id: string) {
+        return axios.post<{ data: ConcessionTabDetail }>(`${this.apiUrl}/Concession/Tab/${id}/HoldConfirmed`, {})
+    }
+    tabRound(id: string, req: ConcessionTabRoundRequest) {
+        return axios.post<{ data: ConcessionTabDetail }>(`${this.apiUrl}/Concession/Tab/${id}/Round`, req)
+    }
+    tabs() {
+        return axios.get<{ data: ConcessionTabSummary[] }>(`${this.apiUrl}/Concession/Tabs`)
+    }
+    tab(id: string) {
+        return axios.get<{ data: ConcessionTabDetail }>(`${this.apiUrl}/Concession/Tab/${id}`)
+    }
+    renameTab(id: string, req: { name: string; customerName?: string }) {
+        return axios.put<{ data: ConcessionTabDetail }>(`${this.apiUrl}/Concession/Tab/${id}`, req)
+    }
+    // Settle the tab. Cash / card-on-file / fully covered → paid immediately; 'card' returns a clientSecret
+    // for the reader followed by finalizeCard, exactly like a counter card sale.
+    closeTab(id: string, req: ConcessionCloseTabRequest) {
+        return axios.post<{ data: ConcessionSaleResult }>(`${this.apiUrl}/Concession/Tab/${id}/Close`, req)
+    }
+    // Manager PIN verified server-side (like a refund). Fired items are not restocked; the card hold is released.
+    voidTab(id: string, managerPin: string, reason: string) {
+        return axios.post(`${this.apiUrl}/Concession/Tab/${id}/Void`, { managerPin, reason })
+    }
+    // Cook screen "picked up" for one tab round (normal orders keep completeSale).
+    roundServed(saleId: string, round: number) {
+        return axios.post(`${this.apiUrl}/Concession/Kitchen/Sale/${saleId}/Round/${round}/Served`, {})
     }
     // Mint a Stripe Terminal connection token (+ ensure the tenant's reader Location). Reuses the
     // counter endpoint, which is connected-account aware for direct-charge tenants.

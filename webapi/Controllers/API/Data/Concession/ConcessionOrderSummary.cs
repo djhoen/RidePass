@@ -25,5 +25,9 @@ namespace webapi.Controllers.API.Data.Concession
         public bool IsRush { get; set; }
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? PaidAtUtc { get; set; }
+        // Open tabs: the tab's name (null for a plain order), and the void trail when status is 'voided'.
+        public string? TabName { get; set; }
+        public string? VoidReason { get; set; }
+        public DateTime? VoidedAtUtc { get; set; }
     }
 }

@@ -32,8 +32,14 @@ namespace Services.Repositories
             // Blank entries are dropped first: an empty query-string param (?statuses=) binds as a
             // one-element list containing "", which would otherwise look like a real selection and
             // match nothing at all instead of falling back to the default view.
+            // An F&B tab that is still 'open' has taken no money yet and a 'voided' one never will, so
+            // neither is a sale: Script0292 drops them from the view's concession branch, and the
+            // default exclusion here keeps them out even against a database the migrator has not
+            // reached yet (and keeps "show everything" meaning dead checkouts, not unpaid tabs).
             var statusArray = statuses?.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray() is { Length: > 0 } s2 ? s2 : null;
-            var excludedStatuses = statusArray is null && !includeAbandoned ? new[] { "abandoned" } : null;
+            var excludedStatuses = statusArray is null
+                ? (includeAbandoned ? new[] { "open", "voided" } : new[] { "abandoned", "open", "voided" })
+                : null;
             if (statusArray is not null) where.Add("status = ANY(@statusArray)");
             if (excludedStatuses is not null) where.Add("status <> ALL(@excludedStatuses)");
 

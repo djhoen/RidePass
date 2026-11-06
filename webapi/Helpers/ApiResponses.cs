@@ -30,6 +30,17 @@ namespace Services.Helpers
             response.Error = obj != null ? obj.ToString() : "";
             return NotFound(response);
         }
+
+        // 409: the request was well-formed but the row it targets changed underneath it (another
+        // register closed the tab first). Same envelope as BadRequestResult so clients read .error.
+        public IActionResult ConflictResult(object obj = null)
+        {
+            APIResponse response = new APIResponse();
+            response.Status = Conflict().StatusCode.ToString();
+            response.Message = APIResponseMessage.Fail;
+            response.Error = obj != null ? obj.ToString() : "";
+            return Conflict(response);
+        }
     }
 
     public class APIResponse

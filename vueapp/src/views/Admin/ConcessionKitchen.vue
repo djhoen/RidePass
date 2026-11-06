@@ -58,13 +58,19 @@
                         </button>
                     </div>
                     <div ref="liveStartEl" class="rail-live">
-                    <div v-for="o in orders" :key="o.saleId" class="ticket"
-                        :class="[`ticket--${urgency(o)}`, { 'ticket--ready': o.fulfillmentStatus === 'ready' }]">
+                    <div v-for="o in orders" :key="ticketKey(o)" class="ticket"
+                        :class="[`ticket--${urgency(o)}`, { 'ticket--ready': ticketReady(o) }]">
                         <div v-if="o.isRush" class="ticket__rush">RUSH</div>
                         <div class="ticket__head">
                             <div class="d-flex flex-column">
                                 <span class="ticket__num">#{{ o.orderNumber ?? '—' }}</span>
-                                <span v-if="o.customerName" class="ticket__cust">{{ o.customerName }}</span>
+                                <!-- A tab fires one ticket per round: the cook needs the table AND which
+                                     round this is, or round 2's burgers get sent out as "the Red Hat order". -->
+                                <span v-if="o.isTab" class="ticket__tab">
+                                    <span class="ticket__tabname">{{ o.tabName || 'Tab' }}</span>
+                                    <span class="rp-pill rp-pill--blue">Round {{ o.roundNumber ?? 1 }}</span>
+                                </span>
+                                <span v-if="o.customerName && o.customerName !== o.tabName" class="ticket__cust">{{ o.customerName }}</span>
                             </div>
                             <div class="d-flex flex-column align-end ga-1">
                                 <span class="ticket__time">{{ elapsed(o.queuedAtUtc) }}</span>
@@ -92,12 +98,12 @@
                         </div>
                         <!-- Plated the whole ticket at once? One tap beats bumping each line. Hidden
                              once everything is already ready, where it would be a no-op. -->
-                        <button v-if="o.fulfillmentStatus !== 'ready'" class="ticket__allready"
+                        <button v-if="!ticketReady(o)" class="ticket__allready"
                             :disabled="allReadying === o.saleId" @click="markAllReady(o)">
                             {{ allReadying === o.saleId ? 'Marking…' : 'All items ready' }}
                         </button>
-                        <button class="ticket__done" :disabled="o.fulfillmentStatus !== 'ready'" @click="complete(o)">
-                            {{ o.fulfillmentStatus === 'ready' ? 'Picked up' : 'Preparing…' }}
+                        <button class="ticket__done" :disabled="!ticketReady(o)" @click="complete(o)">
+                            {{ ticketReady(o) ? 'Picked up' : 'Preparing…' }}
                         </button>
                     </div>
                     <div v-if="orders.length === 0" class="rail-live-empty text-medium-emphasis">
@@ -210,7 +216,8 @@ async function scrollToLive(smooth = true) {
 async function markAllReady(o: KitchenOrder) {
     allReadying.value = o.saleId
     try {
-        await svc.markAllReady(o.saleId)
+        // A tab round is bumped on its own; other rounds of the same tab keep cooking.
+        await svc.markAllReady(o.saleId, o.isTab ? o.roundNumber : undefined)
         o.lines.forEach(l => { l.prepStatus = 'ready' })
         o.fulfillmentStatus = 'ready'
     } catch (err: any) {
@@ -398,10 +405,27 @@ async function bump(order: KitchenOrder, line: KitchenLine) {
     }
 }
 
+// A tab appears once per round, so a sale id alone no longer identifies a ticket.
+function ticketKey(o: KitchenOrder) { return o.isTab ? `${o.saleId}:${o.roundNumber ?? 1}` : o.saleId }
+
+// Normal orders are ready when the sale says so. A tab's fulfillment status is shared by every round
+// of that sale (a new round flips it back to active), so a round is judged by its own lines: the
+// burgers from round 1 can go out while round 2's wings are still on the grill.
+function ticketReady(o: KitchenOrder) {
+    if (!o.isTab) return o.fulfillmentStatus === 'ready'
+    return o.lines.length > 0 && o.lines.every(l => l.prepStatus === 'ready')
+}
+
 async function complete(order: KitchenOrder) {
     try {
-        await svc.completeSale(order.saleId)
-        orders.value = orders.value.filter(o => o.saleId !== order.saleId)
+        if (order.isTab) {
+            // Only this round leaves the board; the sale stays open until the cashier closes the tab.
+            await svc.roundServed(order.saleId, order.roundNumber ?? 1)
+            orders.value = orders.value.filter(o => ticketKey(o) !== ticketKey(order))
+        } else {
+            await svc.completeSale(order.saleId)
+            orders.value = orders.value.filter(o => o.saleId !== order.saleId)
+        }
     } catch (err: any) {
         flash(err.response?.data?.error || 'Could not mark the order picked up.')
     }
@@ -455,6 +479,9 @@ async function complete(order: KitchenOrder) {
 .ticket__head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
 .ticket__num { font-family: var(--rp-font-display); font-style: italic; font-size: 2.8rem; font-weight: 400; line-height: 1; color: var(--rp-ink); font-variant-numeric: tabular-nums; }
 .ticket__cust { font-size: 1.25rem; color: var(--rp-ink); opacity: 0.85; margin-top: 2px; }
+/* Tab name reads like a customer name (it is one, in effect); the round pill rides beside it. */
+.ticket__tab { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.ticket__tabname { font-size: 1.25rem; font-weight: 700; color: var(--rp-ink); text-transform: uppercase; letter-spacing: 0.02em; }
 .ticket__rush { background: var(--rp-red); color: var(--rp-on-ink); font-weight: 800; text-align: center; padding: 5px 0; font-size: 1.05rem; letter-spacing: 0.1em; }
 .ticket__time { font-size: 1.2rem; font-weight: 700; padding: 3px 12px; border-radius: 999px; }
 .ticket--fresh .ticket__head { background: var(--rp-raise); }

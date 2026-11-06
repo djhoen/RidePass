@@ -171,7 +171,41 @@ namespace Services.Payments
             string? connectedAccountId = null,
             long? applicationFeeCents = null,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// Creates a card-present PaymentIntent as a HOLD (capture_method=manual) for the Terminal
+        /// SDK to collect + confirm: the reader authorizes the amount without charging it. Used for
+        /// F&amp;B open tabs — the hold is captured for the real total at close (a partial capture
+        /// releases the rest) or cancelled on void. No application fee. Asks for incremental
+        /// authorization support so a tab that outgrows the hold can be topped up where the card
+        /// network allows it.
+        /// </summary>
+        Task<PaymentIntentCreated> CreateCardPresentHoldPaymentIntentAsync(
+            long amountCents,
+            string currency,
+            string locationId,
+            IReadOnlyDictionary<string, string> metadata,
+            string? connectedAccountId = null,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Reads a PaymentIntent's status plus the card_present details of its latest charge (brand,
+        /// last4, cardholder name as embossed) so a tab can be labelled "Visa ••4242 · SMITH". Returns
+        /// null when Stripe isn't configured or the PI can't be fetched; the card fields are null until
+        /// the reader has confirmed it.
+        /// </summary>
+        Task<CardPresentDetails?> GetCardPresentDetailsAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// Raises an authorized manual-capture PaymentIntent to <paramref name="newAmountCents"/>
+        /// (an incremental authorization). Only some card-present networks allow it; returns false
+        /// when Stripe refuses, so the caller can fall back to collecting the card again.
+        /// </summary>
+        Task<bool> IncrementAuthorizationAsync(string paymentIntentId, long newAmountCents, string? connectedAccountId = null, CancellationToken ct = default);
     }
+
+    /// <summary>Status + card_present snapshot of a PaymentIntent (see <see cref="IPaymentProvider.GetCardPresentDetailsAsync"/>).</summary>
+    public record CardPresentDetails(string Status, string? Brand, string? Last4, string? CardholderName, long AmountCapturableCents);
 
     public record TerminalLocationAddress(
         string Line1,

@@ -26,6 +26,9 @@ export interface KitchenTicket {
     orderNumber: number | null
     /** Blank for an anonymous counter order. */
     customerName: string | null
+    /** Open tabs: "Tab: NAME · Round N", printed under the order number so the pass can match the round
+     *  to the table. Null for a normal order. */
+    tabLabel?: string | null
     /** Printer's own name (e.g. "Grill"), so a cook knows the ticket reached the right station. */
     stationLabel: string | null
     /** Order placed time, printed so a cook can see how long a ticket has been sitting. */
@@ -55,6 +58,7 @@ function buildEposXml(t: KitchenTicket): string {
     // The order number is what the cook and the pass call out, so it's the biggest thing on the page.
     b += `<text align="center" width="4" height="4">#${t.orderNumber ?? '--'}&#10;</text>`
 
+    if (t.tabLabel) b += `<text align="center" width="2" height="2">${esc(t.tabLabel)}&#10;</text>`
     if (t.customerName) b += `<text align="center" width="2" height="2">${esc(t.customerName)}&#10;</text>`
 
     b += `<text align="left" width="1" height="1"></text>`

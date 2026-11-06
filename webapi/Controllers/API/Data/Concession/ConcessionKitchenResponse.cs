@@ -25,9 +25,16 @@ namespace webapi.Controllers.API.Data.Concession
             // Buyer's name for online orders (from their account); null for anonymous counter sales.
             public string? CustomerName { get; set; }
             public bool IsRush { get; set; }
-            // When the order entered the kitchen queue (i.e. when it was paid), so the cook-screen age
-            // timer reflects real prep wait rather than when the cart was first opened.
+            // When the order entered the kitchen queue (i.e. when it was paid; for a tab round, when the
+            // round fired), so the cook-screen age timer reflects real prep wait rather than when the
+            // cart was first opened.
             public DateTime QueuedAtUtc { get; set; }
+            // Open tabs fire one ticket per round: IsTab marks it, TabName/RoundNumber label it
+            // ("#12 · RED HAT TABLE 4 · Round 2"). Picked up on a tab round goes through
+            // Kitchen/Sale/{saleId}/Round/{round}/Served rather than Sale/{id}/Complete.
+            public bool IsTab { get; set; }
+            public string? TabName { get; set; }
+            public int? RoundNumber { get; set; }
             public List<KitchenLine> Lines { get; set; } = new();
         }
 

@@ -261,6 +261,10 @@
         // When true (default), an arbitrary manual percent/dollar discount needs a manager PIN. Presets
         // and member perks are pre-approved and never need one; comps always do regardless of this flag.
         public bool RequireManagerForManualDiscount { get; set; } = true;
+        // Open tabs (Script0291): whether the POS offers "Open tab", and the card-present hold the
+        // cashier can place on a tab (capture_method manual; captured for the real total at close).
+        public bool TabsEnabled { get; set; } = true;
+        public int TabHoldCents { get; set; } = 5000;
         // When the tenant first loaded the starter catalog; NULL = never. Hides the "Load starter content"
         // button once used.
         public DateTime? SeededAt { get; set; }
@@ -354,7 +358,8 @@
     {
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
-        public string Status { get; set; } = "pending";   // pending | paid | failed | refunded
+        // pending | paid | failed | refunded | abandoned | open (a tab still being rung up) | voided (tab torn up)
+        public string Status { get; set; } = "pending";
         // Kitchen/pickup lifecycle, independent of payment status: active -> ready -> completed.
         public string FulfillmentStatus { get; set; } = "active";
         // Per-tenant, per-day pickup number called out to the customer. Assigned on payment success.
@@ -394,6 +399,36 @@
         public Guid? CreditAccountId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? PaidAt { get; set; }
+
+        // ── Open tab (Script0291). A tab is this same row in status 'open': TabOpenedAt is set at
+        // open (so IsTab stays true after it is paid), TabClosedAt when it reaches 'paid'. Void*
+        // record the manager tear-up. Hold* describe the optional card-present authorization held
+        // on the reader: captured for the final total at close, cancelled on void.
+        public string? TabName { get; set; }
+        public DateTime? TabOpenedAt { get; set; }
+        public DateTime? TabClosedAt { get; set; }
+        public DateTime? VoidedAt { get; set; }
+        public string? VoidReason { get; set; }
+        public string? VoidedByName { get; set; }
+        public string? HoldPaymentIntentId { get; set; }
+        public int? HoldAmountCents { get; set; }
+        public string? HoldCardBrand { get; set; }
+        public string? HoldCardLast4 { get; set; }
+        public string? HoldCardholderName { get; set; }
+        // Which close ATTEMPT's store-credit redeem is outstanding (Script0293): the reference_id of
+        // the 'concession_tab_close' credit entry. Null when no credit is applied, or when the credit
+        // was redeemed under the sale-level reference (counter sales). See ConcessionTabCredit.
+        public Guid? CreditRedeemRef { get; set; }
+        public bool IsTab => TabOpenedAt.HasValue;
+    }
+
+    // One row of the POS "Open tabs" drawer: the sale plus what the list needs to show without
+    // loading lines (round count, item count, when the last round fired).
+    public class ConcessionOpenTabRow : ConcessionSale
+    {
+        public int Rounds { get; set; }
+        public int ItemCount { get; set; }
+        public DateTime? LastRoundAt { get; set; }
     }
 
     public class ConcessionSaleLine
@@ -430,6 +465,11 @@
         public Guid? ParentLineId { get; set; }
         public bool IsCombo { get; set; }
         public string? ComboTier { get; set; }
+        // Tab rounds (Script0291): which round of the tab fired this line and when. A normal order is
+        // one round. ServedAt is set when the kitchen marks a tab round picked up (drops it off the KDS).
+        public int RoundNumber { get; set; } = 1;
+        public DateTime FiredAt { get; set; }
+        public DateTime? ServedAt { get; set; }
         // Hydrated for the kitchen/receipt views; not a stored column on the line.
         public List<ConcessionSaleLineModifier> Modifiers { get; set; } = new();
         // Transient: a combo parent's resolved child lines, persisted together by CreateSaleLines.

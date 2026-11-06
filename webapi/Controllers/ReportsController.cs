@@ -518,11 +518,19 @@ namespace webapi.Controllers
                                               .Sum(b => b.GrossCents - b.GiftCardAppliedCents),
             };
 
+            // F&B tabs still open are money not yet taken, so they are outside the ledger-derived
+            // totals. They only mean something for today's close: a past date's tabs are long settled
+            // (or were never this date's), so the figure is reported for today at the track only.
+            var isToday = businessDate == DateOnly.FromDateTime(TenantLocalNow());
+            var openTabs = isToday ? await _concessions.GetOpenTabsAggregate(tenantId) : (Count: 0, TotalCents: 0L);
+
             return new EndOfDayReportResponse
             {
                 BusinessDate = businessDate.ToString("yyyy-MM-dd"),
                 Timezone = tz,
                 GeneratedAtUtc = DateTime.UtcNow,
+                OpenTabsCount = openTabs.Count,
+                OpenTabsTotalCents = openTabs.TotalCents,
                 Revenue = revenue,
                 Totals = totals,
                 Tenders = tenders,

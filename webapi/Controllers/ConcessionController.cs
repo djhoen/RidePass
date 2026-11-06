@@ -1,7 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Services.Concessions;
 using Services.Helpers;
+using Services.Helpers.Interfaces;
 using Services.LoamPassMx;
 using Services.Notifications;
 using Services.Payments;
@@ -51,6 +53,8 @@ namespace webapi.Controllers
         private readonly IDiscountPresetRepository _discounts;
         private readonly Services.Pricing.ISeasonPassPerkResolver _perks;
         private readonly ITenantContext _tenantContext;
+        // Per-tab advisory locks (see the open-tabs section): every mutation of one tab serializes.
+        private readonly IDbHelper _db;
 
         public ConcessionController(
             IConcessionRepository concessions,
@@ -75,8 +79,10 @@ namespace webapi.Controllers
             ITenantContext tenantContext,
             Services.Audit.IAuditLogger audit,
             IDiscountPresetRepository discounts,
-            Services.Pricing.ISeasonPassPerkResolver perks)
+            Services.Pricing.ISeasonPassPerkResolver perks,
+            IDbHelper db)
         {
+            _db = db;
             _discounts = discounts;
             _perks = perks;
             _audit = audit;
@@ -738,6 +744,8 @@ namespace webapi.Controllers
                 LoampassDiscountKind = s?.LoampassDiscountKind ?? "percent",
                 LoampassDiscountValue = s?.LoampassDiscountValue ?? 0,
                 RequireManagerForManualDiscount = s?.RequireManagerForManualDiscount ?? true,
+                TabsEnabled = s?.TabsEnabled ?? true,
+                TabHoldCents = s?.TabHoldCents ?? 5000,
                 StarterSeeded = s?.SeededAt != null,
                 OrderingOpenNow = (await EvaluateOrderingStatus(s)).OpenNow,
             });
@@ -772,6 +780,9 @@ namespace webapi.Controllers
                 LoampassDiscountKind = NormalizeDiscountKind(req.LoampassDiscountKind),
                 LoampassDiscountValue = Math.Max(0, req.LoampassDiscountValue),
                 RequireManagerForManualDiscount = req.RequireManagerForManualDiscount,
+                TabsEnabled = req.TabsEnabled,
+                // Stripe's card minimum at the bottom; nobody needs a five-figure bar hold.
+                TabHoldCents = Math.Clamp(req.TabHoldCents, 50, 1_000_000),
             });
             return new ApiResponses().OkResult();
         }
@@ -1676,11 +1687,13 @@ namespace webapi.Controllers
                 OrderNumber = s.OrderNumber,
                 CustomerName = string.IsNullOrWhiteSpace(s.PurchaserName) ? null : s.PurchaserName,
             };
+            // Tabs are table/bar service: their rounds are run out by staff, so they never appear on
+            // the walk-up "your number is ready" board (an open tab would otherwise sit there all night).
             var board = new ConcessionBoardResponse
             {
-                Ready = sales.Where(s => s.FulfillmentStatus == "ready" && s.OrderNumber.HasValue)
+                Ready = sales.Where(s => !s.IsTab && s.FulfillmentStatus == "ready" && s.OrderNumber.HasValue)
                              .OrderBy(s => s.OrderNumber).Select(Map).ToList(),
-                Preparing = sales.Where(s => s.FulfillmentStatus == "active" && s.OrderNumber.HasValue)
+                Preparing = sales.Where(s => !s.IsTab && s.FulfillmentStatus == "active" && s.OrderNumber.HasValue)
                                  .OrderBy(s => s.OrderNumber).Select(Map).ToList(),
             };
             return new ApiResponses().OkResult(board);
@@ -2369,7 +2382,9 @@ namespace webapi.Controllers
 
             var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
             if (sale is null) return new ApiResponses().NotFoundResult("Sale not found.");
-            if (sale.Status != "paid") return new ApiResponses().BadRequestResult($"A {sale.Status} sale can't be refunded.");
+            // Open tabs have taken no money yet and voided tabs never did, so neither can be refunded.
+            if (ConcessionTabRules.RefundBlocker(sale.Status) is { } refundBlocker)
+                return new ApiResponses().BadRequestResult(refundBlocker);
 
             if (sale.PaymentMethod is "stripe" or "stripe_direct" && !string.IsNullOrEmpty(sale.StripePaymentIntentId))
             {
@@ -2393,7 +2408,11 @@ namespace webapi.Controllers
             await _concessions.MarkSaleRefunded(sale.Id, _tenantContext.TenantId);
             await _concessions.MarkSaleCompleted(sale.Id, _tenantContext.TenantId);
             if (sale.CreditAppliedCents > 0)
-                await _credit.ReverseRedeem(_tenantContext.TenantId, "concession_sale", sale.Id, "sale refunded");
+            {
+                // A tab redeemed under its close attempt's own reference; a counter sale under the sale id.
+                var (refKind, refId) = ConcessionTabCredit.ReferenceFor(sale);
+                await _credit.ReverseRedeem(_tenantContext.TenantId, refKind, refId, "sale refunded");
+            }
             await WriteRefundLedger(sale, actingUserId, pinResult.AuthorizedName);
 
             // The second of three refund paths in the app (the others are PurchaseController and
@@ -2441,16 +2460,30 @@ namespace webapi.Controllers
             foreach (var s in sales)
             {
                 if (!linesBySale.TryGetValue(s.Id, out var saleLines)) continue;   // no lines for this station
+                // A plain order is one ticket. An open tab is one ticket PER ROUND: each round fired at
+                // a different time and is cooked, aged and picked up on its own.
+                var tickets = s.IsTab
+                    ? saleLines.GroupBy(l => l.RoundNumber).OrderBy(g => g.Key).Select(g => ((int?)g.Key, g.ToList()))
+                    : new[] { ((int?)null, saleLines) };
+                foreach (var (roundNumber, ticketLines) in tickets)
                 orders.Add(new ConcessionKitchenResponse.KitchenOrder
                 {
                     SaleId = s.Id,
                     OrderNumber = s.OrderNumber,
-                    FulfillmentStatus = s.FulfillmentStatus,
+                    // A tab round is 'ready' once its own lines are, independent of the other rounds.
+                    FulfillmentStatus = s.IsTab
+                        ? (ticketLines.All(l => l.PrepStatus == "ready") ? "ready" : "active")
+                        : s.FulfillmentStatus,
                     CustomerName = string.IsNullOrWhiteSpace(s.PurchaserName) ? null : s.PurchaserName,
                     IsRush = s.IsRush,
+                    IsTab = s.IsTab,
+                    TabName = s.IsTab ? s.TabName : null,
+                    RoundNumber = roundNumber,
                     // Anchor the age on when the order was paid (entered the kitchen); fall back to created.
-                    QueuedAtUtc = DateTime.SpecifyKind(s.PaidAt ?? s.CreatedAt, DateTimeKind.Utc),
-                    Lines = saleLines.Select(l =>
+                    // A tab round entered the kitchen when it fired.
+                    QueuedAtUtc = DateTime.SpecifyKind(
+                        s.IsTab ? ticketLines.Min(l => l.FiredAt) : (s.PaidAt ?? s.CreatedAt), DateTimeKind.Utc),
+                    Lines = ticketLines.Select(l =>
                     {
                         var defIds = l.ProductId is Guid pid && defaultsByProduct.TryGetValue(pid, out var d)
                             ? new HashSet<Guid>(d) : new HashSet<Guid>();
@@ -2520,12 +2553,13 @@ namespace webapi.Controllers
 
         // "All ready": bump every outstanding line on one ticket at once. One statement rather than a
         // client-side loop, so a ticket can never be left half-bumped by a call that failed midway.
+        // ?round=N limits it to one tab round, since a tab can have several rounds on the board at once.
         [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
         [HttpPost("Kitchen/Sale/{saleId:guid}/AllReady")]
-        public async Task<IActionResult> MarkAllReady(Guid saleId)
+        public async Task<IActionResult> MarkAllReady(Guid saleId, [FromQuery] int? round)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            await _concessions.MarkAllLinesReady(saleId, _tenantContext.TenantId);
+            await _concessions.MarkAllLinesReady(saleId, _tenantContext.TenantId, round);
             // Recompute unconditionally, not just when rows changed: an order whose lines were each
             // bumped individually is already all-ready and still needs its header flipped.
             await _concessions.RecomputeSaleFulfillment(saleId, _tenantContext.TenantId);
@@ -2551,6 +2585,21 @@ namespace webapi.Controllers
                     $"Your {_tenantContext.Tenant.DisplayName} order #{sale.OrderNumber} is ready for pickup!");
             }
             catch { /* notification is best-effort; the bump already succeeded */ }
+        }
+
+        // Tab round picked up: its lines come off the cook screen while the tab stays open for more
+        // rounds. Once a PAID tab has no unserved line left it completes like a normal order would.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Kitchen/Sale/{saleId:guid}/Round/{round:int}/Served")]
+        public async Task<IActionResult> MarkRoundServed(Guid saleId, int round)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var sale = await _concessions.GetSale(saleId, _tenantContext.TenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            await _concessions.MarkRoundServed(saleId, _tenantContext.TenantId, round);
+            await _concessions.RecomputeSaleFulfillment(saleId, _tenantContext.TenantId);
+            await _concessions.CompleteTabIfAllServed(saleId, _tenantContext.TenantId);
+            return new ApiResponses().OkResult();
         }
 
         // Mark an order picked up (drops it off the cook screen + open-orders list).
@@ -2614,68 +2663,95 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
             if (sale is null) return new ApiResponses().NotFoundResult("Order not found.");
+            // A tab's detail is the superset (rounds grouped, hold card, open/closed stamps); a plain
+            // order gets the flat detail as before.
+            if (sale.IsTab) return new ApiResponses().OkResult(await BuildTabDetail(sale));
             var lines = await _concessions.GetSaleLines(sale.Id);
-            var detail = new ConcessionOrderDetail
-            {
-                SaleId = sale.Id,
-                OrderNumber = sale.OrderNumber,
-                Status = sale.Status,
-                FulfillmentStatus = sale.FulfillmentStatus,
-                PaymentMethod = sale.PaymentMethod,
-                OrderChannel = sale.OrderChannel,
-                CustomerName = string.IsNullOrWhiteSpace(sale.PurchaserName) ? null : sale.PurchaserName,
-                SubtotalCents = sale.SubtotalCents,
-                TipCents = sale.TipCents,
-                TaxCents = sale.TaxCents,
-                PricesIncludeTax = sale.PricesIncludeTax,
-                DiscountCents = sale.DiscountCents,
-                DiscountKind = sale.DiscountKind,
-                DiscountLabel = sale.DiscountLabel,
-                AuthorizedByName = sale.AuthorizedByName,
-                TotalCents = sale.TotalCents,
-                IsRush = sale.IsRush,
-                CreatedAtUtc = DateTime.SpecifyKind(sale.CreatedAt, DateTimeKind.Utc),
-                PaidAtUtc = sale.PaidAt.HasValue ? DateTime.SpecifyKind(sale.PaidAt.Value, DateTimeKind.Utc) : null,
-                Lines = lines.Select(l => new ConcessionOrderDetail.Line
-                {
-                    LineId = l.Id,
-                    Name = l.NameSnapshot,
-                    VariantLabel = l.VariantLabel,
-                    Quantity = l.Quantity,
-                    LineTotalCents = l.LineTotalCents,
-                    DiscountCents = l.DiscountCents,
-                    DiscountLabel = l.DiscountLabel,
-                    Notes = l.Notes,
-                    Modifiers = l.Modifiers.Select(m => m.OptionNameSnapshot).ToList(),
-                    IsCombo = l.IsCombo,
-                    ComboTier = l.ComboTier,
-                    ParentLineId = l.ParentLineId,
-                }).ToList(),
-            };
+            var detail = FillOrderSummary(new ConcessionOrderDetail(), sale);
+            detail.Lines = lines.Select(ToOrderLine).ToList();
             return new ApiResponses().OkResult(detail);
         }
 
-        private static ConcessionOrderSummary ToOrderSummary(ConcessionSale s) => new()
+        private static ConcessionOrderSummary ToOrderSummary(ConcessionSale s) => FillOrderSummary(new ConcessionOrderSummary(), s);
+
+        // Shared by the list row, the order detail and the tab detail so the three never drift.
+        private static T FillOrderSummary<T>(T d, ConcessionSale s) where T : ConcessionOrderSummary
         {
-            SaleId = s.Id,
-            OrderNumber = s.OrderNumber,
-            Status = s.Status,
-            FulfillmentStatus = s.FulfillmentStatus,
-            PaymentMethod = s.PaymentMethod,
-            OrderChannel = s.OrderChannel,
-            CustomerName = string.IsNullOrWhiteSpace(s.PurchaserName) ? null : s.PurchaserName,
-            SubtotalCents = s.SubtotalCents,
-            TipCents = s.TipCents,
-            TaxCents = s.TaxCents,
-            PricesIncludeTax = s.PricesIncludeTax,
-            DiscountCents = s.DiscountCents,
-            DiscountKind = s.DiscountKind,
-            DiscountLabel = s.DiscountLabel,
-            AuthorizedByName = s.AuthorizedByName,
-            TotalCents = s.TotalCents,
-            IsRush = s.IsRush,
-            CreatedAtUtc = DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc),
-            PaidAtUtc = s.PaidAt.HasValue ? DateTime.SpecifyKind(s.PaidAt.Value, DateTimeKind.Utc) : null,
+            d.SaleId = s.Id;
+            d.OrderNumber = s.OrderNumber;
+            d.Status = s.Status;
+            d.FulfillmentStatus = s.FulfillmentStatus;
+            d.PaymentMethod = s.PaymentMethod;
+            d.OrderChannel = s.OrderChannel;
+            d.CustomerName = string.IsNullOrWhiteSpace(s.PurchaserName) ? null : s.PurchaserName;
+            d.SubtotalCents = s.SubtotalCents;
+            d.TipCents = s.TipCents;
+            d.TaxCents = s.TaxCents;
+            d.PricesIncludeTax = s.PricesIncludeTax;
+            d.DiscountCents = s.DiscountCents;
+            d.DiscountKind = s.DiscountKind;
+            d.DiscountLabel = s.DiscountLabel;
+            d.AuthorizedByName = s.AuthorizedByName;
+            d.TotalCents = s.TotalCents;
+            d.IsRush = s.IsRush;
+            d.CreatedAtUtc = DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc);
+            d.PaidAtUtc = s.PaidAt.HasValue ? DateTime.SpecifyKind(s.PaidAt.Value, DateTimeKind.Utc) : null;
+            d.TabName = s.TabName;
+            d.VoidReason = s.VoidReason;
+            d.VoidedAtUtc = s.VoidedAt.HasValue ? DateTime.SpecifyKind(s.VoidedAt.Value, DateTimeKind.Utc) : null;
+            return d;
+        }
+
+        private static ConcessionOrderDetail.Line ToOrderLine(ConcessionSaleLine l) => new()
+        {
+            LineId = l.Id,
+            Name = l.NameSnapshot,
+            VariantLabel = l.VariantLabel,
+            Quantity = l.Quantity,
+            LineTotalCents = l.LineTotalCents,
+            DiscountCents = l.DiscountCents,
+            DiscountLabel = l.DiscountLabel,
+            Notes = l.Notes,
+            Modifiers = l.Modifiers.Select(m => m.OptionNameSnapshot).ToList(),
+            IsCombo = l.IsCombo,
+            ComboTier = l.ComboTier,
+            ParentLineId = l.ParentLineId,
+            RoundNumber = l.RoundNumber,
+        };
+
+        private async Task<ConcessionTabDetail> BuildTabDetail(ConcessionSale sale)
+            => BuildTabDetail(sale, await _concessions.GetSaleLines(sale.Id));
+
+        // Overload for callers that already hold the lines (AddTabRound answers from the rows it just wrote).
+        private static ConcessionTabDetail BuildTabDetail(ConcessionSale sale, List<ConcessionSaleLine> lines)
+        {
+            var detail = FillOrderSummary(new ConcessionTabDetail(), sale);
+            detail.Lines = lines.Select(ToOrderLine).ToList();
+            detail.OpenedAtUtc = sale.TabOpenedAt.HasValue ? DateTime.SpecifyKind(sale.TabOpenedAt.Value, DateTimeKind.Utc) : null;
+            detail.ClosedAtUtc = sale.TabClosedAt.HasValue ? DateTime.SpecifyKind(sale.TabClosedAt.Value, DateTimeKind.Utc) : null;
+            detail.HoldCardLabel = ConcessionTabRules.HoldCardLabel(sale.HoldCardBrand, sale.HoldCardLast4);
+            detail.HoldAmountCents = sale.HoldPaymentIntentId is null ? null : sale.HoldAmountCents;
+            detail.Rounds = lines.GroupBy(l => l.RoundNumber).OrderBy(g => g.Key).Select(g => new ConcessionTabDetail.Round
+            {
+                RoundNumber = g.Key,
+                FiredAtUtc = DateTime.SpecifyKind(g.Min(l => l.FiredAt), DateTimeKind.Utc),
+                Lines = g.Select(ToOrderLine).ToList(),
+            }).ToList();
+            return detail;
+        }
+
+        private static ConcessionTabSummary ToTabSummary(ConcessionOpenTabRow r) => new()
+        {
+            SaleId = r.Id,
+            OrderNumber = r.OrderNumber,
+            TabName = r.TabName,
+            CustomerName = string.IsNullOrWhiteSpace(r.PurchaserName) ? null : r.PurchaserName,
+            OpenedAtUtc = DateTime.SpecifyKind(r.TabOpenedAt ?? r.CreatedAt, DateTimeKind.Utc),
+            LastRoundAtUtc = r.LastRoundAt.HasValue ? DateTime.SpecifyKind(r.LastRoundAt.Value, DateTimeKind.Utc) : null,
+            Rounds = r.Rounds,
+            ItemCount = r.ItemCount,
+            TotalCents = r.TotalCents,
+            HoldCardLabel = r.HoldPaymentIntentId is null ? null : ConcessionTabRules.HoldCardLabel(r.HoldCardBrand, r.HoldCardLast4),
         };
 
         // Toggle the rush/priority flag on an order (cook screen sorts rush first + flags it).
@@ -2728,6 +2804,837 @@ namespace webapi.Controllers
             await _finalizer.ProcessPaymentIntentAsync(sale.StripePaymentIntentId, "payment_intent.succeeded", ct);
             var fresh = await _concessions.GetSale(id, _tenantContext.TenantId);
             return new ApiResponses().OkResult(new { status = fresh?.Status, orderNumber = fresh?.OrderNumber });
+        }
+
+        // ── Open tabs (Script0291) ────────────────────────────────────────────────────────────────
+        // A tab is a concession_sale in status 'open': rung up in rounds (each round fires to the
+        // kitchen and depletes inventory immediately), paid once at close through the same cash /
+        // card-present / store-credit paths as a counter sale. Nothing touches the ledger while the
+        // tab is open. The optional card hold is a manual-capture card-present PaymentIntent.
+        //
+        // Deliberate deviation from "status pending while the reader collects": a tab being closed
+        // by card stays 'open' until its PaymentIntent succeeds. The pending-sale reconciler sweeps
+        // 'pending' rows by created_at age, and a tab is hours old by the time it closes, so a
+        // 'pending' tab would be abandoned on the reconciler's next tick. The finalizer flips
+        // 'open' -> 'paid' on success exactly as it does 'pending'.
+
+        // Lets the existing ResolveCartLines/ApplyDiscounts machinery run over a tab request.
+        private static ConcessionSaleRequest AsSaleRequest(
+            List<ConcessionSaleRequest.SaleLine> items, ConcessionDiscountInput? discount, string? managerPin, string? customerName) => new()
+        {
+            Items = items,
+            Discount = discount,
+            ManagerPin = managerPin,
+            CustomerName = customerName,
+        };
+
+        // Folds a round's (or the close's) discount outcome into the sale-level snapshot.
+        private static void MergeDiscountOutcome(ConcessionSale sale, DiscountOutcome disc)
+        {
+            var kind = ConcessionTabRules.MergeDiscountKind(sale.DiscountKind, disc.DiscountKind);
+            sale.DiscountKind = kind;
+            if (kind == "mixed") sale.DiscountLabel = "Discounts";
+            else if (!string.IsNullOrEmpty(disc.DiscountLabel)) sale.DiscountLabel = disc.DiscountLabel;
+            if (disc.CompReasonId is not null) { sale.CompReasonId = disc.CompReasonId; sale.CompReasonLabel = disc.CompReasonLabel; }
+            if (disc.AuthorizedByUserId is not null) { sale.AuthorizedByUserId = disc.AuthorizedByUserId; sale.AuthorizedByName = disc.AuthorizedByName; }
+            if (disc.PurchaserUserId is not null)
+            {
+                sale.PurchaserUserId = disc.PurchaserUserId;
+                sale.PurchaserEmail = disc.PurchaserEmail;
+                sale.PurchaserName = disc.PurchaserName;
+            }
+        }
+
+        private static string TabNotOpenMessage(ConcessionSale sale) => sale.Status switch
+        {
+            "paid" => "This tab was already closed.",
+            "voided" => "This tab was voided.",
+            _ => "This tab is no longer open.",
+        };
+
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Tab")]
+        public async Task<IActionResult> OpenTab([FromBody] ConcessionOpenTabRequest req, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!_tenantContext.Tenant.ConcessionsEnabled)
+                return new ApiResponses().BadRequestResult("Food & Beverage isn't enabled for this track.");
+            var tenantId = _tenantContext.TenantId;
+            var menuSettings = await _concessions.GetMenuSettings(tenantId);
+            if (!(menuSettings?.TabsEnabled ?? true))
+                return new ApiResponses().BadRequestResult("Open tabs aren't enabled for this venue.");
+            var pricesIncludeTax = menuSettings?.PricesIncludeTax ?? false;
+
+            var name = Blank(req.Name);
+            if (name is null && !req.HoldCard)
+                return new ApiResponses().BadRequestResult("Give the tab a name, or hold a card to name it from the card.");
+
+            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            var saleReq = AsSaleRequest(req.Items, req.Discount, req.ManagerPin, req.CustomerName);
+            var requestedItems = req.Items.Where(i => i.Quantity > 0).ToList();
+
+            // First round (may be empty: open the tab, ring later). Discounts apply to these lines; a
+            // member perk with no lines still attaches the customer to the tab.
+            var lines = new List<ConcessionSaleLine>();
+            var subtotal = 0;
+            if (requestedItems.Count > 0)
+            {
+                string? cartError;
+                (lines, subtotal, cartError) = await ResolveCartLines(tenantId, req.Items);
+                if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
+            }
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
+            if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
+
+            // Card hold prerequisites are checked before anything is written.
+            string? connectedAccountId = null;
+            string? locationId = null;
+            if (req.HoldCard)
+            {
+                if (_tenantContext.Tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(_tenantContext.Tenant.StripeConnectAccountId))
+                    return new ApiResponses().BadRequestResult(
+                        "This track is set to charge on its own Stripe account but hasn't connected one yet.");
+                connectedAccountId = DirectConnectedAccountId();
+                locationId = await EnsureTerminalLocation(connectedAccountId, ct);
+                if (locationId is null)
+                    return new ApiResponses().BadRequestResult(
+                        "Cannot hold a card until the track's address is filled in (Settings -> General).");
+            }
+
+            var taxCents = lines.Sum(l => l.TaxCents);
+            var total = subtotal - disc.DiscountCents + (pricesIncludeTax ? 0 : taxCents);
+            // Order number at OPEN so every kitchen ticket for the tab carries one.
+            var orderNumber = await _concessions.NextOrderNumber(tenantId);
+            var sale = new ConcessionSale
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Status = "open",
+                FulfillmentStatus = "active",
+                OrderNumber = orderNumber,
+                SubtotalCents = subtotal,
+                TipCents = 0,
+                TaxCents = taxCents,
+                PricesIncludeTax = pricesIncludeTax,
+                DiscountCents = disc.DiscountCents,
+                DiscountKind = disc.DiscountKind,
+                DiscountLabel = disc.DiscountLabel,
+                CompReasonId = disc.CompReasonId,
+                CompReasonLabel = disc.CompReasonLabel,
+                AuthorizedByUserId = disc.AuthorizedByUserId,
+                AuthorizedByName = disc.AuthorizedByName,
+                TotalCents = Math.Max(0, total),
+                // payment_method is NOT NULL (stripe|stripe_direct|cash); 'cash' is the placeholder
+                // while open and is overwritten by whatever tender actually closes the tab.
+                PaymentMethod = "cash",
+                StripeConnectedAccountId = connectedAccountId,
+                SoldByUserId = soldBy,
+                PurchaserUserId = disc.PurchaserUserId,
+                PurchaserEmail = disc.PurchaserEmail,
+                PurchaserName = disc.PurchaserName ?? Blank(req.CustomerName),
+                TabName = name,
+                TabOpenedAt = DateTime.UtcNow,
+            };
+            sale.Id = await _concessions.CreateSale(sale);
+            if (lines.Count > 0)
+            {
+                foreach (var l in lines) l.RoundNumber = 1;
+                await _concessions.CreateSaleLines(sale.Id, lines);
+                await _concessions.RecomputeSaleFulfillment(sale.Id, tenantId);
+                // Round 1 is cooking now, so its ingredients leave stock now.
+                try { await _concessions.DepleteInventoryForSale(sale.Id, tenantId, 1); } catch { /* inventory is best-effort */ }
+                await NotifyLowStock(tenantId);
+            }
+
+            PaymentIntentCreated? hold = null;
+            var holdCents = Math.Max(ConcessionTabRules.CardMinimumCents, menuSettings?.TabHoldCents ?? 5000);
+            if (req.HoldCard)
+            {
+                var metadata = new Dictionary<string, string>
+                {
+                    ["tenant_id"] = tenantId.ToString(),
+                    ["sale_kind"] = "concession_tab_hold",
+                    ["concession_sale_id"] = sale.Id.ToString(),
+                };
+                try
+                {
+                    hold = await _payments.CreateCardPresentHoldPaymentIntentAsync(holdCents, "usd", locationId!, metadata,
+                        connectedAccountId: connectedAccountId, ct: ct);
+                    if (!await _concessions.SetTabHold(sale.Id, tenantId, hold.IntentId, holdCents))
+                    {
+                        // The tab stopped being open between its insert and this write (voided from
+                        // another register); never leave an authorization nothing owns.
+                        await CancelIntent(hold.IntentId, connectedAccountId, sale.Id, ct);
+                        hold = null;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The tab (and its fired round) already exist; keep it open without a hold rather
+                    // than fail the request and invite a duplicate tab. The POS sees no secret.
+                    hold = null;
+                    _logger.LogWarning(ex, "Card hold could not be started for tab {SaleId}; opened without a hold.", sale.Id);
+                }
+            }
+            if (name is null && hold is null)
+            {
+                // Nothing to name it from after all; give it a visible placeholder.
+                name = $"Tab #{orderNumber}";
+                await _concessions.RenameTab(sale.Id, tenantId, name, null);
+            }
+
+            return new ApiResponses().OkResult(new ConcessionTabResponse
+            {
+                SaleId = sale.Id,
+                OrderNumber = orderNumber,
+                TabName = name,
+                TotalCents = sale.TotalCents,
+                Rounds = lines.Count > 0 ? 1 : 0,
+                HoldClientSecret = hold?.ClientSecret,
+                HoldPaymentIntentId = hold?.IntentId,
+            });
+        }
+
+        // ── Concurrency contract for everything below ─────────────────────────────────────────
+        // Two registers can work the same tab, and Stripe's webhook finalizes card closes on its own
+        // schedule, so every MUTATION of one tab (hold confirmed, add a round, close, void) runs under
+        // a per-sale Postgres advisory lock (TabLock) and re-reads the sale only once it holds the lock.
+        // The lock spans the Stripe round-trips a close needs, which a single DB transaction could not
+        // (the shared finalizer writes the same row on its own connection and would self-deadlock).
+        // Underneath, every repository write is a CONDITIONAL update pinned to the exact state read
+        // under the lock (status 'open', which PaymentIntent the row points at); 0 rows ⇒ 409 and the
+        // attempt is rolled back (its store-credit redeem reversed). A tab with a card close in flight
+        // (status 'open' + stripe_payment_intent_id set) refuses rounds and other tenders until that
+        // intent is settled at Stripe FIRST (SettleInFlightCard): cancelled, or found to have succeeded,
+        // in which case it is finalized and the cashier is told it already went through.
+        private const string TabChangedMessage = "This tab is being closed on another register.";
+        private const string CardInFlightMessage =
+            "A card payment is in progress for this tab. Finish or cancel it on the register closing the tab before adding a round.";
+        private const string CardAlreadyPaidMessage = "The earlier card payment for this tab already went through; the tab is paid.";
+        private const string HoldAlreadyChargedMessage = "The card on file was already charged for this tab, so it is paid by card.";
+
+        private Task<IAsyncDisposable> TabLock(Guid saleId) => _db.AcquireAdvisoryLock($"concession-tab:{saleId}");
+
+        // Best-effort cancel. The provider already re-reads a rejected cancel's real status (most
+        // importantly 'succeeded'); null means Stripe could not be reached at all.
+        private async Task<string?> CancelIntent(string intentId, string? connectedAccountId, Guid saleId, CancellationToken ct)
+        {
+            try { return await _payments.CancelPaymentIntentAsync(intentId, connectedAccountId, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Could not cancel PaymentIntent {IntentId} for tab {SaleId}.", intentId, saleId);
+                return null;
+            }
+        }
+
+        // An earlier close attempt's PaymentIntent (a card on the reader, or the hold being captured)
+        // is still pointed at this open tab. Before anything else changes it is settled at Stripe:
+        // cancelled, so it can never charge (the attempt is over and the caller proceeds), or found to
+        // have succeeded (the tab IS paid by it: finalize and say so). The one intent that is kept is a
+        // hold still awaiting capture when the cashier retries the 'hold' tender; the capture path
+        // re-arms it. Returns null to proceed, otherwise the response to send.
+        private async Task<IActionResult?> SettleInFlightCard(ConcessionSale sale, string tender, CancellationToken ct)
+        {
+            var pi = sale.StripePaymentIntentId!;
+            if (tender == "hold" && pi == sale.HoldPaymentIntentId)
+            {
+                var status = await _payments.GetPaymentIntentStatusAsync(pi, sale.StripeConnectedAccountId, ct);
+                if (status == "requires_capture") return null;
+                if (status == "succeeded") return await FinalizeAlreadyPaid(sale, pi, CardAlreadyPaidMessage, ct);
+                // Expired, cancelled or unknown: cancelled and released below like any other stale intent.
+            }
+            var result = await CancelIntent(pi, sale.StripeConnectedAccountId, sale.Id, ct);
+            switch (ConcessionTabRules.ResolveInFlightCancel(result))
+            {
+                case InFlightCardOutcome.AlreadyPaid:
+                    return await FinalizeAlreadyPaid(sale, pi, CardAlreadyPaidMessage, ct);
+                case InFlightCardOutcome.Blocked:
+                    return new ApiResponses().BadRequestResult(result is null
+                        ? "Could not reach the card processor to cancel the earlier card payment for this tab. Try again."
+                        : "The earlier card payment for this tab is still processing on the reader. Wait a moment and try again.");
+            }
+            if (!await _concessions.ClearTabCardPayment(sale.Id, sale.TenantId, pi))
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+            sale.StripePaymentIntentId = null;
+            sale.PaymentMethod = "cash";
+            // When that intent WAS the hold (a capture attempt with no known outcome), cancelling it
+            // released the hold with it.
+            if (pi == sale.HoldPaymentIntentId && await _concessions.SetTabHold(sale.Id, sale.TenantId, null, null))
+            {
+                sale.HoldPaymentIntentId = null;
+                sale.HoldAmountCents = null;
+            }
+            return null;
+        }
+
+        // The intent already succeeded at Stripe: the tab is paid by it, whatever this request asked.
+        // The row already carries that attempt's totals and credit, so the finalizer books them as is.
+        private async Task<IActionResult> FinalizeAlreadyPaid(ConcessionSale sale, string paymentIntentId, string message, CancellationToken ct)
+        {
+            await _finalizer.ProcessPaymentIntentAsync(paymentIntentId, "payment_intent.succeeded", ct);
+            return new ApiResponses().BadRequestResult(message);
+        }
+
+        private enum HoldRelease { Released, Captured, Blocked }
+
+        // Releases the card hold a tab no longer needs (cash/credit close, or a different card on the
+        // reader). Released: the tab may proceed without it (cancelled, or already dead). Captured: the
+        // hold turned out charged, so that capture is the tab's payment and the caller books it.
+        // Blocked: Stripe could not confirm either way; the caller decides whether that matters (an
+        // uncaptured hold charges nothing and lapses on its own, unless a capture of it is in flight).
+        // A hold the row was pointing at as its settling intent (a re-armed capture attempt) is taken
+        // off the row with it, so the cash flip that follows sees no intent in flight.
+        private async Task<HoldRelease> TryReleaseHold(ConcessionSale sale, CancellationToken ct)
+        {
+            var holdPi = sale.HoldPaymentIntentId;
+            if (string.IsNullOrEmpty(holdPi)) return HoldRelease.Released;
+            var result = await CancelIntent(holdPi, sale.StripeConnectedAccountId, sale.Id, ct);
+            switch (ConcessionTabRules.ResolveInFlightCancel(result))
+            {
+                case InFlightCardOutcome.AlreadyPaid:
+                    return HoldRelease.Captured;
+                case InFlightCardOutcome.Released:
+                    if (sale.StripePaymentIntentId == holdPi && await _concessions.ClearTabCardPayment(sale.Id, sale.TenantId, holdPi))
+                    {
+                        sale.StripePaymentIntentId = null;
+                        sale.PaymentMethod = "cash";
+                    }
+                    if (await _concessions.SetTabHold(sale.Id, sale.TenantId, null, null))
+                    {
+                        sale.HoldPaymentIntentId = null;
+                        sale.HoldAmountCents = null;
+                    }
+                    return HoldRelease.Released;
+                default:
+                    _logger.LogWarning("Card hold {IntentId} on tab {SaleId} could not be released ({Result}).",
+                        holdPi, sale.Id, result ?? "unreachable");
+                    return HoldRelease.Blocked;
+            }
+        }
+
+        // Undoes what a failed close attempt did to the tab: the store credit it redeemed goes back
+        // (exactly once, by its own attempt reference) and the row stops claiming it. The money
+        // figures are left; the next attempt rebuilds them from the lines anyway.
+        private async Task RollBackAttempt(ConcessionSale sale, string note)
+        {
+            if (await ConcessionTabCredit.ReleaseAsync(_credit, sale, note))
+                await _concessions.UpdateTabTotals(sale);
+        }
+
+        // After the reader authorized the hold: read the card's brand/last4/cardholder and label the
+        // tab with them (auto-naming it when the cashier left the name blank).
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Tab/{id:guid}/HoldConfirmed")]
+        public async Task<IActionResult> TabHoldConfirmed(Guid id, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            await using var tabLock = await TabLock(id);
+            var sale = await _concessions.GetSale(id, tenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            if (sale.Status != "open") return new ApiResponses().BadRequestResult(TabNotOpenMessage(sale));
+            if (string.IsNullOrEmpty(sale.HoldPaymentIntentId))
+                return new ApiResponses().BadRequestResult("No card hold was started for this tab.");
+
+            var details = await _payments.GetCardPresentDetailsAsync(sale.HoldPaymentIntentId, sale.StripeConnectedAccountId, ct);
+            if (details is null || details.Status is not ("requires_capture" or "succeeded"))
+                return new ApiResponses().BadRequestResult("The card hold hasn't been confirmed on the reader yet.");
+
+            if (!await _concessions.SetTabHoldCard(sale.Id, tenantId, sale.HoldPaymentIntentId, details.Brand, details.Last4, details.CardholderName,
+                    ConcessionTabRules.AutoTabName(details.Brand, details.Last4, details.CardholderName) ?? $"Tab #{sale.OrderNumber}"))
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+            var fresh = await _concessions.GetSale(id, tenantId);
+            return new ApiResponses().OkResult(await BuildTabDetail(fresh ?? sale));
+        }
+
+        // Another round: fires to the kitchen now, depletes its own inventory now, payment later.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Tab/{id:guid}/Round")]
+        public async Task<IActionResult> AddTabRound(Guid id, [FromBody] ConcessionTabRoundRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            var requestedItems = req.Items.Where(i => i.Quantity > 0).ToList();
+            if (requestedItems.Count == 0) return new ApiResponses().BadRequestResult("Add at least one item to the round.");
+
+            await using var tabLock = await TabLock(id);
+            var sale = await _concessions.GetSale(id, tenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            if (sale.Status != "open") return new ApiResponses().BadRequestResult(TabNotOpenMessage(sale));
+            // A card close in flight has its tip/discount/credit persisted and a PaymentIntent for that
+            // exact due; a round now would make the reader charge a stale amount. The register closing
+            // the tab settles or cancels it first.
+            if (ConcessionTabRules.HasCardInFlight(sale.Status, sale.StripePaymentIntentId))
+                return new ApiResponses().ConflictResult(CardInFlightMessage);
+
+            var menuSettings = await _concessions.GetMenuSettings(tenantId);
+            var pricesIncludeTax = menuSettings?.PricesIncludeTax ?? false;
+            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+
+            var (lines, _, cartError) = await ResolveCartLines(tenantId, req.Items);
+            if (cartError is not null) return new ApiResponses().BadRequestResult(cartError);
+            var saleReq = AsSaleRequest(req.Items, req.Discount, req.ManagerPin, null);
+            var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, requestedItems, saleReq, menuSettings, pricesIncludeTax);
+            if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
+
+            // Sale-level money is rebuilt from EVERY round's lines (tip stays 0 until close): the rounds
+            // already stored, read once, plus the ones about to be. Combo children carry no money of
+            // their own, so the stored child rows and the in-memory parents sum the same way.
+            var existing = await _concessions.GetSaleLines(sale.Id);
+            var totals = ConcessionTabRules.Recompute(existing.Concat(lines), pricesIncludeTax, tipCents: 0);
+            sale.SubtotalCents = totals.SubtotalCents;
+            sale.DiscountCents = totals.DiscountCents;
+            sale.TaxCents = totals.TaxCents;
+            sale.TipCents = 0;
+            sale.TotalCents = totals.TotalCents;
+            MergeDiscountOutcome(sale, disc);
+            // Round number, line inserts and the new totals land together or not at all.
+            var round = await _concessions.AppendTabRound(sale, lines);
+            if (round is null) return new ApiResponses().ConflictResult(TabChangedMessage);
+            // New lines are queued, so the tab is back to 'active' for the kitchen.
+            await _concessions.RecomputeSaleFulfillment(sale.Id, tenantId);
+            try { await _concessions.DepleteInventoryForSale(sale.Id, tenantId, round.Value); } catch { /* inventory is best-effort */ }
+            await NotifyLowStock(tenantId);
+
+            var fresh = await _concessions.GetSale(id, tenantId);
+            // The detail is answered from the lines already in hand (stored rows + the ones just
+            // inserted, each combo parent followed by its children) rather than a third read.
+            var all = existing.Concat(lines.SelectMany(l => l.Children.Prepend(l))).ToList();
+            return new ApiResponses().OkResult(BuildTabDetail(fresh ?? sale, all));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpGet("Tabs")]
+        public async Task<IActionResult> ListOpenTabs()
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tabs = await _concessions.ListOpenTabs(_tenantContext.TenantId);
+            return new ApiResponses().OkResult(tabs.Select(ToTabSummary).ToList());
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpGet("Tab/{id:guid}")]
+        public async Task<IActionResult> GetTab(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            return new ApiResponses().OkResult(await BuildTabDetail(sale));
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPut("Tab/{id:guid}")]
+        public async Task<IActionResult> RenameTab(Guid id, [FromBody] ConcessionRenameTabRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var name = Blank(req.Name);
+            if (name is null) return new ApiResponses().BadRequestResult("Tab name is required.");
+            var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            if (sale.Status != "open") return new ApiResponses().BadRequestResult(TabNotOpenMessage(sale));
+            if (!await _concessions.RenameTab(sale.Id, _tenantContext.TenantId, name, Blank(req.CustomerName)))
+                return new ApiResponses().BadRequestResult("This tab is no longer open.");
+            var fresh = await _concessions.GetSale(id, _tenantContext.TenantId);
+            return new ApiResponses().OkResult(await BuildTabDetail(fresh ?? sale));
+        }
+
+        // Settle the tab. Totals are rebuilt from every round (+ optional close-time order discount +
+        // tip), store credit applied like CreateSale but under a per-ATTEMPT reference (see
+        // ConcessionTabCredit), then: cash / nothing due -> paid now; card -> a new card-present PI for
+        // the reader (finalized by Sale/{id}/Finalize or the webhook); hold -> capture the held
+        // authorization (topped up by incremental auth when the network allows), finalized through
+        // the same path. A close can be ATTEMPTED repeatedly (declined card, tender switch); each
+        // attempt first settles whatever intent the previous one left in flight, hands back the credit
+        // it redeemed, and re-plans from the untouched lines.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [HttpPost("Tab/{id:guid}/Close")]
+        public async Task<IActionResult> CloseTab(Guid id, [FromBody] ConcessionCloseTabRequest req, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            await using var tabLock = await TabLock(id);
+            var sale = await _concessions.GetSale(id, tenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            if (sale.Status != "open") return new ApiResponses().BadRequestResult(TabNotOpenMessage(sale));
+
+            var menuSettings = await _concessions.GetMenuSettings(tenantId);
+            var pricesIncludeTax = menuSettings?.PricesIncludeTax ?? false;
+            var tipCents = (menuSettings?.TipsEnabled ?? false) ? Math.Max(0, req.TipCents) : 0;
+            Guid? soldBy = Guid.TryParse(User.FindFirst("UserId")?.Value, out var uid) ? uid : null;
+            var tender = (req.PaymentMethod ?? "").Trim().ToLowerInvariant();
+
+            var lines = await _concessions.GetSaleLines(sale.Id);
+            if (lines.Count == 0 || lines.Sum(l => l.LineTotalCents + l.DiscountCents) <= 0)
+                return new ApiResponses().BadRequestResult("This tab has nothing on it. Void it instead of closing.");
+
+            // ── 1. An earlier attempt's card intent still in flight is settled at Stripe first. ───
+            if (!string.IsNullOrEmpty(sale.StripePaymentIntentId)
+                && await SettleInFlightCard(sale, tender, ct) is { } settled)
+                return settled;
+
+            // ── 2. Credit an earlier attempt redeemed goes back before this attempt re-plans it. ──
+            // Reversal is by that attempt's own reference, so it happens exactly once however many
+            // times the close is retried; the row stops claiming the credit right away.
+            if (await ConcessionTabCredit.ReleaseAsync(_credit, sale, "tab close retried")
+                && !await _concessions.UpdateTabTotals(sale))
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+
+            // ── 3. Money, rebuilt from the lines. ──────────────────────────────────────────────────
+            // The sale-level discount kind/label start from what the rounds actually carry (each round's
+            // discounts live on its lines), so a close attempt never inherits a label from an earlier,
+            // failed attempt's close-time discount.
+            var lineKinds = lines.Where(l => l.DiscountCents > 0 && !string.IsNullOrEmpty(l.DiscountKind))
+                                 .Select(l => l.DiscountKind!).Distinct().ToList();
+            sale.DiscountKind = lineKinds.Count switch { 0 => null, 1 => lineKinds[0], _ => "mixed" };
+            sale.DiscountLabel = lineKinds.Count switch
+            {
+                0 => null,
+                1 => lines.First(l => l.DiscountCents > 0 && l.DiscountKind == lineKinds[0]).DiscountLabel,
+                _ => "Discounts",
+            };
+
+            // Close-time order-level discount: the same engine as a counter sale, spread across every
+            // round's lines IN MEMORY (percent / dollar / preset / comp / member perk, PIN-gated by kind
+            // as usual). Only the sale-level figures it produces are persisted; the stored lines keep
+            // their round-level values. That is what makes a retry safe: it rebuilds the discount from
+            // the untouched lines instead of stacking it, and a retry without the discount drops it.
+            if (req.Discount is not null && !string.IsNullOrEmpty(req.Discount.Kind))
+            {
+                var saleReq = AsSaleRequest(new(), req.Discount, req.ManagerPin, null);
+                var (discOk, discErr, disc) = await ApplyDiscounts(tenantId, soldBy ?? Guid.Empty, lines, new(), saleReq, menuSettings, pricesIncludeTax);
+                if (!discOk) return new ApiResponses().BadRequestResult(discErr!);
+                MergeDiscountOutcome(sale, disc);
+            }
+
+            var totals = ConcessionTabRules.Recompute(lines, pricesIncludeTax, tipCents);
+            sale.SubtotalCents = totals.SubtotalCents;
+            sale.DiscountCents = totals.DiscountCents;
+            sale.TaxCents = totals.TaxCents;
+            sale.TipCents = tipCents;
+            sale.TotalCents = totals.TotalCents;
+
+            // Store credit tender, capped at balance + total like CreateSale. The balance read here is
+            // the real one: step 2 already handed back anything this tab had reserved.
+            Services.Repositories.Data.CreditData.TenantCreditAccount? creditAccount = null;
+            var creditApplied = 0;
+            if (req.CreditAccountId is not null && req.CreditCents > 0 && sale.TotalCents > 0)
+            {
+                creditAccount = await _credit.GetAccount(req.CreditAccountId.Value, tenantId);
+                if (creditAccount is null)
+                    return new ApiResponses().BadRequestResult("That store credit account no longer exists. Look it up again.");
+                creditApplied = Math.Min(Math.Min(req.CreditCents, creditAccount.BalanceCents), sale.TotalCents);
+            }
+            var due = sale.TotalCents - creditApplied;
+
+            // ── 4. Which path, and everything that can be checked before anything is written. ─────
+            var path = ConcessionTabRules.ResolveClosePath(tender, due, sale.HoldPaymentIntentId, sale.HoldAmountCents);
+            switch (path)
+            {
+                case TabClosePath.Invalid:
+                    return new ApiResponses().BadRequestResult("Choose how the tab is being paid: cash, card, or the card on file.");
+                case TabClosePath.NoHold:
+                    return new ApiResponses().BadRequestResult("No card is held on this tab. Collect a card or take cash.");
+                case TabClosePath.CardBelowMinimum:
+                    // Stripe rejects a capture below the minimum exactly like a charge below it, so a
+                    // sub-50¢ remainder on a held card is a cash remainder too.
+                    return new ApiResponses().BadRequestResult(creditApplied > 0
+                        ? "Less than 50 cents is due after credit. Take cash for the remainder."
+                        : "Card sale total must be at least 50 cents.");
+                case TabClosePath.HoldTooSmall:
+                    // Top the authorization up where the card network allows; otherwise the POS falls
+                    // back to collecting the card again.
+                    if (await _payments.IncrementAuthorizationAsync(sale.HoldPaymentIntentId!, due, sale.StripeConnectedAccountId, ct)
+                        && await _concessions.SetTabHold(sale.Id, tenantId, sale.HoldPaymentIntentId, due))
+                    {
+                        sale.HoldAmountCents = due;
+                        path = TabClosePath.CaptureHold;
+                        break;
+                    }
+                    return new ApiResponses().BadRequestResult("The tab total exceeds the card hold. Collect the card again.");
+            }
+            string? connectedAccountId = null;
+            string? locationId = null;
+            if (path == TabClosePath.CardPresent)
+            {
+                if (_tenantContext.Tenant.StripeChargeMode == "direct" && string.IsNullOrEmpty(_tenantContext.Tenant.StripeConnectAccountId))
+                    return new ApiResponses().BadRequestResult(
+                        "This track is set to charge on its own Stripe account but hasn't connected one yet.");
+                connectedAccountId = DirectConnectedAccountId();
+                locationId = await EnsureTerminalLocation(connectedAccountId, ct);
+                if (locationId is null)
+                    return new ApiResponses().BadRequestResult(
+                        "Cannot take card-present payments until the track's address is filled in (Settings -> General).");
+            }
+
+            // ── 5. This attempt's redeem (its own reference) and the totals, pinned to the state read
+            //       under the lock. From here on every early exit rolls the attempt back. ─────────────
+            if (creditApplied > 0 && !await ConcessionTabCredit.RedeemAsync(_credit, sale, creditAccount!.Id, creditApplied, soldBy))
+                return new ApiResponses().BadRequestResult("The store credit balance changed while closing. Look the customer up again.");
+            if (!await _concessions.UpdateTabTotals(sale))
+            {
+                await RollBackAttempt(sale, "tab changed on another register");
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+            }
+
+            var holdForAudit = sale.HoldPaymentIntentId;
+            async Task AuditClose(string method, int collectedCents) => await _audit.Log(
+                "concession.tab_close",
+                $"Closed tab \"{sale.TabName}\" for ${sale.TotalCents / 100m:0.00} ({method})",
+                targetKind: "concession_sale", targetId: sale.Id, tenantId: tenantId,
+                metadata: new
+                {
+                    tabName = sale.TabName,
+                    totalCents = sale.TotalCents,
+                    tipCents = sale.TipCents,
+                    discountCents = sale.DiscountCents,
+                    creditAppliedCents = creditApplied,
+                    dueCents = Math.Max(0, due),
+                    collectedCents,
+                    paymentMethod = method,
+                    rounds = lines.Select(l => l.RoundNumber).Distinct().Count(),
+                    holdPaymentIntentId = holdForAudit,
+                });
+
+            // The hold is released BEFORE any other tender settles the tab, so a captured hold can never
+            // sit behind a tab recorded as paid by cash or by another card. Captured out of band: that
+            // capture IS the payment (point the row at it, book it, tell the cashier). Blocked: fine to
+            // go on when the hold is merely parked (it lapses uncharged), not when a capture of it is
+            // what this tab was waiting on, because its outcome is then unknown.
+            async Task<IActionResult?> ReleaseHoldOrBookIt()
+            {
+                var holdPi = sale.HoldPaymentIntentId;
+                switch (await TryReleaseHold(sale, ct))
+                {
+                    case HoldRelease.Captured:
+                        var method = string.IsNullOrEmpty(sale.StripeConnectedAccountId) ? "stripe" : "stripe_direct";
+                        if (!await _concessions.SetTabCardPayment(sale.Id, tenantId, holdPi!, method, sale.StripeConnectedAccountId))
+                            return new ApiResponses().ConflictResult(TabChangedMessage);
+                        sale.StripePaymentIntentId = holdPi;
+                        _logger.LogWarning("Card hold {IntentId} on tab {SaleId} was already captured when the tab closed by {Tender}; booking it as the payment.", holdPi, sale.Id, tender);
+                        await AuditClose(method + " (hold, captured out of band)", due);
+                        return await FinalizeAlreadyPaid(sale, holdPi!, HoldAlreadyChargedMessage, ct);
+                    case HoldRelease.Blocked when sale.StripePaymentIntentId == holdPi:
+                        await RollBackAttempt(sale, "hold release unconfirmed");
+                        return new ApiResponses().BadRequestResult("Could not reach the card processor to release the card hold. Try again or use the card on file.");
+                    default:
+                        return null;
+                }
+            }
+
+            // ── Paid at the counter: cash, or credit/comp covered it all. ─────────────────────────
+            if (path == TabClosePath.PaidNow)
+            {
+                if (await ReleaseHoldOrBookIt() is { } holdOutcome) return holdOutcome;
+                if (!await _concessions.CloseTabPaid(sale.Id, tenantId, "cash"))
+                {
+                    await RollBackAttempt(sale, "tab changed on another register");
+                    return new ApiResponses().ConflictResult(TabChangedMessage);
+                }
+                sale.Status = "paid";
+                sale.PaymentMethod = "cash";
+                var collected = sale.TotalCents - creditApplied;
+                if (collected > 0) await WriteCashLedger(sale);   // skip when no money changed hands
+                await _concessions.RecomputeSaleFulfillment(sale.Id, tenantId);
+                await _concessions.CompleteTabIfAllServed(sale.Id, tenantId);
+                await AuditClose("cash", collected);
+                return new ApiResponses().OkResult(new ConcessionSaleResponse
+                {
+                    SaleId = sale.Id,
+                    TotalCents = sale.TotalCents,
+                    DiscountCents = sale.DiscountCents,
+                    CreditAppliedCents = creditApplied,
+                    DueCents = Math.Max(0, due),
+                    Status = "paid",
+                    OrderNumber = sale.OrderNumber,
+                });
+            }
+
+            // ── Capture the hold placed when the tab was opened. ──────────────────────────────────
+            if (path == TabClosePath.CaptureHold)
+            {
+                var holdPi = sale.HoldPaymentIntentId!;
+                var method = string.IsNullOrEmpty(sale.StripeConnectedAccountId) ? "stripe" : "stripe_direct";
+                // Point the sale at the hold PI BEFORE capturing (the succeeded webhook can beat our own
+                // finalize call), and capture only once that write is known to have matched the row.
+                if (!await _concessions.SetTabCardPayment(sale.Id, tenantId, holdPi, method, sale.StripeConnectedAccountId))
+                {
+                    await RollBackAttempt(sale, "tab changed on another register");
+                    return new ApiResponses().ConflictResult(TabChangedMessage);
+                }
+                sale.StripePaymentIntentId = holdPi;
+                sale.PaymentMethod = method;
+                var captured = await _payments.CapturePaymentIntentAsync(holdPi, due, sale.StripeConnectedAccountId, ct);
+                if (captured == "succeeded")
+                {
+                    await _finalizer.ProcessPaymentIntentAsync(holdPi, "payment_intent.succeeded", ct);
+                    var paidSale = await _concessions.GetSale(id, tenantId);
+                    await AuditClose(method + " (hold)", due);
+                    return new ApiResponses().OkResult(new ConcessionSaleResponse
+                    {
+                        SaleId = sale.Id,
+                        PaymentIntentId = holdPi,
+                        TotalCents = sale.TotalCents,
+                        DiscountCents = sale.DiscountCents,
+                        CreditAppliedCents = creditApplied,
+                        DueCents = due,
+                        Status = paidSale?.Status ?? "paid",
+                        OrderNumber = paidSale?.OrderNumber ?? sale.OrderNumber,
+                    });
+                }
+                if (captured is null)
+                {
+                    // Outcome unknown (processor unreachable). The row keeps pointing at the hold, so
+                    // the succeeded webhook books it if it did land, and the next close attempt settles
+                    // it at Stripe before doing anything else. This attempt's credit stays with it.
+                    return new ApiResponses().BadRequestResult("Could not reach the card processor to capture the hold. Try again or collect the card.");
+                }
+                // Definitive: the hold can't be captured (expired, cancelled). Undo this attempt; a hold
+                // Stripe still reports as capturable is left on the tab for another try.
+                if (await _concessions.ClearTabCardPayment(sale.Id, tenantId, holdPi))
+                {
+                    sale.StripePaymentIntentId = null;
+                    sale.PaymentMethod = "cash";
+                }
+                if (captured != "requires_capture" && await _concessions.SetTabHold(sale.Id, tenantId, null, null))
+                {
+                    sale.HoldPaymentIntentId = null;
+                    sale.HoldAmountCents = null;
+                }
+                await RollBackAttempt(sale, "hold capture failed");
+                return new ApiResponses().BadRequestResult("The card hold could not be captured. Collect the card again.");
+            }
+
+            // ── A (different) card on the reader: new card-present PI, same finalize path as a sale. ─
+            // The hold is no longer needed once a different card is collected; it is released before
+            // the new intent exists, so a hold that turns out captured never competes with a second charge.
+            if (await ReleaseHoldOrBookIt() is { } holdOutcome2) return holdOutcome2;
+            var cardMetadata = new Dictionary<string, string>
+            {
+                ["tenant_id"] = tenantId.ToString(),
+                ["sale_kind"] = "concession",
+                ["concession_sale_id"] = sale.Id.ToString(),
+            };
+            PaymentIntentCreated intent;
+            try
+            {
+                intent = await _payments.CreateCardPresentPaymentIntentAsync(due, "usd", locationId!, cardMetadata, null,
+                    connectedAccountId: connectedAccountId, ct: ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                await RollBackAttempt(sale, "payment could not start");
+                return new ApiResponses().BadRequestResult(ex.Message);
+            }
+            var cardMethod = string.IsNullOrEmpty(connectedAccountId) ? "stripe" : "stripe_direct";
+            if (!await _concessions.SetTabCardPayment(sale.Id, tenantId, intent.IntentId, cardMethod, connectedAccountId))
+            {
+                // Never leave a chargeable intent behind a tab that moved on.
+                await CancelIntent(intent.IntentId, connectedAccountId, sale.Id, ct);
+                await RollBackAttempt(sale, "tab changed on another register");
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+            }
+            // Status stays 'open' in the database until the PI succeeds (see the section comment);
+            // 'pending' here tells the POS to run the reader flow, as it does for a counter sale.
+            return new ApiResponses().OkResult(new ConcessionSaleResponse
+            {
+                SaleId = sale.Id,
+                ClientSecret = intent.ClientSecret,
+                PaymentIntentId = intent.IntentId,
+                TotalCents = sale.TotalCents,
+                DiscountCents = sale.DiscountCents,
+                CreditAppliedCents = creditApplied,
+                DueCents = due,
+                Status = "pending",
+                OrderNumber = sale.OrderNumber,
+            });
+        }
+
+        // Tear up a tab. Manager PIN like a refund; fired items are NOT restocked (the kitchen made
+        // them); every outstanding line leaves the KDS. Any in-flight card intent and the hold are
+        // cancelled at Stripe BEFORE the flip, and the void is refused (tab stays open) when a cancel
+        // fails or the intent already succeeded, in which case the tab is paid and gets a refund instead.
+        [Authorize(Policy = TenantPermissions.Policy.ConcessionsCounter)]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("manager-pin")]
+        [HttpPost("Tab/{id:guid}/Void")]
+        public async Task<IActionResult> VoidTab(Guid id, [FromBody] ConcessionVoidTabRequest req, CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (!Guid.TryParse(User.FindFirst("UserId")?.Value, out var actingUserId))
+                return new ApiResponses().BadRequestResult("Not signed in.");
+            var tenantId = _tenantContext.TenantId;
+
+            var pinResult = await _managerPin.VerifyAsync(tenantId, actingUserId, req?.ManagerPin);
+            if (!pinResult.Authorized)
+                return new ApiResponses().BadRequestResult(pinResult.Error ?? "Manager authorization required to void a tab.");
+            var reason = Blank(req?.Reason);
+            if (reason is null) return new ApiResponses().BadRequestResult("Give a reason for voiding the tab.");
+
+            await using var tabLock = await TabLock(id);
+            var sale = await _concessions.GetSale(id, tenantId);
+            if (sale is null || !sale.IsTab) return new ApiResponses().NotFoundResult("Tab not found.");
+            if (ConcessionTabRules.VoidBlocker(sale.Status) is { } blocker) return new ApiResponses().BadRequestResult(blocker);
+            var method = string.IsNullOrEmpty(sale.StripeConnectedAccountId) ? "stripe" : "stripe_direct";
+
+            // An in-flight card close: cancelled first. 'succeeded' means the customer paid in the
+            // window, so the tab is a paid sale now and the manager refunds it rather than voiding it;
+            // anything short of a confirmed cancel keeps the tab open rather than leave a live intent.
+            var holdPi = sale.HoldPaymentIntentId;
+            if (!string.IsNullOrEmpty(sale.StripePaymentIntentId))
+            {
+                var pi = sale.StripePaymentIntentId;
+                switch (ConcessionTabRules.ResolveInFlightCancel(await CancelIntent(pi, sale.StripeConnectedAccountId, sale.Id, ct)))
+                {
+                    case InFlightCardOutcome.AlreadyPaid:
+                        return await FinalizeAlreadyPaid(sale, pi,
+                            "The card payment for this tab already went through, so it is paid. Refund it instead of voiding.", ct);
+                    case InFlightCardOutcome.Blocked:
+                        return new ApiResponses().BadRequestResult(
+                            "Could not cancel the card payment in progress for this tab, so it was not voided. Try again in a moment.");
+                }
+                if (!await _concessions.ClearTabCardPayment(sale.Id, tenantId, pi))
+                    return new ApiResponses().ConflictResult(TabChangedMessage);
+                sale.StripePaymentIntentId = null;
+                if (pi == holdPi) holdPi = null;   // the intent WAS the hold; it is gone with it
+            }
+            if (!string.IsNullOrEmpty(holdPi))
+            {
+                switch (ConcessionTabRules.ResolveInFlightCancel(await CancelIntent(holdPi, sale.StripeConnectedAccountId, sale.Id, ct)))
+                {
+                    case InFlightCardOutcome.AlreadyPaid:
+                        // Captured outside this flow: that capture is the tab's payment.
+                        if (!await _concessions.SetTabCardPayment(sale.Id, tenantId, holdPi, method, sale.StripeConnectedAccountId))
+                            return new ApiResponses().ConflictResult(TabChangedMessage);
+                        return await FinalizeAlreadyPaid(sale, holdPi,
+                            "The card on file was already charged for this tab, so it is paid. Refund it instead of voiding.", ct);
+                    case InFlightCardOutcome.Blocked:
+                        return new ApiResponses().BadRequestResult(
+                            "Could not release the card hold on this tab, so it was not voided. Try again in a moment.");
+                }
+            }
+
+            if (!await _concessions.VoidTab(sale.Id, tenantId, reason, pinResult.AuthorizedName))
+                return new ApiResponses().ConflictResult(TabChangedMessage);
+            // Store credit redeemed by an unfinished close attempt goes back to the customer (by that
+            // attempt's own reference, so a repeated void can't hand it back twice).
+            await ConcessionTabCredit.ReleaseAsync(_credit, sale, "tab voided");
+
+            await _audit.Log(
+                "concession.tab_void",
+                $"Voided tab \"{sale.TabName}\" (${sale.TotalCents / 100m:0.00}): {reason}",
+                targetKind: "concession_sale",
+                targetId: sale.Id,
+                tenantId: tenantId,
+                metadata: new
+                {
+                    tabName = sale.TabName,
+                    totalCents = sale.TotalCents,
+                    discountCents = sale.DiscountCents,
+                    reason,
+                    holdPaymentIntentId = sale.HoldPaymentIntentId,
+                    // Who approved it via manager PIN; the PIN itself is deliberately never recorded.
+                    authorizedBy = pinResult.AuthorizedName,
+                });
+            return new ApiResponses().OkResult();
         }
 
         // ── Rider online ordering (any logged-in user; pays online via the Payment Element) ─────────

@@ -38,6 +38,7 @@ const settings = ref<ConcessionMenuSettings>({
     prepWarnMinutes: 5, prepLateMinutes: 10, orderingHours: null, orderingSeasons: null, requireEventDay: true, pricesIncludeTax: false,
     seasonPassDiscountEnabled: false, seasonPassDiscountKind: 'percent', seasonPassDiscountValue: 0,
     loampassDiscountEnabled: false, loampassDiscountKind: 'percent', loampassDiscountValue: 0, requireManagerForManualDiscount: true,
+    tabsEnabled: true, tabHoldCents: 5000,
     starterSeeded: false, orderingOpenNow: true,
 })
 const loading = ref(true)

@@ -29,6 +29,9 @@ namespace webapi.Controllers.API.Data.Concession
         public int LoampassDiscountValue { get; set; }
         // When true (default), an arbitrary manual discount requires a manager PIN.
         public bool RequireManagerForManualDiscount { get; set; } = true;
+        // Open tabs: offer "Open tab" on the POS, and the card-present hold amount placed on a tab.
+        public bool TabsEnabled { get; set; } = true;
+        public int TabHoldCents { get; set; } = 5000;
         // Whether the tenant has already loaded the starter catalog (hides the "Load starter content" button).
         public bool StarterSeeded { get; set; }
         // Combined gate: in open season AND (event today OR not required) AND within today's hours.

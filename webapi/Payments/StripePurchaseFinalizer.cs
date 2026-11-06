@@ -1,4 +1,5 @@
-﻿using Services.Helpers;
+﻿using Services.Concessions;
+using Services.Helpers;
 using Services.Notifications;
 using Services.Payments;
 using Services.Repositories.Data.ExtrasData;
@@ -42,6 +43,7 @@ namespace webapi.Payments
         private readonly Services.Helpers.ISmsSender _sms;
         private readonly Services.Email.IEventOrderConfirmationEmailer _orderConfirmations;
         private readonly IConfiguration _config;
+        private readonly Services.Audit.IAuditLogger _audit;
         private readonly ILogger<StripePurchaseFinalizer> _logger;
         private readonly int _largeSaleThresholdCents;
 
@@ -73,8 +75,10 @@ namespace webapi.Payments
             Services.Helpers.ISmsSender sms,
             Services.Email.IEventOrderConfirmationEmailer orderConfirmations,
             IConfiguration configuration,
+            Services.Audit.IAuditLogger audit,
             ILogger<StripePurchaseFinalizer> logger)
         {
+            _audit = audit;
             _payments = payments;
             _ticketPurchases = ticketPurchases;
             _feeCalculator = feeCalculator;
@@ -149,6 +153,19 @@ namespace webapi.Payments
             var shopDepositHold = await _shop.GetRentalByDepositPaymentIntentId(paymentIntentId);
             if (shopDepositHold is not null)
             {
+                return;
+            }
+            // An F&B tab's card HOLD is the same kind of manual-capture PI, driven by
+            // ConcessionController (authorize at open, capture at close, cancel on void). Once the
+            // tab is closed against it, the hold becomes the sale's own PI (found above as
+            // concessionSale) and its succeeded event books the sale. Until then its lifecycle events
+            // (authorized, cancelled) are noise, with ONE exception: a hold that succeeded, i.e. was
+            // captured, while the tab does not point at it is money nothing will book. That is never
+            // swallowed: it is logged, audited and, when the tab was settled another way, refunded.
+            if (concessionSale is null && await _concessions.GetSaleByHoldPaymentIntentId(paymentIntentId) is { } holdTab)
+            {
+                if (eventType == "payment_intent.succeeded")
+                    await RecordUnbookedConcessionPayment(holdTab, paymentIntentId, ct);
                 return;
             }
 
@@ -266,19 +283,39 @@ namespace webapi.Payments
 
             // Concession sale (cashier tap-to-pay, anonymous buyer): always standalone on its
             // own PaymentIntent, so flip pending -> paid + write the ledger entry, then return.
+            // An OPEN tab being closed by card (new card-present PI) or by capturing its hold is
+            // the same flip: it stays 'open' while the reader works, so the pending-sale sweeps
+            // never touch it, and lands on 'paid' here.
             if (concessionSale is not null)
             {
-                if (eventType == "payment_intent.succeeded" && concessionSale.Status == "pending")
+                if (eventType == "payment_intent.succeeded")
                 {
-                    await OnConcessionPaid(concessionSale);
+                    switch (ConcessionTabRules.ClassifyPaidIntent(concessionSale.Status, concessionSale.StripePaymentIntentId, paymentIntentId))
+                    {
+                        case PaidIntentOutcome.Book:
+                            await OnConcessionPaid(concessionSale, ct);
+                            break;
+                        case PaidIntentOutcome.AlreadyBooked:
+                            break;   // duplicate webhook, or our own finalize call already ran
+                        default:
+                            // Paid on an intent the sale is no longer waiting for (voided tab, a dead
+                            // counter sale): money nothing will book. Never silent.
+                            await RecordUnbookedConcessionPayment(concessionSale, paymentIntentId, ct);
+                            break;
+                    }
                 }
                 else if (deadStatus is not null && concessionSale.Status == "pending")
                 {
                     await _concessions.MarkSaleFailed(concessionSale.Id, deadStatus);
                     // Hand back any store credit the POS redeemed as a tender.
                     if (concessionSale.CreditAppliedCents > 0)
-                        await _credit.ReverseRedeem(concessionSale.TenantId, "concession_sale", concessionSale.Id, deadReason);
+                    {
+                        var (refKind, refId) = ConcessionTabCredit.ReferenceFor(concessionSale);
+                        await _credit.ReverseRedeem(concessionSale.TenantId, refKind, refId, deadReason);
+                    }
                 }
+                // A dead card attempt on an OPEN tab leaves the tab open: the cashier retries with
+                // another tender, and Close/Void cancel the stale PaymentIntent themselves.
                 return;
             }
 
@@ -718,21 +755,40 @@ namespace webapi.Payments
         // Concession sale: standalone on its own PI, so it owns the whole Stripe fee.
         // All-in pricing means no rider service charge (serviceChargeCents = 0); the RidePass
         // cut is computed from the tenant's bps on the gross.
-        private async Task OnConcessionPaid(Services.Repositories.Data.ConcessionData.ConcessionSale sale)
+        private async Task OnConcessionPaid(Services.Repositories.Data.ConcessionData.ConcessionSale sale, CancellationToken ct = default)
         {
             // Direct mode = the card sale ran on the tenant's own connected account (snapshotted on
             // the sale). In direct mode the tenant bore the Stripe fee, so we record no Stripe fee and
             // no net-to-tenant (they already hold the funds).
             var isDirect = !string.IsNullOrEmpty(sale.StripeConnectedAccountId);
             var stripeFee = isDirect ? 0 : (await _payments.GetActualStripeFeeCentsAsync(sale.StripePaymentIntentId!) ?? 0);
-            await _concessions.MarkSalePaid(sale.Id);
+            // The flip is pinned to the row still waiting on THIS intent. When it matches nothing the
+            // row moved between our lookup and now: either the other finalize (webhook vs. the POS's
+            // own call) got there first, which is the ordinary duplicate and falls through to the
+            // idempotent tail below, or the tab was settled another way in the meantime and this
+            // intent's money has no home, which is recorded loudly instead of booked over the top.
+            if (!await _concessions.MarkSalePaid(sale.Id, sale.StripePaymentIntentId))
+            {
+                var fresh = await _concessions.GetSale(sale.Id, sale.TenantId);
+                if (fresh is null) return;
+                if (ConcessionTabRules.ClassifyPaidIntent(fresh.Status, fresh.StripePaymentIntentId, sale.StripePaymentIntentId!) != PaidIntentOutcome.AlreadyBooked)
+                {
+                    await RecordUnbookedConcessionPayment(fresh, sale.StripePaymentIntentId!, ct);
+                    return;
+                }
+            }
             // Settle the kitchen state on the paid flip: an order made up entirely of grab-and-go items
             // has every line already 'ready' and no cook-screen ticket to bump, so it must land as
             // 'ready' instead of sitting in "Preparing" forever. Orders with real prep lines stay
             // 'active' exactly as before, and a completed order is left alone by the recompute.
             await _concessions.RecomputeSaleFulfillment(sale.Id, sale.TenantId);
+            // A tab whose every round was already picked up has nothing left for the kitchen or the
+            // pickup board once it is paid.
+            if (sale.IsTab) await _concessions.CompleteTabIfAllServed(sale.Id, sale.TenantId);
             // Assign the pickup number now that the card sale is paid (cash sales get theirs at the
             // counter). Skipped automatically on a duplicate webhook (order_number already set).
+            // A tab got its number at OPEN and depleted inventory per round as each fired, so it
+            // skips this block too: nothing to assign, nothing to deplete again.
             if (sale.OrderNumber is null)
             {
                 var orderNumber = await _concessions.NextOrderNumber(sale.TenantId);
@@ -789,6 +845,63 @@ namespace webapi.Payments
                 _logger.LogDebug("Ledger entry for concession sale {Id} already exists; skipping.", sale.Id);
             }
 
+        }
+
+        // A PaymentIntent succeeded (a card charge, or a tab's hold captured) for a concession sale
+        // that is not waiting on it: the tab was voided, or closed by cash / another card, before the
+        // money landed, or the hold was captured out of band. Nothing downstream will ever book that
+        // money, and the old code dropped the event on the floor. Now it is logged as an error, written
+        // to the audit log as 'concession.unbooked_payment' with the intent id so finance can see it,
+        // and, when the sale was settled another way or voided, the stray charge is refunded in full
+        // (idempotent per intent). A sale that is still live keeps the money for a human to resolve,
+        // since the close in progress may be about to book it.
+        private async Task RecordUnbookedConcessionPayment(Services.Repositories.Data.ConcessionData.ConcessionSale sale, string paymentIntentId, CancellationToken ct)
+        {
+            var outcome = ConcessionTabRules.ClassifyPaidIntent(sale.Status, sale.StripePaymentIntentId, paymentIntentId);
+            string? refundId = null;
+            string? refundError = null;
+            if (outcome == PaidIntentOutcome.UnbookedRefund)
+            {
+                try
+                {
+                    var isDirect = !string.IsNullOrEmpty(sale.StripeConnectedAccountId);
+                    var refund = await _payments.RefundAsync(paymentIntentId, null,
+                        idempotencyKey: $"unbooked-concession-{paymentIntentId}",
+                        connectedAccountId: isDirect ? sale.StripeConnectedAccountId : null,
+                        refundApplicationFee: isDirect, ct: ct);
+                    refundId = refund.RefundId;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    refundError = ex.Message;
+                }
+            }
+            _logger.LogError(
+                "UNBOOKED concession payment: PaymentIntent {IntentId} succeeded but sale {SaleId} (tenant {TenantId}) is '{Status}' paid by {Method} on intent {SaleIntent}; hold {HoldIntent}. Refund: {Refund}",
+                paymentIntentId, sale.Id, sale.TenantId, sale.Status, sale.PaymentMethod, sale.StripePaymentIntentId ?? "-", sale.HoldPaymentIntentId ?? "-",
+                refundId ?? (refundError is null ? "not attempted" : "FAILED: " + refundError));
+            await _audit.Log(
+                "concession.unbooked_payment",
+                refundId is not null
+                    ? $"PaymentIntent {paymentIntentId} succeeded for a {sale.Status} F&B sale and was refunded ({refundId})"
+                    : $"PaymentIntent {paymentIntentId} succeeded for a {sale.Status} F&B sale and was NOT booked",
+                targetKind: "concession_sale",
+                targetId: sale.Id,
+                tenantId: sale.TenantId,
+                metadata: new
+                {
+                    paymentIntentId,
+                    saleStatus = sale.Status,
+                    salePaymentMethod = sale.PaymentMethod,
+                    salePaymentIntentId = sale.StripePaymentIntentId,
+                    holdPaymentIntentId = sale.HoldPaymentIntentId,
+                    tabName = sale.TabName,
+                    totalCents = sale.TotalCents,
+                    creditAppliedCents = sale.CreditAppliedCents,
+                    outcome = outcome.ToString(),
+                    refundId,
+                    refundError,
+                });
         }
 
         // Mirrors ConcessionController.NotifyIfReady: texts the rider once when their online order is

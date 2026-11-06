@@ -1,4 +1,6 @@
-﻿using Services.Helpers.Interfaces;
+﻿using Dapper;
+using Npgsql;
+using Services.Helpers.Interfaces;
 using Services.Repositories.Data.ConcessionData;
 using Services.Repositories.Interfaces;
 
@@ -53,6 +55,7 @@ namespace Services.Repositories
             loampass_discount_value AS LoampassDiscountValue,
             require_manager_for_manual_discount AS RequireManagerForManualDiscount,
             customer_display_enabled AS CustomerDisplayEnabled,
+            tabs_enabled AS TabsEnabled, tab_hold_cents AS TabHoldCents,
             seeded_at AS SeededAt, updated_at AS UpdatedAt";
 
         private const string VariantCols = @"
@@ -74,7 +77,12 @@ namespace Services.Repositories
             purchaser_user_id AS PurchaserUserId, purchaser_email AS PurchaserEmail,
             purchaser_name AS PurchaserName, is_rush AS IsRush,
             credit_applied_cents AS CreditAppliedCents, credit_account_id AS CreditAccountId,
-            created_at AS CreatedAt, paid_at AS PaidAt";
+            created_at AS CreatedAt, paid_at AS PaidAt,
+            tab_name AS TabName, tab_opened_at AS TabOpenedAt, tab_closed_at AS TabClosedAt,
+            voided_at AS VoidedAt, void_reason AS VoidReason, voided_by_name AS VoidedByName,
+            hold_payment_intent_id AS HoldPaymentIntentId, hold_amount_cents AS HoldAmountCents,
+            hold_card_brand AS HoldCardBrand, hold_card_last4 AS HoldCardLast4,
+            hold_cardholder_name AS HoldCardholderName, credit_redeem_ref AS CreditRedeemRef";
 
         private const string SaleLineCols = @"
             id, sale_id AS SaleId, product_id AS ProductId, variant_id AS VariantId,
@@ -84,7 +92,8 @@ namespace Services.Repositories
             discount_cents AS DiscountCents, discount_kind AS DiscountKind, discount_label AS DiscountLabel,
             tax_cents AS TaxCents, tax_rate_bps AS TaxRateBps,
             prep_status AS PrepStatus, notes, parent_line_id AS ParentLineId, is_combo AS IsCombo,
-            combo_tier AS ComboTier";
+            combo_tier AS ComboTier,
+            round_number AS RoundNumber, fired_at AS FiredAt, served_at AS ServedAt";
 
         private const string StationCols = @"
             id, tenant_id AS TenantId, name, sort_order AS SortOrder,
@@ -443,11 +452,11 @@ namespace Services.Repositories
                     (tenant_id, logo_url, background_color, text_color, accent_color, show_carousel, carousel_seconds, tips_enabled, prep_warn_minutes, prep_late_minutes, ordering_hours, ordering_seasons, require_event_day, prices_include_tax,
                      season_pass_discount_enabled, season_pass_discount_kind, season_pass_discount_value,
                      loampass_discount_enabled, loampass_discount_kind, loampass_discount_value,
-                     require_manager_for_manual_discount, customer_display_enabled, updated_at)
+                     require_manager_for_manual_discount, customer_display_enabled, tabs_enabled, tab_hold_cents, updated_at)
                 VALUES (@TenantId, @LogoUrl, @BackgroundColor, @TextColor, @AccentColor, @ShowCarousel, @CarouselSeconds, @TipsEnabled, @PrepWarnMinutes, @PrepLateMinutes, @OrderingHoursJson::jsonb, @OrderingSeasonsJson::jsonb, @RequireEventDay, @PricesIncludeTax,
                      @SeasonPassDiscountEnabled, @SeasonPassDiscountKind, @SeasonPassDiscountValue,
                      @LoampassDiscountEnabled, @LoampassDiscountKind, @LoampassDiscountValue,
-                     @RequireManagerForManualDiscount, @CustomerDisplayEnabled, now())
+                     @RequireManagerForManualDiscount, @CustomerDisplayEnabled, @TabsEnabled, @TabHoldCents, now())
                 ON CONFLICT (tenant_id) DO UPDATE SET
                     logo_url = @LogoUrl, background_color = @BackgroundColor, text_color = @TextColor,
                     accent_color = @AccentColor, show_carousel = @ShowCarousel, carousel_seconds = @CarouselSeconds,
@@ -459,7 +468,8 @@ namespace Services.Repositories
                     loampass_discount_enabled = @LoampassDiscountEnabled, loampass_discount_kind = @LoampassDiscountKind,
                     loampass_discount_value = @LoampassDiscountValue,
                     require_manager_for_manual_discount = @RequireManagerForManualDiscount,
-                    customer_display_enabled = @CustomerDisplayEnabled, updated_at = now()";
+                    customer_display_enabled = @CustomerDisplayEnabled,
+                    tabs_enabled = @TabsEnabled, tab_hold_cents = @TabHoldCents, updated_at = now()";
             await _db.Execute(sql, s);
         }
 
@@ -510,11 +520,12 @@ namespace Services.Repositories
         }
 
         // Active orders in the kitchen right now (paid + not yet completed), counter and online both.
+        // Open tabs count too: their fired rounds are real kitchen load for the online-order throttle.
         public async Task<int> CountActiveOrders(Guid tenantId)
         {
             const string sql = @"
                 SELECT COUNT(*)::int FROM concession_sale
-                WHERE tenant_id = @tenantId AND status = 'paid' AND fulfillment_status = 'active'";
+                WHERE tenant_id = @tenantId AND status IN ('paid', 'open') AND fulfillment_status = 'active'";
             return (await _db.Query<int>(sql, new { tenantId })).First();
         }
 
@@ -525,8 +536,8 @@ namespace Services.Repositories
                 SELECT COUNT(*)::int
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE s.tenant_id = @tenantId AND s.status = 'paid' AND s.fulfillment_status = 'active'
-                  AND l.prep_status IN ('queued', 'in_progress')";
+                WHERE s.tenant_id = @tenantId AND s.status IN ('paid', 'open') AND s.fulfillment_status = 'active'
+                  AND l.prep_status IN ('queued', 'in_progress') AND l.served_at IS NULL";
             return (await _db.Query<int>(sql, new { tenantId })).First();
         }
 
@@ -580,15 +591,20 @@ namespace Services.Repositories
         }
 
         // ── Sold counts ─────────────────────────────────────────────────────────────
+        // Stock-reserving statuses. Pending card sales and paid sales always counted; an open tab's
+        // fired rounds are already made, so they reserve too, and a voided tab's items are not
+        // restocked (the kitchen cooked them), so they keep counting as sold.
+        private const string SoldStatuses = "('pending', 'paid', 'open', 'voided')";
+
         public async Task<Dictionary<Guid, int>> SumSoldVariants(IEnumerable<Guid> variantIds)
         {
             var ids = variantIds.ToArray();
             if (ids.Length == 0) return new();
-            const string sql = @"
+            var sql = $@"
                 SELECT l.variant_id AS VariantId, COALESCE(SUM(l.quantity), 0)::int AS Sold
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE l.variant_id = ANY(@ids) AND s.status IN ('pending', 'paid')
+                WHERE l.variant_id = ANY(@ids) AND s.status IN {SoldStatuses}
                 GROUP BY l.variant_id";
             var rows = await _db.Query<(Guid VariantId, int Sold)>(sql, new { ids });
             return rows.ToDictionary(r => r.VariantId, r => r.Sold);
@@ -596,11 +612,11 @@ namespace Services.Repositories
 
         public async Task<int> SumSoldVariant(Guid variantId)
         {
-            const string sql = @"
+            var sql = $@"
                 SELECT COALESCE(SUM(l.quantity), 0)::int
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE l.variant_id = @variantId AND s.status IN ('pending', 'paid')";
+                WHERE l.variant_id = @variantId AND s.status IN {SoldStatuses}";
             return (await _db.Query<int>(sql, new { variantId })).FirstOrDefault();
         }
 
@@ -610,11 +626,11 @@ namespace Services.Repositories
         {
             var ids = productIds.ToArray();
             if (ids.Length == 0) return new();
-            const string sql = @"
+            var sql = $@"
                 SELECT l.product_id AS ProductId, COALESCE(SUM(l.quantity), 0)::int AS Sold
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE l.product_id = ANY(@ids) AND l.variant_id IS NULL AND s.status IN ('pending', 'paid')
+                WHERE l.product_id = ANY(@ids) AND l.variant_id IS NULL AND s.status IN {SoldStatuses}
                 GROUP BY l.product_id";
             var rows = await _db.Query<(Guid ProductId, int Sold)>(sql, new { ids });
             return rows.ToDictionary(r => r.ProductId, r => r.Sold);
@@ -622,11 +638,11 @@ namespace Services.Repositories
 
         public async Task<int> SumSoldProduct(Guid productId)
         {
-            const string sql = @"
+            var sql = $@"
                 SELECT COALESCE(SUM(l.quantity), 0)::int
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE l.product_id = @productId AND l.variant_id IS NULL AND s.status IN ('pending', 'paid')";
+                WHERE l.product_id = @productId AND l.variant_id IS NULL AND s.status IN {SoldStatuses}";
             return (await _db.Query<int>(sql, new { productId })).FirstOrDefault();
         }
 
@@ -652,14 +668,14 @@ namespace Services.Repositories
                      comp_reason_id, comp_reason_label, authorized_by_user_id, authorized_by_name, total_cents,
                      payment_method, stripe_payment_intent_id, stripe_connected_account_id, sold_by_user_id, paid_at,
                      order_channel, purchaser_user_id, purchaser_email, purchaser_name,
-                     credit_applied_cents, credit_account_id)
+                     credit_applied_cents, credit_account_id, tab_name, tab_opened_at)
                 VALUES (CASE WHEN @Id = '00000000-0000-0000-0000-000000000000'::uuid THEN gen_random_uuid() ELSE @Id END,
                      @TenantId, @Status, @FulfillmentStatus, @OrderNumber, @SubtotalCents, @TipCents, @TaxCents,
                      @PricesIncludeTax, @DiscountCents, @DiscountKind, @DiscountLabel,
                      @CompReasonId, @CompReasonLabel, @AuthorizedByUserId, @AuthorizedByName, @TotalCents,
                      @PaymentMethod, @StripePaymentIntentId, @StripeConnectedAccountId, @SoldByUserId, @PaidAt,
                      @OrderChannel, @PurchaserUserId, @PurchaserEmail, @PurchaserName,
-                     @CreditAppliedCents, @CreditAccountId)
+                     @CreditAppliedCents, @CreditAccountId, @TabName, @TabOpenedAt)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, sale)).First();
         }
@@ -675,29 +691,41 @@ namespace Services.Repositories
 
         public async Task CreateSaleLines(Guid saleId, IEnumerable<ConcessionSaleLine> lines)
         {
+            await using var conn = new NpgsqlConnection(_db.ConnectionString);
+            await conn.OpenAsync();
+            await InsertSaleLines(conn, null, saleId, lines);
+        }
+
+        // One connection (and, for a tab round, one transaction) for every line + modifier of a sale.
+        // fired_at is stamped here rather than left to the column default so the entity the caller
+        // keeps (and answers the POS with) carries the same timestamp the row does.
+        private static async Task InsertSaleLines(NpgsqlConnection conn, NpgsqlTransaction? tx, Guid saleId, IEnumerable<ConcessionSaleLine> lines)
+        {
             const string lineSql = @"
                 INSERT INTO concession_sale_line
                     (sale_id, product_id, variant_id, station_id, requires_prep, name_snapshot, variant_label,
                      unit_price_cents, quantity, line_total_cents, discount_cents, discount_kind, discount_label,
                      tax_cents, tax_rate_bps,
-                     prep_status, notes, parent_line_id, is_combo, combo_tier)
+                     prep_status, notes, parent_line_id, is_combo, combo_tier, round_number, fired_at)
                 VALUES (@SaleId, @ProductId, @VariantId, @StationId, @RequiresPrep, @NameSnapshot, @VariantLabel,
                      @UnitPriceCents, @Quantity, @LineTotalCents, @DiscountCents, @DiscountKind, @DiscountLabel,
                      @TaxCents, @TaxRateBps,
-                     @PrepStatus, @Notes, @ParentLineId, @IsCombo, @ComboTier)
+                     @PrepStatus, @Notes, @ParentLineId, @IsCombo, @ComboTier, @RoundNumber, @FiredAt)
                 RETURNING id";
             const string modSql = @"
                 INSERT INTO concession_sale_line_modifier
                     (sale_line_id, modifier_option_id, group_name_snapshot, option_name_snapshot, price_delta_cents_snapshot)
                 VALUES (@SaleLineId, @ModifierOptionId, @GroupNameSnapshot, @OptionNameSnapshot, @PriceDeltaCentsSnapshot)";
+            var firedAt = DateTime.UtcNow;
             async Task InsertOne(ConcessionSaleLine line)
             {
                 line.SaleId = saleId;
-                line.Id = (await _db.Query<Guid>(lineSql, line)).First();
+                if (line.FiredAt == default) line.FiredAt = firedAt;
+                line.Id = await conn.QuerySingleAsync<Guid>(lineSql, line, tx);
                 foreach (var mod in line.Modifiers)
                 {
                     mod.SaleLineId = line.Id;
-                    await _db.Execute(modSql, mod);
+                    await conn.ExecuteAsync(modSql, mod, tx);
                 }
             }
             foreach (var line in lines)
@@ -708,6 +736,7 @@ namespace Services.Repositories
                 {
                     child.SaleId = saleId;
                     child.ParentLineId = line.Id;
+                    child.RoundNumber = line.RoundNumber;   // a combo's sides fire with its entree's round
                     await InsertOne(child);
                 }
             }
@@ -748,11 +777,18 @@ namespace Services.Repositories
             return (await _db.Query<ConcessionSale>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
-        public async Task MarkSalePaid(Guid saleId)
+        // Flips a pending card sale, or an OPEN tab whose card/hold PaymentIntent just succeeded, to
+        // paid. A tab also gets its close stamp here so the finalizer path and the cash path agree.
+        // The optional intent pin means a finalize for an intent the row has since been pointed away
+        // from (a cancelled attempt replaced by another tender) matches nothing; the caller sees false
+        // and goes looking at what the row became instead of booking money against the wrong state.
+        public async Task<bool> MarkSalePaid(Guid saleId, string? paymentIntentId = null)
         {
-            const string sql = @"UPDATE concession_sale SET status = 'paid', paid_at = now()
-                                 WHERE id = @saleId AND status = 'pending'";
-            await _db.Execute(sql, new { saleId });
+            const string sql = @"UPDATE concession_sale SET status = 'paid', paid_at = now(),
+                                     tab_closed_at = CASE WHEN tab_opened_at IS NOT NULL THEN COALESCE(tab_closed_at, now()) ELSE tab_closed_at END
+                                 WHERE id = @saleId AND status IN ('pending', 'open')
+                                   AND (@paymentIntentId::text IS NULL OR stripe_payment_intent_id = @paymentIntentId)";
+            return await _db.Execute(sql, new { saleId, paymentIntentId }) > 0;
         }
 
         // status: 'failed' when Stripe reported a declined attempt, 'abandoned' when no attempt
@@ -823,16 +859,19 @@ namespace Services.Repositories
 
         // ── Kitchen ─────────────────────────────────────────────────────────────────
         // Paid, not-yet-completed orders for the cook screen, optionally one station's lines only.
+        // Open tabs are included: every round fires to the kitchen the moment it is rung, payment
+        // only comes later. (A voided tab is never 'open' or 'paid', so it is excluded by status.)
         public async Task<List<ConcessionSale>> GetKitchenSales(Guid tenantId)
         {
             var sql = $@"SELECT {SaleCols} FROM concession_sale
-                        WHERE tenant_id = @tenantId AND status = 'paid' AND fulfillment_status <> 'completed'
+                        WHERE tenant_id = @tenantId AND status IN ('paid', 'open') AND fulfillment_status <> 'completed'
                         ORDER BY is_rush DESC, order_number, created_at";
             return (await _db.Query<ConcessionSale>(sql, new { tenantId })).ToList();
         }
 
         // Grab-and-go lines (requires_prep = false) are excluded: there is nothing to cook, so they never
         // reach the KDS. An order made up entirely of them returns no lines and drops off the board.
+        // Tab-round lines already marked served (picked up) are excluded the same way.
         public async Task<List<ConcessionSaleLine>> GetKitchenLines(Guid tenantId, Guid? stationId)
         {
             var stationFilter = stationId.HasValue ? "AND l.station_id = @stationId" : "";
@@ -842,13 +881,14 @@ namespace Services.Repositories
                        l.name_snapshot AS NameSnapshot, l.variant_label AS VariantLabel,
                        l.unit_price_cents AS UnitPriceCents, l.quantity, l.line_total_cents AS LineTotalCents,
                        l.prep_status AS PrepStatus, l.notes, l.parent_line_id AS ParentLineId,
-                       l.is_combo AS IsCombo, l.combo_tier AS ComboTier
+                       l.is_combo AS IsCombo, l.combo_tier AS ComboTier,
+                       l.round_number AS RoundNumber, l.fired_at AS FiredAt, l.served_at AS ServedAt
                 FROM concession_sale_line l
                 JOIN concession_sale s ON s.id = l.sale_id
-                WHERE s.tenant_id = @tenantId AND s.status = 'paid' AND s.fulfillment_status <> 'completed'
-                  AND l.requires_prep = true
+                WHERE s.tenant_id = @tenantId AND s.status IN ('paid', 'open') AND s.fulfillment_status <> 'completed'
+                  AND l.requires_prep = true AND l.served_at IS NULL
                   {stationFilter}
-                ORDER BY s.order_number, l.id";
+                ORDER BY s.order_number, l.round_number, l.id";
             var lines = (await _db.Query<ConcessionSaleLine>(sql, new { tenantId, stationId })).ToList();
             await HydrateModifiers(lines);
             return lines;
@@ -867,14 +907,17 @@ namespace Services.Repositories
         // "All ready": bump every outstanding line on one order in a single statement. A cook who has
         // plated the whole ticket should not have to tap each line, and doing it per-line from the
         // client leaves a half-bumped ticket on the board whenever one of those calls fails.
-        public async Task<int> MarkAllLinesReady(Guid saleId, Guid tenantId)
+        public async Task<int> MarkAllLinesReady(Guid saleId, Guid tenantId, int? roundNumber = null)
         {
+            // A tab can have several rounds on the board at once; bumping one ticket must not plate the
+            // round that just fired, so the round filter narrows it when the caller names one.
             const string sql = @"
                 UPDATE concession_sale_line l SET prep_status = 'ready'
                 FROM concession_sale s
                 WHERE l.sale_id = @saleId AND s.id = l.sale_id AND s.tenant_id = @tenantId
-                  AND l.prep_status <> 'ready'";
-            return await _db.Execute(sql, new { saleId, tenantId });
+                  AND l.prep_status <> 'ready'
+                  AND (@roundNumber::int IS NULL OR l.round_number = @roundNumber)";
+            return await _db.Execute(sql, new { saleId, tenantId, roundNumber });
         }
 
         // After a line changes, move the order to 'ready' once every line is ready (and not completed).
@@ -929,9 +972,9 @@ namespace Services.Repositories
             return (await _db.Query<ConcessionSale>(sql, new { tenantId, take })).ToList();
         }
 
-        // Order history for staff (cashiers + cooks): real orders (paid or refunded), newest first,
-        // within an optional [fromUtc, toUtc) created-at window. An empty query returns all in range;
-        // a query matches the order number, buyer name, or email.
+        // Order history for staff (cashiers + cooks): real orders (paid or refunded) plus open and
+        // voided tabs, newest first, within an optional [fromUtc, toUtc) created-at window. An empty
+        // query returns all in range; a query matches the order number, buyer name, email, or tab name.
         public async Task<List<ConcessionSale>> SearchSales(Guid tenantId, string? query, DateTime? fromUtc, DateTime? toUtc, int take = 200)
         {
             var hasQuery = !string.IsNullOrWhiteSpace(query);
@@ -940,13 +983,14 @@ namespace Services.Repositories
             var sql = $@"
                 SELECT {SaleCols} FROM concession_sale
                 WHERE tenant_id = @tenantId
-                  AND status IN ('paid', 'refunded')
-                  AND (@fromUtc IS NULL OR created_at >= @fromUtc)
-                  AND (@toUtc IS NULL OR created_at < @toUtc)
+                  AND status IN ('paid', 'refunded', 'open', 'voided')
+                  AND (@fromUtc::timestamptz IS NULL OR created_at >= @fromUtc)
+                  AND (@toUtc::timestamptz IS NULL OR created_at < @toUtc)
                   AND (@hasQuery = false
                        OR (@num <> 0 AND order_number = @num)
-                       OR LOWER(purchaser_name) LIKE LOWER(@like)
-                       OR LOWER(purchaser_email) LIKE LOWER(@like))
+                       OR LOWER(purchaser_name) LIKE LOWER(@like::text)
+                       OR LOWER(purchaser_email) LIKE LOWER(@like::text)
+                       OR LOWER(tab_name) LIKE LOWER(@like::text))
                 ORDER BY created_at DESC
                 LIMIT @take";
             return (await _db.Query<ConcessionSale>(sql, new { tenantId, fromUtc, toUtc, hasQuery, like, num, take })).ToList();
@@ -960,14 +1004,207 @@ namespace Services.Repositories
         }
 
         // Kitchen prep stats for completed orders since a cutoff (computed against created_at = submitted).
+        // A tab's completed_at - created_at is how long the table sat, not prep time, so tabs count
+        // toward the completed total but are left out of the average.
         public async Task<(int Count, double AvgPrepSeconds)> GetKitchenStats(Guid tenantId, DateTime sinceUtc)
         {
             const string sql = @"
                 SELECT COUNT(*)::int AS Count,
-                       COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at))), 0) AS AvgPrepSeconds
+                       COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) FILTER (WHERE tab_opened_at IS NULL), 0) AS AvgPrepSeconds
                 FROM concession_sale
                 WHERE tenant_id = @tenantId AND completed_at IS NOT NULL AND completed_at >= @sinceUtc";
             return (await _db.Query<(int Count, double AvgPrepSeconds)>(sql, new { tenantId, sinceUtc })).FirstOrDefault();
+        }
+
+        // ── Open tabs (Script0291) ───────────────────────────────────────────────────
+        // Oldest first, with the per-tab counts the drawer shows. Lines are aggregated in a lateral
+        // subquery keyed on the (already tenant-scoped) sale row.
+        public async Task<List<ConcessionOpenTabRow>> ListOpenTabs(Guid tenantId)
+        {
+            var sql = $@"
+                SELECT s.*,
+                       COALESCE(x.rounds, 0) AS Rounds, COALESCE(x.item_count, 0) AS ItemCount, x.last_round_at AS LastRoundAt
+                FROM (SELECT {SaleCols} FROM concession_sale
+                      WHERE tenant_id = @tenantId AND status = 'open') s
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(DISTINCT l.round_number)::int AS rounds,
+                           COALESCE(SUM(l.quantity) FILTER (WHERE l.parent_line_id IS NULL), 0)::int AS item_count,
+                           MAX(l.fired_at) AS last_round_at
+                    FROM concession_sale_line l WHERE l.sale_id = s.id) x ON true
+                ORDER BY s.TabOpenedAt, s.CreatedAt";
+            return (await _db.Query<ConcessionOpenTabRow>(sql, new { tenantId })).ToList();
+        }
+
+        public async Task<(int Count, long TotalCents)> GetOpenTabsAggregate(Guid tenantId)
+        {
+            const string sql = @"
+                SELECT COUNT(*)::int AS Count, COALESCE(SUM(total_cents), 0)::bigint AS TotalCents
+                FROM concession_sale WHERE tenant_id = @tenantId AND status = 'open'";
+            return (await _db.Query<(int Count, long TotalCents)>(sql, new { tenantId })).FirstOrDefault();
+        }
+
+        // Rewrites the money + discount + credit + purchaser snapshot after a round or a close attempt.
+        // Only an OPEN tab still pointing at the intent the entity knows about (normally none) can
+        // change: a concurrent close/void, or a card close that started in between, wins and the
+        // caller sees false.
+        private const string UpdateTabTotalsSql = @"
+            UPDATE concession_sale SET
+                subtotal_cents = @SubtotalCents, tip_cents = @TipCents, tax_cents = @TaxCents,
+                discount_cents = @DiscountCents, discount_kind = @DiscountKind, discount_label = @DiscountLabel,
+                comp_reason_id = @CompReasonId, comp_reason_label = @CompReasonLabel,
+                authorized_by_user_id = @AuthorizedByUserId, authorized_by_name = @AuthorizedByName,
+                total_cents = @TotalCents, credit_applied_cents = @CreditAppliedCents, credit_account_id = @CreditAccountId,
+                credit_redeem_ref = @CreditRedeemRef,
+                purchaser_user_id = @PurchaserUserId, purchaser_email = @PurchaserEmail, purchaser_name = @PurchaserName,
+                fulfillment_status = CASE WHEN fulfillment_status = 'completed' THEN 'active' ELSE fulfillment_status END
+            WHERE id = @Id AND tenant_id = @TenantId AND status = 'open'
+              AND stripe_payment_intent_id IS NOT DISTINCT FROM @StripePaymentIntentId::text";
+
+        public async Task<bool> UpdateTabTotals(ConcessionSale sale)
+            => await _db.Execute(UpdateTabTotalsSql, sale) > 0;
+
+        public async Task<int?> AppendTabRound(ConcessionSale sale, IReadOnlyList<ConcessionSaleLine> lines)
+        {
+            await using var conn = new NpgsqlConnection(_db.ConnectionString);
+            await conn.OpenAsync();
+            await using var tx = await conn.BeginTransactionAsync();
+            try
+            {
+                // The sale row is locked for the rest of the transaction, so the round number read next
+                // and the lines inserted under it can't interleave with another register's round (or a
+                // close) on the same tab. Anything but "open, no card in flight" aborts before a write.
+                var row = await conn.QuerySingleOrDefaultAsync<(string Status, string? IntentId)>(@"
+                    SELECT status, stripe_payment_intent_id FROM concession_sale
+                    WHERE id = @Id AND tenant_id = @TenantId FOR UPDATE", sale, tx);
+                if (row.Status != "open" || row.IntentId is not null)
+                {
+                    await tx.RollbackAsync();
+                    return null;
+                }
+                var round = await conn.ExecuteScalarAsync<int>(
+                    "SELECT COALESCE(MAX(round_number), 0) + 1 FROM concession_sale_line WHERE sale_id = @Id", sale, tx);
+                foreach (var l in lines) l.RoundNumber = round;   // children inherit it in InsertSaleLines
+                await InsertSaleLines(conn, tx, sale.Id, lines);
+                if (await conn.ExecuteAsync(UpdateTabTotalsSql, sale, tx) == 0)
+                {
+                    await tx.RollbackAsync();
+                    return null;
+                }
+                await tx.CommitAsync();
+                return round;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+
+        // Same global-by-PaymentIntent shape as GetSaleByPaymentIntentId (PI ids are unique across
+        // Stripe); used only so the webhook can recognize a hold's own lifecycle events.
+        public async Task<ConcessionSale?> GetSaleByHoldPaymentIntentId(string paymentIntentId)
+        {
+            var sql = $@"SELECT {SaleCols} FROM concession_sale
+                        WHERE hold_payment_intent_id = @paymentIntentId LIMIT 1";
+            return (await _db.Query<ConcessionSale>(sql, new { paymentIntentId })).FirstOrDefault();
+        }
+
+        public async Task<bool> RenameTab(Guid saleId, Guid tenantId, string? tabName, string? customerName)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET tab_name = @tabName, purchaser_name = COALESCE(@customerName, purchaser_name)
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'";
+            return await _db.Execute(sql, new { saleId, tenantId, tabName, customerName }) > 0;
+        }
+
+        public async Task<bool> SetTabHold(Guid saleId, Guid tenantId, string? holdPaymentIntentId, int? holdAmountCents)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET hold_payment_intent_id = @holdPaymentIntentId, hold_amount_cents = @holdAmountCents
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'";
+            return await _db.Execute(sql, new { saleId, tenantId, holdPaymentIntentId, holdAmountCents }) > 0;
+        }
+
+        public async Task<bool> SetTabHoldCard(Guid saleId, Guid tenantId, string holdPaymentIntentId, string? brand, string? last4, string? cardholderName, string? autoName)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET
+                    hold_card_brand = @brand, hold_card_last4 = @last4, hold_cardholder_name = @cardholderName,
+                    tab_name = COALESCE(NULLIF(TRIM(tab_name), ''), @autoName)
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'
+                  AND hold_payment_intent_id = @holdPaymentIntentId";
+            return await _db.Execute(sql, new { saleId, tenantId, holdPaymentIntentId, brand, last4, cardholderName, autoName }) > 0;
+        }
+
+        public async Task<bool> SetTabCardPayment(Guid saleId, Guid tenantId, string paymentIntentId, string paymentMethod, string? connectedAccountId)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET stripe_payment_intent_id = @paymentIntentId, payment_method = @paymentMethod,
+                                           stripe_connected_account_id = @connectedAccountId
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'
+                  AND (stripe_payment_intent_id IS NULL OR stripe_payment_intent_id = @paymentIntentId)";
+            return await _db.Execute(sql, new { saleId, tenantId, paymentIntentId, paymentMethod, connectedAccountId }) > 0;
+        }
+
+        public async Task<bool> ClearTabCardPayment(Guid saleId, Guid tenantId, string paymentIntentId)
+        {
+            // payment_method falls back to the 'cash' placeholder an open tab carries (the column is
+            // NOT NULL); whatever tender finally closes the tab overwrites it.
+            const string sql = @"
+                UPDATE concession_sale SET stripe_payment_intent_id = NULL, payment_method = 'cash'
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'
+                  AND stripe_payment_intent_id = @paymentIntentId";
+            return await _db.Execute(sql, new { saleId, tenantId, paymentIntentId }) > 0;
+        }
+
+        public async Task<bool> CloseTabPaid(Guid saleId, Guid tenantId, string paymentMethod)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET status = 'paid', paid_at = now(), tab_closed_at = now(),
+                                           payment_method = @paymentMethod
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'
+                  AND stripe_payment_intent_id IS NULL";
+            return await _db.Execute(sql, new { saleId, tenantId, paymentMethod }) > 0;
+        }
+
+        public async Task<bool> VoidTab(Guid saleId, Guid tenantId, string reason, string? voidedByName)
+        {
+            const string sql = @"
+                UPDATE concession_sale SET status = 'voided', voided_at = now(), void_reason = @reason, voided_by_name = @voidedByName,
+                                           fulfillment_status = 'completed', completed_at = COALESCE(completed_at, now())
+                WHERE id = @saleId AND tenant_id = @tenantId AND status = 'open'
+                  AND stripe_payment_intent_id IS NULL";
+            if (await _db.Execute(sql, new { saleId, tenantId, reason, voidedByName }) == 0) return false;
+            // Anything still on the cook screen comes off: the kitchen stops cooking a torn-up tab.
+            const string linesSql = @"
+                UPDATE concession_sale_line l SET served_at = now()
+                FROM concession_sale s
+                WHERE l.sale_id = @saleId AND s.id = l.sale_id AND s.tenant_id = @tenantId AND l.served_at IS NULL";
+            await _db.Execute(linesSql, new { saleId, tenantId });
+            return true;
+        }
+
+        public async Task<int> MarkRoundServed(Guid saleId, Guid tenantId, int roundNumber)
+        {
+            const string sql = @"
+                UPDATE concession_sale_line l SET served_at = now(), prep_status = 'ready'
+                FROM concession_sale s
+                WHERE l.sale_id = @saleId AND s.id = l.sale_id AND s.tenant_id = @tenantId
+                  AND s.tab_opened_at IS NOT NULL AND l.round_number = @roundNumber AND l.served_at IS NULL";
+            return await _db.Execute(sql, new { saleId, tenantId, roundNumber });
+        }
+
+        public async Task CompleteTabIfAllServed(Guid saleId, Guid tenantId)
+        {
+            // Only a tab that is no longer open (paid) and has nothing left to serve. Grab-and-go lines
+            // never show on the board, so a served_at on them is not required: prep_status 'ready' is.
+            const string sql = @"
+                UPDATE concession_sale s SET fulfillment_status = 'completed', completed_at = COALESCE(s.completed_at, now())
+                WHERE s.id = @saleId AND s.tenant_id = @tenantId
+                  AND s.tab_opened_at IS NOT NULL AND s.status = 'paid' AND s.fulfillment_status <> 'completed'
+                  AND NOT EXISTS (SELECT 1 FROM concession_sale_line l
+                                  WHERE l.sale_id = s.id AND l.requires_prep = true AND l.served_at IS NULL)";
+            await _db.Execute(sql, new { saleId, tenantId });
         }
 
         // ── Stations ──────────────────────────────────────────────────────────────
@@ -1609,8 +1846,9 @@ namespace Services.Repositories
         }
 
         // Deplete theoretical inventory for a paid sale's lines via their recipes. Best-effort (the
-        // caller swallows failures so it never blocks the sale).
-        public async Task DepleteInventoryForSale(Guid saleId, Guid tenantId)
+        // caller swallows failures so it never blocks the sale). A tab passes the round it just fired
+        // so each round depletes exactly once, as it is cooked, rather than the whole tab at close.
+        public async Task DepleteInventoryForSale(Guid saleId, Guid tenantId, int? roundNumber = null)
         {
             const string sql = @"
                 UPDATE concession_inventory_item i
@@ -1619,9 +1857,10 @@ namespace Services.Repositories
                       FROM concession_sale_line l
                       JOIN concession_recipe_item r ON r.product_id = l.product_id
                       WHERE l.sale_id = @saleId
+                        AND (@roundNumber::int IS NULL OR l.round_number = @roundNumber)
                       GROUP BY r.inventory_item_id) usage
                 WHERE i.id = usage.inventory_item_id AND i.tenant_id = @tenantId";
-            await _db.Execute(sql, new { saleId, tenantId });
+            await _db.Execute(sql, new { saleId, tenantId, roundNumber });
         }
 
         // ── Stock takes (counts) ───────────────────────────────────────────────────

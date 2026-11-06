@@ -31,6 +31,9 @@
                         {{ displayPushFailing ? 'Customer display stopped syncing' : 'No customer display paired' }}
                     </v-tooltip>
                 </v-btn>
+                <v-btn v-if="tabsEnabled" variant="tonal" prepend-icon="mdi-book-open-variant" @click="openTabsDrawer">
+                    Tabs ({{ openTabs.length }})
+                </v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-receipt-text-clock" :to="{ name: 'AdminConcessionOrders' }">Orders</v-btn>
                 <v-btn variant="tonal" prepend-icon="mdi-stove" :to="{ name: 'AdminConcessionKitchen' }">Cook screen</v-btn>
             </div>
@@ -80,7 +83,25 @@
 
                 <!-- Cart -->
                 <div class="pos-cart d-flex flex-column">
-                    <div class="px-4 py-3 d-flex align-center">
+                    <!-- Tab mode: the cart is the NEXT round of a selected tab, so the header says which
+                         tab, which round, and what is already on it. Everything else about the cart
+                         (lines, discounts, rush) works exactly as for a walk-up order. -->
+                    <div v-if="selectedTab" class="px-4 py-3 d-flex align-center pos-tab-head">
+                        <div class="flex-grow-1" style="min-width: 0">
+                            <div class="rp-kicker">Tab · Round {{ nextRoundNumber }}</div>
+                            <div class="d-flex align-center ga-1">
+                                <span class="text-h6 font-weight-bold text-truncate">{{ selectedTab.tabName || 'Unnamed tab' }}</span>
+                                <v-btn icon="mdi-pencil" size="x-small" variant="text" density="comfortable" @click="openRename" />
+                            </div>
+                            <div class="text-caption text-medium-emphasis d-flex align-center ga-2 flex-wrap">
+                                <span>#{{ selectedTab.orderNumber ?? '—' }} · {{ nextRoundNumber - 1 }} round{{ nextRoundNumber === 2 ? '' : 's' }} fired · {{ money(selectedTab.totalCents) }} on tab</span>
+                                <span v-if="selectedTab.holdCardLabel" class="rp-pill rp-pill--blue">{{ selectedTab.holdCardLabel }}</span>
+                            </div>
+                        </div>
+                        <v-chip v-if="cartCount" size="small" class="ml-2" variant="tonal">{{ cartCount }}</v-chip>
+                        <v-btn v-if="cart.length" size="small" variant="text" color="error" @click="clearOrder">Clear</v-btn>
+                    </div>
+                    <div v-else class="px-4 py-3 d-flex align-center">
                         <span class="text-h6 font-weight-bold">Order</span>
                         <v-chip v-if="cartCount" size="small" class="ml-2" variant="tonal">{{ cartCount }}</v-chip>
                         <v-spacer />
@@ -89,8 +110,8 @@
                     <v-divider />
                     <div class="pos-cart-items flex-grow-1">
                         <div v-if="cart.length === 0" class="empty-cart text-medium-emphasis">
-                            <v-icon size="48" class="text-muted2">mdi-cart-outline</v-icon>
-                            <div class="mt-2">Tap items to start an order</div>
+                            <v-icon size="48" class="text-muted2">{{ selectedTab ? 'mdi-book-open-variant' : 'mdi-cart-outline' }}</v-icon>
+                            <div class="mt-2">{{ selectedTab ? `Tap items to add round ${nextRoundNumber} to this tab` : 'Tap items to start an order' }}</div>
                         </div>
                         <div v-for="(line, i) in cart" :key="i" class="cart-line">
                             <div class="flex-grow-1">
@@ -164,12 +185,30 @@
                             @click="rushOrder = !rushOrder">
                             {{ rushOrder ? 'Rush order: on' : 'Mark as rush' }}
                         </v-btn>
-                        <div class="d-flex ga-2">
-                            <v-btn class="flex-grow-1" color="success" size="large" height="56" :disabled="cart.length === 0 || paying"
-                                prepend-icon="mdi-cash" @click="startCheckout('cash')">Cash</v-btn>
-                            <v-btn class="flex-grow-1" color="primary" size="large" height="56" :disabled="cart.length === 0 || paying"
-                                prepend-icon="mdi-credit-card" @click="startCheckout('card')">Card</v-btn>
-                        </div>
+                        <template v-if="selectedTab">
+                            <v-btn block color="primary" size="large" height="56" class="mb-2"
+                                :disabled="cart.length === 0 || paying || tabBusy" :loading="tabBusy"
+                                prepend-icon="mdi-silverware-fork-knife" @click="addRoundToTab">
+                                Add to tab · Round {{ nextRoundNumber }}
+                            </v-btn>
+                            <div class="d-flex ga-2">
+                                <v-btn class="flex-grow-1" color="success" variant="tonal" prepend-icon="mdi-cash-register"
+                                    :disabled="paying || tabBusy" @click="startTabClose(selectedTab)">Close tab</v-btn>
+                                <v-btn variant="outlined" prepend-icon="mdi-pause" :disabled="paying || tabBusy" @click="parkTab">Park</v-btn>
+                                <v-btn variant="text" color="error" :disabled="paying || tabBusy" @click="openVoid(selectedTab)">Void</v-btn>
+                            </div>
+                        </template>
+                        <template v-else>
+                            <div class="d-flex ga-2">
+                                <v-btn class="flex-grow-1" color="success" size="large" height="56" :disabled="cart.length === 0 || paying"
+                                    prepend-icon="mdi-cash" @click="startCheckout('cash')">Cash</v-btn>
+                                <v-btn class="flex-grow-1" color="primary" size="large" height="56" :disabled="cart.length === 0 || paying"
+                                    prepend-icon="mdi-credit-card" @click="startCheckout('card')">Card</v-btn>
+                            </div>
+                            <!-- A tab may open empty (just a name, or a held card) and take its rounds later. -->
+                            <v-btn v-if="tabsEnabled" block variant="outlined" class="mt-2" :disabled="paying"
+                                prepend-icon="mdi-book-open-variant" @click="openOpenTab">Open tab</v-btn>
+                        </template>
                         <div v-if="readerState !== 'connected'" class="text-caption text-medium-emphasis text-center mt-2">
                             Connect a reader to take card payments.
                         </div>
@@ -270,20 +309,30 @@
         <v-dialog v-model="confirmDialog" fullscreen transition="dialog-bottom-transition">
             <v-card class="d-flex flex-column">
                 <v-toolbar color="transparent" density="comfortable" class="border-b">
-                    <v-btn icon="mdi-arrow-left" @click="confirmDialog = false" />
-                    <v-toolbar-title>Review your order · {{ tender === 'cash' ? 'Cash' : 'Card' }}</v-toolbar-title>
+                    <v-btn icon="mdi-arrow-left" @click="cancelConfirm" />
+                    <v-toolbar-title>
+                        <template v-if="closingTab">Close tab · {{ closingTab.tabName || 'Unnamed tab' }}</template>
+                        <template v-else>Review your order · {{ tender === 'cash' ? 'Cash' : 'Card' }}</template>
+                    </v-toolbar-title>
                 </v-toolbar>
 
                 <div class="confirm-body flex-grow-1">
                     <div class="confirm-inner pa-4">
+                        <!-- reviewLines is the cart for a walk-up sale and every fired round for a tab
+                             close (grouped under a round header), so the review reads the same either way. -->
                         <v-list class="mb-2">
-                            <v-list-item v-for="(line, i) in cart" :key="i" class="px-0">
-                                <v-list-item-title class="font-weight-medium">{{ line.quantity }}× {{ line.name }}</v-list-item-title>
-                                <v-list-item-subtitle v-if="line.variantLabel">{{ line.variantLabel }}</v-list-item-subtitle>
-                                <v-list-item-subtitle v-for="m in line.modifierLabels" :key="m">+ {{ m }}</v-list-item-subtitle>
-                                <v-list-item-subtitle v-if="line.notes" class="font-italic">"{{ line.notes }}"</v-list-item-subtitle>
-                                <template #append><span class="font-weight-medium">{{ money(line.lineTotal) }}</span></template>
-                            </v-list-item>
+                            <template v-for="(line, i) in reviewLines" :key="i">
+                                <v-list-subheader v-if="closingTab && (i === 0 || reviewLines[i - 1].roundNumber !== line.roundNumber)">
+                                    Round {{ line.roundNumber ?? 1 }}
+                                </v-list-subheader>
+                                <v-list-item class="px-0">
+                                    <v-list-item-title class="font-weight-medium">{{ line.quantity }}× {{ line.name }}</v-list-item-title>
+                                    <v-list-item-subtitle v-if="line.variantLabel">{{ line.variantLabel }}</v-list-item-subtitle>
+                                    <v-list-item-subtitle v-for="m in line.modifierLabels" :key="m">+ {{ m }}</v-list-item-subtitle>
+                                    <v-list-item-subtitle v-if="line.notes" class="font-italic">"{{ line.notes }}"</v-list-item-subtitle>
+                                    <template #append><span class="font-weight-medium">{{ money(line.lineTotal) }}</span></template>
+                                </v-list-item>
+                            </template>
                         </v-list>
 
                         <template v-if="tipsEnabled && pairedDisplayId && !cashierTipEntry">
@@ -307,7 +356,7 @@
                                 <v-btn v-for="pct in [15, 18, 20]" :key="pct"
                                     :variant="tipMode === 'pct' && tipPct === pct ? 'flat' : 'outlined'"
                                     :color="tipMode === 'pct' && tipPct === pct ? 'primary' : undefined"
-                                    @click="tipMode = 'pct'; tipPct = pct">{{ pct }}% · {{ money(Math.round(subtotal * pct / 100)) }}</v-btn>
+                                    @click="tipMode = 'pct'; tipPct = pct">{{ pct }}% · {{ money(Math.round(ckSubtotal * pct / 100)) }}</v-btn>
                                 <v-btn :variant="tipMode === 'custom' ? 'flat' : 'outlined'" :color="tipMode === 'custom' ? 'primary' : undefined" @click="tipMode = 'custom'">Custom</v-btn>
                             </div>
                             <v-text-field v-if="tipMode === 'custom'" v-model.number="tipCustomDollars" type="number" min="0" step="0.50"
@@ -315,10 +364,13 @@
                             <v-divider class="my-4" />
                         </template>
 
-                        <div class="text-subtitle-1 font-weight-bold mb-2">Name for the order (optional)</div>
-                        <v-text-field v-model="customerName" label="Customer name" density="compact" hide-details
-                            placeholder="e.g. Alex" prepend-inner-icon="mdi-account" style="max-width: 320px" class="mb-4" />
-                        <v-divider class="mb-4" />
+                        <!-- A tab already has its name; renaming lives on the cart header. -->
+                        <template v-if="!closingTab">
+                            <div class="text-subtitle-1 font-weight-bold mb-2">Name for the order (optional)</div>
+                            <v-text-field v-model="customerName" label="Customer name" density="compact" hide-details
+                                placeholder="e.g. Alex" prepend-inner-icon="mdi-account" style="max-width: 320px" class="mb-4" />
+                            <v-divider class="mb-4" />
+                        </template>
 
                         <div class="text-subtitle-1 font-weight-bold mb-2">Store credit</div>
                         <CreditLookupField v-model="creditAccount" class="mb-4" style="max-width: 420px" />
@@ -340,9 +392,29 @@
 
                 <div class="confirm-footer pa-4">
                     <div class="confirm-inner">
-                        <div class="d-flex justify-space-between"><span class="text-medium-emphasis">Subtotal</span><span>{{ money(pricesIncludeTax ? subtotal - taxCents : subtotal) }}</span></div>
-                        <div v-if="taxCents" class="d-flex justify-space-between mt-1"><span class="text-medium-emphasis">Tax{{ pricesIncludeTax ? ' (incl.)' : '' }}</span><span>{{ money(taxCents) }}</span></div>
-                        <div v-if="discountCents" class="d-flex justify-space-between mt-1" style="color: rgb(var(--v-theme-success))"><span>{{ orderDiscountLabel || 'Discount' }}</span><span>-{{ money(discountCents) }}</span></div>
+                        <!-- Closing a tab: the tender is chosen here (a walk-up sale picks it in the cart)
+                             because the card on file is only an option once we know the tab has one. -->
+                        <template v-if="closingTab">
+                            <div class="d-flex align-center flex-wrap ga-2 mb-3">
+                                <v-btn-toggle v-model="tender" mandatory divided density="comfortable" class="flex-wrap">
+                                    <v-btn value="cash" prepend-icon="mdi-cash">Cash</v-btn>
+                                    <v-btn value="card" prepend-icon="mdi-credit-card">Card</v-btn>
+                                    <v-btn v-if="closingTab.holdCardLabel" value="hold" prepend-icon="mdi-credit-card-check">
+                                        Card on file · {{ closingTab.holdCardLabel }}
+                                    </v-btn>
+                                </v-btn-toggle>
+                                <v-spacer />
+                                <v-btn variant="text" size="small" prepend-icon="mdi-tag-outline" @click="openDiscount('order')">
+                                    {{ orderDiscount ? 'Change discount' : 'Discount or comp' }}
+                                </v-btn>
+                            </div>
+                            <div v-if="managerName" class="text-caption text-medium-emphasis mb-2">
+                                <v-icon size="x-small" class="mr-1">mdi-shield-check</v-icon>Approved by {{ managerName }}
+                            </div>
+                        </template>
+                        <div class="d-flex justify-space-between"><span class="text-medium-emphasis">Subtotal</span><span>{{ money(ckPricesIncludeTax ? ckSubtotal - ckTax : ckSubtotal) }}</span></div>
+                        <div v-if="ckTax" class="d-flex justify-space-between mt-1"><span class="text-medium-emphasis">Tax{{ ckPricesIncludeTax ? ' (incl.)' : '' }}</span><span>{{ money(ckTax) }}</span></div>
+                        <div v-if="ckDiscount" class="d-flex justify-space-between mt-1" style="color: rgb(var(--v-theme-success))"><span>{{ orderDiscountLabel || 'Discount' }}</span><span>-{{ money(ckDiscount) }}</span></div>
                         <div v-if="tipCents" class="d-flex justify-space-between mt-1"><span class="text-medium-emphasis">Tip</span><span>{{ money(tipCents) }}</span></div>
                         <div v-if="creditAppliedEstimate" class="d-flex justify-space-between mt-1" style="color: rgb(var(--v-theme-success))">
                             <span>Store credit</span><span>-{{ money(creditAppliedEstimate) }}</span>
@@ -354,12 +426,16 @@
                         <v-btn block size="large" height="56" :loading="paying"
                             :color="tender === 'cash' ? 'success' : 'primary'"
                             :disabled="tender === 'card' && dueEstimate > 0 && readerState !== 'connected'"
-                            :prepend-icon="tender === 'cash' ? 'mdi-cash' : 'mdi-credit-card'"
+                            :prepend-icon="tender === 'cash' ? 'mdi-cash' : tender === 'hold' ? 'mdi-credit-card-check' : 'mdi-credit-card'"
                             @click="confirmPay">
-                            {{ tender === 'cash' ? 'Continue to cash' : `Charge card · ${money(dueEstimate)}` }}
+                            {{ payButtonLabel }}
                         </v-btn>
-                        <div v-if="paying && tender === 'card'" class="text-center text-medium-emphasis mt-2">Processing payment on the reader…</div>
+                        <div v-if="paying && tender === 'hold'" class="text-center text-medium-emphasis mt-2">Charging the card on file…</div>
+                        <div v-else-if="paying && tender === 'card'" class="text-center text-medium-emphasis mt-2">Processing payment on the reader…</div>
                         <div v-else-if="tender === 'card' && dueEstimate > 0 && readerState !== 'connected'" class="text-caption text-medium-emphasis text-center mt-2">Connect a reader to take card payments.</div>
+                        <div v-else-if="tender === 'hold' && closingTab?.holdAmountCents != null && dueEstimate > closingTab.holdAmountCents" class="text-caption text-medium-emphasis text-center mt-2">
+                            The total is above the {{ money(closingTab.holdAmountCents) }} hold. If the card can't be charged for the full amount, you'll be asked to collect it on the reader.
+                        </div>
                     </div>
                 </div>
             </v-card>
@@ -371,7 +447,7 @@
                 <v-card-title class="d-flex align-center">
                     Cash
                     <v-spacer />
-                    <v-btn icon="mdi-close" variant="text" size="small" @click="cashDialog = false" />
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="cancelCash" />
                 </v-card-title>
                 <v-card-text>
                     <div class="d-flex justify-space-between text-h6 mb-3">
@@ -385,7 +461,7 @@
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
-                    <v-btn variant="text" @click="cashDialog = false">Cancel</v-btn>
+                    <v-btn variant="text" @click="cancelCash">Cancel</v-btn>
                     <v-btn color="success" :loading="paying" :disabled="changeCents < 0" @click="payCash">Take payment</v-btn>
                 </v-card-actions>
             </v-card>
@@ -395,13 +471,15 @@
         <v-dialog v-model="doneDialog" max-width="340" persistent>
             <v-card class="text-center pa-4">
                 <v-icon color="success" size="64">mdi-check-circle</v-icon>
+                <div v-if="lastClosedTabName" class="rp-kicker mt-2">Tab closed · {{ lastClosedTabName }}</div>
                 <div class="pos-total mt-2">{{ lastOrderNumber != null ? `Order #${lastOrderNumber}` : 'Order placed' }}</div>
                 <div class="text-medium-emphasis mb-4">
-                    {{ lastOrderNumber != null ? 'Call this number at pickup.' : 'Payment received — the order number will appear on the cook screen shortly.' }}
+                    {{ lastClosedTabName ? 'Payment received. The tab is settled.'
+                        : lastOrderNumber != null ? 'Call this number at pickup.' : 'Payment received — the order number will appear on the cook screen shortly.' }}
                 </div>
                 <v-btn block color="primary" class="mb-2" prepend-icon="mdi-printer" @click="printLast">Print receipt</v-btn>
-                <v-btn v-if="kitchenPrinters.length" block variant="tonal" class="mb-2" prepend-icon="mdi-printer-pos"
-                    @click="sendKitchenTickets(true)">Reprint kitchen tickets</v-btn>
+                <v-btn v-if="kitchenPrinters.length && lastKitchenJob" block variant="tonal" class="mb-2" prepend-icon="mdi-printer-pos"
+                    @click="sendKitchenTickets(lastKitchenJob, true)">Reprint kitchen tickets</v-btn>
                 <v-btn block variant="tonal" @click="newOrder">New order</v-btn>
             </v-card>
         </v-dialog>
@@ -571,6 +649,164 @@
             </v-card>
         </v-dialog>
 
+        <!-- Open a tab: name, optional member, optional card hold on the reader -->
+        <v-dialog v-model="openTabDialog" max-width="480" :persistent="openingTab">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Open a tab
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="openingTab" @click="openTabDialog = false" />
+                </v-card-title>
+                <v-card-text>
+                    <!-- Reader phase: the tab already exists; we are waiting on the card for the hold. -->
+                    <div v-if="tabHoldPhase === 'reader'" class="text-center py-6">
+                        <v-progress-circular indeterminate size="48" width="3" />
+                        <div class="text-subtitle-1 font-weight-bold mt-4">Present the card on the reader</div>
+                        <div class="text-medium-emphasis">
+                            Holding {{ money(tabHoldCents) }} on the card. Nothing is charged until the tab closes.
+                        </div>
+                    </div>
+                    <template v-else>
+                        <v-text-field v-model="tabNameInput" label="Tab name" placeholder="e.g. Red hat table 4" density="compact"
+                            autofocus hide-details prepend-inner-icon="mdi-book-open-variant" @keyup.enter="submitOpenTab" />
+                        <div class="text-caption text-medium-emphasis mt-1 mb-4">
+                            {{ cart.length
+                                ? `${cartCount} item${cartCount === 1 ? '' : 's'} (${money(total)}) go to the kitchen now as round 1.`
+                                : 'No items yet. Rounds are added as the group orders.' }}
+                        </div>
+
+                        <div class="text-subtitle-2 mb-1">Member (optional)</div>
+                        <div v-if="tabMember" class="pa-3 d-flex align-center ga-2" style="border: 1px solid var(--rp-line2); border-radius: 10px;">
+                            <v-icon color="success" size="small">mdi-account-check</v-icon>
+                            <div class="flex-grow-1" style="min-width: 0">
+                                <div class="font-weight-medium text-truncate">{{ tabMember.name || tabMember.email || 'Member' }}</div>
+                                <div class="text-caption text-medium-emphasis">
+                                    {{ tabMember.perk ? `${tabMember.perk.label} · applied when the tab closes` : 'No member perks' }}
+                                </div>
+                            </div>
+                            <v-btn icon="mdi-close" size="x-small" variant="text" @click="tabMember = null" />
+                        </div>
+                        <template v-else>
+                            <div class="d-flex align-center ga-2">
+                                <v-text-field v-model="memberQuery" label="Email or phone" density="compact" hide-details
+                                    prepend-inner-icon="mdi-account-search" @keyup.enter="lookupMember" />
+                                <v-btn variant="tonal" :loading="memberLooking" @click="lookupMember">Look up</v-btn>
+                            </div>
+                            <div v-if="memberResult" class="mt-2 pa-3 d-flex align-center ga-2" style="border: 1px solid var(--rp-line2); border-radius: 10px;">
+                                <div class="flex-grow-1" style="min-width: 0">
+                                    <div class="font-weight-medium text-truncate">{{ memberResult.customerName || memberResult.customerEmail || 'Customer' }}</div>
+                                    <div class="text-caption text-medium-emphasis">{{ memberPerkSummary(memberResult) }}</div>
+                                </div>
+                                <v-btn size="small" color="primary" variant="tonal" @click="attachMember">Attach</v-btn>
+                            </div>
+                        </template>
+
+                        <v-divider class="my-4" />
+                        <template v-if="readerState === 'connected'">
+                            <v-switch v-model="tabHoldCard" color="primary" density="compact" hide-details
+                                :label="`Hold a card (${money(tabHoldCents)})`" />
+                            <div class="text-caption text-medium-emphasis mt-1">
+                                Authorizes {{ money(tabHoldCents) }} on the reader now and keeps the card on file to close
+                                the tab with. With a card held the name can stay blank; the tab is named from the card.
+                            </div>
+                        </template>
+                        <div v-else class="text-caption text-medium-emphasis">Connect the reader to hold a card on this tab.</div>
+                    </template>
+                </v-card-text>
+                <v-card-actions v-if="tabHoldPhase !== 'reader'">
+                    <v-spacer />
+                    <v-btn variant="text" :disabled="openingTab" @click="openTabDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" variant="flat" :loading="openingTab"
+                        :disabled="!tabNameInput.trim() && !tabHoldCard" @click="submitOpenTab">
+                        {{ tabHoldCard ? 'Open & hold card' : 'Open tab' }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Rename a tab (also prompted when a card hold failed on a tab that had no typed name) -->
+        <v-dialog v-model="renameDialog" max-width="400">
+            <v-card>
+                <v-card-title>Name this tab</v-card-title>
+                <v-card-text>
+                    <v-text-field v-model="renameInput" label="Tab name" density="compact" hide-details autofocus
+                        placeholder="e.g. Red hat table 4" @keyup.enter="confirmRename" />
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="renameDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" variant="flat" :loading="renaming" :disabled="!renameInput.trim()" @click="confirmRename">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Void a tab: manager PIN + reason -->
+        <v-dialog v-model="voidDialog" max-width="420" persistent>
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Void tab
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" :disabled="voiding" @click="voidDialog = false" />
+                </v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-3">
+                        Voids <strong>{{ voidTarget?.tabName || 'this tab' }}</strong> ({{ money(voidTarget?.totalCents ?? 0) }}).
+                        Items already sent to the kitchen are not restocked, and any card hold is released.
+                    </p>
+                    <div class="text-caption text-medium-emphasis mb-2">
+                        <v-icon size="x-small" class="mr-1">mdi-shield-lock-outline</v-icon>Needs a manager PIN
+                    </div>
+                    <v-text-field v-model="voidReason" label="Reason" density="compact" hide-details class="mb-3" autofocus
+                        placeholder="e.g. Walked out, duplicate tab" />
+                    <v-text-field v-model="voidPin" label="Manager PIN" type="password" inputmode="numeric"
+                        density="compact" hide-details @keyup.enter="confirmVoid" />
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" :disabled="voiding" @click="voidDialog = false">Cancel</v-btn>
+                    <v-btn color="error" variant="flat" :loading="voiding" :disabled="!voidReason.trim() || !voidPin.trim()" @click="confirmVoid">Void tab</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- Open tabs drawer -->
+        <v-navigation-drawer v-model="tabsDrawer" location="right" width="420" temporary>
+            <div class="d-flex align-center px-4 py-3">
+                <span class="text-h6 font-weight-bold">Open tabs</span>
+                <v-chip v-if="openTabs.length" size="small" class="ml-2" variant="tonal">{{ openTabs.length }}</v-chip>
+                <v-spacer />
+                <v-btn icon="mdi-refresh" size="small" variant="text" :loading="tabsLoading" @click="refreshTabs" />
+                <v-btn icon="mdi-close" size="small" variant="text" @click="tabsDrawer = false" />
+            </div>
+            <v-divider />
+            <div v-if="openTabs.length === 0" class="empty-cart text-medium-emphasis">
+                <v-icon size="48" class="text-muted2">mdi-book-open-variant</v-icon>
+                <div class="mt-2">No open tabs.</div>
+            </div>
+            <div v-for="t in openTabs" :key="t.saleId" class="tab-row" :class="{ 'tab-row--selected': selectedTab?.saleId === t.saleId }">
+                <div class="d-flex align-start ga-2">
+                    <div class="flex-grow-1" style="min-width: 0">
+                        <div class="font-weight-bold text-truncate">{{ t.tabName }}</div>
+                        <div class="text-caption text-medium-emphasis">
+                            #{{ t.orderNumber ?? '—' }} · opened {{ tabAge(t.openedAtUtc) }} · {{ t.rounds }} round{{ t.rounds === 1 ? '' : 's' }} · {{ t.itemCount }} item{{ t.itemCount === 1 ? '' : 's' }}
+                        </div>
+                        <div v-if="t.holdCardLabel || t.customerName" class="d-flex align-center ga-2 mt-1 flex-wrap">
+                            <span v-if="t.holdCardLabel" class="rp-pill rp-pill--blue"><v-icon size="12">mdi-credit-card-check</v-icon>{{ t.holdCardLabel }}</span>
+                            <span v-if="t.customerName" class="rp-pill">{{ t.customerName }}</span>
+                        </div>
+                    </div>
+                    <div class="tab-row__total">{{ money(t.totalCents) }}</div>
+                </div>
+                <div class="d-flex ga-2 mt-2">
+                    <v-btn size="small" class="flex-grow-1" :color="selectedTab?.saleId === t.saleId ? undefined : 'primary'"
+                        :variant="selectedTab?.saleId === t.saleId ? 'tonal' : 'flat'" :disabled="tabBusy"
+                        @click="selectTab(t.saleId)">{{ selectedTab?.saleId === t.saleId ? 'Selected' : 'Select' }}</v-btn>
+                    <v-btn size="small" variant="outlined" :disabled="tabBusy || paying" @click="startTabClose(t)">Close</v-btn>
+                    <v-btn size="small" variant="text" color="error" :disabled="tabBusy" @click="openVoid(t)">Void</v-btn>
+                </div>
+            </div>
+        </v-navigation-drawer>
+
         <v-snackbar v-model="snack.show" :color="snack.color" timeout="5000">{{ snack.text }}</v-snackbar>
     </v-container>
 </template>
@@ -584,11 +820,12 @@ import {
     type ConcessionComboSlotOption, type ConcessionDiscountInput, type ConcessionDiscountPreset,
     type ConcessionCompReason, type ConcessionMemberLookup, type ConcessionMemberPerk,
     type ConcessionPrinter, type DisplayState,
+    type ConcessionTabSummary, type ConcessionTabDetail, type ConcessionSaleResult, type ConcessionCloseTabRequest,
 } from '@/services/ConcessionService'
 import { getTerminal, discoverAndConnect, collectAndProcess } from '@/helpers/TerminalHelper'
 import CreditLookupField from '@/components/CreditLookupField.vue'
 import { type CreditLookupResult } from '@/services/CreditService'
-import { printReceipt, type Receipt } from '@/helpers/ReceiptPrinter'
+import { printReceipt, type Receipt, type ReceiptLine } from '@/helpers/ReceiptPrinter'
 import { printKitchenTicket, type KitchenTicket, type KitchenTicketLine } from '@/helpers/KitchenTicketPrinter'
 import { branding } from '@/stores/branding'
 import { setHomeScreenIcon } from '@/helpers/HomeScreenIcon'
@@ -622,6 +859,19 @@ const rushOrder = ref(false)
 const snack = ref({ show: false, text: '', color: 'error' })
 const toggling = ref<string | null>(null)
 
+// ── Open tabs: state ─────────────────────────────────────────────────
+// A tab is a sale that defers payment; each round of items fires to the kitchen as it is added.
+const tabsEnabled = ref(false)
+const tabHoldCents = ref(5000)
+const openTabs = ref<ConcessionTabSummary[]>([])
+const tabsLoading = ref(false)
+const tabsDrawer = ref(false)
+// Selected: the cart is the NEXT round of this tab (Add to tab / Close / Park / Void replace Cash / Card).
+const selectedTab = ref<ConcessionTabDetail | null>(null)
+// Closing: the confirm + cash dialogs settle this tab (its rounds, its totals) instead of the cart.
+const closingTab = ref<ConcessionTabDetail | null>(null)
+const tabBusy = ref(false)
+
 function flash(text: string, color: 'error' | 'success' = 'error') { snack.value = { show: true, text, color } }
 function money(cents: number) { return `$${(cents / 100).toFixed(2)}` }
 function variantLabel(v: ConcessionVariant) { return [v.size, v.color].filter(Boolean).join(' / ') || 'Standard' }
@@ -651,7 +901,8 @@ const cartCount = computed(() => cart.value.reduce((s, l) => s + l.quantity, 0))
 const tipCents = computed(() => {
     if (!tipsEnabled.value || tipMode.value === 'none') return 0
     if (tipMode.value === 'custom') return Math.max(0, Math.round((tipCustomDollars.value || 0) * 100))
-    return Math.round(subtotal.value * tipPct.value / 100)
+    // Percent tips run off whatever is being paid for: the cart, or the whole tab at close.
+    return Math.round(ckSubtotal.value * tipPct.value / 100)
 })
 
 // Tax preview (server is authoritative). Each line's rate comes from its product's tax category, or
@@ -719,6 +970,48 @@ const discountCents = computed(() => lineDiscountCents.value + orderDiscountCent
 const total = computed(() => Math.max(0,
     subtotal.value + (pricesIncludeTax.value ? 0 : taxCents.value) + tipCents.value - discountCents.value))
 
+// ── Checkout source ("ck"): the cart for a walk-up sale, the tab's server totals when closing a tab ──
+// The confirm / cash dialogs, the tip math and the customer display all read these, so one set of
+// screens settles either thing. The tab's per-round discounts are already inside its discountCents;
+// a discount applied AT close is estimated on top (the server recomputes across all lines).
+const ckSubtotal = computed(() => closingTab.value ? closingTab.value.subtotalCents : subtotal.value)
+const ckTax = computed(() => closingTab.value ? closingTab.value.taxCents : taxCents.value)
+const ckPricesIncludeTax = computed(() => closingTab.value ? closingTab.value.pricesIncludeTax : pricesIncludeTax.value)
+const ckDiscount = computed(() => {
+    const t = closingTab.value
+    if (!t) return discountCents.value
+    const atClose = orderDiscount.value
+        ? estimateDiscount(orderDiscount.value, Math.max(0, t.subtotalCents - t.discountCents), orderMemberPerk.value) : 0
+    return t.discountCents + atClose
+})
+const ckTotal = computed(() => Math.max(0,
+    ckSubtotal.value + (ckPricesIncludeTax.value ? 0 : ckTax.value) + tipCents.value - ckDiscount.value))
+
+// What the customer reviews: cart lines, or every fired round of the closing tab (combo components
+// folded under their entree so it reads like the cart does).
+interface ReviewLine { name: string; quantity: number; variantLabel: string | null; modifierLabels: string[]; notes: string | null; lineTotal: number; roundNumber?: number }
+const reviewLines = computed<ReviewLine[]>(() => {
+    const t = closingTab.value
+    if (!t) return cart.value.map(l => ({ name: l.name, quantity: l.quantity, variantLabel: l.variantLabel, modifierLabels: l.modifierLabels, notes: l.notes, lineTotal: l.lineTotal }))
+    // The flat line list carries roundNumber; if a payload only nests lines under rounds, flatten those.
+    const all = t.lines?.length ? t.lines
+        : (t.rounds ?? []).flatMap(r => r.lines.map(l => ({ ...l, roundNumber: l.roundNumber ?? r.roundNumber })))
+    const sorted = [...all].sort((a, b) => (a.roundNumber ?? 1) - (b.roundNumber ?? 1))
+    return sorted.filter(l => !l.parentLineId).map(l => ({
+        name: l.name, quantity: l.quantity, variantLabel: l.variantLabel,
+        modifierLabels: [
+            ...(l.isCombo && l.comboTier ? [`${l.comboTier} combo`] : []),
+            ...l.modifiers,
+            ...all.filter(c => c.parentLineId === l.lineId).map(c => `${c.name}${c.variantLabel ? ` (${c.variantLabel})` : ''}`),
+        ],
+        notes: l.notes, lineTotal: l.lineTotalCents, roundNumber: l.roundNumber ?? 1,
+    }))
+})
+const nextRoundNumber = computed(() => {
+    const rounds = selectedTab.value?.rounds ?? []
+    return rounds.length ? Math.max(...rounds.map(r => r.roundNumber)) + 1 : 1
+})
+
 // Adjust a cart line's quantity inline; dropping to 0 removes it. lineTotal tracks unit price.
 function setLineQty(i: number, qty: number) {
     if (qty <= 0) { cart.value.splice(i, 1); return }
@@ -743,7 +1036,8 @@ onMounted(() => {
     load()
     loadKitchenPrinters()
     refreshOnlineStatus()
-    onlineTimer = window.setInterval(refreshOnlineStatus, 10000)   // keep the Open/Busy chip current
+    // Keep the Open/Busy chip and the Tabs (n) count current; another register may open or close a tab.
+    onlineTimer = window.setInterval(() => { refreshOnlineStatus(); refreshTabs() }, 10000)
 })
 onUnmounted(() => { if (onlineTimer) window.clearInterval(onlineTimer) })
 
@@ -780,6 +1074,9 @@ async function load() {
         tipsEnabled.value = ms.tipsEnabled
         customerDisplayEnabled.value = ms.customerDisplayEnabled
         pricesIncludeTax.value = ms.pricesIncludeTax
+        tabsEnabled.value = !!ms.tabsEnabled
+        tabHoldCents.value = ms.tabHoldCents ?? 5000
+        refreshTabs()
     } catch { /* tips/tax optional */ }
     try {
         const cats = (await svc.taxCategories() as any).data.data as { id: string; rateBps: number; isDefault: boolean }[]
@@ -1083,7 +1380,8 @@ const pinVerifying = ref(false)
 const pendingDiscount = ref<{ input: ConcessionDiscountInput; label: string; perk: ConcessionMemberPerk | null } | null>(null)
 
 const discountTargetLabel = computed(() =>
-    discountTarget.value === 'order' ? 'this order' : (cart.value[discountTarget.value as number]?.name ?? 'this item'))
+    discountTarget.value === 'order' ? (closingTab.value ? 'the whole tab' : 'this order')
+    : (cart.value[discountTarget.value as number]?.name ?? 'this item'))
 
 // Lazy-load the active presets + comp reasons the first time the picker opens.
 async function ensureDiscountLists() {
@@ -1101,7 +1399,8 @@ async function ensureDiscountLists() {
 }
 
 function openDiscount(target: 'order' | number) {
-    if (cart.value.length === 0) { flash('Add an item before applying a discount.'); return }
+    // Closing a tab has no cart; the discount then applies across every round of the tab.
+    if (cart.value.length === 0 && !closingTab.value) { flash('Add an item before applying a discount.'); return }
     discountTarget.value = target
     manualPercent.value = null
     manualDollars.value = null
@@ -1242,8 +1541,8 @@ function clearOrder() {
 // caps). The money paths (reader charge, cash drawer, change math) all work off the remainder.
 const creditAccount = ref<CreditLookupResult | null>(null)
 const creditAppliedEstimate = computed(() =>
-    creditAccount.value ? Math.min(creditAccount.value.balanceCents, total.value) : 0)
-const dueEstimate = computed(() => total.value - creditAppliedEstimate.value)
+    creditAccount.value ? Math.min(creditAccount.value.balanceCents, ckTotal.value) : 0)
+const dueEstimate = computed(() => ckTotal.value - creditAppliedEstimate.value)
 
 const cashDialog = ref(false)
 const cashTenderedDollars = ref<number | null>(null)
@@ -1251,14 +1550,32 @@ const changeCents = computed(() =>
     cashTenderedDollars.value == null ? 0 : Math.round(cashTenderedDollars.value * 100) - dueEstimate.value)
 const doneDialog = ref(false)
 const lastOrderNumber = ref<number | null>(null)
-const lastReceipt = ref<{ orderNumber: number | null; lines: CartLine[]; subtotal: number; tax: number; pricesIncludeTax: boolean; tip: number; discount: number; total: number; method: string } | null>(null)
+const lastClosedTabName = ref<string | null>(null)   // done dialog: this sale settled a tab
+const lastReceipt = ref<{ orderNumber: number | null; lines: ReceiptLine[]; subtotal: number; tax: number; pricesIncludeTax: boolean; tip: number; discount: number; total: number; method: string } | null>(null)
 
 // ── Customer confirmation (cashier picks tender first; customer reviews + tips + receipt) ──
 const confirmDialog = ref(false)
-const tender = ref<'cash' | 'card'>('card')
+// 'hold' = charge the card held when the tab was opened (tab close only).
+const tender = ref<'cash' | 'card' | 'hold'>('card')
 const receiptMethod = ref<'print' | 'sms' | 'email' | 'none'>('print')
 const receiptDest = ref('')
 const customerName = ref('')   // optional name on a counter order
+const payButtonLabel = computed(() =>
+    tender.value === 'cash' ? 'Continue to cash'
+    : tender.value === 'hold' ? `Charge card on file · ${money(dueEstimate.value)}`
+    : `Charge card · ${money(dueEstimate.value)}`)
+
+// Back arrow on the confirm screen. Abandoning a tab close must also drop the tab's totals out of the
+// checkout math, or the next walk-up cart would show the tab's tip and discount.
+function cancelConfirm() {
+    confirmDialog.value = false
+    // Mid-charge the tab stays "closing" so the finish step can still build its receipt from it.
+    if (closingTab.value && !paying.value) abandonTabClose()
+}
+function cancelCash() {
+    cashDialog.value = false
+    if (closingTab.value) abandonTabClose()
+}
 
 // Cashier taps Cash or Card in the cart, then turns the tablet to the customer to confirm.
 function startCheckout(t: 'cash' | 'card') {
@@ -1284,6 +1601,7 @@ function validateReceipt(): boolean {
 }
 function confirmPay() {
     if (!validateReceipt()) return
+    if (closingTab.value) { closeTabPay(); return }
     if (tender.value === 'cash') { confirmDialog.value = false; openCash() }
     else { payCard() }   // keep the confirmation open (progress) until the charge completes
 }
@@ -1305,6 +1623,7 @@ function buildRequest(method: 'cash' | 'card') {
 }
 
 async function payCash() {
+    if (closingTab.value) { await closeTabCash(); return }
     paying.value = true
     try {
         const r = await svc.createSale(buildRequest('cash'))
@@ -1364,6 +1683,7 @@ async function pollOrderNumber(saleId: string): Promise<number | null> {
 
 function finishOrder(saleId: string, orderNumber: number | null, method: string, serverTotalCents?: number, serverDiscountCents?: number) {
     lastOrderNumber.value = orderNumber
+    lastClosedTabName.value = null
     // Fire-and-forget: the money is already taken, so a failed rush flag must not read as a failed
     // sale. It is surfaced rather than swallowed, because a cook who never sees RUSH will not hurry.
     if (rushOrder.value) {
@@ -1381,7 +1701,370 @@ function finishOrder(saleId: string, orderNumber: number | null, method: string,
     deliverReceipt(saleId)
     // Independent of the customer receipt: the kitchen gets its ticket whether or not the customer
     // wanted one, and whichever of the two fails must not stop the other.
-    sendKitchenTickets()
+    sendKitchenTickets({ lines: [...cart.value], orderNumber, customerName: customerName.value.trim() || null, tabLabel: null })
+}
+
+// ── Open tabs: list, select, open (with optional card hold), rounds, rename, close, void ──
+async function refreshTabs() {
+    if (!tabsEnabled.value) return
+    tabsLoading.value = true
+    try {
+        openTabs.value = (await svc.tabs()).data.data
+        pruneTabMembers()
+        // Closed or voided from another register: leave tab mode rather than post a round to a sale
+        // that will reject it.
+        if (selectedTab.value && !openTabs.value.some(t => t.saleId === selectedTab.value!.saleId)) {
+            flash(`Tab "${selectedTab.value.tabName ?? ''}" is no longer open.`)
+            selectedTab.value = null
+        }
+    } catch { /* best-effort; keep the last known list */ }
+    finally { tabsLoading.value = false }
+}
+function openTabsDrawer() { tabsDrawer.value = true; refreshTabs() }
+function tabAge(iso: string) {
+    const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m ago`
+}
+
+// The member attached when a tab was opened. The server keeps only the purchaser name, so the perk
+// and the receipt email are remembered here (per tablet) to pre-fill the close; a cashier can still
+// apply the perk by hand at close if this tablet never saw the open.
+interface TabMember { name: string | null; email: string | null; query: string; perkKind: 'season_pass' | 'loampass' | null; perk: ConcessionMemberPerk | null }
+const TAB_MEMBERS_KEY = 'concessionTabMembers'
+function loadTabMembers(): Record<string, TabMember> {
+    try { return JSON.parse(localStorage.getItem(TAB_MEMBERS_KEY) || '{}') } catch { return {} }
+}
+const tabMembers = ref<Record<string, TabMember>>(loadTabMembers())
+function saveTabMembers() { localStorage.setItem(TAB_MEMBERS_KEY, JSON.stringify(tabMembers.value)) }
+function rememberTabMember(saleId: string, m: TabMember | null) { if (!m) return; tabMembers.value[saleId] = m; saveTabMembers() }
+function forgetTabMember(saleId: string) { if (saleId in tabMembers.value) { delete tabMembers.value[saleId]; saveTabMembers() } }
+function pruneTabMembers() {
+    const open = new Set(openTabs.value.map(t => t.saleId))
+    let changed = false
+    for (const id of Object.keys(tabMembers.value)) if (!open.has(id)) { delete tabMembers.value[id]; changed = true }
+    if (changed) saveTabMembers()
+}
+
+// Open-tab dialog
+const openTabDialog = ref(false)
+const openingTab = ref(false)
+const tabNameInput = ref('')
+const tabHoldCard = ref(false)
+const tabHoldPhase = ref<'form' | 'reader'>('form')
+const tabMember = ref<TabMember | null>(null)
+
+function openOpenTab() {
+    tabNameInput.value = ''
+    tabHoldCard.value = false
+    tabHoldPhase.value = 'form'
+    tabMember.value = null
+    memberQuery.value = ''
+    memberResult.value = null
+    openTabDialog.value = true
+}
+function memberPerkSummary(m: ConcessionMemberLookup) {
+    const perks = [m.seasonPass, m.loampass].filter(p => p?.eligible).map(p => p!.label)
+    return perks.length ? perks.join(' · ') : 'No member perks'
+}
+function attachMember() {
+    const m = memberResult.value
+    if (!m) return
+    const kind: TabMember['perkKind'] = m.seasonPass?.eligible ? 'season_pass' : m.loampass?.eligible ? 'loampass' : null
+    const perk = kind === 'season_pass' ? m.seasonPass! : kind === 'loampass' ? m.loampass! : null
+    tabMember.value = { name: m.customerName ?? null, email: m.customerEmail ?? null, query: memberQuery.value.trim(), perkKind: kind, perk }
+    memberResult.value = null
+}
+
+async function submitOpenTab() {
+    const name = tabNameInput.value.trim()
+    const hold = tabHoldCard.value && readerState.value === 'connected'
+    if (!name && !hold) { flash('Give the tab a name, or hold a card and it will be named from the card.'); return }
+    openingTab.value = true
+    const fired = [...cart.value]   // round 1, for the kitchen tickets
+    const member = tabMember.value
+    try {
+        const res = (await svc.openTab({
+            name: name || undefined,
+            customerName: member?.name ?? undefined,
+            items: cart.value.map(l => l.input),
+            discount: orderDiscount.value ?? undefined,
+            managerPin: managerPin.value || undefined,
+            holdCard: hold,
+        })).data.data
+        rememberTabMember(res.saleId, member)
+        if (rushOrder.value) {
+            svc.setRush(res.saleId, true).catch((err: any) => {
+                flash(err.response?.data?.error || 'The tab opened but could not be flagged as a rush. Tell the kitchen directly.')
+            })
+        }
+        clearOrder()
+
+        let detail: ConcessionTabDetail | null = null
+        let needsName = false
+        if (hold && res.holdClientSecret) {
+            // Same reader flow as a card sale, on the hold intent (manual capture: nothing is charged
+            // now). The tab already exists at this point, so a failed hold leaves it open, cardless.
+            tabHoldPhase.value = 'reader'
+            try {
+                const terminal = await getTerminal(async () => (await svc.terminalConnectionToken() as any).data.data.secret)
+                await collectAndProcess(terminal!, res.holdClientSecret)
+                detail = (await svc.tabHoldConfirmed(res.saleId)).data.data
+                flash(`Card held${detail.holdCardLabel ? ` · ${detail.holdCardLabel}` : ''}. Tab "${detail.tabName ?? name}" is open.`, 'success')
+            } catch (err: any) {
+                flash(`${err.message || 'The card hold did not go through.'} The tab is open without a card on file.`)
+                needsName = !name
+            }
+        } else {
+            flash(`Tab "${res.tabName || name}" opened · order #${res.orderNumber ?? '—'}.`, 'success')
+        }
+        const tabName = detail?.tabName || res.tabName || name
+        // Printed after the hold so an auto-named tab's ticket carries the card name, not a blank.
+        if (fired.length) {
+            sendKitchenTickets({ lines: fired, orderNumber: res.orderNumber, customerName: member?.name ?? null,
+                tabLabel: `Tab: ${tabName || `#${res.orderNumber ?? ''}`} · Round 1` })
+        }
+        openTabDialog.value = false
+        await selectTab(res.saleId, detail)
+        refreshTabs()
+        if (needsName) openRename()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not open the tab. Nothing was sent to the kitchen.')
+    } finally {
+        openingTab.value = false
+        tabHoldPhase.value = 'form'
+    }
+}
+
+async function selectTab(saleId: string, detail: ConcessionTabDetail | null = null) {
+    tabBusy.value = true
+    try {
+        selectedTab.value = detail ?? (await svc.tab(saleId)).data.data
+        tabsDrawer.value = false
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load that tab.')
+    } finally { tabBusy.value = false }
+}
+// Park = leave tab mode. The cart is left alone: anything rung up stays rung up, as a walk-up order.
+function parkTab() { selectedTab.value = null }
+
+// Post the cart as the tab's next round. The kitchen gets it now; the money waits for close.
+async function addRoundToTab() {
+    const tab = selectedTab.value
+    if (!tab || cart.value.length === 0 || tabBusy.value) return
+    tabBusy.value = true
+    const fired = [...cart.value]
+    const expectedRound = nextRoundNumber.value
+    try {
+        const detail = (await svc.tabRound(tab.saleId, {
+            items: cart.value.map(l => l.input),
+            discount: orderDiscount.value ?? undefined,
+            managerPin: managerPin.value || undefined,
+        })).data.data
+        if (rushOrder.value) {
+            svc.setRush(tab.saleId, true).catch((err: any) => {
+                flash(err.response?.data?.error || 'The round was sent but could not be flagged as a rush. Tell the kitchen directly.')
+            })
+        }
+        const round = detail.rounds.length ? Math.max(...detail.rounds.map(r => r.roundNumber)) : expectedRound
+        selectedTab.value = detail
+        clearOrder()
+        flash(`Round ${round} sent to the kitchen · ${detail.tabName ?? ''}`, 'success')
+        sendKitchenTickets({ lines: fired, orderNumber: detail.orderNumber, customerName: null,
+            tabLabel: `Tab: ${detail.tabName ?? `#${detail.orderNumber ?? ''}`} · Round ${round}` })
+        refreshTabs()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not add the round. Nothing was sent to the kitchen.')
+    } finally { tabBusy.value = false }
+}
+
+// Rename
+const renameDialog = ref(false)
+const renameInput = ref('')
+const renaming = ref(false)
+function openRename() { renameInput.value = selectedTab.value?.tabName ?? ''; renameDialog.value = true }
+async function confirmRename() {
+    const tab = selectedTab.value
+    const name = renameInput.value.trim()
+    if (!tab || !name) return
+    renaming.value = true
+    try {
+        selectedTab.value = (await svc.renameTab(tab.saleId, { name, customerName: tab.customerName ?? undefined })).data.data
+        renameDialog.value = false
+        refreshTabs()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not rename the tab.')
+    } finally { renaming.value = false }
+}
+
+// Close: the existing customer-confirmation screen, fed by the tab instead of the cart.
+async function startTabClose(t: { saleId: string }) {
+    if (cart.value.length > 0) { flash('Add the cart to the tab (or clear it) before closing a tab.'); return }
+    tabBusy.value = true
+    try {
+        const detail = (await svc.tab(t.saleId)).data.data   // fresh totals, in case another register added a round
+        closingTab.value = detail
+        tabsDrawer.value = false
+        tender.value = detail.holdCardLabel ? 'hold' : readerState.value === 'connected' ? 'card' : 'cash'
+        tipMode.value = 'none'
+        tipCustomDollars.value = null
+        customerTipReceived.value = false
+        cashierTipEntry.value = false
+        customerName.value = detail.customerName ?? ''
+        creditAccount.value = null
+        receiptMethod.value = printerUrl.value ? 'print' : 'none'
+        receiptDest.value = ''
+        // Member attached at open: perk pre-applied across the whole tab, receipt email pre-filled.
+        removeOrderDiscount()
+        const member = tabMembers.value[detail.saleId]
+        if (member?.perk && member.perkKind) {
+            orderDiscount.value = { kind: member.perkKind, customerEmailOrPhone: member.query }
+            orderDiscountLabel.value = member.perk.label
+            orderMemberPerk.value = member.perk
+        }
+        if (member?.email) {
+            receiptDest.value = member.email
+            if (receiptMethod.value === 'none') receiptMethod.value = 'email'
+        }
+        confirmDialog.value = true
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not load that tab.')
+    } finally { tabBusy.value = false }
+}
+function abandonTabClose() {
+    closingTab.value = null
+    tipMode.value = 'none'
+    tipCustomDollars.value = null
+    creditAccount.value = null
+    removeOrderDiscount()
+}
+function buildCloseRequest(method: ConcessionCloseTabRequest['paymentMethod']): ConcessionCloseTabRequest {
+    return {
+        paymentMethod: method,
+        tipCents: tipCents.value,
+        creditAccountId: creditAccount.value?.id ?? undefined,
+        creditCents: creditAccount.value?.balanceCents ?? 0,
+        discount: orderDiscount.value ?? undefined,
+        managerPin: managerPin.value || undefined,
+    }
+}
+async function closeTabPay() {
+    if (tender.value === 'cash') { confirmDialog.value = false; openCash(); return }
+    await closeTabWithCard(tender.value)
+}
+async function closeTabCash() {
+    const tab = closingTab.value
+    if (!tab) return
+    paying.value = true
+    try {
+        const res = (await svc.closeTab(tab.saleId, buildCloseRequest('cash'))).data.data
+        cashDialog.value = false
+        finishTabClose(tab, res, (res.creditAppliedCents ?? 0) > 0 ? 'Cash + credit' : 'Cash')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not close the tab. Nothing was charged.')
+    } finally { paying.value = false }
+}
+// The server refuses to capture a hold smaller than what is due; the POS then collects the card again.
+function holdTooSmall(err: any): boolean {
+    const msg = String(err?.response?.data?.error ?? err?.response?.data?.message ?? '')
+    return err?.response?.status === 400 && /exceeds the card hold/i.test(msg)
+}
+async function closeTabWithCard(method: 'card' | 'hold') {
+    const tab = closingTab.value
+    if (!tab) return
+    const isZero = dueEstimate.value <= 0
+    if (method === 'card' && !isZero && readerState.value !== 'connected') { flash('Connect the card reader first.'); return }
+    paying.value = true
+    try {
+        let used = method
+        let res: ConcessionSaleResult
+        try {
+            res = (await svc.closeTab(tab.saleId, buildCloseRequest(method))).data.data
+        } catch (err: any) {
+            if (method !== 'hold' || !holdTooSmall(err)) throw err
+            if (readerState.value !== 'connected') {
+                flash('The tab total is more than the card hold and no reader is connected. Connect the reader to collect the card again, or take cash.')
+                return
+            }
+            flash('The tab total is more than the card hold. Collect the card on the reader.', 'success')
+            used = 'card'
+            tender.value = 'card'
+            res = (await svc.closeTab(tab.saleId, buildCloseRequest('card'))).data.data
+        }
+        const credited = (res.creditAppliedCents ?? 0) > 0
+        // No client secret: settled server-side (card on file captured, $0 due, comp, or credit covered it).
+        if (!res.clientSecret) {
+            finishTabClose(tab, res, used === 'hold' ? (credited ? 'Card on file + credit' : 'Card on file') : credited ? 'Store credit' : 'Comp')
+            return
+        }
+        const terminal = await getTerminal(async () => (await svc.terminalConnectionToken() as any).data.data.secret)
+        await collectAndProcess(terminal!, res.clientSecret)
+        let orderNumber: number | null = null
+        try { orderNumber = (await svc.finalizeCard(res.saleId) as any).data.data?.orderNumber ?? null }
+        catch { /* fall back to the webhook/poll */ }
+        if (orderNumber == null) orderNumber = await pollOrderNumber(res.saleId)
+        finishTabClose(tab, { ...res, orderNumber: orderNumber ?? tab.orderNumber }, credited ? 'Card + credit' : 'Card')
+    } catch (err: any) {
+        flash(err.message || err.response?.data?.error || 'Card payment failed. Try again, another card, or cash.')
+    } finally { paying.value = false }
+}
+function finishTabClose(tab: ConcessionTabDetail, res: ConcessionSaleResult, method: string) {
+    lastOrderNumber.value = res.orderNumber ?? tab.orderNumber
+    lastClosedTabName.value = tab.tabName || `#${tab.orderNumber ?? ''}`
+    // Capture the review lines + totals BEFORE leaving close mode (they are derived from closingTab).
+    lastReceipt.value = {
+        orderNumber: lastOrderNumber.value, lines: reviewLines.value,
+        subtotal: ckPricesIncludeTax.value ? ckSubtotal.value - ckTax.value : ckSubtotal.value, tax: ckTax.value,
+        pricesIncludeTax: ckPricesIncludeTax.value, tip: tipCents.value,
+        discount: res.discountCents ?? ckDiscount.value, total: res.totalCents ?? ckTotal.value, method,
+    }
+    lastKitchenJob.value = null   // every round already went to the kitchen when it was fired
+    confirmDialog.value = false
+    doneDialog.value = true
+    deliverReceipt(tab.saleId)
+    openTabs.value = openTabs.value.filter(t => t.saleId !== tab.saleId)
+    forgetTabMember(tab.saleId)
+    if (selectedTab.value?.saleId === tab.saleId) selectedTab.value = null
+    // Leave close mode with clean checkout state so the next cart starts from zero.
+    closingTab.value = null
+    tipMode.value = 'none'
+    tipCustomDollars.value = null
+    removeOrderDiscount()
+    creditAccount.value = null
+    refreshTabs()
+}
+
+// Void: manager PIN + reason. Fired items are not restocked; the hold is released server-side.
+const voidDialog = ref(false)
+const voidTarget = ref<{ saleId: string; tabName: string | null; totalCents: number } | null>(null)
+const voidReason = ref('')
+const voidPin = ref('')
+const voiding = ref(false)
+function openVoid(t: { saleId: string; tabName: string | null; totalCents: number }) {
+    voidTarget.value = t
+    voidReason.value = ''
+    voidPin.value = ''
+    voidDialog.value = true
+}
+async function confirmVoid() {
+    const t = voidTarget.value
+    if (!t) return
+    const reason = voidReason.value.trim(), pin = voidPin.value.trim()
+    if (!reason || !pin) { flash('Enter a reason and the manager PIN.'); return }
+    voiding.value = true
+    try {
+        await svc.voidTab(t.saleId, pin, reason)
+        voidDialog.value = false
+        openTabs.value = openTabs.value.filter(x => x.saleId !== t.saleId)
+        forgetTabMember(t.saleId)
+        if (selectedTab.value?.saleId === t.saleId) selectedTab.value = null
+        if (closingTab.value?.saleId === t.saleId) { confirmDialog.value = false; cashDialog.value = false; abandonTabClose() }
+        flash(`Tab "${t.tabName ?? ''}" voided.`, 'success')
+        refreshTabs()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Could not void the tab. Check the manager PIN.')
+    } finally { voiding.value = false }
 }
 
 // ── Kitchen ticket printing ────────────────────────────────────────────────
@@ -1389,6 +2072,9 @@ function finishOrder(saleId: string, orderNumber: number | null, method: string,
 // printer which is per-tablet localStorage. Printed from here because the API is in the cloud and
 // cannot reach a printer on the venue LAN.
 const kitchenPrinters = ref<ConcessionPrinter[]>([])
+// What last went to the kitchen (a sale, or one tab round), kept for "Reprint kitchen tickets".
+interface KitchenJob { lines: CartLine[]; orderNumber: number | null; customerName: string | null; tabLabel: string | null }
+const lastKitchenJob = ref<KitchenJob | null>(null)
 
 async function loadKitchenPrinters() {
     try { kitchenPrinters.value = (await svc.activePrinters()).data.data }
@@ -1416,21 +2102,23 @@ function linesForPrinter(p: ConcessionPrinter, lines: CartLine[]): KitchenTicket
 // Sends one ticket per configured printer that has anything to make. Never throws: the money is
 // already taken, so a dead printer must not read as a failed sale. Failures name the printer so the
 // cashier knows which one to walk to, and can hit "Reprint tickets" once it's fixed.
-async function sendKitchenTickets(isReprint = false) {
-    const rec = lastReceipt.value
-    if (!rec || kitchenPrinters.value.length === 0) return
+async function sendKitchenTickets(job: KitchenJob | null, isReprint = false) {
+    if (!job) return
+    lastKitchenJob.value = job
+    if (kitchenPrinters.value.length === 0) return
 
     const failed: string[] = []
     let printed = 0
 
     for (const p of kitchenPrinters.value) {
-        const lines = linesForPrinter(p, rec.lines)
+        const lines = linesForPrinter(p, job.lines)
         if (lines.length === 0) continue   // nothing for this station on this order
 
         const ticket: KitchenTicket = {
             header: branding.displayName || 'Order',
-            orderNumber: rec.orderNumber,
-            customerName: customerName.value.trim() || null,
+            orderNumber: job.orderNumber,
+            customerName: job.customerName,
+            tabLabel: job.tabLabel,
             stationLabel: p.name,
             placedAt: new Date(),
             lines,
@@ -1470,6 +2158,8 @@ function newOrder() {
     tipCustomDollars.value = null
     receiptMethod.value = 'print'
     receiptDest.value = ''
+    closingTab.value = null
+    lastClosedTabName.value = null
     doneDialog.value = false
 }
 
@@ -1534,19 +2224,20 @@ const displaySnapshot = computed<DisplayState>(() => {
     if (doneDialog.value) status = 'done'
     else if (paying.value) status = 'processing'
     else if (confirmDialog.value) status = tipsEnabled.value ? 'tip' : 'building'
-    else if (cart.value.length > 0) status = 'building'
+    else if (cart.value.length > 0 || closingTab.value) status = 'building'
     return {
         status,
-        lines: status === 'idle' || status === 'done' ? [] : cart.value.map(l => ({
+        // The cart, or the whole tab while it is being closed (same shape either way).
+        lines: status === 'idle' || status === 'done' ? [] : reviewLines.value.map(l => ({
             name: l.name, quantity: l.quantity, variantLabel: l.variantLabel,
             modifierLabels: l.modifierLabels, lineTotal: l.lineTotal,
         })),
-        subtotal: subtotal.value,
-        taxCents: taxCents.value,
-        pricesIncludeTax: pricesIncludeTax.value,
-        discountCents: discountCents.value,
+        subtotal: ckSubtotal.value,
+        taxCents: ckTax.value,
+        pricesIncludeTax: ckPricesIncludeTax.value,
+        discountCents: ckDiscount.value,
         tipCents: tipCents.value,
-        totalCents: total.value,
+        totalCents: ckTotal.value,
         tipsEnabled: tipsEnabled.value,
         orderNumber: status === 'done' ? lastOrderNumber.value : null,
     }
@@ -1711,6 +2402,22 @@ async function printLast() {
 .empty-cart { text-align: center; padding: 56px 16px; }
 .cart-line { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--rp-line); }
 .pos-cart-footer { flex: 0 0 auto; border-top: 1px solid var(--rp-line); }
+/* Tab mode is visibly different from a walk-up cart: raised header so a cashier never adds a
+   stranger's burger to someone's tab without noticing. */
+.pos-tab-head { background: var(--rp-raise); }
+
+/* Open-tabs drawer rows. The running total takes the display face, like every other money figure. */
+.tab-row { padding: 12px 16px; border-bottom: 1px solid var(--rp-line); }
+.tab-row--selected { background: var(--rp-raise); }
+.tab-row__total {
+    font-family: var(--rp-font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 1.7rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
 
 .confirm-body { overflow-y: auto; min-height: 0; }
 .confirm-inner { max-width: 640px; margin: 0 auto; }

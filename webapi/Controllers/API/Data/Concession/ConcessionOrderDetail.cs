@@ -22,6 +22,8 @@ namespace webapi.Controllers.API.Data.Concession
             public string? ComboTier { get; set; }
             public Guid? ParentLineId { get; set; }
             public Guid LineId { get; set; }
+            // Which tab round fired this line (always 1 for a plain order).
+            public int RoundNumber { get; set; } = 1;
         }
     }
 }

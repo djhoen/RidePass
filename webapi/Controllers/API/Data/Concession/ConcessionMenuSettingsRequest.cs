@@ -35,5 +35,8 @@ namespace webapi.Controllers.API.Data.Concession
         [Range(0, 10_000_000)] public int LoampassDiscountValue { get; set; }
         // When true (default), an arbitrary manual discount requires a manager PIN.
         public bool RequireManagerForManualDiscount { get; set; } = true;
+        // Open tabs: offer "Open tab" on the POS, and the card-present hold amount placed on a tab.
+        public bool TabsEnabled { get; set; } = true;
+        [Range(50, 1_000_000)] public int TabHoldCents { get; set; } = 5000;
     }
 }

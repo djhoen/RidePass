@@ -496,6 +496,84 @@ namespace webapi.Payments
             return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
         }
 
+        public async Task<PaymentIntentCreated> CreateCardPresentHoldPaymentIntentAsync(
+            long amountCents,
+            string currency,
+            string locationId,
+            IReadOnlyDictionary<string, string> metadata,
+            string? connectedAccountId = null,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey))
+                throw new InvalidOperationException("Stripe:SecretKey is not configured.");
+
+            // Same card_present + Location shape as a Terminal sale, but capture_method=manual: the
+            // reader AUTHORIZES the hold amount and nothing is charged (or fee'd) until the tab is
+            // closed and we capture the real total. RequestIncrementalAuthorizationSupport asks the
+            // network up front so a tab that grows past the hold can be topped up instead of
+            // re-collecting the card, where the issuer allows it.
+            var options = new PaymentIntentCreateOptions
+            {
+                Amount = amountCents,
+                Currency = currency,
+                PaymentMethodTypes = new List<string> { "card_present" },
+                CaptureMethod = "manual",
+                Metadata = metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
+                PaymentMethodOptions = new PaymentIntentPaymentMethodOptionsOptions
+                {
+                    CardPresent = new PaymentIntentPaymentMethodOptionsCardPresentOptions
+                    {
+                        RequestIncrementalAuthorizationSupport = true,
+                    },
+                },
+            };
+            options.Metadata["stripe_terminal_location_id"] = locationId;
+
+            var service = new PaymentIntentService();
+            var intent = await service.CreateAsync(options, BuildRequestOptions(connectedAccountId), ct);
+            return new PaymentIntentCreated(intent.Id, intent.ClientSecret);
+        }
+
+        public async Task<CardPresentDetails?> GetCardPresentDetailsAsync(string paymentIntentId, string? connectedAccountId = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return null;
+            try
+            {
+                var service = new PaymentIntentService();
+                var options = new PaymentIntentGetOptions();
+                // The card details live on the charge the reader created when it confirmed the PI.
+                options.AddExpand("latest_charge");
+                var intent = await service.GetAsync(paymentIntentId, options, BuildRequestOptions(connectedAccountId), ct);
+                var card = intent.LatestCharge?.PaymentMethodDetails?.CardPresent;
+                return new CardPresentDetails(intent.Status, card?.Brand, card?.Last4, card?.CardholderName, intent.AmountCapturable);
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogWarning(ex, "Failed to read card-present details for PaymentIntent {IntentId}.", paymentIntentId);
+                return null;
+            }
+        }
+
+        public async Task<bool> IncrementAuthorizationAsync(string paymentIntentId, long newAmountCents, string? connectedAccountId = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(_secretKey)) return false;
+            try
+            {
+                var service = new PaymentIntentService();
+                var updated = await service.IncrementAuthorizationAsync(paymentIntentId,
+                    new PaymentIntentIncrementAuthorizationOptions { Amount = newAmountCents },
+                    BuildRequestOptions(connectedAccountId), ct);
+                return updated.Status == "requires_capture" && updated.Amount >= newAmountCents;
+            }
+            catch (StripeException ex)
+            {
+                // Expected for networks/issuers that don't support incremental auth; the caller
+                // falls back to collecting the card again.
+                _logger.LogInformation(ex, "Incremental authorization refused for PaymentIntent {IntentId}.", paymentIntentId);
+                return false;
+            }
+        }
+
         public async Task<RefundResult> RefundAsync(string paymentIntentId, long? amountCents = null,
             string? idempotencyKey = null, string? connectedAccountId = null,
             bool refundApplicationFee = false, CancellationToken ct = default)

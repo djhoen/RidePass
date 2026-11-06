@@ -35,7 +35,11 @@
                         <td class="font-weight-bold">#{{ o.orderNumber ?? '—' }}</td>
                         <td>{{ formatTenantDateTime(o.createdAtUtc, 'MMM D, YYYY h:mm A') }}</td>
                         <td>
-                            {{ o.customerName || (o.orderChannel === 'online' ? 'Online customer' : 'Walk-up') }}
+                            <template v-if="o.tabName">
+                                <v-icon size="x-small" class="mr-1 text-medium-emphasis">mdi-book-open-variant</v-icon>{{ o.tabName }}
+                                <span v-if="o.customerName && o.customerName !== o.tabName" class="text-caption text-medium-emphasis"> · {{ o.customerName }}</span>
+                            </template>
+                            <template v-else>{{ o.customerName || (o.orderChannel === 'online' ? 'Online customer' : 'Walk-up') }}</template>
                             <v-icon v-if="o.isRush" color="error" size="x-small" class="ml-1">mdi-flash</v-icon>
                         </td>
                         <td><v-chip size="x-small" variant="tonal">{{ o.orderChannel === 'online' ? 'Online' : 'Counter' }}</v-chip></td>
@@ -46,11 +50,12 @@
                             </div>
                         </td>
                         <td>
-                            <v-chip size="x-small" variant="tonal"
-                                :color="o.status === 'refunded' ? 'error' : fulfillmentColor(o.fulfillmentStatus)">
-                                {{ o.status === 'refunded' ? 'Refunded' : fulfillmentLabel(o.fulfillmentStatus) }}
+                            <v-chip size="x-small" variant="tonal" :color="statusColor(o)">{{ statusLabel(o) }}</v-chip>
+                            <!-- An open tab has no tender yet and a voided one never had one; the stored
+                                 payment_method is a placeholder there, so don't show it. -->
+                            <v-chip v-if="o.status !== 'open' && o.status !== 'voided'" size="x-small" variant="tonal" class="ml-1">
+                                {{ o.paymentMethod === 'cash' ? 'Cash' : 'Card' }}
                             </v-chip>
-                            <v-chip size="x-small" variant="tonal" class="ml-1">{{ o.paymentMethod === 'cash' ? 'Cash' : 'Card' }}</v-chip>
                         </td>
                         <td><v-btn variant="text" size="small" @click.stop="openDetail(o.saleId)">View</v-btn></td>
                     </tr>
@@ -67,8 +72,10 @@
                 <v-card-title class="d-flex align-center">
                     <span>Order #{{ detail.orderNumber ?? '—' }}</span>
                     <v-chip v-if="detail.status === 'refunded'" size="small" color="error" variant="tonal" class="ml-2">Refunded</v-chip>
+                    <v-chip v-else-if="detail.status === 'open'" size="small" color="info" variant="tonal" class="ml-2">Open tab</v-chip>
+                    <v-chip v-else-if="detail.status === 'voided'" size="small" variant="tonal" class="ml-2">Voided</v-chip>
                     <v-spacer></v-spacer>
-                    <v-btn v-if="detail.status !== 'refunded' && detail.fulfillmentStatus !== 'completed'"
+                    <v-btn v-if="detail.status !== 'refunded' && detail.status !== 'voided' && detail.fulfillmentStatus !== 'completed'"
                         size="small" variant="tonal" prepend-icon="mdi-flash" class="mr-2"
                         :color="detail.isRush ? 'error' : undefined" :loading="settingRush" @click="toggleRush">
                         {{ detail.isRush ? 'Un-rush' : 'Rush' }}
@@ -78,28 +85,41 @@
                 <v-card-text>
                     <div class="text-caption text-medium-emphasis mb-3">
                         {{ formatTenantDateTime(detail.createdAtUtc, 'MMM D, YYYY h:mm A') }} ·
-                        {{ detail.orderChannel === 'online' ? 'Online' : 'Counter' }} ·
-                        {{ detail.paymentMethod === 'cash' ? 'Cash' : 'Card' }}
-                        <template v-if="detail.customerName"> · {{ detail.customerName }}</template>
+                        {{ detail.orderChannel === 'online' ? 'Online' : 'Counter' }}
+                        <template v-if="detail.status !== 'open' && detail.status !== 'voided'"> · {{ detail.paymentMethod === 'cash' ? 'Cash' : 'Card' }}</template>
+                        <template v-if="detail.tabName"> · Tab: {{ detail.tabName }}</template>
+                        <template v-if="detail.customerName && detail.customerName !== detail.tabName"> · {{ detail.customerName }}</template>
                     </div>
+                    <v-alert v-if="detail.status === 'voided'" variant="tonal" density="compact" class="mb-3" icon="mdi-cancel">
+                        Voided<template v-if="detail.voidedAtUtc"> {{ formatTenantDateTime(detail.voidedAtUtc, 'MMM D, h:mm A') }}</template>
+                        <template v-if="detail.voidReason"> · {{ detail.voidReason }}</template>
+                    </v-alert>
 
-                    <div v-for="l in topLines(detail.lines)" :key="l.lineId" class="mb-2">
-                        <div class="d-flex justify-space-between">
-                            <span class="font-weight-medium">
-                                {{ l.quantity }}× {{ l.name }}<span v-if="l.variantLabel"> ({{ l.variantLabel }})</span>
-                                <span v-if="l.isCombo && l.comboTier" class="text-caption text-medium-emphasis"> · {{ l.comboTier }} combo</span>
-                            </span>
-                            <span>{{ money(l.lineTotalCents) }}</span>
+                    <!-- A tab's lines are grouped by the round that fired them; a normal order is one
+                         unlabelled group, so the layout is the same either way. -->
+                    <div v-for="g in roundGroups(detail)" :key="g.round ?? 0" class="mb-2">
+                        <div v-if="g.round != null" class="d-flex align-center ga-2 mb-1 mt-3">
+                            <span class="rp-pill">Round {{ g.round }}</span>
+                            <span class="text-caption text-medium-emphasis">{{ g.lines.reduce((n, l) => n + l.quantity, 0) }} items</span>
                         </div>
-                        <div v-if="l.discountCents > 0" class="text-caption ml-4" style="color: rgb(var(--v-theme-success))">
-                            {{ l.discountLabel || 'Discount' }} (-{{ money(l.discountCents) }})
-                        </div>
-                        <div v-for="m in l.modifiers" :key="m" class="text-caption text-medium-emphasis ml-4">+ {{ m }}</div>
-                        <div v-if="l.notes" class="text-caption font-italic ml-4">"{{ l.notes }}"</div>
-                        <!-- combo component lines -->
-                        <div v-for="c in childLines(detail.lines, l.lineId)" :key="c.lineId" class="text-body-2 ml-4">
-                            {{ c.name }}<span v-if="c.variantLabel"> ({{ c.variantLabel }})</span>
-                            <span v-for="m in c.modifiers" :key="m" class="text-caption text-medium-emphasis"> · {{ m }}</span>
+                        <div v-for="l in topLines(g.lines)" :key="l.lineId" class="mb-2">
+                            <div class="d-flex justify-space-between">
+                                <span class="font-weight-medium">
+                                    {{ l.quantity }}× {{ l.name }}<span v-if="l.variantLabel"> ({{ l.variantLabel }})</span>
+                                    <span v-if="l.isCombo && l.comboTier" class="text-caption text-medium-emphasis"> · {{ l.comboTier }} combo</span>
+                                </span>
+                                <span>{{ money(l.lineTotalCents) }}</span>
+                            </div>
+                            <div v-if="l.discountCents > 0" class="text-caption ml-4" style="color: rgb(var(--v-theme-success))">
+                                {{ l.discountLabel || 'Discount' }} (-{{ money(l.discountCents) }})
+                            </div>
+                            <div v-for="m in l.modifiers" :key="m" class="text-caption text-medium-emphasis ml-4">+ {{ m }}</div>
+                            <div v-if="l.notes" class="text-caption font-italic ml-4">"{{ l.notes }}"</div>
+                            <!-- combo component lines -->
+                            <div v-for="c in childLines(detail.lines, l.lineId)" :key="c.lineId" class="text-body-2 ml-4">
+                                {{ c.name }}<span v-if="c.variantLabel"> ({{ c.variantLabel }})</span>
+                                <span v-for="m in c.modifiers" :key="m" class="text-caption text-medium-emphasis"> · {{ m }}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -114,11 +134,14 @@
                     </div>
                     <div v-if="detail.taxCents > 0" class="d-flex justify-space-between text-body-2"><span>Tax{{ detail.pricesIncludeTax ? ' (incl.)' : '' }}</span><span>{{ money(detail.taxCents) }}</span></div>
                     <div v-if="detail.tipCents > 0" class="d-flex justify-space-between text-body-2"><span>Tip</span><span>{{ money(detail.tipCents) }}</span></div>
-                    <div class="d-flex justify-space-between text-h6 mt-1"><span>Total</span><span>{{ money(detail.totalCents) }}</span></div>
+                    <div class="d-flex justify-space-between text-h6 mt-1">
+                        <span>{{ detail.status === 'open' ? 'Running total' : 'Total' }}</span><span>{{ money(detail.totalCents) }}</span>
+                    </div>
 
-                    <v-divider class="my-3"></v-divider>
-                    <div class="text-subtitle-2 mb-1">Send receipt</div>
-                    <div class="d-flex align-center ga-2 flex-wrap">
+                    <!-- No receipt for money that hasn't changed hands (open) or never will (voided). -->
+                    <v-divider v-if="detail.status !== 'open' && detail.status !== 'voided'" class="my-3"></v-divider>
+                    <div v-if="detail.status !== 'open' && detail.status !== 'voided'" class="text-subtitle-2 mb-1">Send receipt</div>
+                    <div v-if="detail.status !== 'open' && detail.status !== 'voided'" class="d-flex align-center ga-2 flex-wrap">
                         <v-btn-toggle v-model="receiptChannel" density="compact" mandatory variant="outlined">
                             <v-btn value="sms" size="small">Text</v-btn>
                             <v-btn value="email" size="small">Email</v-btn>
@@ -157,10 +180,31 @@ function money(c: number) { return `$${(c / 100).toFixed(2)}` }
 function fulfillmentLabel(s: string) { return s === 'completed' ? 'Picked up' : s === 'ready' ? 'Ready' : 'Preparing' }
 // Distinct color per stage: preparing = amber, ready = green, picked up = grey.
 function fulfillmentColor(s: string) { return s === 'completed' ? 'grey' : s === 'ready' ? 'success' : 'warning' }
+// Sale status wins over fulfillment: an open tab is "Open tab" however far along its kitchen tickets
+// are, and a voided one is simply voided (muted, no semantic colour).
+function statusLabel(o: OrderSummary) {
+    if (o.status === 'refunded') return 'Refunded'
+    if (o.status === 'open') return 'Open tab'
+    if (o.status === 'voided') return 'Voided'
+    return fulfillmentLabel(o.fulfillmentStatus)
+}
+function statusColor(o: OrderSummary) {
+    if (o.status === 'refunded') return 'error'
+    if (o.status === 'open') return 'info'
+    if (o.status === 'voided') return undefined
+    return fulfillmentColor(o.fulfillmentStatus)
+}
 
 // Combo nesting helpers.
 function topLines(lines: OrderDetailLine[]) { return lines.filter(l => !l.parentLineId) }
 function childLines(lines: OrderDetailLine[], parentId: string) { return lines.filter(l => l.parentLineId === parentId) }
+// Lines grouped by tab round. A normal order (or a tab whose lines carry no round number) is one
+// unlabelled group, so the detail renders identically to before for everything that isn't a tab.
+function roundGroups(d: OrderDetail): { round: number | null; lines: OrderDetailLine[] }[] {
+    const rounds = new Set(d.lines.map(l => l.roundNumber).filter((r): r is number => r != null))
+    if (!d.tabName || rounds.size === 0) return [{ round: null, lines: d.lines }]
+    return [...rounds].sort((a, b) => a - b).map(r => ({ round: r, lines: d.lines.filter(l => l.roundNumber === r) }))
+}
 
 onMounted(load)
 async function load() {
