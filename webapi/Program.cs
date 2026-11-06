@@ -74,6 +74,8 @@ builder.Services.AddScoped<IShopDayRepository, ShopDayRepository>();
 // PaymentIntent, detaches the unit from the dead sale line) before another buyer takes the bike.
 builder.Services.AddScoped<IShopListingRepository, ShopListingRepository>();
 builder.Services.AddScoped<Services.BikeShop.IListingReservationService, Services.BikeShop.ListingReservationService>();
+// Frees a unit from dead sales still naming it (declined, abandoned, refunded) before it is listed or sold.
+builder.Services.AddScoped<Services.BikeShop.IListingSaleGuard, Services.BikeShop.ListingSaleGuard>();
 builder.Services.AddScoped<IPlatformPartRepository, PlatformPartRepository>();
 builder.Services.AddScoped<IDistributorCredentialRepository, DistributorCredentialRepository>();
 // Distributor catalog sync. One source per distributor, resolved by slug. The nightly sweep lives
