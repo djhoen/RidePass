@@ -639,7 +639,7 @@
                 <v-card-text>
                     <p class="text-caption text-medium-emphasis mb-3">A manager must authorize this discount or comp.</p>
                     <v-text-field v-model="pinInput" label="Manager PIN" type="password" inputmode="numeric"
-                        autofocus density="compact" hide-details @keyup.enter="verifyPin" />
+                        autocomplete="one-time-code" autofocus density="compact" hide-details @keyup.enter="verifyPin" />
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
@@ -757,9 +757,9 @@
                         <v-icon size="x-small" class="mr-1">mdi-shield-lock-outline</v-icon>Needs a manager PIN
                     </div>
                     <v-text-field v-model="voidReason" label="Reason" density="compact" hide-details class="mb-3" autofocus
-                        placeholder="e.g. Walked out, duplicate tab" />
+                        placeholder="e.g. Walked out, duplicate tab" autocomplete="off" />
                     <v-text-field v-model="voidPin" label="Manager PIN" type="password" inputmode="numeric"
-                        density="compact" hide-details @keyup.enter="confirmVoid" />
+                        autocomplete="one-time-code" density="compact" hide-details @keyup.enter="confirmVoid" />
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
