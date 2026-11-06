@@ -112,11 +112,12 @@
          Tenant Admin otherwise. Also used as the mobile menu container.
 
          On admin routes at desktop width it becomes the operator-console sidebar from the
-         design reference: a permanent 236px panel on the left with a brand block, so the
+         design reference: a permanent 236px panel with a brand block (tenant admin on the left,
+         super admin on the right), so the
          console reads as an app rather than a public page with a pop-out menu. Everywhere
          else (public pages, phones) it stays the temporary right-hand menu. -->
     <v-navigation-drawer v-model="drawer"
-        :location="adminShell ? 'left' : 'right'"
+        :location="adminShell && !isSuperAdmin ? 'left' : 'right'"
         :permanent="adminShell"
         :temporary="!adminShell"
         :width="adminShell ? 236 : 320"
