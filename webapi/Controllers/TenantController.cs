@@ -201,6 +201,11 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult($"Unknown IANA timezone: {request.Timezone}.");
             }
+            if (request.BirthdateVerifyMode is not null
+                && !Services.Riders.IdVerificationWindow.IsValidMode(request.BirthdateVerifyMode))
+                return new ApiResponses().BadRequestResult("Birthdate check must be off, prompt or required.");
+            if (request.BirthdateVerifyValidDays is < 1 or > 3650)
+                return new ApiResponses().BadRequestResult("A birthdate check can count for 1 to 3650 days.");
 
             await _tenants.UpdateTimezone(_tenantContext.TenantId, request.Timezone);
             await _tenants.UpdateRequireReservation(_tenantContext.TenantId, request.RequireReservationForPasses);
@@ -209,6 +214,13 @@ namespace webapi.Controllers
             await _tenants.UpdateRequireIdAtCheckin(_tenantContext.TenantId, request.RequireIdAtCheckin);
             await _tenants.UpdateRequireIdForWristband(_tenantContext.TenantId, request.RequireIdForWristband);
             await _tenants.UpdateSeasonPassAdmissionType(_tenantContext.TenantId, request.SeasonPassAdmissionTypeId);
+            // Yearly birthdate check: only when the caller sent it (older settings screens don't).
+            if (request.BirthdateVerifyMode is not null || request.BirthdateVerifyValidDays is not null)
+            {
+                await _tenants.UpdateBirthdateVerification(_tenantContext.TenantId,
+                    request.BirthdateVerifyMode ?? _tenantContext.Tenant.BirthdateVerifyMode,
+                    request.BirthdateVerifyValidDays ?? _tenantContext.Tenant.BirthdateVerifyValidDays);
+            }
             return await GetBranding();
         }
 
@@ -648,6 +660,8 @@ namespace webapi.Controllers
                 AllowEventSubscriptions = tenant.AllowEventSubscriptions,
                 RequireIdAtCheckin = tenant.RequireIdAtCheckin,
                 RequireIdForWristband = tenant.RequireIdForWristband,
+                BirthdateVerifyMode = tenant.BirthdateVerifyMode,
+                BirthdateVerifyValidDays = tenant.BirthdateVerifyValidDays,
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,

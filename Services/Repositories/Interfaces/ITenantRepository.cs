@@ -25,6 +25,8 @@ namespace Services.Repositories.Interfaces
         Task UpdateRequireIdAtCheckin(Guid tenantId, bool require);
         /// <summary>Gate wristband issuance on a signed waiver plus a stored ID/age verification.</summary>
         Task UpdateRequireIdForWristband(Guid tenantId, bool require);
+        /// <summary>Yearly birthdate check: mode 'off' | 'prompt' | 'required', and the window in days.</summary>
+        Task UpdateBirthdateVerification(Guid tenantId, string mode, int validDays);
         /// <summary>Who funds the platform service charge on a bike shop sale (bps of the charge;
         /// 0 = the shop absorbs it, 10000 = the customer pays it), and whether the customer's share
         /// is taxed.</summary>

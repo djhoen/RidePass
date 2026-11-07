@@ -28,6 +28,10 @@
         // persists, so a rider is carded once and every later scan shows the tick. Enforced
         // server-side in WristbandController.Link.
         public bool RequireIdForWristband { get; set; }
+        // Yearly birthdate check (Script0305): 'off' | 'prompt' | 'required', and how many days a
+        // recorded ID/birthdate verification counts for. Enforced in IWaiverCheckInGate.
+        public string BirthdateVerifyMode { get; set; } = "off";
+        public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted
         // 'platform' (default): charges run on the platform account, internal split, monthly payout.

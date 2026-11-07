@@ -10,6 +10,9 @@ namespace webapi.Controllers.API.Data.Redemption
         // against PurchaserName before redeeming. Drives the attestation gate in the UI;
         // also enforced server-side on RedeemBulk.
         public bool RequireIdAtCheckin { get; set; }
+        /// <summary>Yearly birthdate check: off | prompt | required, and its window in days.</summary>
+        public string BirthdateVerifyMode { get; set; } = "off";
+        public int BirthdateVerifyValidDays { get; set; } = 365;
 
         // Everything paid for in this order, so the gate can hand over what was bought
         // (add-ons included) and not just admit people.

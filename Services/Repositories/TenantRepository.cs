@@ -14,6 +14,8 @@ namespace Services.Repositories
             allow_event_subscriptions AS AllowEventSubscriptions,
             require_id_at_checkin AS RequireIdAtCheckin,
             require_id_for_wristband AS RequireIdForWristband,
+            birthdate_verify_mode AS BirthdateVerifyMode,
+            birthdate_verify_valid_days AS BirthdateVerifyValidDays,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -237,6 +239,13 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET require_id_for_wristband = @require WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, require });
+        }
+
+        public async Task UpdateBirthdateVerification(Guid tenantId, string mode, int validDays)
+        {
+            const string sql = @"UPDATE tenant SET birthdate_verify_mode = @mode, birthdate_verify_valid_days = @validDays
+                                 WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, mode, validDays });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

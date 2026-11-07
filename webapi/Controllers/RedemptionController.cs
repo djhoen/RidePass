@@ -26,6 +26,7 @@ namespace webapi.Controllers
         private readonly IWaiverSignRequestRepository _signRequests;
         private readonly ISmtpEmailer _emailer;
         private readonly IConfiguration _config;
+        private readonly Services.Riders.IRiderIdVerification _idVerification;
 
         public RedemptionController(
             IEventTicketPurchaseRepository tickets,
@@ -39,8 +40,10 @@ namespace webapi.Controllers
             ISeasonPassRepository passes,
             IWaiverSignRequestRepository signRequests,
             ISmtpEmailer emailer,
-            IConfiguration config)
+            IConfiguration config,
+            Services.Riders.IRiderIdVerification idVerification)
         {
+            _idVerification = idVerification;
             _audit = audit;
             _passes = passes;
             _signRequests = signRequests;
@@ -456,6 +459,8 @@ namespace webapi.Controllers
                 PurchaserName = anchor.PurchaserName,
                 PurchaserEmail = anchor.PurchaserEmail,
                 RequireIdAtCheckin = _tenantContext.Tenant.RequireIdAtCheckin,
+                BirthdateVerifyMode = _tenantContext.Tenant.BirthdateVerifyMode,
+                BirthdateVerifyValidDays = _tenantContext.Tenant.BirthdateVerifyValidDays,
             };
 
             var redeemerIds = new HashSet<Guid>();
@@ -753,6 +758,11 @@ namespace webapi.Controllers
                 var signed = required ? ds.Where(d => d.Required).All(d => d.Satisfied) : ds.Any(d => d.Signed);
                 var ageFacts = ds.FirstOrDefault(d => d.Birthdate is not null) ?? ds.FirstOrDefault();
                 var signerFacts = ds.FirstOrDefault(d => d.Signed);
+                // The rider-side ticket an ID check is recorded against (it stamps the registrant's
+                // other tickets and the rider's account too), and its decision.
+                var riderTicket = tickets.FirstOrDefault(r =>
+                    decisionById.TryGetValue(r.PurchaseId, out var rd) && rd.RiderAudience);
+                var riderFacts = riderTicket is not null ? decisionById[riderTicket.PurchaseId] : null;
 
                 var signatureRow = tickets.FirstOrDefault(r => r.SignatureHasImage || r.HasInlineSignatureImage);
                 var signedRow = tickets.FirstOrDefault(r =>
@@ -794,6 +804,12 @@ namespace webapi.Controllers
                     CanRequestSignature = blocked is { RegistrationIncomplete: false, FixTarget: "ticket" },
                     GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(
                         first.RiderFirstName, first.RiderLastName, first.PurchaserName, first.PurchaserEmail),
+                    // Yearly birthdate check, from the same decisions.
+                    RecordedBirthdate = first.RiderBirthdate is { } rb ? DateTime.SpecifyKind(rb, DateTimeKind.Utc) : null,
+                    IdVerifiedAtUtc = riderFacts?.IdVerifiedAtUtc is { } va ? DateTime.SpecifyKind(va, DateTimeKind.Utc) : null,
+                    BirthdateCheckNeeded = ds.Any(d => d.BirthdateCheckNeeded),
+                    BirthdateBlocked = ds.Any(d => d.BirthdateBlocked),
+                    VerifyPurchaseId = riderTicket?.PurchaseId,
                 });
             }
 
@@ -821,6 +837,73 @@ namespace webapi.Controllers
 
         private static DateTime? ToUtc(DateTime? value) =>
             value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : null;
+
+        // Gate: staff checked this rider's photo ID and birthdate. Stamped on the rider's ticket(s)
+        // in this order (the registrant's other tickets too, since the gate checks each) and, when
+        // the buyer account IS the rider, on the account (per tenant), so the next visit at this
+        // tenant (any event, any pass) within the tenant's window needs no re-check. The verified
+        // DOB is the age evidence the waiver gate then uses, so a DOB that makes the rider a minor
+        // brings the guardian rule into play on the very next lookup.
+        [HttpPost("Order/{token:guid}/VerifyId")]
+        public async Task<IActionResult> VerifyOrderRiderId(Guid token,
+            [FromBody] webapi.Controllers.API.Data.Redemption.VerifyOrderRiderIdRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+
+            // Scope: the ticket must be in the scanned token's event+purchaser set.
+            var anchor = await ResolveAnchor(token, tenantId);
+            if (anchor?.EventId is null)
+                return new ApiResponses().NotFoundResult("No purchase found for this token in your tenant.");
+            var rows = await _tickets.ListWaiverStatusForPurchaser(
+                anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
+            if (!rows.Any(r => r.PurchaseId == req.PurchaseId))
+                return new ApiResponses().NotFoundResult("That ticket isn't part of this order.");
+
+            var ticket = await _tickets.GetById(req.PurchaseId, tenantId);
+            if (ticket is null) return new ApiResponses().NotFoundResult("Ticket not found.");
+            if (ticket.Status is not ("paid" or "redeemed"))
+                return new ApiResponses().BadRequestResult($"This ticket is {ticket.Status}, so there's nothing to verify against.");
+            if (!(await _waiverGate.EvaluateTicket(tenantId, ticket)).RiderAudience)
+                return new ApiResponses().BadRequestResult("Only a rider's birthdate is checked at the gate.");
+
+            var dob = req.VerifiedDob ?? ticket.RiderBirthdate;
+            if (dob is null)
+                return new ApiResponses().BadRequestResult(
+                    "Enter the date of birth from the rider's ID. It's what the age check rests on.");
+            if (dob.Value.Date > DateTime.UtcNow.Date)
+                return new ApiResponses().BadRequestResult("That date of birth is in the future. Check the ID again.");
+
+            var staffId = TryGetStaffUserId();
+            var status = await _idVerification.RecordForTicket(ticket, tenantId, staffId, dob.Value.Date);
+            if (!status.Verified)
+                return new ApiResponses().BadRequestResult(
+                    "The verification did not save: the ticket changed while you were entering it. Rescan and try again.");
+            foreach (var sibling in await _tickets.ListRegistrantTickets(ticket.Id, tenantId))
+            {
+                if (sibling.Id != ticket.Id && sibling.Status is "paid" or "redeemed")
+                    await _idVerification.RecordForTicket(sibling, tenantId, staffId, dob.Value.Date);
+            }
+
+            var rider = BuildAttendeeName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName;
+            var recorded = ticket.RiderBirthdate?.Date;
+            await _audit.Log("rider.id_verified",
+                $"Verified ID and age for {rider} (age {status.VerifiedAge}).",
+                targetKind: "event_ticket_purchase", targetId: ticket.Id,
+                tenantId: tenantId,
+                metadata: new { scope = status.Scope, verifiedDob = dob.Value.Date,
+                    recordedBirthdate = recorded, dobMismatch = recorded is not null && recorded != dob.Value.Date });
+
+            return new ApiResponses().OkResult(new
+            {
+                IdVerified = true,
+                IdVerifiedAtUtc = status.VerifiedAtUtc,
+                IdVerifiedByName = status.VerifiedByName,
+                IdVerifiedScope = status.Scope,
+                IdVerifiedAge = status.VerifiedAge,
+                DobMismatch = recorded is not null && recorded != dob.Value.Date,
+            });
+        }
 
         // Gate fix-up for a waiver block (a minor who signed their own waiver, or nobody signed):
         // send the existing waiver signing link (waiver_sign_request, /SignWaiver/:token) to a

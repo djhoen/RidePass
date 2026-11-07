@@ -46,6 +46,13 @@ namespace Services.Repositories.Interfaces
         Task<int> SetIdVerified(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
         /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
         Task<int> ClearIdVerified(Guid userId, Guid tenantId);
+
+        /// <summary>This tenant's ID check of a platform-wide RIDER account (rider_id_verification,
+        /// Script0305), or null. Rider accounts carry no tenant_id, so their verification lives here.</summary>
+        Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId);
+        /// <summary>Records (or refreshes) this tenant's ID check of a rider account.</summary>
+        Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
+        Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId);
         Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
             string? city, string? state, string? postalCode, string? country);
         Task<string?> GetDashboardConfig(Guid userId);

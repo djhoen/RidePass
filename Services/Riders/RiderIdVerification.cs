@@ -44,6 +44,36 @@ namespace Services.Riders
         public const string Credential = "credential";
     }
 
+    /// <summary>
+    /// The yearly birthdate check (tenant.birthdate_verify_mode / birthdate_verify_valid_days).
+    /// A verification is "current" when it was recorded on a tenant-local day within
+    /// <c>validDays</c> of the check-in day: recorded today is day 0, and it lapses on day
+    /// <c>validDays</c> (so 365 means "once a year": a check from exactly a year ago is due again).
+    /// A verification dated after the check-in day can't be trusted (clock or data error) and is
+    /// not current, so a 'required' tenant fails closed.
+    /// </summary>
+    public static class IdVerificationWindow
+    {
+        public const string ModeOff = "off";
+        public const string ModePrompt = "prompt";
+        public const string ModeRequired = "required";
+
+        public static bool IsValidMode(string? mode) => mode is ModeOff or ModePrompt or ModeRequired;
+
+        /// <summary>The tenant-local calendar day a verification was recorded on.</summary>
+        public static DateOnly? VerifiedLocalDate(DateTime? verifiedAtUtc, TimeZoneInfo tenantZone) =>
+            verifiedAtUtc is { } at
+                ? DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(at, DateTimeKind.Utc), tenantZone))
+                : null;
+
+        public static bool IsCurrent(DateTime? verifiedAtUtc, DateOnly checkInDate, int validDays, TimeZoneInfo tenantZone)
+        {
+            if (VerifiedLocalDate(verifiedAtUtc, tenantZone) is not { } day) return false;
+            var elapsed = checkInDate.DayNumber - day.DayNumber;
+            return elapsed >= 0 && elapsed < Math.Max(1, validDays);
+        }
+    }
+
     public class RiderIdVerificationStatus
     {
         public bool Verified { get; init; }
@@ -99,7 +129,22 @@ namespace Services.Riders
             Services.Repositories.Data.UserData.User? account,
             DateTime? credentialAt, Guid? credentialBy, DateTime? credentialDob)
         {
-            if (account?.IdVerifiedAt is not null)
+            // A platform-wide rider account's check is this tenant's rider_id_verification row
+            // (Script0305); a tenant's own (staff) account carries it on users, as before.
+            if (account is not null && account.TenantId is null
+                && await _users.GetRiderIdVerification(account.Id, tenantId) is { } riderCheck)
+            {
+                return new RiderIdVerificationStatus
+                {
+                    Verified = true,
+                    VerifiedAtUtc = DateTime.SpecifyKind(riderCheck.VerifiedAt, DateTimeKind.Utc),
+                    VerifiedByUserId = riderCheck.VerifiedByUserId,
+                    VerifiedByName = await NameOf(riderCheck.VerifiedByUserId, tenantId),
+                    VerifiedDob = riderCheck.VerifiedDob,
+                    Scope = IdVerificationScope.Rider,
+                };
+            }
+            if (account is not null && account.TenantId == tenantId && account.IdVerifiedAt is not null)
             {
                 return new RiderIdVerificationStatus
                 {
@@ -141,10 +186,7 @@ namespace Services.Riders
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
             var account = await AccountForHolder(pass, tenantId);
-            if (account is not null)
-            {
-                await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
-            }
+            if (account is not null) await StampAccount(account, tenantId, staffUserId, verifiedDob);
             return new RiderIdVerificationStatus
             {
                 Verified = true,
@@ -163,10 +205,7 @@ namespace Services.Riders
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
             var account = await AccountForRider(ticket, tenantId);
-            if (account is not null)
-            {
-                await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
-            }
+            if (account is not null) await StampAccount(account, tenantId, staffUserId, verifiedDob);
             return new RiderIdVerificationStatus
             {
                 Verified = true,
@@ -185,7 +224,19 @@ namespace Services.Riders
             if (account is not null)
             {
                 await _users.ClearIdVerified(account.Id, tenantId);
+                await _users.ClearRiderIdVerification(account.Id, tenantId);
             }
+        }
+
+        // A platform-wide rider account (users.tenant_id IS NULL) is stamped in this tenant's
+        // rider_id_verification row; a tenant's own account on users, as before.
+        private async Task StampAccount(Services.Repositories.Data.UserData.User account, Guid tenantId,
+            Guid? staffUserId, DateTime? verifiedDob)
+        {
+            if (account.TenantId is null)
+                await _users.SetRiderIdVerification(account.Id, tenantId, staffUserId, verifiedDob);
+            else
+                await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
         }
 
         // ── Identity resolution ──────────────────────────────────────────────────
@@ -202,7 +253,8 @@ namespace Services.Riders
         {
             // A pass always has a buyer account (the column is NOT NULL), unlike a ticket.
             var buyer = await _users.GetById(pass.PurchaserUserId);
-            if (buyer is null || buyer.TenantId != tenantId) return null;
+            // A platform-wide rider account (no tenant) or this tenant's own account; never another tenant's.
+            if (buyer is null || (buyer.TenantId is not null && buyer.TenantId != tenantId)) return null;
 
             var holder = Normalize($"{pass.HolderFirstName} {pass.HolderLastName}");
             if (holder.Length == 0) return buyer;   // never registered a distinct holder
@@ -214,7 +266,8 @@ namespace Services.Riders
         {
             if (ticket.PurchaserUserId is not Guid buyerId) return null;
             var buyer = await _users.GetById(buyerId);
-            if (buyer is null || buyer.TenantId != tenantId) return null;
+            // A platform-wide rider account (no tenant) or this tenant's own account; never another tenant's.
+            if (buyer is null || (buyer.TenantId is not null && buyer.TenantId != tenantId)) return null;
 
             var rider = Normalize($"{ticket.RiderFirstName} {ticket.RiderLastName}");
             if (rider.Length == 0) return buyer;

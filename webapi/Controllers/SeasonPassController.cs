@@ -1797,6 +1797,11 @@ namespace webapi.Controllers
                 WaiverSignedByGuardian = waiverDecision.SignedByGuardian,
                 WaiverGuardianName = waiverDecision.GuardianName,
                 WaiverSignerName = waiverDecision.SignerName,
+                // Yearly birthdate check: the tenant's policy and where this holder stands.
+                BirthdateVerifyMode = _tenantContext.Tenant.BirthdateVerifyMode,
+                BirthdateVerifyValidDays = _tenantContext.Tenant.BirthdateVerifyValidDays,
+                BirthdateCheckNeeded = waiverDecision.BirthdateCheckNeeded,
+                BirthdateBlocked = waiverDecision.BirthdateBlocked,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
                 // parent who bought the pass), else nobody on file and staff type one in.
                 GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(

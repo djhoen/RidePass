@@ -298,6 +298,13 @@ export class TicketService {
         return axios.post<{ data: GateWaiverSignRequestResult }>(
             `${this.apiUrl}/Redemption/WaiverSignRequest`, req)
     }
+
+    // Gate: record that staff checked this rider's photo ID and birthdate (the ticket, the rider's
+    // other tickets in the order and, when the account is the rider, the account).
+    verifyOrderRiderId(token: string, purchaseId: string, verifiedDob: string | null) {
+        return axios.post<{ data: { idVerified: boolean; idVerifiedAge: number | null; dobMismatch: boolean } }>(
+            `${this.apiUrl}/Redemption/Order/${token}/VerifyId`, { purchaseId, verifiedDob })
+    }
 }
 
 export interface GateSearchResult {
@@ -331,6 +338,9 @@ export interface OrderLookup {
     purchaserEmail: string
     items: OrderItem[]
     requireIdAtCheckin: boolean
+    /** Yearly birthdate check: off | prompt | required, and its window in days. */
+    birthdateVerifyMode: 'off' | 'prompt' | 'required'
+    birthdateVerifyValidDays: number
     totalAmountCents: number
     // One entry per attending person (tickets grouped by registrant), with waiver status.
     waivers: OrderWaiverAttendee[]
@@ -367,6 +377,16 @@ export interface OrderWaiverAttendee {
     canRequestSignature: boolean
     /** Default recipient for that link: the buyer, when the buyer isn't this rider. */
     guardianEmail: string | null
+    /** The birthdate the rider gave, to compare with the ID. */
+    recordedBirthdate: string | null
+    /** When this rider's ID/birthdate was last checked (account first, then ticket). */
+    idVerifiedAtUtc: string | null
+    /** The tenant checks birthdates and this rider's check is missing or out of date. */
+    birthdateCheckNeeded: boolean
+    /** 'required' mode: admission blocked until the ID is checked. */
+    birthdateBlocked: boolean
+    /** The rider ticket to record an ID check against. */
+    verifyPurchaseId: string | null
 }
 
 export interface GateWaiverSignRequestResult {

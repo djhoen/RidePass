@@ -45,5 +45,17 @@ namespace webapi.Controllers.API.Data.Redemption
         public bool CanRequestSignature { get; set; }
         /// <summary>Suggested recipient for that link: the buyer when the buyer isn't this rider.</summary>
         public string? GuardianEmail { get; set; }
+
+        // ── Yearly birthdate check ──
+        /// <summary>The birthdate the rider gave (ticket), to show beside the ID's when they differ.</summary>
+        public DateTime? RecordedBirthdate { get; set; }
+        /// <summary>When this rider's ID/birthdate was last checked (account first, then ticket).</summary>
+        public DateTime? IdVerifiedAtUtc { get; set; }
+        /// <summary>The tenant checks birthdates and this rider's check is missing or out of date.</summary>
+        public bool BirthdateCheckNeeded { get; set; }
+        /// <summary>'required' mode: admission is blocked until the ID is checked.</summary>
+        public bool BirthdateBlocked { get; set; }
+        /// <summary>The rider ticket to record an ID check against (Order/{token}/VerifyId).</summary>
+        public Guid? VerifyPurchaseId { get; set; }
     }
 }

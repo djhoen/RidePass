@@ -271,6 +271,17 @@
                                 @click="openSignRequest('ticket', a.purchaseIds[0], a.name, a.guardianEmail, a.isMinor)">
                                 Send signing link{{ a.isMinor ? ' to a guardian' : '' }}
                             </v-btn>
+                            <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
+                            <v-alert v-if="a.birthdateCheckNeeded" density="compact" variant="tonal"
+                                :type="a.birthdateBlocked ? 'error' : 'warning'" class="mt-2"
+                                icon="mdi-card-account-details-outline">
+                                <div class="d-flex align-center flex-wrap ga-2">
+                                    <span>{{ birthdateCheckText(a.idVerifiedAtUtc) }}</span>
+                                    <v-spacer></v-spacer>
+                                    <v-btn v-if="a.verifyPurchaseId" size="small" color="primary" variant="flat"
+                                        @click="openVerifyRider(a)">Verify ID</v-btn>
+                                </div>
+                            </v-alert>
 
                             <v-btn v-if="a.hasSignatureImage" size="small" variant="text" class="mt-1 px-0"
                                 prepend-icon="mdi-draw" :loading="signatureLoadingFor === a.attendeeKey"
@@ -400,7 +411,24 @@
                         No date of birth on file: check their ID to confirm they're 18 or over
                     </span>
                 </div>
-                <v-alert v-if="pass.waiverBlockReason" type="error" variant="tonal" density="compact" class="mt-3">
+                <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
+                <v-alert v-if="pass.birthdateCheckNeeded && !pass.birthdateBlocked" type="warning" variant="tonal"
+                    density="compact" class="mt-3" icon="mdi-card-account-details-outline">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                        <span>{{ birthdateCheckText(pass.idVerifiedAtUtc) }}</span>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" color="primary" variant="flat" @click="openVerifyId">Verify ID</v-btn>
+                    </div>
+                </v-alert>
+                <v-alert v-if="pass.waiverBlockReason && pass.birthdateBlocked" type="error" variant="tonal"
+                    density="compact" class="mt-3" icon="mdi-card-account-details-outline">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                        <span>{{ pass.waiverBlockReason }}</span>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" color="primary" variant="flat" @click="openVerifyId">Verify ID</v-btn>
+                    </div>
+                </v-alert>
+                <v-alert v-else-if="pass.waiverBlockReason" type="error" variant="tonal" density="compact" class="mt-3">
                     {{ pass.waiverBlockReason }}
                     <div class="mt-2">
                         <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-email-fast-outline"
@@ -625,7 +653,7 @@
 
         <!-- ── Verify ID / age ─────────────────────────────────────────────── -->
         <v-dialog v-model="verifyIdOpen" max-width="440">
-            <v-card v-if="pass">
+            <v-card v-if="verifyTarget">
                 <v-card-title class="d-flex align-center">
                     <span>Verify ID and age</span>
                     <v-spacer></v-spacer>
@@ -636,9 +664,11 @@
                     <p class="text-body-2 mb-1">
                         Check the photo ID against the person in front of you.
                     </p>
-                    <div class="text-h6">{{ pass.holderName || pass.purchaserName }}</div>
+                    <div class="text-h6">{{ verifyTarget.name }}</div>
                     <p class="text-caption text-medium-emphasis mb-0">
-                        This is recorded against the rider, so they won't be asked again on later scans.
+                        This is recorded against the rider, so they won't be asked again on later scans
+                        <template v-if="branding.birthdateVerifyMode !== 'off'">
+                            for {{ branding.birthdateVerifyValidDays }} days</template>.
                     </p>
 
                     <v-text-field v-model="verifyDob" type="date" label="Date of birth on the ID"
@@ -648,7 +678,13 @@
 
                     <p v-if="verifyAge != null" class="text-body-2 mt-2 mb-0">
                         That makes them <strong>{{ verifyAge }}</strong> today.
+                        <template v-if="verifyAge < 18">A parent or guardian has to sign their waiver.</template>
                     </p>
+                    <v-alert v-if="verifyDobMismatch" type="warning" variant="tonal" density="compact" class="mt-3">
+                        This differs from the birthdate on file
+                        ({{ dayjs(verifyTarget.recordedBirthdate!).format('MMM D, YYYY') }}). The date on the ID
+                        is what counts from now on.
+                    </v-alert>
 
                     <div v-if="verifyIdError" class="text-error text-body-2 mt-3">{{ verifyIdError }}</div>
                 </v-card-text>
@@ -1469,14 +1505,42 @@ const verifyingId = ref(false)
 const verifyIdError = ref('')
 const verifyDob = ref('')
 
-function openVerifyId() {
+// Who the dialog is verifying: the pass holder on the pass card, or one rider in the order's
+// waiver panel (recorded against their rider ticket, the rest of their tickets and their account).
+const verifyTarget = ref<{ kind: 'pass' | 'ticket'; name: string; recordedBirthdate: string | null;
+    purchaseId: string | null } | null>(null)
+
+function openVerifyDialog(target: NonNullable<typeof verifyTarget.value>) {
+    verifyTarget.value = target
     // Seed from what the rider gave at registration: the common case is the document simply
     // confirming it, so staff only change it when the two disagree.
-    verifyDob.value = pass.value?.holderBirthdate
-        ? dayjs(pass.value.holderBirthdate).format('YYYY-MM-DD')
-        : ''
+    verifyDob.value = target.recordedBirthdate ? dayjs(target.recordedBirthdate).format('YYYY-MM-DD') : ''
     verifyIdError.value = ''
     verifyIdOpen.value = true
+}
+
+function openVerifyId() {
+    if (!pass.value) return
+    openVerifyDialog({ kind: 'pass', name: pass.value.holderName || pass.value.purchaserName,
+        recordedBirthdate: pass.value.holderBirthdate, purchaseId: null })
+}
+
+function openVerifyRider(a: OrderWaiverAttendee) {
+    if (!a.verifyPurchaseId) return
+    openVerifyDialog({ kind: 'ticket', name: a.name || 'This rider',
+        recordedBirthdate: a.recordedBirthdate, purchaseId: a.verifyPurchaseId })
+}
+
+// The ID says something other than what the rider gave: the ID wins, and staff should see it.
+const verifyDobMismatch = computed(() =>
+    !!verifyTarget.value?.recordedBirthdate && !!verifyDob.value && !verifyDobError.value
+    && dayjs(verifyTarget.value.recordedBirthdate).format('YYYY-MM-DD') !== verifyDob.value)
+
+// "Check ID: not verified since <date> / never", for the gate banners.
+function birthdateCheckText(verifiedAtUtc: string | null): string {
+    return verifiedAtUtc
+        ? `Check ID: birthdate not verified since ${formatDate(verifiedAtUtc)}.`
+        : 'Check ID: birthdate never verified.'
 }
 
 const verifyAge = computed(() => {
@@ -1494,21 +1558,27 @@ const verifyDobError = computed(() => {
 })
 
 const verifyDobHint = computed(() =>
-    pass.value?.holderBirthdate
+    verifyTarget.value?.recordedBirthdate
         ? 'Pre-filled from what the rider gave at registration. Change it if the ID says otherwise.'
         : 'No birthdate on file, so read it off the ID.')
 
 async function submitVerifyId() {
-    if (!passToken.value || !verifyDob.value || verifyDobError.value) return
+    const target = verifyTarget.value
+    if (!target || !verifyDob.value || verifyDobError.value) return
+    if (target.kind === 'pass' && !passToken.value) return
+    if (target.kind === 'ticket' && (!orderToken.value || !target.purchaseId)) return
     verifyingId.value = true
     verifyIdError.value = ''
     try {
-        await seasonPasses.verifyPassHolderId(passToken.value, verifyDob.value)
+        if (target.kind === 'pass') await seasonPasses.verifyPassHolderId(passToken.value!, verifyDob.value)
+        else await service.verifyOrderRiderId(orderToken.value!, target.purchaseId!, verifyDob.value)
         verifyIdOpen.value = false
         flash('ID and age verified.', 'success')
         // Re-read rather than patching locally: the server decides whether this stuck to the
-        // rider's account or only to this pass, and the chip's wording depends on which.
-        await tryLoadPass(passToken.value)
+        // rider's account, and a verified DOB that makes the rider a minor brings the guardian
+        // rule into the verdict, which only the gate can say.
+        if (target.kind === 'pass') await tryLoadPass(passToken.value!)
+        else await loadOrder(orderToken.value!)
     } catch (err: any) {
         verifyIdError.value = err.response?.data?.error
             || 'Couldn\'t record the ID verification. Check the connection and try again.'

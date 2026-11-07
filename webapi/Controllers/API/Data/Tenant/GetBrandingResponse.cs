@@ -25,6 +25,9 @@
         public bool AllowEventSubscriptions { get; set; }
         public bool RequireIdAtCheckin { get; set; }
         public bool RequireIdForWristband { get; set; }
+        /// <summary>Yearly birthdate check: off | prompt | required, and the window in days.</summary>
+        public string BirthdateVerifyMode { get; set; } = "off";
+        public int BirthdateVerifyValidDays { get; set; } = 365;
         /// <summary>Customer's share of the platform service charge on a bike shop sale (bps).
         /// 0 = the shop absorbs it and no fee line is shown at checkout.</summary>
         public int ShopBuyerPaidServiceChargeBps { get; set; }

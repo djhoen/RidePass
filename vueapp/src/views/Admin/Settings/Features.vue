@@ -46,6 +46,19 @@
                                     :loading="savingKey === 'seasonPassAdmissionType'"
                                     :disabled="savingKey !== null && savingKey !== 'seasonPassAdmissionType'"
                                     @update:model-value="(v: number) => applySeasonPassAdmissionType(v)"></v-select>
+                                <!-- Yearly birthdate check: three modes, so a select like the row above. -->
+                                <v-select v-else-if="f.key === 'birthdateVerify'"
+                                    :model-value="branding.birthdateVerifyMode"
+                                    :items="[
+                                        { title: 'Off', value: 'off' },
+                                        { title: 'Prompt staff', value: 'prompt' },
+                                        { title: 'Required to admit', value: 'required' },
+                                    ]"
+                                    density="compact" hide-details variant="outlined"
+                                    style="min-width: 220px"
+                                    :loading="savingKey === 'birthdateVerify'"
+                                    :disabled="savingKey !== null && savingKey !== 'birthdateVerify'"
+                                    @update:model-value="(v: 'off' | 'prompt' | 'required') => applyBirthdateVerifyMode(v)"></v-select>
                                 <v-switch v-else
                                     :model-value="f.enabled"
                                     @update:model-value="(v: boolean | null) => toggle(f, !!v)"
@@ -138,6 +151,28 @@
                         </div>
                     </v-expand-transition>
 
+                    <!-- Inline birthdate-check config: how long one ID check counts for. -->
+                    <v-expand-transition v-if="f.key === 'birthdateVerify'">
+                        <div v-if="branding.birthdateVerifyMode !== 'off'" class="px-4 pb-4 pl-14">
+                            <v-text-field v-model.number="birthdateValidDays"
+                                type="number" min="1" max="3650" density="compact"
+                                label="An ID check counts for (days)"
+                                hint="365 = once a year. A rider checked longer ago than this is asked again."
+                                persistent-hint
+                                :disabled="!!savingKey"
+                                style="max-width: 360px">
+                                <template #append>
+                                    <v-btn size="small" color="primary" variant="tonal"
+                                        :loading="savingKey === 'birthdateValidDays'"
+                                        :disabled="!birthdateValidDaysDirty || birthdateValidDays < 1 || birthdateValidDays > 3650"
+                                        @click="saveBirthdateValidDays">
+                                        Save
+                                    </v-btn>
+                                </template>
+                            </v-text-field>
+                        </div>
+                    </v-expand-transition>
+
                     <!-- Inline gift-card config: min/max denominations a buyer can pick. -->
                     <v-expand-transition v-if="f.key === 'giftCards'">
                         <div v-if="f.enabled" class="px-4 pb-4 pl-14">
@@ -175,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { TenantService } from '@/services/TenantService'
 import { MembershipService } from '@/services/MembershipService'
 import { branding, loadBranding } from '@/stores/branding'
@@ -198,6 +233,8 @@ function saveSettings(overrides: Partial<Parameters<typeof tenantService.updateS
         requireIdAtCheckin: branding.requireIdAtCheckin,
         requireIdForWristband: branding.requireIdForWristband,
         seasonPassAdmissionTypeId: branding.seasonPassAdmissionTypeId,
+        birthdateVerifyMode: branding.birthdateVerifyMode,
+        birthdateVerifyValidDays: branding.birthdateVerifyValidDays,
         ...overrides,
     })
 }
@@ -434,6 +471,18 @@ const features = computed<Feature[]>(() => [
         enabled: branding.requireIdForWristband,
         apply: async (next) => { await saveSettings({ requireIdForWristband: next }) },
     },
+    {
+        key: 'birthdateVerify',
+        title: 'Check birthdates against an ID once a year',
+        description: 'Gate staff check a rider\'s photo ID against their birthdate and record it, so they are '
+            + 'asked again only once the check is older than the window below. "Prompt staff" shows a '
+            + 'reminder but still admits; "Required to admit" refuses check-in until it is done. A '
+            + 'birthdate that makes the rider under 18 means a parent or guardian has to sign the waiver.',
+        icon: 'mdi-cake-variant-outline',
+        // Three modes, so the row renders a v-select; `enabled` only drives the icon colour.
+        enabled: branding.birthdateVerifyMode !== 'off',
+        apply: async () => { /* handled by applyBirthdateVerifyMode */ },
+    },
 ])
 
 // Super-admin-gated platform features: the tenant can't flip these on/off (that's a
@@ -479,6 +528,41 @@ async function applySeasonPassAdmissionType(next: number) {
         flash(`Season pass admission set to ${next === 1 ? 'event sign-up required' : 'walk-up'}.`, 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || "Couldn't save the season pass admission setting.", 'error')
+    } finally {
+        savingKey.value = null
+    }
+}
+
+async function applyBirthdateVerifyMode(next: 'off' | 'prompt' | 'required') {
+    if (savingKey.value) return
+    savingKey.value = 'birthdateVerify'
+    try {
+        await saveSettings({ birthdateVerifyMode: next })
+        await loadBranding()
+        flash(next === 'off' ? 'Birthdate checks turned off.'
+            : next === 'prompt' ? 'Gate staff will be prompted to check birthdates.'
+            : 'A current birthdate check is now required to admit a rider.', 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || "Couldn't save the birthdate check setting.", 'error')
+    } finally {
+        savingKey.value = null
+    }
+}
+
+const birthdateValidDays = ref(branding.birthdateVerifyValidDays)
+watch(() => branding.birthdateVerifyValidDays, v => { birthdateValidDays.value = v })
+const birthdateValidDaysDirty = computed(() => birthdateValidDays.value !== branding.birthdateVerifyValidDays)
+
+async function saveBirthdateValidDays() {
+    if (savingKey.value) return
+    if (birthdateValidDays.value < 1 || birthdateValidDays.value > 3650) return
+    savingKey.value = 'birthdateValidDays'
+    try {
+        await saveSettings({ birthdateVerifyValidDays: birthdateValidDays.value })
+        await loadBranding()
+        flash(`An ID check now counts for ${birthdateValidDays.value} days.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || "Couldn't save the birthdate check window.", 'error')
     } finally {
         savingKey.value = null
     }

@@ -251,6 +251,38 @@ namespace Services.Repositories
             return await _db.Execute(sql, new { userId, tenantId });
         }
 
+        public async Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT tenant_id AS TenantId, user_id AS UserId, verified_at AS VerifiedAt,
+                       verified_by_user_id AS VerifiedByUserId, verified_dob AS VerifiedDob
+                FROM rider_id_verification
+                WHERE user_id = @userId AND tenant_id = @tenantId
+                LIMIT 1";
+            return (await _db.Query<RiderAccountIdVerification>(sql, new { userId, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        {
+            // One row per (tenant, account): a re-check refreshes it, so the window restarts.
+            const string sql = @"
+                INSERT INTO rider_id_verification (tenant_id, user_id, verified_at, verified_by_user_id, verified_dob)
+                VALUES (@tenantId, @userId, now(), @verifiedByUserId, @verifiedDob)
+                ON CONFLICT (tenant_id, user_id) DO UPDATE
+                   SET verified_at = now(),
+                       verified_by_user_id = EXCLUDED.verified_by_user_id,
+                       verified_dob = EXCLUDED.verified_dob,
+                       updated_at = now()";
+            return await _db.Execute(sql, new { userId, tenantId, verifiedByUserId,
+                verifiedDob = verifiedDob?.Date });
+        }
+
+        public async Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId)
+        {
+            const string sql = "DELETE FROM rider_id_verification WHERE user_id = @userId AND tenant_id = @tenantId";
+            return await _db.Execute(sql, new { userId, tenantId });
+        }
+
         public async Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
             string? city, string? state, string? postalCode, string? country)
         {

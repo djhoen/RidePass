@@ -27,6 +27,13 @@ namespace webapi.Controllers.API.Data.Tenant
         /// a recorded ID/age verification. Separate from RequireIdAtCheckin, which is a per-scan
         /// attestation that records nothing.</summary>
         public bool RequireIdForWristband { get; set; }
+
+        /// <summary>Yearly birthdate check: 'off' | 'prompt' | 'required'. Null = leave unchanged, so
+        /// a settings screen that predates the field never resets it.</summary>
+        public string? BirthdateVerifyMode { get; set; }
+
+        /// <summary>How many days a recorded ID/birthdate check counts for (1-3650). Null = unchanged.</summary>
+        public int? BirthdateVerifyValidDays { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

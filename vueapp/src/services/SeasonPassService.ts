@@ -228,6 +228,11 @@ export interface PassLookup {
     waiverSignerName: string | null
     /** Default recipient for a guardian signing link: the buyer, when not the holder. */
     guardianEmail: string | null
+    /** Yearly birthdate check: the tenant's policy and where this holder stands. */
+    birthdateVerifyMode: 'off' | 'prompt' | 'required'
+    birthdateVerifyValidDays: number
+    birthdateCheckNeeded: boolean
+    birthdateBlocked: boolean
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null
