@@ -486,6 +486,16 @@ const features = computed<Feature[]>(() => [
         apply: async (next) => { await saveSettings({ requireIdForWristband: next }) },
     },
     {
+        // Script0312: every rider wears a band per day; a track can make it part of completing check-in.
+        key: 'wristbandRequiredAtCheckin',
+        title: 'Wristband required at check-in',
+        description: 'With Wristbands on, a season pass check-in completes only when the band is scanned in the '
+            + 'same step ("Admit and band") or the rider already wears today\'s band. Off: banding stays optional.',
+        icon: 'mdi-watch-variant',
+        enabled: branding.wristbandRequiredAtCheckin,
+        apply: async (next) => { await tenantService.updateWristbandRequiredAtCheckin({ required: next }) },
+    },
+    {
         key: 'birthdateVerify',
         title: 'Check birthdates against an ID once a year',
         description: 'Gate staff check a rider\'s photo ID against their birthdate and record it, so they are '

@@ -124,6 +124,8 @@
         /// <summary>Default shop labor rate in cents/hour; null = no rate set.</summary>
         public int? ShopLaborRateCents { get; set; }
         public bool WristbandsEnabled { get; set; }
+        /// <summary>With wristbands on, a pass check-in completes only with a band (Script0312).</summary>
+        public bool WristbandRequiredAtCheckin { get; set; }
         public bool TracksideExportEnabled { get; set; }
         /// <summary>The tenant has ever configured a spectator ticket tier; drives the
         /// Spectator Report nav visibility.</summary>

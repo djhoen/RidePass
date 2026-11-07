@@ -115,6 +115,8 @@ namespace Services.Repositories.Interfaces
         Task UpdateSeasonPassesEnabled(Guid tenantId, bool enabled);
         Task UpdateBikeShopEnabled(Guid tenantId, bool enabled);
         Task UpdateWristbandsEnabled(Guid tenantId, bool enabled);
+        /// <summary>Script0312: a band is part of completing a pass check-in (only while wristbands are on).</summary>
+        Task UpdateWristbandRequiredAtCheckin(Guid tenantId, bool required);
         Task UpdateTracksideExportEnabled(Guid tenantId, bool enabled);
         /// <summary>Any spectator ticket tier on any event, ever (drives Spectator Report visibility).</summary>
         Task<bool> HasSpectatorTiers(Guid tenantId);

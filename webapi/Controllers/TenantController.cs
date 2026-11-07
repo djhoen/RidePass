@@ -427,6 +427,15 @@ namespace webapi.Controllers
         }
 
         [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
+        [HttpPut("WristbandRequiredAtCheckin")]
+        public async Task<IActionResult> UpdateWristbandRequiredAtCheckin([FromBody] UpdateWristbandRequiredAtCheckinRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            await _tenants.UpdateWristbandRequiredAtCheckin(_tenantContext.TenantId, request.Required);
+            return await GetBranding();
+        }
+
+        [Authorize(Policy = TenantPermissions.Policy.SettingsManage)]
         [HttpPut("TracksideExportEnabled")]
         public async Task<IActionResult> UpdateTracksideExportEnabled([FromBody] UpdateTracksideExportEnabledRequest request)
         {
@@ -741,6 +750,7 @@ namespace webapi.Controllers
                 SeasonPassDiscountAppliesRental = tenant.SeasonPassDiscountAppliesRental,
                 BikeShopEnabled = tenant.BikeShopEnabled,
                 WristbandsEnabled = tenant.WristbandsEnabled,
+                WristbandRequiredAtCheckin = tenant.WristbandRequiredAtCheckin,
                 TracksideExportEnabled = tenant.TracksideExportEnabled,
                 SellsSpectatorPasses = await _tenants.HasSpectatorTiers(tenant.Id),
                 BlogEnabled = tenant.BlogEnabled,

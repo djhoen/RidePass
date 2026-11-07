@@ -201,6 +201,9 @@
         /// take a typed price. When set, a labor line entered by hours bills hours * this rate.</summary>
         public int? ShopLaborRateCents { get; set; }
         public bool WristbandsEnabled { get; set; } = false;
+        /// <summary>Script0312: with wristbands on, a season pass check-in completes only with a band (scanned in
+        /// the same step, or already worn today). Off by default: banding stays optional.</summary>
+        public bool WristbandRequiredAtCheckin { get; set; }
 
         // ── Staff access policy (Script0239) ──────────────────────────────────
         /// <summary>0 = off (default), 1 = enforce. Gates whether the location and hours rules

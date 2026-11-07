@@ -182,5 +182,32 @@ namespace Services.Repositories
             // TicketId is non-null on every row here: the query filters on ticket_id = ANY(@ids).
             return rows.ToDictionary(r => r.TicketId!.Value, r => r.Code);
         }
+
+        public async Task<string?> HolderOnDate(Guid tenantId, string code, DateOnly date, string timezone, Guid? exceptPassPurchaseId)
+        {
+            // A legacy (Script0189 / Script0237) band in use on that tenant-local date: a ticket band for an
+            // event starting that day, or a pass band for such an event or a walk-up on that date.
+            const string sql = @"
+                SELECT COALESCE(NULLIF(TRIM(COALESCE(t.rider_first_name,'') || ' ' || COALESCE(t.rider_last_name,'')), ''),
+                                t.purchaser_name)
+                FROM event_wristband w
+                JOIN event_ticket_purchase t ON t.id = w.ticket_id AND t.tenant_id = @tenantId
+                JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
+                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code)
+                  AND (e.starts_at AT TIME ZONE @timezone)::date = @date
+                UNION ALL
+                SELECT COALESCE(NULLIF(TRIM(COALESCE(p.holder_first_name,'') || ' ' || COALESCE(p.holder_last_name,'')), ''),
+                                p.purchaser_name)
+                FROM event_wristband w
+                JOIN season_pass_reservation r ON r.id = w.season_pass_reservation_id
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id AND p.tenant_id = @tenantId
+                LEFT JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
+                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code)
+                  AND (@exceptPassPurchaseId::uuid IS NULL OR p.id <> @exceptPassPurchaseId::uuid)
+                  AND ((w.event_id IS NULL AND w.valid_on_date = @date)
+                    OR (w.event_id IS NOT NULL AND (e.starts_at AT TIME ZONE @timezone)::date = @date))
+                LIMIT 1";
+            return (await _db.Query<string>(sql, new { tenantId, code, date, timezone, exceptPassPurchaseId })).FirstOrDefault();
+        }
     }
 }

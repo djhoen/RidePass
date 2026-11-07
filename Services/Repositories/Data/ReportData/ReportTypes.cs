@@ -105,6 +105,7 @@
         public bool CheckedIn { get; set; }
         public DateTime? CheckedInAtUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
+        public string? WristbandCode { get; set; }
     }
 
     /// <summary>

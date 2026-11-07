@@ -94,6 +94,8 @@ builder.Services.AddScoped<ICatalogImporter>(sp => sp.GetRequiredService<IBikeSh
 builder.Services.AddScoped<Services.BikeShop.IPartLookupProvider, Services.BikeShop.DisabledPartLookupProvider>();
 builder.Services.AddScoped<ITenantCreditRepository, TenantCreditRepository>();
 builder.Services.AddScoped<IWristbandRepository, WristbandRepository>();
+builder.Services.AddScoped<IRiderDayBandRepository, RiderDayBandRepository>();
+builder.Services.AddScoped<webapi.Helpers.IRiderDayBands, webapi.Helpers.RiderDayBands>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IWaiverRepository, WaiverRepository>();
 builder.Services.AddScoped<IWaiverSignRequestRepository, WaiverSignRequestRepository>();

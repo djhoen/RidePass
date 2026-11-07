@@ -679,6 +679,8 @@ export interface EventRiderRow {
     checkedIn: boolean
     checkedInAtUtc: string | null
     createdAtUtc: string
+    /** The band this entry wears: a ticket band, or the holder's day band (Script0312). */
+    wristbandCode?: string | null
 }
 
 export interface EventWaiverSignatureReport {

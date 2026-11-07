@@ -268,7 +268,9 @@ namespace Services.Repositories
                     t.status AS Status,
                     (t.status = 'redeemed') AS CheckedIn,
                     t.redeemed_at_utc AS CheckedInAtUtc,
-                    t.created_at AS CreatedAtUtc
+                    t.created_at AS CreatedAtUtc,
+                    (SELECT w.code FROM event_wristband w
+                      WHERE w.ticket_id = t.id AND w.tenant_id = @tenantId LIMIT 1) AS WristbandCode
                 FROM event_ticket_purchase t
                 JOIN event_ticket_tier tier ON tier.id = t.tier_id
                 LEFT JOIN users u ON u.id = t.purchaser_user_id
@@ -301,7 +303,14 @@ namespace Services.Repositories
                     spr.status AS Status,
                     (spr.checked_in_at IS NOT NULL) AS CheckedIn,
                     spr.checked_in_at AS CheckedInAtUtc,
-                    spr.reserved_at AS CreatedAtUtc
+                    spr.reserved_at AS CreatedAtUtc,
+                    -- The holder's day band covering this admission (Script0312), else an older pass band.
+                    COALESCE(
+                        (SELECT b.code FROM rider_day_band_admission a
+                           JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
+                          WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId LIMIT 1),
+                        (SELECT w.code FROM event_wristband w
+                          WHERE w.season_pass_reservation_id = spr.id AND w.tenant_id = @tenantId LIMIT 1)) AS WristbandCode
                 FROM season_pass_reservation spr
                 JOIN season_pass_purchase spp ON spp.id = spr.season_pass_purchase_id
                 JOIN season_pass_product sp ON sp.id = spp.product_id
@@ -407,7 +416,13 @@ namespace Services.Repositories
                        sp.name,
                        (spr.checked_in_at IS NOT NULL),
                        spr.checked_in_at,
-                       NULL::text,
+                       -- The holder's day band for this admission (Script0312), else an older pass band.
+                       COALESCE(
+                           (SELECT b.code FROM rider_day_band_admission a
+                              JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
+                             WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId LIMIT 1),
+                           (SELECT w.code FROM event_wristband w
+                             WHERE w.season_pass_reservation_id = spr.id AND w.tenant_id = @tenantId LIMIT 1)),
                        false,
 {SEASON_PASS_PURCHASE_TYPE},
                        tet.name, tet.code,

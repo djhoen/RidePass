@@ -36,6 +36,8 @@ namespace webapi.Controllers.API.Data.Reports
         public bool CheckedIn { get; set; }
         public DateTime? CheckedInAtUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
+        /// <summary>The band this entry wears: a ticket band, or the holder's day band (Script0312).</summary>
+        public string? WristbandCode { get; set; }
     }
 
     public class DailyEventReportResponse

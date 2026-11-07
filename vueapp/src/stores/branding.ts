@@ -121,6 +121,8 @@ export interface BrandingState {
     shopSupplyFeeLabel: string
     shopLaborRateCents: number | null
     wristbandsEnabled: boolean
+    /** With wristbands on, a pass check-in completes only with a band (Script0312). */
+    wristbandRequiredAtCheckin: boolean
     tracksideExportEnabled: boolean
     /// The tenant has ever configured a spectator ticket tier; drives Spectator Report visibility.
     sellsSpectatorPasses: boolean
@@ -254,6 +256,7 @@ const defaults: BrandingState = {
     shopSupplyFeeLabel: 'Shop supplies',
     shopLaborRateCents: null,
     wristbandsEnabled: false,
+    wristbandRequiredAtCheckin: false,
     tracksideExportEnabled: false,
     sellsSpectatorPasses: false,
     blogEnabled: false,
@@ -431,6 +434,7 @@ export async function loadBranding(): Promise<void> {
         branding.shopSupplyFeeLabel = data.shopSupplyFeeLabel ?? 'Shop supplies'
         branding.shopLaborRateCents = data.shopLaborRateCents ?? null
         branding.wristbandsEnabled = !!data.wristbandsEnabled
+        branding.wristbandRequiredAtCheckin = !!data.wristbandRequiredAtCheckin
         branding.tracksideExportEnabled = !!data.tracksideExportEnabled
         branding.sellsSpectatorPasses = !!data.sellsSpectatorPasses
         branding.blogEnabled = !!data.blogEnabled

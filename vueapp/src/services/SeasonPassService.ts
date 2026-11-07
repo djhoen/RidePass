@@ -164,6 +164,18 @@ export interface PassReservation {
     checkInDate: string | null
     status: string
     checkedInAtUtc: string | null
+    /** The holder's day band covering this admission (Script0312), when banded. */
+    bandCode?: string | null
+}
+
+/** The rider's wristband for the business day (Script0312). */
+export interface DayBand {
+    id: string
+    code: string
+    issuedAtUtc: string
+    /** Tenant-local wall-clock time, e.g. "9:12 AM". */
+    issuedAtLocal: string
+    issuedByName?: string | null
 }
 
 export interface PassTodayEvent {
@@ -265,6 +277,10 @@ export interface PassLookup {
     holderBirthdate: string | null
     /** Tenant requires waiver + verified ID before a wristband may be issued. */
     requireIdForWristband: boolean
+    /** A pass check-in completes only with a band (wristbands on and required). */
+    wristbandRequiredAtCheckin?: boolean
+    /** The holder's band today, if banded. */
+    todaysBand?: DayBand | null
     /** Null when this pass's product grants no buddy admissions (most products). */
     buddyPass: BuddyEntitlement | null
 }
@@ -282,6 +298,10 @@ export interface GateRedeemResult {
     alreadyAdmitted: boolean
     checkedInAtUtc: string | null
     creditsRemaining: number | null
+    /** The band now on the rider (issued with this admission, or already worn today). */
+    band?: DayBand | null
+    /** The admission went through but the band couldn't be issued (a race since the check). */
+    bandError?: string | null
 }
 
 /** One row of the admin Employee Passes roster. */
@@ -440,8 +460,12 @@ export class SeasonPassService {
     /** Walk-up gate admission for a scanned pass: burns one credit on credits passes. */
     /** Admit a scanned pass. eventId null = walk-up on a day with no calendar event, which the
      *  server accepts only for tenants in walk-up admission mode. */
-    redeemAtGate(token: string, eventId: string | null) {
-        return axios.post<{ data: GateRedeemResult }>(`${this.apiUrl}/SeasonPass/Pass/${token}/Redeem`, { eventId })
+    redeemAtGate(token: string, eventId: string | null, bandCode: string | null = null) {
+        return axios.post<{ data: GateRedeemResult }>(`${this.apiUrl}/SeasonPass/Pass/${token}/Redeem`, { eventId, bandCode })
+    }
+    /** Band a pass holder admitted today, or replace their band (with a reason: lost, broken, other). */
+    bandHolder(token: string, code: string, replaceReason: string | null = null) {
+        return axios.post<{ data: DayBand & { replaced: boolean } }>(`${this.apiUrl}/RiderDayBands/Pass/${token}`, { code, replaceReason })
     }
     /**
      * Records that the worker checked this holder's photo ID. `verifiedDob` is the date of birth

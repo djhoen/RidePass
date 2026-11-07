@@ -1,8 +1,8 @@
 import axios from 'axios'
 
 export interface WristbandResolution {
-    /** Which anchor this band resolved through. */
-    source: 'ticket' | 'season_pass'
+    /** Which anchor this band resolved through: a rider's day band (Script0312), else an older ticket / pass band. */
+    source: 'rider_day' | 'ticket' | 'season_pass'
     /** Set when source is 'ticket'. */
     ticketId: string | null
     /** Set when source is 'season_pass': the admission the band was issued at. */
@@ -12,13 +12,25 @@ export interface WristbandResolution {
     /** Null on a band issued on a day with no calendar event. */
     eventId: string | null
     code: string
-    redemptionToken: string
+    /** The order or pass to open (null only when a day band's pass is gone). */
+    redemptionToken: string | null
     eventTitle: string
     tierName: string | null
     status: string
     name: string
     raceNumber: string | null
     linkedAt: string
+    // ── rider_day only ──
+    bandId?: string
+    businessDate?: string
+    issuedAtLocal?: string
+    /** Every admission the band covers today. */
+    admissions?: { seasonPassReservationId: string | null; eventTicketPurchaseId: string | null; eventId: string | null;
+        eventTitle: string; status: string; checkedInAtUtc: string | null }[]
+    hasPhoto?: boolean
+    photoSource?: string | null
+    riderPhotoId?: string | null
+    photoUrl?: string | null
 }
 
 export interface WristbandCodesResult {

@@ -35,6 +35,8 @@ namespace webapi.Controllers
         private readonly IProfitCenterRepository _profitCenters;
         private readonly ICashRepository _cash;
 
+        private readonly webapi.Helpers.IRiderDayBands _dayBands;
+
         public ReportsController(
             IReportsRepository reports,
             IConcessionRepository concessions,
@@ -54,8 +56,10 @@ namespace webapi.Controllers
             IQuickBooksDesktopRepository quickBooksDesktop,
             IProfitCenterRepository profitCenters,
             ICashRepository cash,
-            Services.Audit.IAuditLogger audit)
+            Services.Audit.IAuditLogger audit,
+            webapi.Helpers.IRiderDayBands dayBands)
         {
+            _dayBands = dayBands;
             _audit = audit;
             _cash = cash;
             _reports = reports;
@@ -1149,6 +1153,7 @@ namespace webapi.Controllers
                         CheckedInAtUtc = r.CheckedInAtUtc.HasValue
                             ? DateTime.SpecifyKind(r.CheckedInAtUtc.Value, DateTimeKind.Utc) : null,
                         CreatedAtUtc = DateTime.SpecifyKind(r.CreatedAtUtc, DateTimeKind.Utc),
+                        WristbandCode = r.WristbandCode,
                     };
                 }).ToList(),
             };
@@ -1251,12 +1256,27 @@ namespace webapi.Controllers
                             }
                         }
                     }
+                    // The day's wristband (Script0312): this toggle has no band field, so when the track
+                    // requires a band at check-in the holder must already wear today's; a worn band covers
+                    // this admission too.
+                    Services.Repositories.Data.WristbandData.RiderDayBand? worn = null;
+                    if (req.CheckedIn && _tenantContext.Tenant.WristbandsEnabled
+                        && await _seasonPasses.GetReservationForCheckIn(purchaseId, tenantId) is { } bandCtx
+                        && await _seasonPasses.GetPurchase(bandCtx.PassPurchaseId) is { } bandPass && bandPass.TenantId == tenantId)
+                    {
+                        worn = await _dayBands.TodayForPass(bandPass);
+                        if (worn is null && _dayBands.RequiredAtCheckin)
+                            return new ApiResponses().BadRequestResult(
+                                "A wristband is required to check in. Admit this pass from the gate screen and scan the band.",
+                                new { code = "band_required" });
+                    }
                     var affected = await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,
                         req.CheckedIn ? "checked_in" : "reserved",
                         req.CheckedIn ? staffId : null);
                     if (req.CheckedIn && affected == 0)
                         return new ApiResponses().BadRequestResult(
                             "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
+                    if (worn is not null) await _dayBands.LinkAdmission(worn.Id, purchaseId, staffId);
                     break;
                 default:
                     return new ApiResponses().BadRequestResult("Unknown source.");

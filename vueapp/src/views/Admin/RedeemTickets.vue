@@ -517,6 +517,30 @@
                                 ? `Checked in${r.checkedInAtUtc ? ' ' + formatInTenant(r.checkedInAtUtc) : ''}`
                                 : 'Reserved' }}
                         </v-chip>
+                        <v-chip v-if="branding.wristbandsEnabled && r.bandCode" size="x-small" color="indigo"
+                            variant="tonal" prepend-icon="mdi-watch">Band {{ r.bandCode }}</v-chip>
+                    </div>
+                </template>
+
+                <!-- The holder's day pass (Script0312): today's admission is the day pass, and with
+                     wristbands on, the band they wear for the whole day. -->
+                <template v-if="branding.wristbandsEnabled && passAdmittedToday">
+                    <div class="d-flex align-center flex-wrap ga-2 mt-3" data-test="day-pass">
+                        <v-icon size="18" color="success">mdi-ticket-confirmation-outline</v-icon>
+                        <span class="text-body-2">
+                            Today: {{ dayPassLabel }}<template v-if="pass.todaysBand"> · <strong>Band #{{ pass.todaysBand.code }}</strong>
+                                issued {{ pass.todaysBand.issuedAtLocal }}</template>
+                        </span>
+                        <v-spacer></v-spacer>
+                        <v-btn v-if="pass.todaysBand" size="small" variant="tonal" prepend-icon="mdi-watch-vibrate"
+                            @click="openReplaceBand">Replace band</v-btn>
+                    </div>
+                    <div v-if="!pass.todaysBand" class="d-flex align-center ga-2 mt-2">
+                        <v-text-field v-model="passBandCode" label="Wristband (scan or type)" density="compact"
+                            hide-details prepend-inner-icon="mdi-watch" autocomplete="off"
+                            @keyup.enter="bandAdmittedHolder"></v-text-field>
+                        <v-btn color="primary" :loading="bandBusy" :disabled="!passBandCode.trim()"
+                            @click="bandAdmittedHolder">Band</v-btn>
                     </div>
                 </template>
 
@@ -543,14 +567,16 @@
                             <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
                             No event today: walk-up admission
                         </div>
+                        <v-text-field v-if="admitBandField" v-model="passBandCode" density="compact" hide-details
+                            class="mb-2" prepend-inner-icon="mdi-watch" autocomplete="off"
+                            :label="pass.wristbandRequiredAtCheckin ? 'Wristband (required): scan or type' : 'Wristband (optional): scan or type'"
+                            @keyup.enter="admitPass"></v-text-field>
                         <div class="d-flex align-center ga-2">
                             <v-spacer></v-spacer>
-                            <span v-if="passAdmitBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock }}</span>
-                            <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock"
+                            <span v-if="passAdmitBlock || admitBandBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock || admitBandBlock }}</span>
+                            <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock || !!admitBandBlock"
                                 @click="admitPass">
-                                {{ pass.productKind === 'credits'
-                                    ? `Admit — uses 1 ride credit (${pass.creditsRemaining ?? 0} left)`
-                                    : 'Admit' }}
+                                {{ admitLabel }}
                             </v-btn>
                         </div>
                     </template>
@@ -564,6 +590,10 @@
                     <div v-else class="text-body-2 text-medium-emphasis mb-2">
                         {{ pass.todaysEvents[0].title }}
                     </div>
+                    <v-text-field v-if="admitBandField" v-model="passBandCode" density="compact" hide-details
+                        class="mb-2" prepend-inner-icon="mdi-watch" autocomplete="off"
+                        :label="pass.wristbandRequiredAtCheckin ? 'Wristband (required): scan or type' : 'Wristband (optional): scan or type'"
+                        @keyup.enter="admitPass"></v-text-field>
                     <div class="d-flex align-center ga-2">
                         <!-- Sign-up track: warn before the click that this event has no reservation
                              on file. The server enforces it either way. -->
@@ -572,12 +602,10 @@
                             Sign-up required
                         </v-chip>
                         <v-spacer></v-spacer>
-                        <span v-if="passAdmitBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock }}</span>
-                        <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock || !passEventId"
+                        <span v-if="passAdmitBlock || admitBandBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock || admitBandBlock }}</span>
+                        <v-btn color="success" :loading="admitting" :disabled="!!passAdmitBlock || !!admitBandBlock || !passEventId"
                             @click="admitPass">
-                            {{ pass.productKind === 'credits'
-                                ? `Admit — uses 1 ride credit (${pass.creditsRemaining ?? 0} left)`
-                                : 'Admit' }}
+                            {{ admitLabel }}
                         </v-btn>
                     </div>
                 </template>
@@ -803,6 +831,32 @@
                         This waiver was accepted without a drawn signature.
                     </p>
                 </v-card-text>
+            </v-card>
+        </v-dialog>
+
+        <!-- Replace a pass holder's day band (lost / broken): the old band is voided with the reason. -->
+        <v-dialog v-model="replaceBandOpen" max-width="420">
+            <v-card v-if="pass?.todaysBand">
+                <v-card-title>Replace band #{{ pass.todaysBand.code }}</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-3">
+                        {{ pass.holderName || pass.purchaserName }}'s old band stops working the moment the new one is on.
+                    </p>
+                    <v-radio-group v-model="replaceBandReason" inline hide-details density="compact" class="mb-2">
+                        <v-radio label="Lost" value="lost"></v-radio>
+                        <v-radio label="Broken" value="broken"></v-radio>
+                        <v-radio label="Other" value="other"></v-radio>
+                    </v-radio-group>
+                    <v-text-field v-model="replaceBandCode" label="New band (scan or type)" density="compact" autofocus
+                        hide-details autocomplete="off" @keyup.enter="saveReplaceBand"></v-text-field>
+                    <div v-if="replaceBandError" class="text-error text-body-2 mt-2">{{ replaceBandError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="replaceBandBusy" @click="replaceBandOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="replaceBandBusy" :disabled="!replaceBandCode.trim()"
+                        @click="saveReplaceBand">Replace</v-btn>
+                </v-card-actions>
             </v-card>
         </v-dialog>
 
@@ -1176,7 +1230,7 @@ useGateScanner({
     onScan: (scan, raw, source) => { void handleScan(scan, raw, source) },
     wristbandsEnabled: () => !!branding.wristbandsEnabled,
     enabled: () => !buddyOpen.value && !verifyIdOpen.value && !signatureOpen.value && !bandDialogOpen.value
-        && !signRequestOpen.value && !takePhotoOpen.value,
+        && !signRequestOpen.value && !takePhotoOpen.value && !replaceBandOpen.value,
 })
 
 // A scan that arrives mid-lookup or mid-check-in waits; only the latest one is kept.
@@ -1191,6 +1245,14 @@ async function handleScan(scan: GateScan, raw: string, source: GateScanSource) {
     if (busy.value) { queuedScan = { scan, raw, source }; return }
     if (scanning.value) await stopScan()
     if (source === 'codes') manualInput.value = raw.trim()
+
+    // A band scanned while the open pass card is waiting for one goes into its band field ("Admit and
+    // band" / "Band"), not to a lookup. The server still refuses a band already on someone else.
+    if (scan.kind === 'band' && source === 'page' && passAwaitingBand.value) {
+        passBandCode.value = scan.code
+        flash(`Band ${scan.code} scanned. ${passAdmittedToday.value ? 'Press Band.' : 'Press Admit and band.'}`, 'success')
+        return
+    }
 
     let ok: boolean
     if (scan.kind === 'token') {
@@ -1374,8 +1436,15 @@ async function lookupBand() {
 async function resolveBand(code: string, opts: { quietNotFound?: boolean } = {}): Promise<'ok' | 'not_found' | 'failed'> {
     bandLookupBusy.value = true
     try {
-        const r = await wristbands.resolve(code)
-        return await loadOrder(r.data.data.redemptionToken) ? 'ok' : 'failed'
+        const hit = (await wristbands.resolve(code)).data.data
+        if (!hit.redemptionToken) { flash(`Band ${hit.code} is on ${hit.name}, but their credential can't be opened here.`, 'warning'); return 'failed' }
+        const ok = await loadOrder(hit.redemptionToken)
+        // A rider's day band (Script0312): who it is and what it covers today; the card shows the photo.
+        if (ok && hit.source === 'rider_day') {
+            const what = (hit.admissions ?? []).map(a => a.eventTitle).join(', ') || 'day pass'
+            flash(`Band #${hit.code}: ${hit.name} · ${what} · issued ${hit.issuedAtLocal ?? ''}`.trim(), 'success')
+        }
+        return ok ? 'ok' : 'failed'
     } catch (err: any) {
         const notFound = err.response?.status === 404
         if (notFound && opts.quietNotFound) return 'not_found'
@@ -1821,22 +1890,110 @@ async function submitVerifyId() {
     }
 }
 
+// ── The holder's day band (Script0312) ──────────────────────────────────────
+// Every rider wears one band per day; a pass holder's admission today is their day pass. The band
+// goes on with the admission ("Admit and band"), afterwards ("Band"), or replaces a lost one.
+const passBandCode = ref('')
+const bandBusy = ref(false)
+const replaceBandOpen = ref(false)
+const replaceBandCode = ref('')
+const replaceBandReason = ref<'lost' | 'broken' | 'other'>('lost')
+const replaceBandError = ref('')
+const replaceBandBusy = ref(false)
+watch(passToken, () => { passBandCode.value = '' })
+
+const passAdmittedToday = computed(() =>
+    pass.value?.todaysReservations.some(r => r.status === 'checked_in') ?? false)
+
+/** "walk-up day pass" or "day pass · Saturday Open Riding" (the latest admission today). */
+const dayPassLabel = computed(() => {
+    const latest = [...(pass.value?.todaysReservations ?? [])]
+        .filter(r => r.status === 'checked_in')
+        .sort((a, b) => (b.checkedInAtUtc ?? '').localeCompare(a.checkedInAtUtc ?? ''))[0]
+    if (!latest) return 'day pass'
+    return latest.eventId ? `day pass · ${latest.eventTitle}` : 'walk-up day pass'
+})
+
+/** The admit row offers a band field: wristbands on and the holder not banded today. */
+const admitBandField = computed(() => !!branding.wristbandsEnabled && !!pass.value && !pass.value.todaysBand)
+
+/** Waiting for a band: a scanned band fills the field instead of looking someone up. */
+const passAwaitingBand = computed(() => admitBandField.value && !passAdmitBlock.value)
+
+const admitBandBlock = computed(() =>
+    admitBandField.value && pass.value?.wristbandRequiredAtCheckin && !passBandCode.value.trim()
+        ? 'Scan the wristband to admit.' : null)
+
+const admitLabel = computed(() => {
+    const p = pass.value
+    if (!p) return 'Admit'
+    const verb = admitBandField.value && passBandCode.value.trim() ? 'Admit and band' : 'Admit'
+    return p.productKind === 'credits' ? `${verb} — uses 1 ride credit (${p.creditsRemaining ?? 0} left)` : verb
+})
+
+async function bandAdmittedHolder() {
+    const code = passBandCode.value.trim()
+    if (!code || !passToken.value) return
+    bandBusy.value = true
+    try {
+        const b = (await seasonPasses.bandHolder(passToken.value, code)).data.data
+        flash(`Band #${b.code} on. Their day pass is complete.`, 'success')
+        passBandCode.value = ''
+        await tryLoadPass(passToken.value, ++lookupSeq, passEventId.value)
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t put the band on. Try again.', 'error')
+    } finally {
+        bandBusy.value = false
+    }
+}
+
+function openReplaceBand() {
+    replaceBandCode.value = ''
+    replaceBandReason.value = 'lost'
+    replaceBandError.value = ''
+    replaceBandOpen.value = true
+}
+
+async function saveReplaceBand() {
+    const code = replaceBandCode.value.trim()
+    if (!code || !passToken.value) return
+    replaceBandBusy.value = true
+    replaceBandError.value = ''
+    try {
+        const b = (await seasonPasses.bandHolder(passToken.value, code, replaceBandReason.value)).data.data
+        replaceBandOpen.value = false
+        flash(`Band #${b.code} replaces the old one (${replaceBandReason.value}).`, 'success')
+        await tryLoadPass(passToken.value, ++lookupSeq, passEventId.value)
+    } catch (err: any) {
+        replaceBandError.value = err.response?.data?.error || 'Couldn’t replace the band. Try again.'
+    } finally {
+        replaceBandBusy.value = false
+    }
+}
+
 async function admitPass() {
     if (!pass.value || !passToken.value) return
     // With events running, staff must still pick one. With none, the walk-up path sends null.
     if (pass.value.todaysEvents.length > 0 && !passEventId.value) return
+    if (passAdmitBlock.value || admitBandBlock.value) return
     admitting.value = true
     try {
-        const r = await seasonPasses.redeemAtGate(passToken.value, passEventId.value)
-        const data = (r.data as any).data
-        if (data.alreadyAdmitted) {
-            flash(`Already admitted today${data.checkedInAtUtc ? ' at ' + formatInTenant(data.checkedInAtUtc) : ''}.`, 'warning')
+        // "Admit and band": the band goes with the admission, checked before anything is written.
+        const bandCode = admitBandField.value && passBandCode.value.trim() ? passBandCode.value.trim() : null
+        const r = await seasonPasses.redeemAtGate(passToken.value, passEventId.value, bandCode)
+        const data = r.data.data
+        const banded = data.band ? ` Band #${data.band.code}.` : ''
+        if (data.bandError) {
+            flash(`Admitted, but the band didn't go on: ${data.bandError}`, 'warning')
+        } else if (data.alreadyAdmitted) {
+            flash(`Already admitted today${data.checkedInAtUtc ? ' at ' + formatInTenant(data.checkedInAtUtc) : ''}.${banded}`, 'warning')
         } else if (pass.value.productKind === 'credits') {
             const left = data.creditsRemaining ?? 0
-            flash(`Admitted — ${left} ${left === 1 ? 'ride' : 'rides'} left on this pass.`, 'success')
+            flash(`Admitted — ${left} ${left === 1 ? 'ride' : 'rides'} left on this pass.${banded}`, 'success')
         } else {
-            flash('Admitted.', 'success')
+            flash(`Admitted.${banded}`, 'success')
         }
+        passBandCode.value = ''
         markOpenedResult(row => { row.redeemedCount = 1 })   // the search row now reads "In today"
         await tryLoadPass(passToken.value, ++lookupSeq, passEventId.value)   // refresh credits + today's check-in state
         await readyForNextScan()

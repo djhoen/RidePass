@@ -41,5 +41,10 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Band codes for a set of season pass admissions, keyed by reservation id.</summary>
         Task<Dictionary<Guid, string>> GetCodesForReservations(IEnumerable<Guid> reservationIds, Guid tenantId);
+
+        /// <summary>Who wears this code in event_wristband on that tenant-local date (a ticket band for an event
+        /// that day, or a pass band for such an event or a walk-up that date), other than this pass; null if nobody.
+        /// Day bands (rider_day_band) check it so one code never means two riders on the same day.</summary>
+        Task<string?> HolderOnDate(Guid tenantId, string code, DateOnly date, string timezone, Guid? exceptPassPurchaseId);
     }
 }

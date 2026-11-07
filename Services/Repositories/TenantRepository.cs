@@ -84,6 +84,7 @@ namespace Services.Repositories
             shop_supply_fee_label AS ShopSupplyFeeLabel,
             shop_labor_rate_cents AS ShopLaborRateCents,
             wristbands_enabled AS WristbandsEnabled,
+            wristband_required_at_checkin AS WristbandRequiredAtCheckin,
             staff_access_policy_mode AS StaffAccessPolicyMode,
             staff_allowed_cidrs AS StaffAllowedCidrs,
             staff_hours_start AS StaffHoursStart,
@@ -652,6 +653,12 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET wristbands_enabled = @enabled WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, enabled });
+        }
+
+        public async Task UpdateWristbandRequiredAtCheckin(Guid tenantId, bool required)
+        {
+            const string sql = "UPDATE tenant SET wristband_required_at_checkin = @required WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, required });
         }
 
         public async Task UpdateSeasonPassDiscount(

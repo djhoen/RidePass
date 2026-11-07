@@ -95,6 +95,10 @@
                 <template #item.purchaserEmail="{ item }">
                     <a :href="`mailto:${item.purchaserEmail}`">{{ item.purchaserEmail }}</a>
                 </template>
+                <template #item.wristbandCode="{ item }">
+                    <v-chip v-if="item.wristbandCode" size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-watch">{{ item.wristbandCode }}</v-chip>
+                    <span v-else class="text-medium-emphasis">—</span>
+                </template>
                 <template #item.purchaserPhone="{ item }">
                     <a v-if="item.purchaserPhone" :href="`tel:${item.purchaserPhone}`">{{ item.purchaserPhone }}</a>
                     <span v-else class="text-medium-emphasis">—</span>
@@ -315,15 +319,17 @@ const classOptions = computed(() => {
     return Array.from(set).sort()
 })
 
-const headers = [
+const headers = computed(() => [
     { title: 'In', key: 'checkedIn', sortable: true, width: 130 },
     { title: 'Race #', key: 'raceNumber', sortable: true, width: 130 },
     { title: 'Name', key: 'purchaserName', sortable: true },
     { title: 'Email', key: 'purchaserEmail', sortable: true },
     { title: 'Phone', key: 'purchaserPhone', sortable: false, width: 130 },
     { title: 'Class', key: 'itemName', sortable: true },
+    // The band each entry wears (a ticket band, or the holder's day band, Script0312).
+    ...(branding.wristbandsEnabled ? [{ title: 'Band', key: 'wristbandCode', sortable: true, width: 110 }] : []),
     { title: 'Status', key: 'status', sortable: true, width: 110 },
-]
+])
 
 // Substring match across the visible-ish fields. "Fuzzy" in the practical
 // sense — admins type a fragment of a name / email / number / class and we
@@ -338,6 +344,7 @@ const filteredRows = computed<EventRiderRow[]>(() => {
             r.purchaserName, r.purchaserEmail, r.purchaserPhone ?? '',
             r.itemName, r.raceNumber ?? '', r.userRaceNumber ?? '',
             r.hometown ?? '',
+            r.wristbandCode ?? '',
         ].join(' ').toLowerCase()
         return hay.includes(q)
     })

@@ -99,6 +99,11 @@ export class TenantService {
         return axios.put(`${this.apiUrl}/Tenant/WristbandsEnabled`, req)
     }
 
+    /** A pass check-in completes only with a wristband (Script0312). */
+    async updateWristbandRequiredAtCheckin(req: { required: boolean }) {
+        return axios.put(`${this.apiUrl}/Tenant/WristbandRequiredAtCheckin`, req)
+    }
+
     async updateTracksideExportEnabled(req: { enabled: boolean }) {
         return axios.put(`${this.apiUrl}/Tenant/TracksideExportEnabled`, req)
     }

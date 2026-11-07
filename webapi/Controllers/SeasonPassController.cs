@@ -42,6 +42,7 @@ namespace webapi.Controllers
         private readonly Services.Helpers.Interfaces.IDbHelper _db;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly Services.Storage.IImageStorage _imageStorage;
+        private readonly IRiderDayBands _dayBands;
 
         public SeasonPassController(
             ISeasonPassRepository passes,
@@ -66,8 +67,10 @@ namespace webapi.Controllers
             Services.Helpers.Interfaces.IDbHelper db,
             Services.Audit.IAuditLogger audit,
             Services.Storage.IImageStorage imageStorage,
-            Services.Riders.IRiderPhotos riderPhotos)
+            Services.Riders.IRiderPhotos riderPhotos,
+            IRiderDayBands dayBands)
         {
+            _dayBands = dayBands;
             _riderPhotos = riderPhotos;
             _passes = passes;
             _events = events;
@@ -1792,6 +1795,12 @@ namespace webapi.Controllers
             // Buddy entitlement (Script0247). Null for a product that grants none, which is most
             // of them, so the scan screen shows the panel only when there is something to spend.
             var buddy = await _passes.GetBuddyEntitlement(pass.Id, _tenantContext.TenantId);
+            // Today's wristband (Script0312): the rider's band for the business day, and which of today's
+            // admissions it covers. Together with the admission this is the holder's day pass.
+            var todaysBand = _tenantContext.Tenant.WristbandsEnabled ? await _dayBands.TodayForPass(pass) : null;
+            var bandCodes = _tenantContext.Tenant.WristbandsEnabled
+                ? await _dayBands.CodesForReservations(reservations.Select(r => r.Id))
+                : new Dictionary<Guid, string>();
 
             return new ApiResponses().OkResult(new
             {
@@ -1876,6 +1885,15 @@ namespace webapi.Controllers
                 HolderBirthdate = pass.HolderBirthdate is { } hb ? DateOnly.FromDateTime(hb) : (DateOnly?)null,
                 // Echoed so the scanner knows whether to enforce, without a second round trip.
                 RequireIdForWristband = _tenantContext.Tenant.RequireIdForWristband,
+                WristbandRequiredAtCheckin = _dayBands.RequiredAtCheckin,
+                TodaysBand = todaysBand is null ? null : new
+                {
+                    todaysBand.Id,
+                    todaysBand.Code,
+                    IssuedAtUtc = DateTime.SpecifyKind(todaysBand.IssuedAt, DateTimeKind.Utc),
+                    IssuedAtLocal = _dayBands.IssuedTime(todaysBand),
+                    todaysBand.IssuedByName,
+                },
                 // Who the pass admits — may differ from the buyer, so this is the name staff
                 // should be checking against the photo.
                 HolderName = string.IsNullOrWhiteSpace(pass.HolderFirstName)
@@ -1910,6 +1928,7 @@ namespace webapi.Controllers
                         ? null : (DateTime?)DateTime.SpecifyKind(r.EventEndsAt.Value, DateTimeKind.Utc),
                     r.CheckInDate,
                     r.Status,
+                    BandCode = bandCodes.TryGetValue(r.Id, out var rb) ? rb : null,
                     CheckedInAtUtc = r.CheckedInAt is null ? null : (DateTime?)DateTime.SpecifyKind(r.CheckedInAt.Value, DateTimeKind.Utc),
                 }),
             });
@@ -2074,10 +2093,23 @@ namespace webapi.Controllers
                 }
             }
 
+            // The day's wristband (Script0312). This flip has no band field: when the track requires a band
+            // at check-in, the holder must already wear today's band (else admit from the gate screen, which
+            // bands in the same step). A band already worn covers this admission too.
+            var bandPass = ctx is not null && _tenantContext.Tenant.WristbandsEnabled
+                ? await _passes.GetPurchase(ctx.PassPurchaseId) : null;
+            var worn = bandPass is not null && bandPass.TenantId == _tenantContext.TenantId
+                ? await _dayBands.TodayForPass(bandPass) : null;
+            if (ctx is not null && _dayBands.RequiredAtCheckin && worn is null)
+                return new ApiResponses().BadRequestResult(
+                    "A wristband is required to check in. Admit this pass from the gate screen and scan the band.",
+                    new { code = "band_required" });
+
             var affected = await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
             if (affected == 0)
                 return new ApiResponses().BadRequestResult(
                     "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
+            if (worn is not null) await _dayBands.LinkAdmission(worn.Id, id, staffId);
             return new ApiResponses().OkResult();
         }
 
@@ -2186,6 +2218,61 @@ namespace webapi.Controllers
             // against today, event or no event.
             await using var redeemLock = await _db.AcquireAdvisoryLock($"season-pass-redeem:{pass.Id}");
 
+            // ── The day's wristband (Script0312) ──────────────────────────────────────────
+            // "Admit and band": a band scanned with the admission is checked in full BEFORE anything is
+            // written (gate, ID rule, one band per rider per day, one rider per band), so a band that
+            // can't go on leaves the rider un-admitted and their credit unspent. A band already worn
+            // today covers this admission too (a second event the same day).
+            var wantBand = !string.IsNullOrWhiteSpace(request.BandCode);
+            var worn = _tenantContext.Tenant.WristbandsEnabled ? await _dayBands.TodayForPass(pass) : null;
+            if (wantBand)
+            {
+                var bandCheck = await _dayBands.Check(pass, product, eventId, request.BandCode, null);
+                if (!bandCheck.Ok)
+                    return bandCheck.GateBlock is { } bandGate
+                        ? GateBlockResult.Result(bandGate, "season_pass", pass.RedemptionToken, pass.Id, eventId)
+                        : new ApiResponses().BadRequestResult(bandCheck.Error!, new { code = "band_refused" });
+            }
+            // The track requires a band to complete check-in: a NEW admission needs one, scanned now or
+            // already on the wrist. (An admission that already happened is reported as it is.)
+            IActionResult? BandRequired() =>
+                _dayBands.RequiredAtCheckin && !wantBand && worn is null
+                    ? new ApiResponses().BadRequestResult(
+                        "A wristband is required to check in. Scan the band, then Admit and band.", new { code = "band_required" })
+                    : null;
+
+            async Task<IActionResult> Admitted(Guid reservationId, bool already, DateTime? checkedInAtUtc, int? creditsRemaining)
+            {
+                Services.Repositories.Data.WristbandData.RiderDayBand? band = worn;
+                string? bandError = null;
+                if (wantBand)
+                {
+                    // Re-checked inside IssueForPass; a refusal now can only be a race lost since the
+                    // pre-check, and the admission stands.
+                    var issued = await _dayBands.IssueForPass(pass, product, reservationId, eventId, request.BandCode, null, staffId);
+                    if (issued.Ok) band = issued.Band; else bandError = issued.Error;
+                }
+                else if (worn is not null)
+                {
+                    await _dayBands.LinkAdmission(worn.Id, reservationId, staffId);
+                }
+                return new ApiResponses().OkResult(new
+                {
+                    ReservationId = reservationId,
+                    AlreadyAdmitted = already,
+                    CheckedInAtUtc = checkedInAtUtc is { } c ? (DateTime?)DateTime.SpecifyKind(c, DateTimeKind.Utc) : null,
+                    CreditsRemaining = creditsRemaining,
+                    Band = band is null ? null : new
+                    {
+                        band.Id,
+                        band.Code,
+                        IssuedAtUtc = DateTime.SpecifyKind(band.IssuedAt, DateTimeKind.Utc),
+                        IssuedAtLocal = _dayBands.IssuedTime(band),
+                    },
+                    BandError = bandError,
+                });
+            }
+
             if (eventId is Guid gateEventId)
             {
                 var existing = await _passes.GetReservation(pass.Id, gateEventId);
@@ -2201,16 +2288,8 @@ namespace webapi.Controllers
                 }
 
                 if (existing is not null && existing.Status == "checked_in")
-                {
-                    return new ApiResponses().OkResult(new
-                    {
-                        ReservationId = existing.Id,
-                        AlreadyAdmitted = true,
-                        CheckedInAtUtc = existing.CheckedInAt is null
-                            ? null : (DateTime?)DateTime.SpecifyKind(existing.CheckedInAt.Value, DateTimeKind.Utc),
-                        pass.CreditsRemaining,
-                    });
-                }
+                    return await Admitted(existing.Id, true, existing.CheckedInAt, pass.CreditsRemaining);
+                if (BandRequired() is { } needBand) return needBand;
                 if (existing is not null && existing.Status == "reserved")
                 {
                     // Pre-booked via Reserve, which already burned the credit, so just flip it.
@@ -2219,13 +2298,7 @@ namespace webapi.Controllers
                     if (flipped == 0)
                         return new ApiResponses().BadRequestResult(
                             "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
-                    return new ApiResponses().OkResult(new
-                    {
-                        ReservationId = existing.Id,
-                        AlreadyAdmitted = false,
-                        CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
-                        pass.CreditsRemaining,
-                    });
+                    return await Admitted(existing.Id, false, DateTime.UtcNow, pass.CreditsRemaining);
                 }
 
                 // Walk-up only past this point: a sign-up track already returned above.
@@ -2240,26 +2313,11 @@ namespace webapi.Controllers
                     // re-read before choosing the message. Only on this rare path, never per scan.
                     var raced = await _passes.GetReservation(pass.Id, gateEventId);
                     if (raced is not null && raced.Status == "checked_in")
-                    {
-                        return new ApiResponses().OkResult(new
-                        {
-                            ReservationId = raced.Id,
-                            AlreadyAdmitted = true,
-                            CheckedInAtUtc = raced.CheckedInAt is null
-                                ? null : (DateTime?)DateTime.SpecifyKind(raced.CheckedInAt.Value, DateTimeKind.Utc),
-                            pass.CreditsRemaining,
-                        });
-                    }
+                        return await Admitted(raced.Id, true, raced.CheckedInAt, pass.CreditsRemaining);
                     return new ApiResponses().BadRequestResult(
                         "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
                 }
-                return new ApiResponses().OkResult(new
-                {
-                    ReservationId = result.Value.ReservationId,
-                    AlreadyAdmitted = false,
-                    CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
-                    CreditsRemaining = result.Value.CreditsRemaining,
-                });
+                return await Admitted(result.Value.ReservationId, false, DateTime.UtcNow, result.Value.CreditsRemaining);
             }
             else
             {
@@ -2269,16 +2327,8 @@ namespace webapi.Controllers
                 // than a rider's credit.
                 var existingWalkUp = await _passes.GetWalkUpCheckIn(pass.Id, _tenantContext.TenantId, dayLocal);
                 if (existingWalkUp is not null && existingWalkUp.Status == "checked_in")
-                {
-                    return new ApiResponses().OkResult(new
-                    {
-                        ReservationId = existingWalkUp.Id,
-                        AlreadyAdmitted = true,
-                        CheckedInAtUtc = existingWalkUp.CheckedInAt is null
-                            ? null : (DateTime?)DateTime.SpecifyKind(existingWalkUp.CheckedInAt.Value, DateTimeKind.Utc),
-                        pass.CreditsRemaining,
-                    });
-                }
+                    return await Admitted(existingWalkUp.Id, true, existingWalkUp.CheckedInAt, pass.CreditsRemaining);
+                if (BandRequired() is { } needBand) return needBand;
 
                 var burnCredit = product.Kind == "credits";
                 var result = await _passes.CreateWalkUpGateCheckIn(pass.Id, _tenantContext.TenantId, dayLocal, staffId, burnCredit);
@@ -2287,26 +2337,11 @@ namespace webapi.Controllers
                     // Same two causes as the event branch, same re-read before blaming credits.
                     var raced = await _passes.GetWalkUpCheckIn(pass.Id, _tenantContext.TenantId, dayLocal);
                     if (raced is not null && raced.Status == "checked_in")
-                    {
-                        return new ApiResponses().OkResult(new
-                        {
-                            ReservationId = raced.Id,
-                            AlreadyAdmitted = true,
-                            CheckedInAtUtc = raced.CheckedInAt is null
-                                ? null : (DateTime?)DateTime.SpecifyKind(raced.CheckedInAt.Value, DateTimeKind.Utc),
-                            pass.CreditsRemaining,
-                        });
-                    }
+                        return await Admitted(raced.Id, true, raced.CheckedInAt, pass.CreditsRemaining);
                     return new ApiResponses().BadRequestResult(
                         "This pass has no ride credits left. If that's a mistake, credits can be adjusted from the customer's admin page.");
                 }
-                return new ApiResponses().OkResult(new
-                {
-                    ReservationId = result.Value.ReservationId,
-                    AlreadyAdmitted = false,
-                    CheckedInAtUtc = (DateTime?)DateTime.UtcNow,
-                    CreditsRemaining = result.Value.CreditsRemaining,
-                });
+                return await Admitted(result.Value.ReservationId, false, DateTime.UtcNow, result.Value.CreditsRemaining);
             }
         }
 
