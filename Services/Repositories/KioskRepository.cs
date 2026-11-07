@@ -193,33 +193,65 @@ namespace Services.Repositories
                 new { id, tenantId, byUserId }) == 1;
 
         // ── Pushed steps (Script0311) ────────────────────────────────────────────────────────────
+        // Time is applied when a request is read, never by sweeping the tenant: a pending / on-screen request
+        // past expires_at reads as expired, and a 'completing' one whose claim is older than the lease reads as
+        // on screen again (or expired, past expires_at), so a crashed completion never holds the kiosk.
+        // Only CreatePush writes those states back, for the one kiosk it inserts for (to free the unique slot).
+
+        private const string Lease = "interval '2 minutes'"; // KioskPush.ClaimLease
+
+        private const string EffectiveStatus = @"
+            CASE WHEN p.status IN ('pending', 'in_progress') AND p.expires_at <= now() THEN 'expired'
+                 WHEN p.status = 'completing' AND p.claimed_at <= now() - " + Lease + @"
+                      THEN CASE WHEN p.expires_at <= now() THEN 'expired' ELSE 'in_progress' END
+                 ELSE p.status END";
+
+        /// <summary>Holds its kiosk: waiting or on screen before expiry, or claimed within the lease.</summary>
+        private const string IsOpen = @"
+            ((p.status IN ('pending', 'in_progress') AND p.expires_at > now())
+             OR (p.status = 'completing' AND (p.claimed_at > now() - " + Lease + @" OR p.expires_at > now())))";
+
+        /// <summary>The kiosk may (re)take it, or staff / the kiosk may end it: waiting or on screen before
+        /// expiry, or a stale claim before expiry. A live claim (a save in flight) is never interrupted.</summary>
+        private const string IsClaimable = @"
+            p.expires_at > now()
+            AND (p.status IN ('pending', 'in_progress')
+                 OR (p.status = 'completing' AND p.claimed_at <= now() - " + Lease + @"))";
 
         private const string PushColumns = @"
-            id, tenant_id AS TenantId, kiosk_device_id AS KioskDeviceId, created_by_user_id AS CreatedByUserId,
-            created_at AS CreatedAt, expires_at AS ExpiresAt, want_waiver AS WantWaiver, want_photo AS WantPhoto,
-            target_kind AS TargetKind, event_ticket_purchase_id AS EventTicketPurchaseId,
-            season_pass_purchase_id AS SeasonPassPurchaseId, event_id AS EventId, kiosk_signup_id AS KioskSignupId,
-            sign_mode AS SignMode, waiver_id AS WaiverId, rider_first_name AS RiderFirstName, status,
-            started_at AS StartedAt, completed_at AS CompletedAt, cancelled_at AS CancelledAt,
-            cancelled_by_user_id AS CancelledByUserId, result_signature_id AS ResultSignatureId,
-            result_photo_id AS ResultPhotoId";
+            p.id, p.tenant_id AS TenantId, p.kiosk_device_id AS KioskDeviceId, p.created_by_user_id AS CreatedByUserId,
+            p.created_at AS CreatedAt, p.expires_at AS ExpiresAt, p.want_waiver AS WantWaiver, p.want_photo AS WantPhoto,
+            p.target_kind AS TargetKind, p.event_ticket_purchase_id AS EventTicketPurchaseId,
+            p.photo_ticket_purchase_id AS PhotoTicketPurchaseId,
+            p.season_pass_purchase_id AS SeasonPassPurchaseId, p.event_id AS EventId, p.kiosk_signup_id AS KioskSignupId,
+            p.sign_mode AS SignMode, p.waiver_id AS WaiverId, p.rider_first_name AS RiderFirstName,
+            " + EffectiveStatus + @" AS Status,
+            p.started_at AS StartedAt, p.completed_at AS CompletedAt, p.cancelled_at AS CancelledAt,
+            p.cancelled_by_user_id AS CancelledByUserId, p.result_signature_id AS ResultSignatureId,
+            p.result_photo_id AS ResultPhotoId, p.claimed_at AS ClaimedAt, p.claim_id AS ClaimId, p.end_reason AS EndReason";
 
-        /// <summary>Requests past their expiry are expired (lazily, whenever pushes are read).</summary>
-        private Task ExpireStale(Guid tenantId) => _db.Execute(@"
-            UPDATE kiosk_push SET status = 'expired'
-             WHERE tenant_id = @tenantId AND status IN ('pending', 'in_progress') AND expires_at <= now()",
-            new { tenantId });
+        /// <summary>Only for the kiosk's open request: whether its waiver still exists and has not expired.</summary>
+        private const string WaiverUsable = @"
+            (NOT p.want_waiver OR EXISTS (SELECT 1 FROM tenant_waiver w
+                WHERE w.id = p.waiver_id AND w.tenant_id = p.tenant_id
+                  AND (w.expires_at IS NULL OR w.expires_at > now()))) AS WaiverUsable";
 
         public async Task<KioskPush?> CreatePush(KioskPush p)
         {
-            await ExpireStale(p.TenantId);
+            // Settle this kiosk's lapsed request (if any) so it stops holding the one-open-request slot.
+            await _db.Execute(@"
+                UPDATE kiosk_push p SET status = CASE WHEN p.expires_at <= now() THEN 'expired' ELSE 'in_progress' END
+                 WHERE p.tenant_id = @TenantId AND p.kiosk_device_id = @KioskDeviceId
+                   AND ((p.status IN ('pending', 'in_progress') AND p.expires_at <= now())
+                        OR (p.status = 'completing' AND p.claimed_at <= now() - " + Lease + "))",
+                new { p.TenantId, p.KioskDeviceId });
             var sql = $@"
-                INSERT INTO kiosk_push
+                INSERT INTO kiosk_push AS p
                     (tenant_id, kiosk_device_id, created_by_user_id, expires_at, want_waiver, want_photo, target_kind,
-                     event_ticket_purchase_id, season_pass_purchase_id, event_id, kiosk_signup_id,
+                     event_ticket_purchase_id, photo_ticket_purchase_id, season_pass_purchase_id, event_id, kiosk_signup_id,
                      sign_mode, waiver_id, rider_first_name)
                 VALUES (@TenantId, @KioskDeviceId, @CreatedByUserId, @ExpiresAt, @WantWaiver, @WantPhoto, @TargetKind,
-                        @EventTicketPurchaseId, @SeasonPassPurchaseId, @EventId, @KioskSignupId,
+                        @EventTicketPurchaseId, @PhotoTicketPurchaseId, @SeasonPassPurchaseId, @EventId, @KioskSignupId,
                         @SignMode, @WaiverId, @RiderFirstName)
                 ON CONFLICT (kiosk_device_id) WHERE status IN ('pending', 'in_progress', 'completing') DO NOTHING
                 RETURNING {PushColumns}";
@@ -228,54 +260,82 @@ namespace Services.Repositories
 
         public async Task<KioskPush?> GetPush(Guid id, Guid tenantId)
         {
-            await ExpireStale(tenantId);
-            var sql = $"SELECT {PushColumns} FROM kiosk_push WHERE id = @id AND tenant_id = @tenantId";
+            var sql = $"SELECT {PushColumns} FROM kiosk_push p WHERE p.id = @id AND p.tenant_id = @tenantId";
             return (await _db.Query<KioskPush>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
         public async Task<KioskPush?> GetActivePush(Guid tenantId, Guid kioskDeviceId)
         {
-            await ExpireStale(tenantId);
-            var sql = $@"SELECT {PushColumns} FROM kiosk_push
-                         WHERE tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
-                           AND status IN ('pending', 'in_progress', 'completing')
+            var sql = $@"SELECT {PushColumns}, {WaiverUsable} FROM kiosk_push p
+                         WHERE p.tenant_id = @tenantId AND p.kiosk_device_id = @kioskDeviceId
+                           AND p.status IN ('pending', 'in_progress', 'completing') AND {IsOpen}
                          LIMIT 1";
             return (await _db.Query<KioskPush>(sql, new { tenantId, kioskDeviceId })).FirstOrDefault();
         }
 
+        public async Task<List<KioskPush>> ListOpenPushes(Guid tenantId)
+        {
+            var sql = $@"SELECT {PushColumns} FROM kiosk_push p
+                         WHERE p.tenant_id = @tenantId
+                           AND p.status IN ('pending', 'in_progress', 'completing') AND {IsOpen}";
+            return (await _db.Query<KioskPush>(sql, new { tenantId })).ToList();
+        }
+
         public async Task<bool> StartPush(Guid id, Guid tenantId, Guid kioskDeviceId) =>
             await _db.Execute(@"
-                UPDATE kiosk_push SET status = 'in_progress', started_at = COALESCE(started_at, now())
-                 WHERE id = @id AND tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
-                   AND status IN ('pending', 'in_progress') AND expires_at > now()",
-                new { id, tenantId, kioskDeviceId }) == 1;
+                UPDATE kiosk_push p SET status = 'in_progress', started_at = COALESCE(p.started_at, now())
+                 WHERE p.id = @id AND p.tenant_id = @tenantId AND p.kiosk_device_id = @kioskDeviceId
+                   AND " + IsClaimable, new { id, tenantId, kioskDeviceId }) == 1;
 
         public async Task<KioskPush?> ClaimPush(Guid id, Guid tenantId, Guid kioskDeviceId)
         {
             var sql = $@"
-                UPDATE kiosk_push SET status = 'completing'
-                 WHERE id = @id AND tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
-                   AND status IN ('pending', 'in_progress') AND expires_at > now()
+                UPDATE kiosk_push p SET status = 'completing', claimed_at = now(), claim_id = uuid_generate_v4()
+                 WHERE p.id = @id AND p.tenant_id = @tenantId AND p.kiosk_device_id = @kioskDeviceId AND {IsClaimable}
                 RETURNING {PushColumns}";
             return (await _db.Query<KioskPush>(sql, new { id, tenantId, kioskDeviceId })).FirstOrDefault();
         }
 
-        public Task FinishPush(Guid id, Guid tenantId, Guid? signatureId, Guid? photoId) => _db.Execute(@"
-            UPDATE kiosk_push SET status = 'done', completed_at = now(),
-                   result_signature_id = @signatureId, result_photo_id = @photoId
-             WHERE id = @id AND tenant_id = @tenantId AND status = 'completing'",
-            new { id, tenantId, signatureId, photoId });
+        public async Task<bool> RecordPushSignature(Guid id, Guid tenantId, Guid claimId, Guid signatureId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET result_signature_id = @signatureId
+                 WHERE id = @id AND tenant_id = @tenantId AND status = 'completing' AND claim_id = @claimId",
+                new { id, tenantId, claimId, signatureId }) == 1;
 
-        public Task ReleasePush(Guid id, Guid tenantId) => _db.Execute(@"
+        public async Task<bool> RecordPushPhoto(Guid id, Guid tenantId, Guid claimId, Guid photoId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET result_photo_id = @photoId
+                 WHERE id = @id AND tenant_id = @tenantId AND status = 'completing' AND claim_id = @claimId",
+                new { id, tenantId, claimId, photoId }) == 1;
+
+        public async Task<bool> FinishPush(Guid id, Guid tenantId, Guid claimId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET status = 'done', completed_at = now()
+                 WHERE id = @id AND tenant_id = @tenantId AND status = 'completing' AND claim_id = @claimId",
+                new { id, tenantId, claimId }) == 1;
+
+        public Task ReleasePush(Guid id, Guid tenantId, Guid claimId) => _db.Execute(@"
             UPDATE kiosk_push SET status = 'in_progress'
-             WHERE id = @id AND tenant_id = @tenantId AND status = 'completing'",
-            new { id, tenantId });
+             WHERE id = @id AND tenant_id = @tenantId AND status = 'completing' AND claim_id = @claimId",
+            new { id, tenantId, claimId });
+
+        public async Task<bool> EndPush(Guid id, Guid tenantId, string endReason) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET status = 'expired', end_reason = @endReason
+                 WHERE id = @id AND tenant_id = @tenantId AND status IN ('pending', 'in_progress', 'completing')",
+                new { id, tenantId, endReason }) == 1;
 
         public async Task<bool> CancelPush(Guid id, Guid tenantId, Guid? byUserId) =>
             await _db.Execute(@"
-                UPDATE kiosk_push SET status = 'cancelled', cancelled_at = now(), cancelled_by_user_id = @byUserId
-                 WHERE id = @id AND tenant_id = @tenantId AND status IN ('pending', 'in_progress')",
+                UPDATE kiosk_push p SET status = 'cancelled', cancelled_at = now(), cancelled_by_user_id = @byUserId
+                 WHERE p.id = @id AND p.tenant_id = @tenantId AND " + IsClaimable,
                 new { id, tenantId, byUserId }) == 1;
+
+        public async Task<bool> DeclinePush(Guid id, Guid tenantId, Guid kioskDeviceId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push p SET status = 'cancelled', cancelled_at = now(), end_reason = 'declined'
+                 WHERE p.id = @id AND p.tenant_id = @tenantId AND p.kiosk_device_id = @kioskDeviceId AND " + IsClaimable,
+                new { id, tenantId, kioskDeviceId }) == 1;
 
         public Task TouchPoll(Guid kioskDeviceId, Guid tenantId) => _db.Execute(
             "UPDATE kiosk_device SET last_poll_at = now() WHERE id = @kioskDeviceId AND tenant_id = @tenantId",

@@ -82,19 +82,27 @@ export class KioskDeviceApi {
     signup(body: KioskSignupBody) {
         return kioskClient().post<{ data: { checkedIn: boolean } }>('/Kiosk/Signup', body)
     }
-    /** A step staff pushed to this kiosk (asked only while idle), or null. */
+    /** A step staff pushed to this kiosk (asked only while idle), or null. Never the waiver text. */
     pollPush() {
         return kioskClient().get<{ data: KioskPushPayload | null }>('/Kiosk/Push')
     }
+    /** The waiver text for a pushed step, fetched once when it goes on screen. */
+    pushWaiver(id: string) {
+        return kioskClient().get<{ data: KioskPushWaiver }>(`/Kiosk/Push/${id}/Waiver`)
+    }
     startPush(id: string) {
         return kioskClient().post(`/Kiosk/Push/${id}/Start`)
+    }
+    /** "Not me" / cancel / idle reset: ends the request so it doesn't come back for the next walk-up. */
+    declinePush(id: string) {
+        return kioskClient().post(`/Kiosk/Push/${id}/Decline`)
     }
     completePush(id: string, body: KioskPushCompleteBody) {
         return kioskClient().post<{ data: { done: boolean } }>(`/Kiosk/Push/${id}/Complete`, body)
     }
 }
 
-/** What a pushed step shows: first name only, the steps, the signing mode and the waiver text. */
+/** What a pushed step shows: first name only, the steps, the signing mode and which waiver. */
 export interface KioskPushPayload {
     pushId: string
     firstName: string
@@ -102,9 +110,13 @@ export interface KioskPushPayload {
     wantPhoto: boolean
     signAs: 'guardian' | 'adult' | null
     waiverId: string | null
-    waiverTitle: string | null
-    waiverBody: string | null
     expiresAtUtc: string
+}
+
+export interface KioskPushWaiver {
+    waiverId: string
+    title: string
+    body: string
 }
 
 export interface KioskPushCompleteBody {
@@ -127,10 +139,14 @@ export interface ActiveKiosk {
     activePushId: string | null
 }
 
+/** A ticket's photo may be checked on another of the rider's tickets (photoPurchaseId) than the one the
+ *  waiver is fixed on (purchaseId): both travel on one request. */
 export type KioskPushTarget =
-    | { targetKind: 'ticket'; purchaseId: string }
+    | { targetKind: 'ticket'; purchaseId: string; photoPurchaseId?: string | null }
     | { targetKind: 'season_pass'; purchaseId: string; eventId?: string | null }
     | { targetKind: 'kiosk_signup'; kioskSignupId: string }
+
+export type KioskPushEndReason = 'declined' | 'waiver_changed' | 'mode_changed'
 
 export interface KioskPushStatus {
     id: string
@@ -142,6 +158,25 @@ export interface KioskPushStatus {
     wantPhoto: boolean
     expiresAtUtc: string
     completedAtUtc: string | null
+    endReason: KioskPushEndReason | null
+}
+
+export const KIOSK_PUSH_OPEN = ['pending', 'in_progress', 'completing'] as const
+
+/** What staff read for a request's state. */
+export function kioskPushStatusText(p: KioskPushStatus): string {
+    switch (p.status) {
+        case 'pending': return p.kioskIdle ? 'Waiting for the kiosk…' : 'Kiosk busy: someone is using it. It shows next.'
+        case 'in_progress': return 'On screen'
+        case 'completing': return 'Saving…'
+        case 'done': return 'Done'
+        case 'cancelled': return p.endReason === 'declined' ? 'Declined at kiosk' : 'Cancelled'
+        case 'expired':
+            return p.endReason === 'waiver_changed' ? 'Waiver changed, send again'
+                : p.endReason === 'mode_changed' ? 'Who signs changed (age), send again'
+                : 'Expired'
+        default: return p.status
+    }
 }
 
 export class KioskPushService {

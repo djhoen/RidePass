@@ -64,7 +64,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { KioskPushService, type ActiveKiosk, type KioskPushStatus, type KioskPushTarget } from '@/services/KioskService'
+import { KioskPushService, kioskPushStatusText, type ActiveKiosk, type KioskPushStatus, type KioskPushTarget } from '@/services/KioskService'
 
 const props = withDefaults(defineProps<{
     modelValue: boolean
@@ -75,8 +75,10 @@ const props = withDefaults(defineProps<{
 }>(), { riderName: null, allowWaiver: true, allowPhoto: true })
 const emit = defineEmits<{
     (e: 'update:modelValue', v: boolean): void
-    /** The kiosk finished: refresh what the gate shows. */
-    (e: 'done'): void
+    /** Sent: the screen keeps following it (useKioskPushWatch) after this dialog closes. */
+    (e: 'sent', pushId: string): void
+    /** The kiosk finished while this dialog was open: refresh what the gate shows. */
+    (e: 'done', pushId: string): void
 }>()
 
 const service = new KioskPushService()
@@ -92,18 +94,7 @@ const busyPushId = ref<string | null>(null)
 const push = ref<KioskPushStatus | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
-const statusText = computed(() => {
-    const p = push.value
-    if (!p) return ''
-    switch (p.status) {
-        case 'pending': return p.kioskIdle ? 'Waiting for the kiosk…' : 'Kiosk busy: someone is using it. It shows next.'
-        case 'in_progress': case 'completing': return 'On screen'
-        case 'done': return 'Done'
-        case 'expired': return 'Expired'
-        case 'cancelled': return 'Cancelled'
-        default: return p.status
-    }
-})
+const statusText = computed(() => push.value ? kioskPushStatusText(push.value) : '')
 
 function ago(utc: string | null) {
     if (!utc) return 'never'
@@ -143,6 +134,7 @@ async function send() {
     busyPushId.value = null
     try {
         push.value = (await service.send(kioskId.value, props.target, wantWaiver.value, wantPhoto.value)).data.data
+        emit('sent', push.value.id)
         follow()
     } catch (err: any) {
         error.value = err.response?.data?.error || 'Couldn’t send it to the kiosk.'
@@ -166,7 +158,7 @@ function follow() {
             push.value = (await service.status(push.value.id)).data.data
             if (['done', 'cancelled', 'expired'].includes(push.value.status)) {
                 stop()
-                if (push.value.status === 'done') emit('done')
+                if (push.value.status === 'done') emit('done', push.value.id)
             }
         } catch { /* try again on the next tick */ }
     }, 2000)

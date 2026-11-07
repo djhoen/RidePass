@@ -244,7 +244,8 @@
         </v-dialog>
 
         <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
-            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="onKioskDone" />
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto"
+            @sent="id => kioskWatch.track(id, true)" @done="onKioskDialogDone" />
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </div>
@@ -261,6 +262,7 @@ import { branding } from '@/stores/branding'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import type { KioskPushTarget } from '@/services/KioskService'
+import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
 
 const props = defineProps<{ initialEventId?: string | null }>()
@@ -632,6 +634,12 @@ function sendBlockToKiosk(kind: 'ticket' | 'season_pass', purchaseId: string, ev
     kioskAllowWaiver.value = allowWaiver
     kioskAllowPhoto.value = allowPhoto
     kioskOpen.value = true
+}
+// Closing the dialog doesn't lose the result: requests sent from here are re-checked every 5 s until they end.
+const kioskWatch = useKioskPushWatch<boolean>(() => { void onKioskDone() })
+function onKioskDialogDone(pushId: string) {
+    kioskWatch.untrack(pushId)
+    void onKioskDone()
 }
 async function onKioskDone() {
     flash('The kiosk finished: check them in again.', 'success')

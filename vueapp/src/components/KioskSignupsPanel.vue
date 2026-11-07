@@ -52,7 +52,8 @@
         </div>
 
         <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
-            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="load" />
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto"
+            @sent="id => kioskWatch.track(id, true)" @done="onKioskDialogDone" />
 
         <!-- A sign-up that matched an existing account: attached only after staff check ID. -->
         <v-dialog v-model="confirmOpen" max-width="480">
@@ -90,6 +91,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
 import { KioskAdminService, type KioskSignupItem, type KioskPushTarget } from '@/services/KioskService'
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
+import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
@@ -138,6 +140,12 @@ function sendToKiosk(s: KioskSignupItem) {
     kioskAllowWaiver.value = !s.waiverSigned
     kioskAllowPhoto.value = true
     kioskOpen.value = true
+}
+// Closing the dialog doesn't lose the result: requests sent from here are re-checked every 5 s until they end.
+const kioskWatch = useKioskPushWatch<boolean>(() => { void load() })
+function onKioskDialogDone(pushId: string) {
+    kioskWatch.untrack(pushId)
+    void load()
 }
 
 async function dismiss(s: KioskSignupItem) {

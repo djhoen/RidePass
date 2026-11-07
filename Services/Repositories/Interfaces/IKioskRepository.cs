@@ -38,20 +38,30 @@ namespace Services.Repositories.Interfaces
         /// <summary>Dismissed: also drops a held signature image.</summary>
         Task<bool> Dismiss(Guid id, Guid tenantId, Guid? byUserId);
 
-        // ── Pushed steps (Script0311). Expired requests are expired lazily on every read. ──
-        /// <summary>A new request, or null when the kiosk already has an active one (one at a time).</summary>
+        // ── Pushed steps (Script0311). Reads apply time (expiry, the claim lease) without writing. ──
+        /// <summary>A new request, or null when the kiosk already has an open one (one at a time).</summary>
         Task<KioskPush?> CreatePush(KioskPush push);
         Task<KioskPush?> GetPush(Guid id, Guid tenantId);
-        /// <summary>The kiosk's active request (pending, on screen or being completed), if any.</summary>
+        /// <summary>The kiosk's open request (waiting, on screen, or claimed within the lease), with WaiverUsable.</summary>
         Task<KioskPush?> GetActivePush(Guid tenantId, Guid kioskDeviceId);
+        /// <summary>Every open request of the tenant, in one read.</summary>
+        Task<List<KioskPush>> ListOpenPushes(Guid tenantId);
         /// <summary>The kiosk put it on screen.</summary>
         Task<bool> StartPush(Guid id, Guid tenantId, Guid kioskDeviceId);
-        /// <summary>Takes the request for completion: only its own kiosk, once, before expiry (one statement).</summary>
+        /// <summary>Takes the request for completion under a new claim (its own kiosk, before expiry; a stale
+        /// claim can be taken again). Returns the row with ClaimId and any results of an earlier attempt.</summary>
         Task<KioskPush?> ClaimPush(Guid id, Guid tenantId, Guid kioskDeviceId);
-        Task FinishPush(Guid id, Guid tenantId, Guid? signatureId, Guid? photoId);
+        /// <summary>Recorded right after the write, so a retry reuses it instead of signing / saving again.</summary>
+        Task<bool> RecordPushSignature(Guid id, Guid tenantId, Guid claimId, Guid signatureId);
+        Task<bool> RecordPushPhoto(Guid id, Guid tenantId, Guid claimId, Guid photoId);
+        Task<bool> FinishPush(Guid id, Guid tenantId, Guid claimId);
         /// <summary>Completion failed: the kiosk may try again (while it hasn't expired).</summary>
-        Task ReleasePush(Guid id, Guid tenantId);
+        Task ReleasePush(Guid id, Guid tenantId, Guid claimId);
+        /// <summary>Ends an open request that can't be completed as sent (KioskPush.End*): staff send it again.</summary>
+        Task<bool> EndPush(Guid id, Guid tenantId, string endReason);
         Task<bool> CancelPush(Guid id, Guid tenantId, Guid? byUserId);
+        /// <summary>"Not me" / cancel / idle timeout at the kiosk.</summary>
+        Task<bool> DeclinePush(Guid id, Guid tenantId, Guid kioskDeviceId);
         /// <summary>The kiosk is idle and asking for work.</summary>
         Task TouchPoll(Guid kioskDeviceId, Guid tenantId);
     }

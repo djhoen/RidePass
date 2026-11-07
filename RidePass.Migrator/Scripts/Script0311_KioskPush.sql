@@ -47,3 +47,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_kiosk_push_active
     ON kiosk_push (kiosk_device_id) WHERE status IN ('pending', 'in_progress', 'completing');
 
 ALTER TABLE kiosk_device ADD COLUMN IF NOT EXISTS last_poll_at timestamptz NULL;
+
+-- Review round (amended in place, unpushed):
+-- claimed_at / claim_id: when (and by which attempt) the kiosk took the request for completion. A 'completing'
+--   request whose claim is older than the lease (2 minutes) is stale: it no longer holds the kiosk and can be
+--   taken again (a new claim_id) or expire. Only the current claim records results or finishes it.
+-- end_reason: why a request ended without being done: declined (at the kiosk), waiver_changed,
+--   mode_changed (e.g. the rider turned 18), no_longer_needed, or NULL (timed out / cancelled by staff).
+-- photo_ticket_purchase_id: the ticket the gate's photo check uses, when it differs from the ticket the
+--   waiver is fixed on (a registrant's rider ticket vs their waiver ticket).
+ALTER TABLE kiosk_push
+    ADD COLUMN IF NOT EXISTS claimed_at               timestamptz NULL,
+    ADD COLUMN IF NOT EXISTS claim_id                 uuid        NULL,
+    ADD COLUMN IF NOT EXISTS end_reason               text        NULL,
+    ADD COLUMN IF NOT EXISTS photo_ticket_purchase_id uuid        NULL REFERENCES event_ticket_purchase(id) ON DELETE CASCADE;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_kiosk_push_end_reason') THEN
+        ALTER TABLE kiosk_push ADD CONSTRAINT chk_kiosk_push_end_reason
+            CHECK (end_reason IS NULL OR end_reason IN ('declined', 'waiver_changed', 'mode_changed', 'no_longer_needed'));
+    END IF;
+END $$;
+
+-- The open requests of a tenant in one read (staff's kiosk list); a kiosk's own is uq_kiosk_push_active.
+CREATE INDEX IF NOT EXISTS idx_kiosk_push_open_tenant ON kiosk_push (tenant_id)
+    WHERE status IN ('pending', 'in_progress', 'completing');

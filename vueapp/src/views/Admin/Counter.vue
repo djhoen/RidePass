@@ -788,7 +788,7 @@
         </v-dialog>
 
         <SendToKioskDialog v-model="kioskPushOpen" :target="kioskPushTarget" :rider-name="kioskPushRider"
-            @done="refreshRiderWaivers" />
+            @sent="id => kioskWatch.track(id, true)" @done="onKioskDialogDone" />
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
@@ -819,6 +819,7 @@ import PhoneField from '@/components/PhoneField.vue'
 import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import type { KioskSignupItem, KioskPushTarget } from '@/services/KioskService'
+import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 
 type Customer = CounterRider
 type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
@@ -1472,6 +1473,12 @@ function sendRiderToKiosk(li: { purchaseId: string; riderName: string }) {
     kioskPushTarget.value = { targetKind: 'ticket', purchaseId: li.purchaseId }
     kioskPushRider.value = li.riderName
     kioskPushOpen.value = true
+}
+// Closing the dialog doesn't lose the result: requests sent from here are re-checked every 5 s until they end.
+const kioskWatch = useKioskPushWatch<boolean>(() => { void refreshRiderWaivers() })
+function onKioskDialogDone(pushId: string) {
+    kioskWatch.untrack(pushId)
+    void refreshRiderWaivers()
 }
 
 function stopWaiverPoll() {

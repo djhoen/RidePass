@@ -277,7 +277,7 @@
                             <v-btn v-if="(a.canRequestSignature && a.purchaseIds.length) || (a.photoPurchaseId && a.riderPhotoMode !== 'off' && !a.hasPhoto)"
                                 size="small" variant="text" class="mt-2 ml-1" prepend-icon="mdi-tablet-cellphone"
                                 @click="openSendToKiosk('ticket', (a.canRequestSignature ? a.purchaseIds[0] : a.photoPurchaseId)!, a.name,
-                                    !!a.canRequestSignature, !!a.photoPurchaseId && a.riderPhotoMode !== 'off')">
+                                    !!a.canRequestSignature, !!a.photoPurchaseId && a.riderPhotoMode !== 'off', a.photoPurchaseId)">
                                 Send to kiosk
                             </v-btn>
                             <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
@@ -833,7 +833,8 @@
         <!-- Waiver fix-up: email the waiver signing link (to a parent / guardian for a minor). Once
              signed, the signature is linked to this ticket / pass and a re-scan admits them. -->
         <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
-            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="onKioskDone" />
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto"
+            @sent="id => kioskWatch.track(id, kioskKind)" @done="onKioskDialogDone" />
 
         <v-dialog v-model="signRequestOpen" max-width="460">
             <v-card>
@@ -907,6 +908,7 @@ import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
 import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import type { KioskPushTarget } from '@/services/KioskService'
+import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
 import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
     type GateScanSource } from '@/composables/useGateScanner'
@@ -1670,20 +1672,28 @@ const kioskRider = ref<string | null>(null)
 const kioskAllowWaiver = ref(true)
 const kioskAllowPhoto = ref(true)
 const kioskKind = ref<'ticket' | 'season_pass'>('ticket')
+// A registrant's waiver is fixed on their first ticket and their photo checked on their rider ticket: one
+// request carries both (purchaseId for the waiver, photoPurchaseId for the photo).
 function openSendToKiosk(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null,
-    allowWaiver: boolean, allowPhoto: boolean) {
+    allowWaiver: boolean, allowPhoto: boolean, photoPurchaseId: string | null = null) {
     kioskKind.value = kind
     kioskTarget.value = kind === 'season_pass'
         ? { targetKind: 'season_pass', purchaseId, eventId: passEventId.value }
-        : { targetKind: 'ticket', purchaseId }
+        : { targetKind: 'ticket', purchaseId, photoPurchaseId }
     kioskRider.value = name
     kioskAllowWaiver.value = allowWaiver
     kioskAllowPhoto.value = allowPhoto
     kioskOpen.value = true
 }
-async function onKioskDone() {
+// Closing the dialog doesn't lose the result: requests sent from here are re-checked every 5 s until they end.
+const kioskWatch = useKioskPushWatch<'ticket' | 'season_pass'>(kind => { void onKioskDone(kind) })
+function onKioskDialogDone(pushId: string) {
+    kioskWatch.untrack(pushId)
+    void onKioskDone(kioskKind.value)
+}
+async function onKioskDone(kind: 'ticket' | 'season_pass') {
     flash('The kiosk finished: the gate is updated.', 'success')
-    await refreshAfterPhoto(kioskKind.value)
+    await refreshAfterPhoto(kind)
 }
 
 function openTakePhoto(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null) {

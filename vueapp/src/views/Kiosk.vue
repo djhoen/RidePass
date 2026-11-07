@@ -109,17 +109,18 @@
                 <h1>Staff sent this to you</h1>
                 <p class="kiosk-sub">For <strong>{{ push.firstName }}</strong>:
                     {{ push.wantWaiver && push.wantPhoto ? 'the waiver and a photo' : push.wantWaiver ? 'the waiver' : 'a photo' }}.</p>
-                <v-btn size="x-large" color="primary" class="kiosk-big" @click="beginPush">Begin</v-btn>
+                <v-btn size="x-large" color="primary" class="kiosk-big" :loading="busy" @click="beginPush">Begin</v-btn>
+                <v-btn size="x-large" variant="text" class="mt-4" :disabled="busy" @click="declinePush">Not me</v-btn>
             </section>
 
             <section v-else-if="step === 'push-waiver' && push" class="kiosk-card">
-                <h1>{{ push.waiverTitle || 'Waiver' }}</h1>
+                <h1>{{ pushWaiverDoc?.title || 'Waiver' }}</h1>
                 <v-alert type="info" variant="tonal" density="compact" class="mb-3">
                     {{ push.signAs === 'guardian'
                         ? `You're signing for ${push.firstName} as their parent or guardian.`
                         : `Sign as yourself, ${push.firstName}.` }}
                 </v-alert>
-                <div class="kiosk-waiver"><RichTextView :html="push.waiverBody || ''" /></div>
+                <div class="kiosk-waiver"><RichTextView :html="pushWaiverDoc?.body || ''" /></div>
                 <template v-if="push.signAs === 'guardian'">
                     <div class="kiosk-grid">
                         <v-text-field v-model="pushForm.guardianName" label="Parent or guardian name" variant="outlined" class="kiosk-input" autocomplete="off"></v-text-field>
@@ -132,7 +133,7 @@
                 <SignaturePad v-model="pushForm.signature" />
                 <v-alert v-if="error" type="error" variant="tonal" class="my-4">{{ error }}</v-alert>
                 <div class="kiosk-actions">
-                    <v-btn size="x-large" variant="text" @click="reset">Cancel</v-btn>
+                    <v-btn size="x-large" variant="text" :disabled="busy" @click="declinePush">Cancel</v-btn>
                     <v-btn size="x-large" color="primary" :loading="busy" :disabled="!pushWaiverComplete"
                         @click="push.wantPhoto ? (step = 'push-photo') : completePush()">{{ push.wantPhoto ? 'Next' : 'Finish' }}</v-btn>
                 </div>
@@ -144,7 +145,7 @@
                 <PhotoCapture v-model="pushForm.photo" button-label="Take photo" :max-dimension="720" class="kiosk-photo" />
                 <v-alert v-if="error" type="error" variant="tonal" class="my-4">{{ error }}</v-alert>
                 <div class="kiosk-actions">
-                    <v-btn size="x-large" variant="text" :disabled="busy" @click="push.wantWaiver ? (step = 'push-waiver') : reset()">
+                    <v-btn size="x-large" variant="text" :disabled="busy" @click="push.wantWaiver ? (step = 'push-waiver') : declinePush()">
                         {{ push.wantWaiver ? 'Back' : 'Cancel' }}</v-btn>
                     <v-btn size="x-large" color="primary" :loading="busy" :disabled="!pushForm.photo" @click="completePush">Finish</v-btn>
                 </div>
@@ -153,7 +154,7 @@
             <section v-else-if="step === 'push-aborted'" class="kiosk-card kiosk-center">
                 <v-icon size="72" color="warning">mdi-information-outline</v-icon>
                 <h1>This request ended</h1>
-                <p class="kiosk-sub">Staff cancelled it or it timed out. Please see the front desk.</p>
+                <p class="kiosk-sub">{{ pushAbortMessage || 'Staff cancelled it or it timed out. Please see the front desk.' }}</p>
                 <v-btn size="x-large" variant="outlined" class="mt-6" @click="reset">OK</v-btn>
             </section>
 
@@ -173,7 +174,7 @@ import RichTextView from '@/components/RichTextView.vue'
 import SignaturePad from '@/components/SignaturePad.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import authHelper from '@/helpers/AuthHelper'
-import { KioskDeviceApi, getKioskToken, saveKioskPairing, forgetKioskPairing, type KioskConfig, type KioskPushPayload } from '@/services/KioskService'
+import { KioskDeviceApi, getKioskToken, saveKioskPairing, forgetKioskPairing, type KioskConfig, type KioskPushPayload, type KioskPushWaiver } from '@/services/KioskService'
 
 type Step = 'pair' | 'loading' | 'start' | 'who' | 'guardian' | 'waiver' | 'photo' | 'done'
     | 'push-intro' | 'push-waiver' | 'push-photo' | 'push-aborted'
@@ -232,8 +233,11 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null
 let doneTimer: ReturnType<typeof setInterval> | null = null
 function touch() {
     if (idleTimer) clearTimeout(idleTimer)
-    if (['who', 'guardian', 'waiver', 'photo', 'push-intro', 'push-waiver', 'push-photo'].includes(step.value))
+    if (['who', 'guardian', 'waiver', 'photo'].includes(step.value))
         idleTimer = setTimeout(() => reset(), IDLE_RESET_MS)
+    // A pushed step left untouched is declined, so it doesn't come back over the next walk-up.
+    else if (['push-intro', 'push-waiver', 'push-photo'].includes(step.value))
+        idleTimer = setTimeout(() => declinePush(), IDLE_RESET_MS)
 }
 function clearTimers() {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
@@ -244,6 +248,8 @@ function reset() {
     clearTimers()
     form.value = blankForm()
     push.value = null
+    pushWaiverDoc.value = null
+    pushAbortMessage.value = null
     pushForm.value = blankPushForm()
     doneFromPush.value = false
     error.value = null
@@ -385,6 +391,9 @@ function showDone(fromPush: boolean) {
 // pushed step is on screen the kiosk keeps asking, and aborts cleanly if staff cancel it or it expires.
 const PUSH_POLL_MS = 3000
 const push = ref<KioskPushPayload | null>(null)
+/** The waiver text, fetched once when the step goes on screen (never on every poll). */
+const pushWaiverDoc = ref<KioskPushWaiver | null>(null)
+const pushAbortMessage = ref<string | null>(null)
 const doneFromPush = ref(false)
 const blankPushForm = () => ({ guardianName: '', guardianPhone: '', agreed: false, signature: null as string | null, photo: null as string | null })
 const pushForm = ref(blankPushForm())
@@ -405,12 +414,7 @@ async function pollPush() {
         const p = (await api.pollPush()).data.data
         if (onPush) {
             // The request on screen was cancelled or expired: stop, clear what was entered.
-            if (!busy.value && (!p || p.pushId !== push.value?.pushId)) {
-                clearTimers()
-                push.value = null
-                pushForm.value = blankPushForm()
-                step.value = 'push-aborted'
-            }
+            if (!busy.value && (!p || p.pushId !== push.value?.pushId)) abortPush(null)
         } else if (p && step.value === 'start') {
             push.value = p
             pushForm.value = blankPushForm()
@@ -426,9 +430,38 @@ async function pollPush() {
     }
 }
 
-function beginPush() {
-    if (!push.value) return
-    step.value = push.value.wantWaiver ? 'push-waiver' : 'push-photo'
+function abortPush(message: string | null) {
+    clearTimers()
+    push.value = null
+    pushWaiverDoc.value = null
+    pushForm.value = blankPushForm()
+    pushAbortMessage.value = message
+    step.value = 'push-aborted'
+}
+
+/** "Not me", Cancel, or left untouched: the request ends (staff see "Declined at kiosk"). */
+function declinePush() {
+    const id = push.value?.pushId
+    if (id) void api.declinePush(id).catch(() => { /* it already ended */ })
+    reset()
+}
+
+async function beginPush() {
+    const p = push.value
+    if (!p) return
+    if (p.wantWaiver && pushWaiverDoc.value?.waiverId !== p.waiverId) {
+        busy.value = true
+        try {
+            pushWaiverDoc.value = (await api.pushWaiver(p.pushId)).data.data
+        } catch (err: any) {
+            if (err.response?.status === 401) { forgetKioskPairing(); reset(); return }
+            abortPush(err.response?.data?.error ?? null)
+            return
+        } finally {
+            busy.value = false
+        }
+    }
+    step.value = p.wantWaiver ? 'push-waiver' : 'push-photo'
     touch()
 }
 
@@ -452,7 +485,8 @@ async function completePush() {
         showDone(true)
     } catch (err: any) {
         if (err.response?.status === 401) { forgetKioskPairing(); reset(); return }
-        if (err.response?.status === 409) { push.value = null; pushForm.value = blankPushForm(); step.value = 'push-aborted'; return }
+        // Ended (the waiver or who signs changed) or no longer active: say why when the server did.
+        if (err.response?.status === 409) { abortPush(err.response?.data?.error ?? null); return }
         error.value = err.response?.data?.error || 'That didn’t go through. Please try again or see the front desk.'
     } finally {
         busy.value = false

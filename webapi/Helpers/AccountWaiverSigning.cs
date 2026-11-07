@@ -1,3 +1,5 @@
+using Services.Helpers;
+using Services.Repositories.Data.RiderData;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
 using Services.Waivers;
@@ -16,11 +18,35 @@ namespace webapi.Helpers
     public static class AccountWaiverSigning
     {
         public const string MinorNeedsGuardian = "Riders under 18 need a parent or guardian's name and phone number on the waiver.";
+        public const string ModeChanged = "Who signs for this rider has changed. Please ask staff to send it again.";
 
+        public const string Guardian = "guardian";
+        public const string Adult = "adult";
+
+        /// <summary>
+        /// Who signs for this profile today: "guardian" (a parent or guardian signs for a minor) or "adult" (the
+        /// rider signs as themselves), on the tenant's date from the birthdate these helpers use: an account's
+        /// AccountWaiverStatus.Birthdate (the ID-verified one first, exactly as SignForAccount decides), else a
+        /// dependent's own birthdate. Null when it can't be told (a dependent with no birthdate).
+        /// </summary>
+        public static string? SignModeFor(User? riderAccount, RiderDependent? dependent, string? timezone, DateTime utcNow)
+        {
+            if (riderAccount is not null)
+                return AccountWaiverStatus.IsMinorToday(riderAccount, timezone, utcNow) ? Guardian : Adult;
+            if (dependent is not null && GuardianWaiverRule.ToDateOnly(dependent.Birthdate) is { } b)
+                return GuardianWaiverRule.IsMinorOn(b, TenantClock.LocalDate(timezone, utcNow)) ? Guardian : Adult;
+            return null;
+        }
+
+        /// <param name="expectMinor">When set (the mode a request was sent with), signing refuses with ModeChanged
+        /// if the account's age today disagrees, rather than storing a guardian's signature as the rider's own
+        /// (or the reverse).</param>
         public static async Task<(Guid? SignatureId, string? Error)> SignForAccount(IWaiverRepository waivers,
             IWaiverCheckInGate gate, Guid tenantId, string? timezone, User account, Guid waiverId, string? ip,
-            string signatureDataUrl, string? parentName, string? parentPhone)
+            string signatureDataUrl, string? parentName, string? parentPhone, bool? expectMinor = null)
         {
+            if (expectMinor is bool expected && expected != AccountWaiverStatus.IsMinorToday(account, timezone, DateTime.UtcNow))
+                return (null, ModeChanged);
             var existing = await waivers.GetSignature(account.Id, waiverId);
             // A guardian / pre-18 signature stops counting once the rider is 18: they sign again as an
             // adult, and their credentials are relinked (below).
@@ -62,6 +88,22 @@ namespace webapi.Helpers
                 attendeeFirstName: childFirstName, attendeeLastName: childLastName,
                 attendeeBirthdate: childBirthdate.ToDateTime(TimeOnly.MinValue),
                 signedByParent: true, parentName: pName, parentPhone: pPhone);
+            return (sigId, null);
+        }
+
+        /// <summary>
+        /// A rider without an account of their own who is 18 or over (an adult dependent) signs as themselves: a
+        /// registrant signature naming them, signed by them, no guardian (the signing link's adult path).
+        /// </summary>
+        public static async Task<(Guid? SignatureId, string? Error)> SignAsAdultRegistrant(IWaiverRepository waivers,
+            Guid tenantId, Guid waiverId, string? ip, string signatureDataUrl, string firstName, string lastName,
+            DateOnly birthdate, string? email)
+        {
+            var sigId = await waivers.SignRegistrant(tenantId, waiverId, ip, signatureDataUrl,
+                signerEmail: email, signerName: $"{firstName} {lastName}".Trim(),
+                attendeeFirstName: firstName, attendeeLastName: lastName,
+                attendeeBirthdate: birthdate.ToDateTime(TimeOnly.MinValue),
+                signedByParent: false, parentName: null, parentPhone: null);
             return (sigId, null);
         }
     }

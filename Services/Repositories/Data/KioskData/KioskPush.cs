@@ -13,6 +13,14 @@ namespace Services.Repositories.Data.KioskData
         public const string StatusCancelled = "cancelled";
         public const string StatusExpired = "expired";
 
+        /// <summary>A claim (status completing) older than this no longer holds the kiosk: it can be taken again or expire.</summary>
+        public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
+
+        // Why a request ended without being done (end_reason).
+        public const string EndDeclined = "declined";
+        public const string EndWaiverChanged = "waiver_changed";
+        public const string EndModeChanged = "mode_changed";
+
         public Guid Id { get; set; }
         public Guid TenantId { get; set; }
         public Guid KioskDeviceId { get; set; }
@@ -23,7 +31,10 @@ namespace Services.Repositories.Data.KioskData
         public bool WantPhoto { get; set; }
         /// <summary>ticket | season_pass | kiosk_signup</summary>
         public string TargetKind { get; set; } = string.Empty;
+        /// <summary>The ticket the waiver is fixed on (and the photo, unless PhotoTicketPurchaseId is set).</summary>
         public Guid? EventTicketPurchaseId { get; set; }
+        /// <summary>The ticket the gate looks for the photo on, when it is not EventTicketPurchaseId.</summary>
+        public Guid? PhotoTicketPurchaseId { get; set; }
         public Guid? SeasonPassPurchaseId { get; set; }
         public Guid? EventId { get; set; }
         public Guid? KioskSignupId { get; set; }
@@ -38,5 +49,10 @@ namespace Services.Repositories.Data.KioskData
         public Guid? CancelledByUserId { get; set; }
         public Guid? ResultSignatureId { get; set; }
         public Guid? ResultPhotoId { get; set; }
+        public DateTime? ClaimedAt { get; set; }
+        public Guid? ClaimId { get; set; }
+        public string? EndReason { get; set; }
+        /// <summary>Read with the open request only: the waiver step's document still exists and has not expired.</summary>
+        public bool WaiverUsable { get; set; } = true;
     }
 }

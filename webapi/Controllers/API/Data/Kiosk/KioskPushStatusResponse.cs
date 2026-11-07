@@ -14,5 +14,8 @@ namespace webapi.Controllers.API.Data.Kiosk
         public bool WantPhoto { get; set; }
         public DateTime ExpiresAtUtc { get; set; }
         public DateTime? CompletedAtUtc { get; set; }
+        /// <summary>Why it ended without being done: declined (at the kiosk), waiver_changed, mode_changed; null
+        /// otherwise (timed out / cancelled by staff).</summary>
+        public string? EndReason { get; set; }
     }
 }

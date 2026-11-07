@@ -63,9 +63,11 @@ namespace webapi.Controllers
             if (!await MayUse()) return Forbid();
             var tenantId = _tenantContext.TenantId;
             var items = new List<ActiveKioskItem>();
+            // Every open request in one read (at most one per kiosk).
+            var open = (await _kiosks.ListOpenPushes(tenantId)).ToDictionary(p => p.KioskDeviceId);
             foreach (var d in (await _kiosks.ListDevices(tenantId)).Where(IsActive))
             {
-                var active = await _kiosks.GetActivePush(tenantId, d.Id);
+                var active = open.GetValueOrDefault(d.Id);
                 items.Add(new ActiveKioskItem
                 {
                     Id = d.Id, Name = d.Name,
@@ -121,7 +123,9 @@ namespace webapi.Controllers
             var push = await _kiosks.GetPush(id, _tenantContext.TenantId);
             if (push is null) return new ApiResponses().NotFoundResult("Request not found.");
             if (!await _kiosks.CancelPush(id, _tenantContext.TenantId, StaffId()))
-                return new ApiResponses().BadRequestResult($"This request is already {push.Status.Replace('_', ' ')}.");
+                return new ApiResponses().BadRequestResult(push.Status == KioskPush.StatusCompleting
+                    ? "The kiosk is saving it right now."
+                    : $"This request is already {push.Status.Replace('_', ' ')}.");
             return new ApiResponses().OkResult();
         }
 
@@ -136,6 +140,7 @@ namespace webapi.Controllers
             WantPhoto = p.WantPhoto,
             ExpiresAtUtc = DateTime.SpecifyKind(p.ExpiresAt, DateTimeKind.Utc),
             CompletedAtUtc = p.CompletedAt is { } c ? DateTime.SpecifyKind(c, DateTimeKind.Utc) : null,
+            EndReason = p.EndReason,
         };
     }
 }
