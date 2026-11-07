@@ -20,7 +20,7 @@
                      dead phone, lost email, a ticket a parent bought for a kid, or a season pass
                      card left at home. A USB scanner also works here (and with nothing focused). -->
                 <p class="text-caption text-medium-emphasis mb-2">No QR code? Look them up:</p>
-                <v-text-field ref="searchField" v-model="searchInput" data-gate-scan
+                <v-text-field ref="searchField" v-model="searchInput" data-gate-scan="search"
                     label="Rider, pass holder or buyer: name, email or phone"
                     prepend-inner-icon="mdi-account-search" density="compact" hide-details clearable
                     :loading="searching" @keydown.enter="onSearchEnter" @click:clear="clearSearch"></v-text-field>
@@ -35,26 +35,20 @@
                          @click="openResult(r)" @keydown.enter="openResult(r)">
                         <v-icon :icon="r.kind === 'season_pass' ? 'mdi-card-account-details' : 'mdi-ticket-confirmation'"
                             size="20" class="text-medium-emphasis"></v-icon>
+                        <!-- Same layout for both kinds: who is at the gate (riders / pass holder),
+                             who bought it when that's someone else, the emails, and what they hold. -->
                         <div class="flex-grow-1" style="min-width: 0">
-                            <template v-if="r.kind === 'season_pass'">
-                                <div class="text-body-2 font-weight-medium">{{ r.displayName }}</div>
-                                <div v-if="r.purchaserName && r.purchaserName !== r.displayName"
-                                     class="text-caption text-medium-emphasis text-truncate">
-                                    Bought by {{ r.purchaserName }}
-                                </div>
-                                <div class="text-caption text-medium-emphasis text-truncate">
-                                    {{ r.purchaserEmail }}<template v-if="r.accountEmail"> · {{ r.accountEmail }}</template>
-                                </div>
-                                <div class="text-caption text-medium-emphasis">{{ passResultSummary(r) }}</div>
-                            </template>
-                            <template v-else>
-                                <div class="text-body-2 font-weight-medium">{{ r.purchaserName }}</div>
-                                <div class="text-caption text-medium-emphasis text-truncate">{{ r.purchaserEmail }}</div>
-                                <div v-if="r.riderNames" class="text-caption text-medium-emphasis text-truncate">
-                                    Riders: {{ r.riderNames }}
-                                </div>
-                                <div class="text-caption text-medium-emphasis">{{ r.holds }}</div>
-                            </template>
+                            <div class="text-body-2 font-weight-medium">{{ r.displayName }}</div>
+                            <div v-if="r.purchaserName && r.purchaserName !== r.displayName"
+                                 class="text-caption text-medium-emphasis text-truncate">
+                                Bought by {{ r.purchaserName }}
+                            </div>
+                            <div class="text-caption text-medium-emphasis text-truncate">
+                                {{ r.purchaserEmail }}<template v-if="r.accountEmail"> · account: {{ r.accountEmail }}</template>
+                            </div>
+                            <div class="text-caption text-medium-emphasis">
+                                {{ r.kind === 'season_pass' ? passResultSummary(r) : r.holds }}
+                            </div>
                         </div>
                         <div class="d-flex flex-column align-end ga-1 flex-shrink-0">
                             <v-chip size="x-small" variant="outlined">
@@ -86,7 +80,7 @@
                     Or scan / paste a token, redeem URL<template v-if="branding.wristbandsEnabled"> or wristband code</template>:
                 </p>
                 <div class="d-flex ga-2">
-                    <v-text-field ref="manualField" v-model="manualInput" data-gate-scan
+                    <v-text-field v-model="manualInput" data-gate-scan="codes"
                         :label="branding.wristbandsEnabled ? 'Token, URL or wristband' : 'Token or URL'"
                         density="compact" hide-details @keydown.enter="onManualEnter"></v-text-field>
                     <v-btn color="primary" :loading="loading" @click="lookupManual">Look Up</v-btn>
@@ -693,7 +687,8 @@ import { branding } from '@/stores/branding'
 import { WristbandService } from '@/services/WristbandService'
 import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService'
 import { CounterService, type CounterRider } from '@/services/CounterService'
-import { useGateScanner, parseGateScan, extractGateToken } from '@/composables/useGateScanner'
+import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
+    type GateScanSource } from '@/composables/useGateScanner'
 
 const service = new TicketService()
 const wristbands = new WristbandService()
@@ -701,7 +696,6 @@ const seasonPasses = new SeasonPassService()
 const counter = new CounterService()
 
 const manualInput = ref('')
-const manualField = ref<{ focus: () => void } | null>(null)
 const searchField = ref<{ focus: () => void } | null>(null)
 const searchInput = ref('')
 const searchResults = ref<GateSearchResult[]>([])
@@ -930,6 +924,7 @@ async function onDecoded(decodedText: string) {
     const token = extractGateToken(decodedText)
     if (!token) return
     await stopScan()
+    openedResultKey.value = null
     await loadOrder(token)
 }
 
@@ -938,28 +933,53 @@ async function onDecoded(decodedText: string) {
 // data-gate-scan). Other fields, like the band link or buddy email boxes, keep their keystrokes.
 // Paused while a dialog is up so a stray scan can't swap the order out from under it.
 useGateScanner({
-    onScan: raw => { void handleScan(raw) },
+    onScan: (scan, raw, source) => { void handleScan(scan, raw, source) },
+    wristbandsEnabled: () => !!branding.wristbandsEnabled,
     enabled: () => !buddyOpen.value && !verifyIdOpen.value && !signatureOpen.value && !bandDialogOpen.value,
 })
 
-// One entry point for scans and pastes: a ticket/pass token, a /redeem/{token} link, or (when
-// the tenant uses them) a wristband code. The boxes are cleared first so the next scan never
-// lands on top of this one's text.
-async function handleScan(raw: string) {
-    const scan = parseGateScan(raw, !!branding.wristbandsEnabled)
-    clearSearch()
-    manualInput.value = ''
-    if (!scan) {
-        flash(branding.wristbandsEnabled
-            ? 'That scan isn’t a ticket, pass or wristband code.'
-            : 'That scan isn’t a ticket or pass code.', 'error')
-        return
+// A scan that arrives mid-lookup or mid-check-in waits; only the latest one is kept.
+let queuedScan: { scan: GateScan; raw: string; source: GateScanSource } | null = null
+
+// One entry point for scans and pastes: a ticket/pass token, a /redeem/{token} link, or (when the
+// tenant uses them) a wristband code.
+// - search box: the scan's characters landed in it, so it goes back to the term its results
+//   belong to; a "band code" that resolves to nobody was really a number typed fast, so search it.
+// - paste box: its text stays until the lookup succeeds, so a typo can be fixed.
+async function handleScan(scan: GateScan, raw: string, source: GateScanSource) {
+    if (busy.value) { queuedScan = { scan, raw, source }; return }
+    if (scanning.value) await stopScan()
+    if (source === 'codes') manualInput.value = raw.trim()
+
+    let ok: boolean
+    if (scan.kind === 'token') {
+        if (source === 'search') restoreSearchBox()
+        ok = await loadOrder(scan.token)
+    } else {
+        const res = await resolveBand(scan.code, { quietNotFound: source === 'search' })
+        if (res === 'not_found' && source === 'search') {
+            searchInput.value = raw.trim()      // the watcher runs it as a search
+            return
+        }
+        if (source === 'search') restoreSearchBox()
+        ok = res === 'ok'
     }
-    if (scan.kind === 'token') await loadOrder(scan.token)
-    else await resolveBand(scan.code)
+    if (!ok) return
+    if (source === 'codes') manualInput.value = ''
+    // A scanned pass that is also in the result list gets its row marked on admission.
+    openedResultKey.value = null
+    if (scan.kind === 'token' && pass.value) {
+        const row = searchResults.value.find(r => r.kind === 'season_pass' && r.anchorToken === scan.token)
+        if (row) openedResultKey.value = resultKey(row)
+    }
 }
 
-// Enter in the paste box: typed or pasted text (a scanner burst is caught before this runs).
+function restoreSearchBox() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchInput.value = searchedFor.value
+}
+
+// Enter in the paste box with text that isn't a code (codes are caught by the scanner first).
 function onManualEnter(e: KeyboardEvent) {
     if (e.defaultPrevented) return
     void lookupManual()
@@ -967,38 +987,51 @@ function onManualEnter(e: KeyboardEvent) {
 
 async function lookupManual() {
     const raw = manualInput.value
-    if (!parseGateScan(raw, !!branding.wristbandsEnabled)) {
+    const scan = parseGateScan(raw, !!branding.wristbandsEnabled)
+    if (!scan) {
         flash(branding.wristbandsEnabled ? 'No token, link or wristband code found in input.' : 'No token found in input.', 'error')
         return
     }
-    await handleScan(raw)
+    await handleScan(scan, raw, 'codes')
 }
 
-// Enter in the search box: a token or redeem link pasted here is a lookup, not a name search.
+// Enter in the search box: tokens and links were already taken by the scanner, so this is a name.
 function onSearchEnter(e: KeyboardEvent) {
     if (e.defaultPrevented) return
-    if (extractGateToken(searchInput.value ?? '')) { void handleScan(searchInput.value); return }
     void runSearch()
 }
 
-// After a successful check-in: empty boxes and focus ready for the next person. Focus only where a
-// physical keyboard is likely (a fine pointer): on a phone or tablet it would pop the on-screen
-// keyboard over the card, and the page-level scanner capture works without focus anyway.
+// After a successful check-in: the paste box empties, the result list stays (its row now shows the
+// check-in) and the search box is focused with its text selected, so typing or scanning the next
+// person replaces it. Focus only where a physical keyboard is likely (a fine pointer): on a phone or
+// tablet it would pop the on-screen keyboard over the card, and the page-level capture works
+// without focus anyway.
 async function readyForNextScan() {
-    clearSearch()
     manualInput.value = ''
     await nextTick()
-    if (window.matchMedia?.('(pointer: fine)').matches) searchField.value?.focus()
-    else (document.activeElement as HTMLElement | null)?.blur?.()
+    if (window.matchMedia?.('(pointer: fine)').matches) {
+        searchField.value?.focus()
+        const el = document.activeElement
+        if (el instanceof HTMLInputElement) el.select()
+    } else {
+        (document.activeElement as HTMLElement | null)?.blur?.()
+    }
+}
+
+// Text that is (or is on its way to being) a token or link rather than a name or phone number.
+function looksLikeCode(term: string): boolean {
+    return !!extractGateToken(term) || /^[0-9a-f]{8}-/i.test(term) || /^https?:\/\//i.test(term)
+        || term.includes('/redeem')
 }
 
 // Debounced as the operator types: a gate queue is not the place to make someone press a button.
-// Under 3 characters the server rejects the query, so don't even ask. A token or link in the box is
-// not a name: Enter (or the scanner) looks it up instead.
+// Under 3 characters the server rejects the query, so don't even ask. A token or link arriving in
+// the box is not a name: don't search it and don't wipe the results it is about to be scanned over.
 watch(searchInput, () => {
     if (searchTimer) clearTimeout(searchTimer)
     const term = (searchInput.value ?? '').trim()
-    if (term.length < 3 || extractGateToken(term)) {
+    if (looksLikeCode(term) && !isPlainWords(term)) return
+    if (term.length < 3) {
         searchResults.value = []
         searchedFor.value = ''
         return
@@ -1031,17 +1064,33 @@ function clearSearch() {
     searchedFor.value = ''
 }
 
+// The result row whose order / pass is open, so a check-in can mark that row in place.
+const openedResultKey = ref<string | null>(null)
+function resultKey(r: Pick<GateSearchResult, 'kind' | 'anchorToken'>): string {
+    return `${r.kind}:${r.anchorToken}`
+}
+function markOpenedResult(update: (r: GateSearchResult) => void) {
+    const row = searchResults.value.find(x => resultKey(x) === openedResultKey.value)
+    if (row) update(row)
+}
+
 // Picking a result is the same as scanning that rider's QR: a ticket's token anchors the whole
 // order, a season pass's token opens the pass card.
 async function openResult(r: GateSearchResult) {
+    if (busy.value) return
+    let ok: boolean
     if (r.kind === 'season_pass') {
+        const seq = ++lookupSeq
         loading.value = true
         try {
-            if (!await tryLoadPass(r.anchorToken)) flash('That pass could not be found. Search again.', 'error')
-        } finally { loading.value = false }
-        return
+            const res = await tryLoadPass(r.anchorToken, seq)
+            if (res === 'not_found') flash('That pass could not be found. Search again.', 'error')
+            ok = res === 'ok'
+        } finally { if (seq === lookupSeq) loading.value = false }
+    } else {
+        ok = await loadOrder(r.anchorToken)
     }
-    await loadOrder(r.anchorToken)
+    if (ok) openedResultKey.value = resultKey(r)
 }
 
 function passResultSummary(r: GateSearchResult): string {
@@ -1062,25 +1111,37 @@ const bandDialogError = ref('')
 const bandCodeInput = ref('')
 const bandTarget = ref<OrderItem | null>(null)
 
+// Anything in flight that a new scan must not race: a lookup, a redeem, an admission, a band lookup.
+// (Declared here, after the last flag it reads.) A scan that arrived meanwhile runs when it clears.
+const busy = computed(() => loading.value || redeeming.value || admitting.value || bandLookupBusy.value)
+watch(busy, isBusy => {
+    if (isBusy || !queuedScan) return
+    const next = queuedScan
+    queuedScan = null
+    void handleScan(next.scan, next.raw, next.source)
+})
+
 async function lookupBand() {
     const code = bandLookupInput.value.trim()
     if (!code) return
-    if (await resolveBand(code)) bandLookupInput.value = ''
+    if (await resolveBand(code) === 'ok') bandLookupInput.value = ''
 }
 
 // Band code → the wearer's order or pass (loadOrder falls through to the pass card for a pass
-// token). Shared by the band box and scanner input. True when the band resolved.
-async function resolveBand(code: string): Promise<boolean> {
+// token). Shared by the band box and scanner input. quietNotFound leaves the "no such band" case to
+// the caller (the search box treats it as a search instead).
+async function resolveBand(code: string, opts: { quietNotFound?: boolean } = {}): Promise<'ok' | 'not_found' | 'failed'> {
     bandLookupBusy.value = true
     try {
         const r = await wristbands.resolve(code)
-        await loadOrder(r.data.data.redemptionToken)
-        return true
+        return await loadOrder(r.data.data.redemptionToken) ? 'ok' : 'failed'
     } catch (err: any) {
-        flash(err.response?.status === 404
+        const notFound = err.response?.status === 404
+        if (notFound && opts.quietNotFound) return 'not_found'
+        flash(notFound
             ? (err.response?.data?.error || 'No entrant is linked to that band.')
             : (err.response?.data?.error || 'Could not look up that band. Check the connection and try again.'), 'error')
-        return false
+        return notFound ? 'not_found' : 'failed'
     } finally { bandLookupBusy.value = false }
 }
 
@@ -1130,10 +1191,18 @@ async function unlinkBand(ticketId: string) {
     }
 }
 
-async function loadOrder(token: string) {
+// Every order / pass lookup takes a sequence number; a response that comes back after a newer
+// lookup started is dropped, so a slow answer for the previous person never overwrites the card
+// for the one standing at the gate now.
+let lookupSeq = 0
+
+// True when an order (or, for a pass token, the pass card) is now showing.
+async function loadOrder(token: string): Promise<boolean> {
+    const seq = ++lookupSeq
     try {
         loading.value = true
         const r = await service.orderLookup(token)
+        if (seq !== lookupSeq) return false
         order.value = (r.data as any).data
         orderToken.value = token
         pass.value = null
@@ -1146,13 +1215,19 @@ async function loadOrder(token: string) {
             .filter(i => i.isRedeemableToday)
             .map(i => i.purchaseId) ?? []
         await loadBands()
+        return true
     } catch (err: any) {
+        if (seq !== lookupSeq) return false
         // Only a real 404 means the QR/token is invalid — and even then it may be a SEASON PASS
         // token, which lives in a different subsystem than orders. Try that before giving up.
         // A network blip or server error must NOT read as "not found" — that would turn away a
         // paying customer holding a valid ticket.
         const status = err.response?.status
-        if (status === 404 && await tryLoadPass(token)) return
+        if (status === 404) {
+            const res = await tryLoadPass(token, seq)
+            if (res === 'ok') return true
+            if (res !== 'not_found') return false     // already surfaced, or superseded
+        }
         const msg = status === 404
             ? (err.response?.data?.error || 'Order not found. Double-check the code and rescan.')
             : (err.response?.data?.error || 'Couldn’t look up the order. Check the connection and rescan.')
@@ -1160,27 +1235,30 @@ async function loadOrder(token: string) {
         order.value = null
         orderToken.value = null
         selectedIds.value = []
+        return false
     } finally {
-        loading.value = false
+        if (seq === lookupSeq) loading.value = false
     }
 }
 
-// Returns true when the token resolved to a season pass (card shown) OR the lookup failed in a
-// way we already surfaced — i.e. whenever the caller should NOT show its own "not found" message.
-async function tryLoadPass(token: string): Promise<boolean> {
+// 'ok': the pass card is showing. 'not_found': no pass has this token (the caller words that).
+// 'error': the lookup failed and was already surfaced. 'stale': a newer lookup took over.
+async function tryLoadPass(token: string, seq = ++lookupSeq): Promise<'ok' | 'not_found' | 'error' | 'stale'> {
     try {
         const r = await seasonPasses.lookupByToken(token)
+        if (seq !== lookupSeq) return 'stale'
         pass.value = (r.data as any).data
         passToken.value = token
         order.value = null
         orderToken.value = null
         selectedIds.value = []
         passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
-        return true
+        return 'ok'
     } catch (err: any) {
-        if (err.response?.status === 404) return false      // genuinely unknown token
+        if (seq !== lookupSeq) return 'stale'
+        if (err.response?.status === 404) return 'not_found'      // genuinely unknown token
         flash(err.response?.data?.error || 'Couldn’t look up the pass. Check the connection and rescan.', 'error')
-        return true
+        return 'error'
     }
 }
 
@@ -1326,6 +1404,7 @@ async function admitPass() {
         } else {
             flash('Admitted.', 'success')
         }
+        markOpenedResult(row => { row.redeemedCount = 1 })   // the search row now reads "In today"
         await tryLoadPass(passToken.value)   // refresh credits + today's check-in state
         await readyForNextScan()
     } catch (err: any) {
@@ -1356,8 +1435,20 @@ async function redeemSelected() {
         else if (errs.length) flash(errs.join(' '), 'error')
         else flash(`Redeemed ${n}.`, 'success')
         // Refresh the order so the redeemed rows now show as redeemed.
+        const ticketIdsSent = items.filter(i => i.kind === 'event_ticket').map(i => i.purchaseId)
         await loadOrder(orderToken.value)
-        if (n > 0) await readyForNextScan()
+        if (n > 0) {
+            // Mark progress on the search row this order was opened from: tickets sent that are no
+            // longer redeemable today went through; nothing redeemable left means all are in.
+            const stillOpen = new Set(order.value?.items.filter(i => i.isRedeemableToday).map(i => i.purchaseId) ?? [])
+            const nowIn = ticketIdsSent.filter(id => !stillOpen.has(id)).length
+            markOpenedResult(row => {
+                row.redeemedCount = redeemableCount.value === 0
+                    ? row.itemCount
+                    : Math.min(row.itemCount, row.redeemedCount + nowIn)
+            })
+            await readyForNextScan()
+        }
     } catch (err: any) {
         flash(err.response?.data?.error || 'Redeem failed.', 'error')
     } finally {

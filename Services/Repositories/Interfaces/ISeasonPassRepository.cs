@@ -172,12 +172,14 @@ namespace Services.Repositories.Interfaces
         /// reservation yet) — for walk-up gate redemption. ReservationId/EventId are unset.</summary>
         Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId);
 
-        /// <summary>Gate lookup by name/email/phone for a pass holder with no QR: paid passes of
-        /// this tenant valid on <paramref name="todayLocal"/>, matching holder name, buyer name/email,
-        /// and the linked account's email/name/phone. Same word rules as the ticket gate search.
-        /// Today's UTC bounds decide "already checked in today".</summary>
+        /// <summary>Gate lookup by name/email/phone for a pass holder with no QR: this tenant's passes
+        /// usable on <paramref name="todayLocal"/> (paid, in season, credits left, staff pass still
+        /// eligible), matching holder name, buyer name/email, and the linked account's
+        /// email/name/phone. Same word rules as the ticket gate search. "In today" uses the pass
+        /// card's reservation-day rule with <paramref name="atUtc"/> and exclusive
+        /// <paramref name="untilUtc"/> (the tenant day as a UTC range).</summary>
         Task<List<GatePassSearchRow>> SearchForGate(Guid tenantId, string query, DateTime todayLocal,
-            DateTime todayStartUtc, DateTime todayEndUtc, int limit);
+            DateTime atUtc, DateTime untilUtc, int limit);
 
         /// <summary>
         /// Walk-up gate admission in ONE atomic statement: optionally burns a credit

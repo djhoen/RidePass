@@ -1060,61 +1060,62 @@ namespace Services.Repositories
         // still found by the address they give now). Rider accounts are platform-wide
         // (users.tenant_id IS NULL), so the users join is reached only through this tenant's pass row
         // and refuses a staff account belonging to another tenant. season_pass_reservation carries no
-        // tenant_id; it is scoped through p.
+        // tenant_id; it is scoped through sp.
+        //
+        // "Valid today" is the gate's own definition, not a date test: PassNotUsedUpExpr (paid, in its
+        // season window, and a credits pass with rides left) AND EmployeePassEligible (a staff pass
+        // whose holder is still active staff here). "In today" is ReservationOnGateDayExpr, the same
+        // predicate the pass card uses.
         public async Task<List<GatePassSearchRow>> SearchForGate(Guid tenantId, string query, DateTime todayLocal,
-            DateTime todayStartUtc, DateTime todayEndUtc, int limit)
+            DateTime atUtc, DateTime untilUtc, int limit)
         {
             var likes = GateSearchTerms.BuildLikePatterns(query);
             if (likes.Length == 0) return new List<GatePassSearchRow>();
-            const string sql = @"
-                SELECT p.id AS PassPurchaseId,
-                       p.redemption_token AS RedemptionToken,
-                       NULLIF(trim(COALESCE(p.holder_first_name, '') || ' ' ||
-                                   COALESCE(p.holder_last_name, '')), '') AS HolderName,
-                       p.purchaser_name AS PurchaserName,
-                       p.purchaser_email AS PurchaserEmail,
-                       CASE WHEN lower(trim(u.email)) <> lower(trim(p.purchaser_email))
+            var sql = $@"
+                SELECT sp.id AS PassPurchaseId,
+                       sp.redemption_token AS RedemptionToken,
+                       NULLIF(trim(COALESCE(sp.holder_first_name, '') || ' ' ||
+                                   COALESCE(sp.holder_last_name, '')), '') AS HolderName,
+                       sp.purchaser_name AS PurchaserName,
+                       sp.purchaser_email AS PurchaserEmail,
+                       CASE WHEN lower(trim(u.email)) <> lower(trim(sp.purchaser_email))
                             THEN u.email END AS AccountEmail,
                        pr.name AS ProductName,
                        pr.kind AS ProductKind,
-                       p.credits_remaining AS CreditsRemaining,
-                       p.valid_to_date AS ValidToDate,
+                       sp.credits_remaining AS CreditsRemaining,
+                       sp.valid_to_date AS ValidToDate,
                        EXISTS (
                            SELECT 1 FROM season_pass_reservation r
-                           WHERE r.season_pass_purchase_id = p.id
+                           LEFT JOIN event e ON e.id = r.event_id AND e.tenant_id = sp.tenant_id
+                           WHERE r.season_pass_purchase_id = sp.id
                              AND r.status = 'checked_in'
-                             AND r.checked_in_at >= @todayStartUtc
-                             AND r.checked_in_at <= @todayEndUtc
+                             AND {ReservationOnGateDayExpr}
                        ) AS CheckedInToday
-                FROM season_pass_purchase p
-                JOIN season_pass_product pr ON pr.id = p.product_id AND pr.tenant_id = p.tenant_id
-                LEFT JOIN users u ON u.id = p.purchaser_user_id
-                                 AND (u.tenant_id IS NULL OR u.tenant_id = p.tenant_id)
-                WHERE p.tenant_id = @tenantId
-                  AND p.status = 'paid'
-                  AND p.valid_from_date <= @todayLocal::date
-                  AND p.valid_to_date   >= @todayLocal::date
+                FROM season_pass_purchase sp
+                JOIN season_pass_product pr ON pr.id = sp.product_id AND pr.tenant_id = sp.tenant_id
+                LEFT JOIN users u ON u.id = sp.purchaser_user_id
+                                 AND (u.tenant_id IS NULL OR u.tenant_id = sp.tenant_id)
+                WHERE sp.tenant_id = @tenantId
+                  AND {PassNotUsedUpExpr}
+                  AND {EmployeePassEligible("sp")}
                   AND lower(
-                        COALESCE(p.holder_first_name, '') || ' ' ||
-                        COALESCE(p.holder_last_name, '') || ' ' ||
-                        COALESCE(p.purchaser_name, '') || ' ' ||
-                        COALESCE(p.purchaser_email, '') || ' ' ||
-                        COALESCE(u.email, '') || ' ' ||
-                        COALESCE(u.first_name, '') || ' ' ||
-                        COALESCE(u.last_name, '') || ' ' ||
-                        COALESCE(regexp_replace(u.phone, '\D', '', 'g'), '')
+                        COALESCE(sp.holder_first_name, '') || ' ' ||
+                        COALESCE(sp.holder_last_name, '') || ' ' ||
+                        COALESCE(sp.purchaser_name, '') || ' ' ||
+                        COALESCE(sp.purchaser_email, '') || ' ' ||{GateSearchTerms.AccountHaystackSql}
                       ) LIKE ALL (@likes)
-                ORDER BY COALESCE(NULLIF(trim(COALESCE(p.holder_first_name, '') || ' ' ||
-                                              COALESCE(p.holder_last_name, '')), ''), p.purchaser_name),
-                         p.valid_to_date
+                ORDER BY COALESCE(NULLIF(trim(COALESCE(sp.holder_first_name, '') || ' ' ||
+                                              COALESCE(sp.holder_last_name, '')), ''), sp.purchaser_name),
+                         sp.valid_to_date
                 LIMIT @limit";
             return (await _db.Query<GatePassSearchRow>(sql, new
             {
                 tenantId,
                 likes,
-                todayLocal = todayLocal.Date,
-                todayStartUtc,
-                todayEndUtc,
+                today = todayLocal.Date,
+                localDate = todayLocal.Date,
+                atUtc,
+                untilUtc,
                 limit,
             })).ToList();
         }
@@ -1323,6 +1324,18 @@ namespace Services.Repositories
             return (await _db.Query<SeasonPassReservationWithContext>(sql, new { purchaseId })).ToList();
         }
 
+        /// <summary>
+        /// "This reservation belongs to the gate day": event-anchored rows by the event's UTC window,
+        /// no-event walk-up rows by check_in_date against the tenant's local calendar date. Shared by
+        /// the pass card (ListReservationsForPurchaseOnDate) and the gate search's "in today" flag so
+        /// the two can never disagree. Expects `r` = season_pass_reservation, `e` = its event (LEFT
+        /// JOIN), and @atUtc / @untilUtc (exclusive) / @localDate.
+        /// </summary>
+        private const string ReservationOnGateDayExpr = @"(
+                        (r.event_id IS NOT NULL AND e.starts_at < @untilUtc AND e.ends_at >= @atUtc)
+                     OR (r.event_id IS NULL AND r.check_in_date = @localDate)
+                      )";
+
         /// <summary>Today's admissions for one pass. Event-anchored rows are matched by the event's
         /// UTC window as before; no-event walk-up rows have no start/end to bound them, so they are
         /// matched by check_in_date against the tenant's local calendar date.</summary>
@@ -1343,10 +1356,7 @@ namespace Services.Repositories
                 LEFT JOIN event e ON e.id = r.event_id
                 WHERE r.season_pass_purchase_id = @purchaseId
                   AND p.tenant_id = @tenantId
-                  AND (
-                        (r.event_id IS NOT NULL AND e.starts_at < @untilUtc AND e.ends_at >= @atUtc)
-                     OR (r.event_id IS NULL AND r.check_in_date = @localDate)
-                      )
+                  AND " + ReservationOnGateDayExpr + @"
                 ORDER BY COALESCE(e.starts_at, r.checked_in_at)";
             return (await _db.Query<SeasonPassReservationWithContext>(sql,
                 new { purchaseId, tenantId, atUtc, untilUtc, localDate = localDate.Date })).ToList();

@@ -51,11 +51,20 @@ namespace UnitTests
 
         [TestCase("(555) 123-4567", "5551234567")]
         [TestCase("555.123.4567", "5551234567")]
-        [TestCase("+1 555 123 4567", "15551234567")]
+        [TestCase("+1 555 123 4567", "5551234567")]
+        [TestCase("15551234567", "5551234567")]
         [TestCase("4567", "4567")]
         public void Phone_shaped_query_collapses_to_one_digits_pattern(string query, string digits)
         {
             Assert.That(GateSearchTerms.BuildLikePatterns(query), Is.EqualTo(new[] { $"%{digits}%" }));
+            Assert.That(GateSearchTerms.PhoneDigits(query), Is.EqualTo(digits));
+        }
+
+        [Test]
+        public void Eleven_digits_not_starting_with_1_keep_every_digit()
+        {
+            Assert.That(GateSearchTerms.PhoneDigits("44 20 7946 0958"), Is.EqualTo("442079460958"));
+            Assert.That(GateSearchTerms.PhoneDigits("25551234567"), Is.EqualTo("25551234567"));
         }
 
         [Test]
@@ -66,10 +75,21 @@ namespace UnitTests
         }
 
         [Test]
-        public void Letters_mixed_with_digits_are_not_a_phone()
+        public void Mixed_query_splits_the_phone_run_from_the_words()
         {
             Assert.That(GateSearchTerms.PhoneDigits("jake 4567"), Is.Null);
             Assert.That(GateSearchTerms.BuildLikePatterns("jake 4567"), Is.EqualTo(new[] { "%jake%", "%4567%" }));
+            Assert.That(GateSearchTerms.BuildLikePatterns("Smith (555) 123-4567"),
+                Is.EqualTo(new[] { "%smith%", "%5551234567%" }));
+            Assert.That(GateSearchTerms.BuildLikePatterns("+1 555-123-4567 reed"),
+                Is.EqualTo(new[] { "%5551234567%", "%reed%" }));
+        }
+
+        [Test]
+        public void Digits_inside_an_email_stay_part_of_the_word()
+        {
+            Assert.That(GateSearchTerms.BuildLikePatterns("rider2026@x.test"),
+                Is.EqualTo(new[] { "%rider2026@x.test%" }));
         }
     }
 }

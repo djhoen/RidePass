@@ -374,14 +374,20 @@ namespace webapi.Controllers
             var todayLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
             var todayStartUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal, tz);
             var todayEndUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal.AddDays(1).AddTicks(-1), tz);
+            // The pass card's day bound is exclusive (next local midnight); the pass search shares its rule.
+            var tomorrowStartUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal.AddDays(1), tz);
 
-            var rows = await _tickets.SearchForGate(
-                _tenantContext.TenantId, query, todayStartUtc, todayEndUtc, limit: GateSearchLimitPerKind);
             // Season pass holders come back in the same list: a pass holder with a dead phone is just
             // as common at the gate as a ticket holder, and staff shouldn't have to know which one
-            // the person bought before they can look them up.
-            var passRows = await _passes.SearchForGate(
-                _tenantContext.TenantId, query, todayLocal, todayStartUtc, todayEndUtc, limit: GateSearchLimitPerKind);
+            // the person bought before they can look them up. The two queries are independent
+            // (DbHelper opens a connection per call), so run them side by side.
+            var ticketTask = _tickets.SearchForGate(
+                _tenantContext.TenantId, query, todayStartUtc, todayEndUtc, limit: GateSearchLimitPerKind);
+            var passTask = _passes.SearchForGate(
+                _tenantContext.TenantId, query, todayLocal, todayStartUtc, tomorrowStartUtc, limit: GateSearchLimitPerKind);
+            await Task.WhenAll(ticketTask, passTask);
+            var rows = ticketTask.Result;
+            var passRows = passTask.Result;
 
             var results = rows.Select(r => new webapi.Controllers.API.Data.Redemption.GateSearchResult
             {
@@ -393,6 +399,7 @@ namespace webapi.Controllers
                 EventStartsAtUtc = DateTime.SpecifyKind(r.EventStartsAt, DateTimeKind.Utc),
                 PurchaserName = r.PurchaserName,
                 PurchaserEmail = r.PurchaserEmail,
+                AccountEmail = r.AccountEmail,
                 AnchorToken = r.AnchorToken,
                 ItemCount = r.ItemCount,
                 RedeemedCount = r.RedeemedCount,

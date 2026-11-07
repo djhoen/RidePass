@@ -197,7 +197,14 @@ namespace Services.Repositories
                        COUNT(*)::int AS ItemCount,
                        COUNT(*) FILTER (WHERE p.status = 'redeemed')::int AS RedeemedCount,
                        string_agg(DISTINCT NULLIF(trim(COALESCE(p.rider_first_name, '') || ' ' ||
-                                                        COALESCE(p.rider_last_name, '')), ''), ', ') AS RiderNames
+                                                        COALESCE(p.rider_last_name, '')), ''), ', ') AS RiderNames,
+                       -- The account's email, only when the account is what matched (one of the
+                       -- typed terms hits its email/name/phone) and it differs from the checkout
+                       -- email, so staff can see why a row with a different address came back.
+                       MIN(u.email) FILTER (
+                           WHERE lower(trim(u.email)) <> lower(trim(p.purchaser_email))
+                             AND lower(" + GateSearchTerms.AccountHaystackSql + @") LIKE ANY (@likes)
+                       ) AS AccountEmail
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id AND t.tenant_id = p.tenant_id
                 JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
@@ -216,11 +223,7 @@ namespace Services.Repositories
                         COALESCE(p.purchaser_name, '') || ' ' ||
                         COALESCE(p.purchaser_email, '') || ' ' ||
                         COALESCE(p.rider_first_name, '') || ' ' ||
-                        COALESCE(p.rider_last_name, '') || ' ' ||
-                        COALESCE(u.email, '') || ' ' ||
-                        COALESCE(u.first_name, '') || ' ' ||
-                        COALESCE(u.last_name, '') || ' ' ||
-                        COALESCE(regexp_replace(u.phone, '\D', '', 'g'), '')
+                        COALESCE(p.rider_last_name, '') || ' ' ||" + GateSearchTerms.AccountHaystackSql + @"
                       ) LIKE ALL (@likes)
                 GROUP BY e.id, COALESCE(p.purchaser_user_id::text, lower(trim(p.purchaser_email)))
                 ORDER BY MIN(e.starts_at), MIN(p.purchaser_name)

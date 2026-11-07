@@ -27,7 +27,8 @@ namespace webapi.Controllers.API.Data.Redemption
         public DateTime? EventStartsAtUtc { get; set; }
         public string PurchaserName { get; set; } = null!;
         public string PurchaserEmail { get; set; } = null!;
-        /// <summary>Season pass rows: the linked account's email when it differs from the checkout email.</summary>
+        /// <summary>The linked account's email when it differs from the checkout email (ticket rows:
+        /// only when the account is what matched the search).</summary>
         public string? AccountEmail { get; set; }
         /// <summary>The redemption token to open: any ticket of the order, or the pass's own token.</summary>
         public Guid AnchorToken { get; set; }

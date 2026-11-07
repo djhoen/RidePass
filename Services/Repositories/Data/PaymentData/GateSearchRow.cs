@@ -21,5 +21,8 @@ namespace Services.Repositories.Data.PaymentData
         /// <summary>The riders on the order (distinct names captured at registration), so a search for
         /// "Reed" shows whose order it's on when the buyer is a parent with a different surname.</summary>
         public string? RiderNames { get; set; }
+        /// <summary>The linked account's email, when the account is what matched the search and it
+        /// differs from the checkout email.</summary>
+        public string? AccountEmail { get; set; }
     }
 }
