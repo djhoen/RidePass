@@ -230,6 +230,8 @@
     public class SeasonPassCheckInContext
     {
         public Guid ReservationId { get; set; }
+        /// <summary>The pass behind the reservation (for IWaiverCheckInGate.EvaluatePass).</summary>
+        public Guid PassPurchaseId { get; set; }
         public Guid EventId { get; set; }
 
         /// <summary>Whether this pass came from a staff-only (employee) product.</summary>

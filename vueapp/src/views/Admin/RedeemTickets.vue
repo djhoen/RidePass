@@ -235,7 +235,8 @@
                                 </span>
                                 <span v-else class="text-warning d-inline-flex align-center ga-1">
                                     <v-icon icon="mdi-alert-outline" size="14"></v-icon>
-                                    No date of birth on file
+                                    No date of birth on file<template v-if="a.birthdateUnknown">: check their ID
+                                        to confirm they're 18 or over (a minor needs a guardian's signature)</template>
                                 </span>
                             </div>
 
@@ -248,6 +249,12 @@
                                 <span v-if="a.waiverName"> ({{ a.waiverName }})</span>
                                 <span v-if="a.signerName && a.signerName !== a.name"> by {{ a.signerName }}</span>
                             </div>
+                            <!-- A minor's own signature: on file, but it doesn't count. Say who signed. -->
+                            <div v-else-if="a.waiverRequired && a.signedAtUtc && a.isMinor && !a.signedByParent"
+                                 class="text-caption text-medium-emphasis mt-1">
+                                Signed {{ formatInTenant(a.signedAtUtc) }}
+                                by {{ a.signerName || a.name || 'the rider' }} themselves, not by a parent or guardian
+                            </div>
                             <div v-if="a.signedByParent" class="text-caption d-flex align-center ga-1"
                                  style="color: rgb(var(--v-theme-info))">
                                 <v-icon icon="mdi-shield-account" size="14"></v-icon>
@@ -259,6 +266,11 @@
                                 <v-icon icon="mdi-alert-circle" size="16"></v-icon>
                                 {{ a.blockReason }}
                             </div>
+                            <v-btn v-if="a.canRequestSignature && a.purchaseIds.length" size="small" variant="tonal"
+                                color="primary" class="mt-2" prepend-icon="mdi-email-fast-outline"
+                                @click="openSignRequest('ticket', a.purchaseIds[0], a.name, a.guardianEmail, a.isMinor)">
+                                Send signing link{{ a.isMinor ? ' to a guardian' : '' }}
+                            </v-btn>
 
                             <v-btn v-if="a.hasSignatureImage" size="small" variant="text" class="mt-1 px-0"
                                 prepend-icon="mdi-draw" :loading="signatureLoadingFor === a.attendeeKey"
@@ -368,6 +380,35 @@
                     class="text-caption text-error mt-1 mb-0">
                     {{ bandBlockReason }}
                 </p>
+
+                <!-- Waiver verdict for the holder: age today, who signed, and why it doesn't count
+                     (a minor's own signature). Same decision admission makes. -->
+                <div v-if="pass.holderAge != null || pass.birthdateUnknown || pass.waiverSignedByGuardian"
+                     class="text-caption text-medium-emphasis mt-2 d-flex align-center flex-wrap ga-2">
+                    <span v-if="pass.holderAge != null">Age {{ pass.holderAge }}</span>
+                    <v-chip v-if="pass.holderIsMinor" size="x-small" color="info">Minor</v-chip>
+                    <span v-if="pass.waiverSignedByGuardian" class="d-inline-flex align-center ga-1"
+                          style="color: rgb(var(--v-theme-info))">
+                        <v-icon icon="mdi-shield-account" size="14"></v-icon>
+                        Signed by guardian{{ pass.waiverGuardianName ? `: ${pass.waiverGuardianName}` : '' }}
+                    </span>
+                    <span v-else-if="pass.holderIsMinor && pass.waiverSignerName">
+                        Signed by {{ pass.waiverSignerName }} themselves
+                    </span>
+                    <span v-if="pass.birthdateUnknown" class="text-warning d-inline-flex align-center ga-1">
+                        <v-icon icon="mdi-alert-outline" size="14"></v-icon>
+                        No date of birth on file: check their ID to confirm they're 18 or over
+                    </span>
+                </div>
+                <v-alert v-if="pass.waiverBlockReason" type="error" variant="tonal" density="compact" class="mt-3">
+                    {{ pass.waiverBlockReason }}
+                    <div class="mt-2">
+                        <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-email-fast-outline"
+                            @click="openSignRequest('season_pass', pass.id, pass.purchaserName, pass.guardianEmail, !!pass.holderIsMinor)">
+                            Send signing link{{ pass.holderIsMinor ? ' to a guardian' : '' }}
+                        </v-btn>
+                    </div>
+                </v-alert>
 
                 <v-alert v-if="!pass.registrationComplete" type="warning" variant="tonal"
                     density="compact" class="mt-3">
@@ -673,6 +714,50 @@
             </v-card>
         </v-dialog>
 
+        <!-- Waiver fix-up: email the waiver signing link (to a parent / guardian for a minor). Once
+             signed, the signature is linked to this ticket / pass and a re-scan admits them. -->
+        <v-dialog v-model="signRequestOpen" max-width="460">
+            <v-card>
+                <v-card-title>Send a waiver signing link</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 text-medium-emphasis mb-3">
+                        <template v-if="signRequestForMinor">
+                            {{ signRequestName || 'This rider' }} is under 18, so a parent or guardian has to
+                            sign. The link opens the waiver for {{ signRequestName || 'the rider' }}; the guardian
+                            signs on their behalf.
+                        </template>
+                        <template v-else>
+                            The link opens the waiver for {{ signRequestName || 'the rider' }} to sign.
+                        </template>
+                    </p>
+                    <v-text-field v-model="signRequestEmail" type="email" density="compact" autofocus
+                        :label="signRequestForMinor ? 'Parent / guardian email' : 'Email'"
+                        :hint="signRequestSuggested ? 'The buyer on file. Change it if the guardian is someone else.' : ''"
+                        persistent-hint @keyup.enter="sendSignRequest"></v-text-field>
+                    <div v-if="signRequestError" class="text-error text-body-2 mt-2">{{ signRequestError }}</div>
+                    <div v-if="signRequestResult" class="mt-3">
+                        <div class="text-body-2">
+                            {{ signRequestResult.sent
+                                ? `Sent to ${signRequestResult.recipientEmail}.`
+                                : 'Email isn’t available here, so open this link on the guardian’s phone or this device:' }}
+                        </div>
+                        <div class="text-caption mt-1" style="word-break: break-all">{{ signRequestResult.link }}</div>
+                        <div class="text-caption text-medium-emphasis mt-2">
+                            Once it’s signed, look them up again to check them in.
+                        </div>
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="signRequestBusy" @click="signRequestOpen = false">
+                        {{ signRequestResult ? 'Done' : 'Cancel' }}
+                    </v-btn>
+                    <v-btn v-if="!signRequestResult" color="primary" :loading="signRequestBusy"
+                        @click="sendSignRequest">Send</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -682,7 +767,7 @@ import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { Html5Qrcode } from 'html5-qrcode'
 import { TicketService, type OrderLookup, type OrderItem, type OrderWaiverAttendee, type OrderSignature,
-    type GateSearchResult } from '@/services/TicketService'
+    type GateSearchResult, type GateWaiverSignRequestResult } from '@/services/TicketService'
 import { branding } from '@/stores/branding'
 import { WristbandService } from '@/services/WristbandService'
 import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService'
@@ -935,7 +1020,8 @@ async function onDecoded(decodedText: string) {
 useGateScanner({
     onScan: (scan, raw, source) => { void handleScan(scan, raw, source) },
     wristbandsEnabled: () => !!branding.wristbandsEnabled,
-    enabled: () => !buddyOpen.value && !verifyIdOpen.value && !signatureOpen.value && !bandDialogOpen.value,
+    enabled: () => !buddyOpen.value && !verifyIdOpen.value && !signatureOpen.value && !bandDialogOpen.value
+        && !signRequestOpen.value,
 })
 
 // A scan that arrives mid-lookup or mid-check-in waits; only the latest one is kept.
@@ -1301,8 +1387,47 @@ const passAdmitBlock = computed(() => {
         return 'No ride credits left.'
     if (pass.value.todaysEvents.length === 0 && walkUpAlreadyCheckedIn.value)
         return 'Already admitted today.'
+    // The waiver verdict (incl. a minor's own signature) the server will enforce on admission.
+    if (pass.value.waiverBlockReason) return pass.value.waiverBlockReason
     return null
 })
+
+// ── Waiver signing link (gate fix-up for a waiver block) ─────────────────────
+const signRequestOpen = ref(false)
+const signRequestBusy = ref(false)
+const signRequestError = ref('')
+const signRequestEmail = ref('')
+const signRequestSuggested = ref(false)
+const signRequestName = ref<string | null>(null)
+const signRequestForMinor = ref(false)
+const signRequestTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string } | null>(null)
+const signRequestResult = ref<GateWaiverSignRequestResult | null>(null)
+
+function openSignRequest(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null,
+    guardianEmail: string | null, forMinor: boolean) {
+    signRequestTarget.value = { kind, purchaseId }
+    signRequestName.value = name
+    signRequestForMinor.value = forMinor
+    signRequestEmail.value = guardianEmail ?? ''
+    signRequestSuggested.value = !!guardianEmail
+    signRequestError.value = ''
+    signRequestResult.value = null
+    signRequestOpen.value = true
+}
+
+async function sendSignRequest() {
+    if (!signRequestTarget.value || signRequestResult.value) return
+    const email = signRequestEmail.value.trim()
+    if (!email.includes('@')) { signRequestError.value = 'Enter an email address.'; return }
+    signRequestBusy.value = true
+    signRequestError.value = ''
+    try {
+        const r = await service.gateWaiverSignRequest({ ...signRequestTarget.value, email })
+        signRequestResult.value = r.data.data
+    } catch (err: any) {
+        signRequestError.value = err.response?.data?.error || 'Couldn’t send the link. Check the connection and try again.'
+    } finally { signRequestBusy.value = false }
+}
 
 // ── Waiver + ID gate for a wristband ────────────────────────────────────────
 // Mirrors what WristbandController.Link enforces, so the screen never invites a click the

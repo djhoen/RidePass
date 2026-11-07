@@ -1761,15 +1761,11 @@ namespace webapi.Controllers
             // satisfied it via the event's waiver rather than a signature on the pass would read
             // as "not signed" for the rest of the day.
             var admittedToday = reservations.Any(r => r.Status == "checked_in");
-            var waiverSigned = admittedToday || ctx?.WaiverSignatureId is not null;
-            string? waiverBlockReason = null;
-            if (!waiverSigned && ctx is not null && todaysEvents.Count == 1)
-            {
-                waiverBlockReason = await _waiverGate.BlockReason(
-                    _tenantContext.TenantId, todaysEvents[0].Id, riderAudience: true,
-                    ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
-                waiverSigned = waiverBlockReason is null;
-            }
+            // The gate decides (including the minor / guardian rule) exactly as admission will.
+            var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass.Id,
+                todaysEvents.Count == 1 ? todaysEvents[0].Id : null);
+            var waiverSigned = admittedToday || waiverDecision.Satisfied;
+            var waiverBlockReason = admittedToday ? null : waiverDecision.BlockReason;
 
             // ID / age. Resolved through the shared service so this display and the wristband
             // gate always agree about who counts as verified.
@@ -1790,6 +1786,18 @@ namespace webapi.Controllers
                 pass.PhotoDataUrl,
                 WaiverSigned = waiverSigned,
                 WaiverBlockReason = waiverBlockReason,
+                // Who signed and how old the holder is today, so staff can see WHY a minor is
+                // blocked (self-signed) or cleared (a guardian signed, and who).
+                HolderAge = waiverDecision.Age,
+                HolderIsMinor = waiverDecision.IsMinor,
+                BirthdateUnknown = waiverDecision.BirthdateUnknown,
+                WaiverSignedByGuardian = waiverDecision.SignedByGuardian,
+                WaiverGuardianName = waiverDecision.GuardianName,
+                WaiverSignerName = waiverDecision.SignerName,
+                // Who a signing link should go to: the buyer, when they are not the holder (a
+                // parent who bought the pass), else nobody on file and staff type one in.
+                GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(
+                    pass.HolderFirstName, pass.HolderLastName, pass.PurchaserName, pass.PurchaserEmail),
                 // Employee pass whose holder is no longer active staff (Script0242). Surfaced as
                 // its own reason rather than letting the scan look fine and the button fail: the
                 // worker has to be able to tell the person WHY they are not getting in.
@@ -2013,17 +2021,12 @@ namespace webapi.Controllers
                 // separate requirement from the pass product's own waiver — an event can pin its
                 // own document). The holder is a rider, so enforce the event's rider waiver.
                 //
-                // Only when the pass carries no signature of its own: BlockReason keys on the
-                // purchaser's account, and a pass bought FOR someone else would then be tested
-                // against the buyer's signature and wave the actual holder through. When the pass
-                // does have a holder signature, that signature is the holder's own evidence — the
-                // same standard BlockReasonForTicket applies to an event ticket.
-                if (ctx.WaiverSignatureId is null)
-                {
-                    var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, ctx.EventId,
-                        riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
-                    if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
-                }
+                // The gate decides: a holder signature on the pass is the holder's own evidence (the
+                // standard a ticket's linked signature meets), otherwise the event waiver is looked
+                // up for the pass's account; either way a minor needs a guardian's signature.
+                var waiverBlock = await _waiverGate.BlockReasonForPass(_tenantContext.TenantId,
+                    ctx.PassPurchaseId, ctx.EventId);
+                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 
             var affected = await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
@@ -2124,14 +2127,11 @@ namespace webapi.Controllers
                 var registrationBlock = await RegistrationBlockReason(ctx);
                 if (registrationBlock is not null) return new ApiResponses().BadRequestResult(registrationBlock);
 
-                // Skipped with no event: there is no event document to carry a rider waiver, so
-                // there is nothing to enforce. The product's own waiver was covered just above.
-                if (eventId is Guid waiverEventId && ctx.WaiverSignatureId is null)
-                {
-                    var waiverBlock = await _waiverGate.BlockReason(_tenantContext.TenantId, waiverEventId,
-                        riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
-                    if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
-                }
+                // The gate decides, with or without an event: the pass's own signature (the
+                // product waiver, whose presence was checked just above) and, when an event is in
+                // play, the event's rider waiver; a minor needs a guardian's signature either way.
+                var waiverBlock = await _waiverGate.BlockReasonForPass(_tenantContext.TenantId, pass.Id, eventId);
+                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 
             // Serialize double-scans of the same pass; the pre-checks below and the atomic

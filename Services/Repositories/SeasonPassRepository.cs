@@ -1030,12 +1030,32 @@ namespace Services.Repositories
             return await _db.Execute(sql, new { purchaseId, tenantId, credits });
         }
 
+        public async Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId,
+            string attendeeFirstName, string attendeeLastName)
+        {
+            // The signature must name the holder (holder name, else the buyer's name for a pass that
+            // never captured a holder) and be this tenant's own row.
+            const string sql = @"
+                UPDATE season_pass_purchase sp
+                   SET waiver_signature_id = @signatureId, updated_at = now()
+                 WHERE sp.id = @passPurchaseId
+                   AND sp.tenant_id = @tenantId
+                   AND lower(trim(@attendeeFirstName || ' ' || @attendeeLastName)) =
+                       lower(trim(COALESCE(NULLIF(trim(COALESCE(sp.holder_first_name, '') || ' ' ||
+                                                       COALESCE(sp.holder_last_name, '')), ''), sp.purchaser_name)))
+                   AND EXISTS (SELECT 1 FROM rider_waiver_signature s
+                               WHERE s.id = @signatureId AND s.tenant_id = @tenantId)";
+            return await _db.Execute(sql, new { passPurchaseId, tenantId, signatureId,
+                attendeeFirstName = attendeeFirstName.Trim(), attendeeLastName = attendeeLastName.Trim() });
+        }
+
         public async Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId)
         {
             // Same projection as GetReservationForCheckIn minus the reservation join: the
             // walk-up gate validates the pass BEFORE any reservation row exists.
             var sql = @"
-                SELECT p.purchaser_user_id AS HolderUserId,
+                SELECT p.id AS PassPurchaseId,
+                       p.purchaser_user_id AS HolderUserId,
                        p.purchaser_email AS HolderEmail,
                        p.purchaser_name AS HolderName,
                        p.holder_first_name AS HolderFirstName,
@@ -1288,6 +1308,7 @@ namespace Services.Repositories
         {
             var sql = @"
                 SELECT r.id AS ReservationId, r.event_id AS EventId,
+                       p.id AS PassPurchaseId,
                        p.purchaser_user_id AS HolderUserId,
                        p.purchaser_email AS HolderEmail,
                        p.purchaser_name AS HolderName,

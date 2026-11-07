@@ -23,6 +23,11 @@ namespace Services.Repositories.Interfaces
         // so the gate can show, per attendee, who signed which waiver and who still owes one.
         Task<List<OrderAttendeeWaiverRow>> ListWaiverStatusForPurchaser(
             Guid eventId, Guid tenantId, Guid? purchaserUserId, string? purchaserEmail);
+        // Gate signing link signed: link the new signature to this ticket and the rest of the same
+        // rider's tickets (same registrant), only when the attendee named on the signature IS that
+        // rider. Returns the number of tickets linked (0 = name mismatch or not this tenant's).
+        Task<int> LinkWaiverSignatureForRider(Guid ticketId, Guid tenantId, Guid signatureId, Guid waiverId,
+            string attendeeFirstName, string attendeeLastName);
         // Operator-app check-in roster: every paid/redeemed attendee for one event with the
         // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
         Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId, DateOnly? onDate = null);

@@ -215,8 +215,19 @@ export interface PassLookup {
     // ── The two gate checks the worker has to see before banding someone ──────
     /** Holder has a signed waiver. Computed the same way admission enforces it. */
     waiverSigned: boolean
-    /** Why the waiver check fails, when it could be resolved (a single event today). */
+    /** Why the waiver check fails, when it could be resolved (a single event today), including
+     *  a minor whose waiver isn't a parent / guardian's. */
     waiverBlockReason: string | null
+    /** Holder's age on the tenant's today, from the best birthdate on file. Null when unknown. */
+    holderAge: number | null
+    holderIsMinor: boolean | null
+    /** No birthdate anywhere for a holder whose waiver was checked: allowed, but check ID. */
+    birthdateUnknown: boolean
+    waiverSignedByGuardian: boolean
+    waiverGuardianName: string | null
+    waiverSignerName: string | null
+    /** Default recipient for a guardian signing link: the buyer, when not the holder. */
+    guardianEmail: string | null
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

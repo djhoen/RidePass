@@ -39,5 +39,11 @@ namespace webapi.Controllers.API.Data.Redemption
         /// <summary>Why this person can't be checked in yet (unsigned waiver, unfinished registration).
         /// NULL when they're clear.</summary>
         public string? BlockReason { get; set; }
+        /// <summary>A rider with no birthdate on file anywhere. Not a block: check their ID.</summary>
+        public bool BirthdateUnknown { get; set; }
+        /// <summary>Staff can send a waiver signing link to fix the block on the spot.</summary>
+        public bool CanRequestSignature { get; set; }
+        /// <summary>Suggested recipient for that link: the buyer when the buyer isn't this rider.</summary>
+        public string? GuardianEmail { get; set; }
     }
 }

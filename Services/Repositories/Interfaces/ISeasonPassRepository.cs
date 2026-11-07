@@ -172,6 +172,11 @@ namespace Services.Repositories.Interfaces
         /// reservation yet) — for walk-up gate redemption. ReservationId/EventId are unset.</summary>
         Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId);
 
+        /// <summary>Gate signing link signed: make the new signature this pass's own, only when the
+        /// attendee named on it is the pass holder. Returns rows updated (0 = mismatch).</summary>
+        Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId,
+            string attendeeFirstName, string attendeeLastName);
+
         /// <summary>Gate lookup by name/email/phone for a pass holder with no QR: this tenant's passes
         /// usable on <paramref name="todayLocal"/> (paid, in season, credits left, staff pass still
         /// eligible), matching holder name, buyer name/email, and the linked account's

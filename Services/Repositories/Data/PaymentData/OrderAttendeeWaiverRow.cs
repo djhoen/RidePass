@@ -44,5 +44,18 @@ namespace Services.Repositories.Data.PaymentData
         public Guid? SignedWaiverId { get; set; }
         public string? SignedWaiverName { get; set; }
         public string? SignedWaiverTitle { get; set; }
+
+        // Guardian rule inputs (Services.Waivers.GuardianWaiverRule).
+        public bool HasSignatureRow { get; set; }
+        /// <summary>The signature row's own guardian name (ParentName above also falls back to the ticket's).</summary>
+        public string? SignatureParentName { get; set; }
+        /// <summary>The ticket's guardian name: the only record for a legacy ticket with no signature row.</summary>
+        public string? TicketGuardianName { get; set; }
+        public DateTime? IdVerifiedDob { get; set; }
+        public string? PurchaserEmail { get; set; }
+        public string? AccountFirstName { get; set; }
+        public string? AccountLastName { get; set; }
+        public DateTime? AccountBirthdate { get; set; }
+        public DateTime? AccountVerifiedDob { get; set; }
     }
 }

@@ -21,6 +21,8 @@ namespace webapi.Controllers
         private readonly IWaiverSignRequestRepository _signRequests;
         private readonly Services.Helpers.ISmtpEmailer _emailer;
         private readonly IConfiguration _config;
+        private readonly IEventTicketPurchaseRepository _tickets;
+        private readonly ISeasonPassRepository _passes;
 
         public WaiverController(
             IWaiverRepository repo,
@@ -29,8 +31,12 @@ namespace webapi.Controllers
             ITenantContext tenantContext,
             IWaiverSignRequestRepository signRequests,
             Services.Helpers.ISmtpEmailer emailer,
-            IConfiguration config)
+            IConfiguration config,
+            IEventTicketPurchaseRepository tickets,
+            ISeasonPassRepository passes)
         {
+            _tickets = tickets;
+            _passes = passes;
             _repo = repo;
             _events = events;
             _users = users;
@@ -652,19 +658,23 @@ namespace webapi.Controllers
                 attendeeBirthdate: request.Birthdate,
                 signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
             await _signRequests.MarkSigned(row.Id, _tenantContext.TenantId, sigId);
+
+            // A link the gate sent for a specific ticket or pass (Script0310): make this signature the
+            // one that ticket / pass is judged on, so the rider can be checked in straight away. Only
+            // when the attendee signed for IS that rider; otherwise the signature is kept but unlinked.
+            if (row.EventTicketPurchaseId is Guid ticketId)
+                await _tickets.LinkWaiverSignatureForRider(ticketId, _tenantContext.TenantId, sigId, waiver.Id, first!, last!);
+            if (row.SeasonPassPurchaseId is Guid passId)
+                await _passes.LinkWaiverSignatureForHolder(passId, _tenantContext.TenantId, sigId, first!, last!);
             return new ApiResponses().OkResult();
         }
 
         // ── Signature-request helpers ───────────────────────────────────────────
 
-        private static string NewToken() =>
-            Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+        private static string NewToken() => WaiverSignRequestMail.NewToken();
 
-        private string BuildSigningLink(string token)
-        {
-            var apex = _config["App:RootDomain"] ?? "ridepass.io";
-            return $"https://{_tenantContext.Tenant.Subdomain}.{apex}/SignWaiver/{token}";
-        }
+        private string BuildSigningLink(string token) =>
+            WaiverSignRequestMail.BuildSigningLink(_config, _tenantContext.Tenant, token);
 
         private WaiverSignRequestItem ToRequestItem(Services.Repositories.Data.WaiverData.WaiverSignRequestRow r) => new()
         {
@@ -685,27 +695,8 @@ namespace webapi.Controllers
         /// <summary>Sends the signing email and marks the request sent. Returns false when the
         /// emailer is unconfigured or the send fails; the request stays pending so the admin
         /// can copy the link manually or retry.</summary>
-        private async Task<bool> TrySendRequestEmail(Services.Repositories.Data.WaiverData.WaiverSignRequestRow row)
-        {
-            if (!_emailer.IsConfigured) return false;
-            var tenant = _tenantContext.Tenant;
-            var link = BuildSigningLink(row.Token);
-            static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
-            var html =
-                $"<div style=\"font-family:Arial,Helvetica,sans-serif;max-width:480px\">" +
-                $"<h2 style=\"margin:0 0 8px\">{Enc(tenant.DisplayName)}</h2>" +
-                $"<p>Hi {Enc(row.RecipientName ?? "there")},</p>" +
-                $"<p>Please sign our waiver before your visit. It only takes a minute, and it means " +
-                $"no paperwork holds you up when you arrive:</p>" +
-                $"<p style=\"margin:16px 0\"><a href=\"{link}\" style=\"background:#1976d2;color:#fff;padding:10px 18px;" +
-                $"border-radius:6px;text-decoration:none\">Sign the waiver</a></p>" +
-                $"<p style=\"font-size:12px;color:#666\">Or paste this link into your browser:<br/>{link}</p></div>";
-            var ok = await _emailer.Send(row.RecipientEmail,
-                $"{tenant.DisplayName}: please sign the waiver before your visit",
-                html, null, Services.Email.TenantEmailIdentity.For(tenant));
-            if (ok) await _signRequests.MarkSent(row.Id, _tenantContext.TenantId);
-            return ok;
-        }
+        private Task<bool> TrySendRequestEmail(Services.Repositories.Data.WaiverData.WaiverSignRequestRow row) =>
+            WaiverSignRequestMail.TrySend(_emailer, _config, _tenantContext.Tenant, _signRequests, row);
 
         private static bool IsValidPngDataUrl(string? dataUrl)
         {

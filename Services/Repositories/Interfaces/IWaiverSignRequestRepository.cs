@@ -4,8 +4,11 @@ namespace Services.Repositories.Interfaces
 {
     public interface IWaiverSignRequestRepository
     {
+        /// <summary>New signing link. The optional ticket / pass is what the gate sent it FOR
+        /// (Script0310): signing it links the new signature there (see WaiverController.SignByToken).</summary>
         Task<WaiverSignRequestRow> Create(Guid tenantId, Guid? waiverId, string token,
-            string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId);
+            string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
+            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null);
         Task<(List<WaiverSignRequestRow> Rows, int Total)> List(Guid tenantId,
             string? search, string? status, int page, int pageSize);
         Task<WaiverSignRequestRow?> GetById(Guid id, Guid tenantId);

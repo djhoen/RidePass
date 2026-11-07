@@ -1234,8 +1234,9 @@ namespace webapi.Controllers
                         var ctx = await _seasonPasses.GetReservationForCheckIn(purchaseId, tenantId);
                         if (ctx is not null)
                         {
-                            var waiverBlock = await _waiverGate.BlockReason(tenantId, ctx.EventId,
-                                riderAudience: true, ctx.HolderUserId, ctx.HolderEmail, ctx.HolderName);
+                            // Same verdict as the gate screen: the pass's own signature or the
+                            // event waiver, and a guardian's signature for a minor.
+                            var waiverBlock = await _waiverGate.BlockReasonForPass(tenantId, ctx.PassPurchaseId, ctx.EventId);
                             if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
                         }
                     }

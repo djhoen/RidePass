@@ -4,6 +4,7 @@ using Services.Helpers;
 using Services.Repositories.Interfaces;
 using webapi.AuthPolicies;
 using webapi.Controllers.API.Data.Redemption;
+using webapi.Helpers;
 using webapi.Multitenancy;
 
 namespace webapi.Controllers
@@ -22,6 +23,9 @@ namespace webapi.Controllers
         private readonly ITenantContext _tenantContext;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ISeasonPassRepository _passes;
+        private readonly IWaiverSignRequestRepository _signRequests;
+        private readonly ISmtpEmailer _emailer;
+        private readonly IConfiguration _config;
 
         public RedemptionController(
             IEventTicketPurchaseRepository tickets,
@@ -32,10 +36,16 @@ namespace webapi.Controllers
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext,
             Services.Audit.IAuditLogger audit,
-            ISeasonPassRepository passes)
+            ISeasonPassRepository passes,
+            IWaiverSignRequestRepository signRequests,
+            ISmtpEmailer emailer,
+            IConfiguration config)
         {
             _audit = audit;
             _passes = passes;
+            _signRequests = signRequests;
+            _emailer = emailer;
+            _config = config;
             _tickets = tickets;
             _extras = extras;
             _users = users;
@@ -501,7 +511,8 @@ namespace webapi.Controllers
 
                 // Per-person waiver status for the whole order. This is what makes an unsigned
                 // attendee impossible to miss at the gate; redeem is blocked server-side regardless.
-                resp.Waivers = await BuildWaiverPanel(tenantId, anchor.EventId.Value, anchor);
+                resp.Waivers = await BuildWaiverPanel(tenantId, anchor.EventId.Value, anchor,
+                    DateOnly.FromDateTime(todayInTenant));
                 resp.WaiverRequiredCount = resp.Waivers.Count(w => w.WaiverRequired);
                 resp.WaiverSignedCount = resp.Waivers.Count(w => w.WaiverRequired && w.WaiverSigned);
                 resp.WaiverMissingCount = resp.Waivers.Count(w => w.WaiverRequired && !w.WaiverSigned);
@@ -700,8 +711,11 @@ namespace webapi.Controllers
         // document is the event's pinned waiver, falling back to the tenant's active one; and when no
         // document is configured at all there is nothing to enforce. Anything the gate would block,
         // this panel flags. The panel never grants admission, it only makes the block visible early.
+        //
+        // A rider under 18 on `today` (tenant-local) whose waiver is not a parent / guardian's is
+        // blocked by the gate; the panel applies the same GuardianWaiverRule to the same inputs.
         private async Task<List<webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee>> BuildWaiverPanel(
-            Guid tenantId, Guid eventId, AnchorInfo anchor)
+            Guid tenantId, Guid eventId, AnchorInfo anchor, DateOnly today)
         {
             var rows = await _tickets.ListWaiverStatusForPurchaser(
                 eventId, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail);
@@ -741,10 +755,30 @@ namespace webapi.Controllers
                 var first = tickets[0];
                 var name = BuildAttendeeName(first.RiderFirstName, first.RiderLastName)
                            ?? signedRow?.SignerName;
-                var birthdate = first.RiderBirthdate ?? signedRow?.SignatureBirthdate;
+                // Same birthdate order as the gate: verified DOB, the ticket's, the signature's, then
+                // the buyer account's only when the buyer is this rider.
+                var resolvedDob = Services.Waivers.GuardianWaiverRule.ResolveBirthdate(new Services.Waivers.RiderBirthdateFacts(
+                    Services.Waivers.GuardianWaiverRule.ToDateOnly(first.IdVerifiedDob),
+                    Services.Waivers.GuardianWaiverRule.ToDateOnly(first.RiderBirthdate),
+                    Services.Waivers.GuardianWaiverRule.ToDateOnly(signedRow?.SignatureBirthdate),
+                    Services.Waivers.GuardianWaiverRule.ToDateOnly(first.AccountVerifiedDob),
+                    Services.Waivers.GuardianWaiverRule.ToDateOnly(first.AccountBirthdate),
+                    first.AccountFirstName is not null && Services.Waivers.GuardianWaiverRule.AccountIsRider(
+                        first.RiderFirstName, first.RiderLastName, first.AccountFirstName, first.AccountLastName)));
+                DateTime? birthdate = resolvedDob?.ToDateTime(TimeOnly.MinValue);
                 var registrationComplete = tickets.All(r => r.RegistrationComplete);
 
                 var signedDocName = signedRow?.SignedWaiverName ?? signedRow?.SignedWaiverTitle;
+
+                // The guardian rule, for a rider whose required waiver is signed: the gate's verdict.
+                Services.Waivers.GuardianCheck? guardian = null;
+                if (riderAudience && required && signed && signedRow is not null)
+                {
+                    guardian = Services.Waivers.GuardianWaiverRule.Evaluate(resolvedDob, today,
+                        new Services.Waivers.WaiverSignatureFacts(signedRow.HasSignatureRow, signedRow.SignedByParent,
+                            signedRow.SignatureParentName, signedRow.SignerName, signedRow.TicketGuardianName),
+                        name);
+                }
 
                 string? block = null;
                 if (riderAudience && !registrationComplete)
@@ -756,6 +790,11 @@ namespace webapi.Controllers
                     block = $"Has NOT signed the required {(riderAudience ? "rider" : "spectator")} waiver"
                           + (string.IsNullOrWhiteSpace(docName) ? "." : $" ({docName}).");
                 }
+                else if (guardian?.BlockReason is { } minorBlock)
+                {
+                    block = minorBlock;
+                }
+                var age = resolvedDob is { } dob ? Services.Waivers.GuardianWaiverRule.AgeOn(dob, today) : (int?)null;
 
                 attendees.Add(new webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee
                 {
@@ -764,21 +803,30 @@ namespace webapi.Controllers
                     Name = name,
                     Audience = riderAudience ? "rider" : "spectator",
                     Birthdate = birthdate.HasValue ? DateTime.SpecifyKind(birthdate.Value, DateTimeKind.Utc) : null,
-                    Age = AgeFrom(birthdate),
-                    IsMinor = webapi.Helpers.WaiverPolicy.IsMinor(birthdate),
+                    Age = age is >= 0 ? age : null,
+                    IsMinor = age is >= 0 and < Services.Waivers.GuardianWaiverRule.AdultAge,
+                    // Rider whose waiver was checked but whose age is unknown: allowed, but staff should check ID.
+                    BirthdateUnknown = riderAudience && resolvedDob is null,
                     Items = tickets.Select(r => r.TierName).ToList(),
                     RegistrationComplete = registrationComplete,
                     WaiverRequired = required,
-                    WaiverSigned = signed,
+                    // A minor's self-signed waiver does not count: it reads as not signed, with the reason.
+                    WaiverSigned = signed && guardian?.BlockReason is null,
                     WaiverName = signed ? (signedDocName ?? docName) : docName,
                     SignedAtUtc = ToUtc(signedRow?.SignatureSignedAt ?? signedRow?.WaiverSignedAt),
-                    SignedByParent = signedRow?.SignedByParent ?? false,
-                    GuardianName = (signedRow?.SignedByParent ?? false) ? signedRow?.ParentName : null,
+                    SignedByParent = guardian?.SignedByGuardian ?? (signedRow?.SignedByParent ?? false),
+                    GuardianName = guardian is not null ? guardian.GuardianName
+                        : (signedRow?.SignedByParent ?? false) ? signedRow?.ParentName : null,
                     SignerName = signedRow?.SignerName,
                     SignerEmail = signedRow?.SignerEmail,
                     HasSignatureImage = signatureRow is not null,
                     SignaturePurchaseId = signatureRow?.PurchaseId,
                     BlockReason = block,
+                    // A signing link is offered for a waiver problem (not unfinished registration),
+                    // addressed by default to the buyer when the buyer is not this rider.
+                    CanRequestSignature = block is not null && registrationComplete && required,
+                    GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(
+                        first.RiderFirstName, first.RiderLastName, first.PurchaserName, first.PurchaserEmail),
                 });
             }
 
@@ -814,6 +862,61 @@ namespace webapi.Controllers
             var age = today.Year - birthdate.Value.Year;
             if (birthdate.Value.Date > today.AddYears(-age)) age--;
             return age < 0 ? null : age;
+        }
+
+        // Gate fix-up for a waiver block (a minor who signed their own waiver, or nobody signed):
+        // send the existing waiver signing link (waiver_sign_request, /SignWaiver/:token) to a
+        // parent / guardian, recorded against THIS ticket or pass so the signature is linked to it
+        // when signed (WaiverController.SignByToken). The request's name is the rider's, which is
+        // what the signing page pre-fills as the person the waiver is for. The link comes back in
+        // the response too, so staff can hand the device over when email isn't configured.
+        [HttpPost("WaiverSignRequest")]
+        public async Task<IActionResult> GateWaiverSignRequest(
+            [FromBody] webapi.Controllers.API.Data.Redemption.GateWaiverSignRequestRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            var email = req.Email?.Trim();
+            if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                return new ApiResponses().BadRequestResult("Enter the parent or guardian's email address.");
+
+            Guid? ticketId = null, passId = null, eventId = null, waiverId = null;
+            string riderName;
+            if (req.Kind == "ticket")
+            {
+                var t = await _tickets.GetById(req.PurchaseId, tenantId);
+                if (t is null) return new ApiResponses().NotFoundResult("Ticket not found.");
+                var ctx = await _tickets.GetByRedemptionToken(t.RedemptionToken, tenantId);
+                if (ctx is not null)
+                {
+                    eventId = ctx.EventId;
+                    waiverId = (await _events.GetById(ctx.EventId, tenantId))?.RacerWaiverId;
+                }
+                ticketId = t.Id;
+                riderName = BuildAttendeeName(t.RiderFirstName, t.RiderLastName) ?? t.PurchaserName;
+            }
+            else if (req.Kind == "season_pass")
+            {
+                var p = await _passes.GetPurchase(req.PurchaseId);
+                if (p is null || p.TenantId != tenantId) return new ApiResponses().NotFoundResult("Pass not found.");
+                passId = p.Id;
+                riderName = BuildAttendeeName(p.HolderFirstName, p.HolderLastName) ?? p.PurchaserName;
+            }
+            else return new ApiResponses().BadRequestResult("Unknown kind.");
+
+            if (waiverId is null && await _waivers.GetActive(tenantId) is null)
+                return new ApiResponses().BadRequestResult("This venue has no active waiver to send.");
+
+            var row = await _signRequests.Create(tenantId, waiverId, WaiverSignRequestMail.NewToken(), email,
+                riderName, eventId, TryGetStaffUserId(), ticketId, passId);
+            var sent = await WaiverSignRequestMail.TrySend(_emailer, _config, _tenantContext.Tenant, _signRequests, row);
+            return new ApiResponses().OkResult(new
+            {
+                RequestId = row.Id,
+                row.RecipientEmail,
+                Sent = sent,
+                Link = WaiverSignRequestMail.BuildSigningLink(_config, _tenantContext.Tenant, row.Token),
+            });
         }
 
         // The signature image behind one ticket in the scanned order, on demand. Kept out of the

@@ -291,6 +291,13 @@ export class TicketService {
         return axios.get<{ data: GateSearchResult[] }>(
             `${this.apiUrl}/Redemption/Search`, { params: { q } })
     }
+
+    // Gate fix-up for a waiver block: email a waiver signing link (to a parent / guardian) for one
+    // ticket or pass. When it is signed, the signature is linked to that ticket / pass.
+    gateWaiverSignRequest(req: { kind: 'ticket' | 'season_pass'; purchaseId: string; email: string }) {
+        return axios.post<{ data: GateWaiverSignRequestResult }>(
+            `${this.apiUrl}/Redemption/WaiverSignRequest`, req)
+    }
 }
 
 export interface GateSearchResult {
@@ -354,6 +361,20 @@ export interface OrderWaiverAttendee {
     hasSignatureImage: boolean
     signaturePurchaseId: string | null
     blockReason: string | null
+    /** Rider with no birthdate anywhere: allowed in, but staff should check their ID. */
+    birthdateUnknown: boolean
+    /** A waiver signing link can be sent to fix this attendee's block on the spot. */
+    canRequestSignature: boolean
+    /** Default recipient for that link: the buyer, when the buyer isn't this rider. */
+    guardianEmail: string | null
+}
+
+export interface GateWaiverSignRequestResult {
+    requestId: string
+    recipientEmail: string
+    /** False when email isn't configured or failed: hand over the link instead. */
+    sent: boolean
+    link: string
 }
 
 export interface OrderSignature {

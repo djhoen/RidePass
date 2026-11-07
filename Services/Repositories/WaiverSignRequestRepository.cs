@@ -14,7 +14,9 @@ namespace Services.Repositories
             q.created_at AS CreatedAt, q.sent_at AS SentAt,
             q.opened_at AS OpenedAt, q.signed_at AS SignedAt,
             w.name AS WaiverName, w.version AS WaiverVersion,
-            e.title AS EventTitle";
+            e.title AS EventTitle,
+            q.event_ticket_purchase_id AS EventTicketPurchaseId,
+            q.season_pass_purchase_id AS SeasonPassPurchaseId";
         private const string RequestJoins = @"
             FROM waiver_sign_request q
             LEFT JOIN tenant_waiver w ON w.id = q.waiver_id
@@ -25,15 +27,20 @@ namespace Services.Repositories
         public WaiverSignRequestRepository(IDbHelper db) => _db = db;
 
         public async Task<WaiverSignRequestRow> Create(Guid tenantId, Guid? waiverId, string token,
-            string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId)
+            string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
+            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null)
         {
+            // The ticket / pass targets (Script0310) are tenant-checked in the insert itself: a
+            // target from another tenant is stored as NULL rather than linked.
             const string sql = @"
                 WITH ins AS (
                     INSERT INTO waiver_sign_request
                         (tenant_id, waiver_id, token, recipient_email, recipient_name,
-                         event_id, requested_by_user_id)
+                         event_id, requested_by_user_id, event_ticket_purchase_id, season_pass_purchase_id)
                     VALUES (@tenantId, @waiverId, @token, @recipientEmail, @recipientName,
-                            @eventId, @requestedByUserId)
+                            @eventId, @requestedByUserId,
+                            (SELECT id FROM event_ticket_purchase WHERE id = @eventTicketPurchaseId AND tenant_id = @tenantId),
+                            (SELECT id FROM season_pass_purchase WHERE id = @seasonPassPurchaseId AND tenant_id = @tenantId))
                     RETURNING *
                 )
                 SELECT ins.id, ins.tenant_id AS TenantId, ins.waiver_id AS WaiverId, ins.token,
@@ -42,7 +49,9 @@ namespace Services.Repositories
                        ins.created_at AS CreatedAt, ins.sent_at AS SentAt,
                        ins.opened_at AS OpenedAt, ins.signed_at AS SignedAt,
                        w.name AS WaiverName, w.version AS WaiverVersion,
-                       e.title AS EventTitle
+                       e.title AS EventTitle,
+                       ins.event_ticket_purchase_id AS EventTicketPurchaseId,
+                       ins.season_pass_purchase_id AS SeasonPassPurchaseId
                 FROM ins
                 LEFT JOIN tenant_waiver w ON w.id = ins.waiver_id
                 LEFT JOIN event e ON e.id = ins.event_id";
@@ -52,6 +61,7 @@ namespace Services.Repositories
                 recipientEmail = recipientEmail.Trim(),
                 recipientName,
                 eventId, requestedByUserId,
+                eventTicketPurchaseId, seasonPassPurchaseId,
             });
             return result.First();
         }

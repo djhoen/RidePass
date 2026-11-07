@@ -270,13 +270,27 @@ namespace Services.Repositories
                        sig.spectator_birthdate AS SignatureBirthdate,
                        COALESCE(sig.waiver_id, p.waiver_id) AS SignedWaiverId,
                        w.name AS SignedWaiverName,
-                       w.title AS SignedWaiverTitle
+                       w.title AS SignedWaiverTitle,
+                       -- Guardian rule inputs (GuardianWaiverRule): the signature row as such, the
+                       -- ticket's own guardian name for legacy rows, every birthdate source, and
+                       -- the buyer account (its DOB only counts when it IS the rider).
+                       (sig.id IS NOT NULL) AS HasSignatureRow,
+                       sig.parent_name AS SignatureParentName,
+                       p.parent_guardian_name AS TicketGuardianName,
+                       p.id_verified_dob AS IdVerifiedDob,
+                       p.purchaser_email AS PurchaserEmail,
+                       u.first_name AS AccountFirstName,
+                       u.last_name AS AccountLastName,
+                       u.birthdate AS AccountBirthdate,
+                       u.id_verified_dob AS AccountVerifiedDob
                 FROM event_ticket_purchase p
-                JOIN event_ticket_tier t ON t.id = p.tier_id
+                JOIN event_ticket_tier t ON t.id = p.tier_id AND t.tenant_id = p.tenant_id
                 LEFT JOIN rider_waiver_signature sig
                        ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
                 LEFT JOIN tenant_waiver w
                        ON w.id = COALESCE(sig.waiver_id, p.waiver_id) AND w.tenant_id = p.tenant_id
+                LEFT JOIN users u ON u.id = p.purchaser_user_id
+                                 AND (u.tenant_id IS NULL OR u.tenant_id = p.tenant_id)
                 WHERE p.tenant_id = @tenantId
                   AND t.event_id = @eventId
                   AND p.status IN ('paid', 'redeemed')
@@ -288,6 +302,33 @@ namespace Services.Repositories
             var rows = await _db.Query<OrderAttendeeWaiverRow>(sql,
                 new { eventId, tenantId, purchaserUserId, purchaserEmail });
             return rows.ToList();
+        }
+
+        public async Task<int> LinkWaiverSignatureForRider(Guid ticketId, Guid tenantId, Guid signatureId, Guid waiverId,
+            string attendeeFirstName, string attendeeLastName)
+        {
+            // The anchor ticket decides the rider; its registrant siblings (gate fee + class entries
+            // of the same person) take the same signature, because the gate checks every ticket.
+            // The signature must name this rider (the ticket's rider name, else its buyer's name
+            // for a ticket that never captured one), and must be this tenant's own row.
+            const string sql = @"
+                UPDATE event_ticket_purchase p
+                   SET waiver_signature_id = @signatureId,
+                       waiver_id = @waiverId,
+                       updated_at = now()
+                  FROM event_ticket_purchase a
+                 WHERE a.id = @ticketId
+                   AND a.tenant_id = @tenantId
+                   AND p.tenant_id = a.tenant_id
+                   AND (p.id = a.id OR (a.registrant_id IS NOT NULL AND p.registrant_id = a.registrant_id))
+                   AND p.status IN ('paid', 'redeemed')
+                   AND lower(trim(@attendeeFirstName || ' ' || @attendeeLastName)) =
+                       lower(trim(COALESCE(NULLIF(trim(COALESCE(a.rider_first_name, '') || ' ' ||
+                                                       COALESCE(a.rider_last_name, '')), ''), a.purchaser_name)))
+                   AND EXISTS (SELECT 1 FROM rider_waiver_signature s
+                               WHERE s.id = @signatureId AND s.tenant_id = @tenantId)";
+            return await _db.Execute(sql, new { ticketId, tenantId, signatureId, waiverId,
+                attendeeFirstName = attendeeFirstName.Trim(), attendeeLastName = attendeeLastName.Trim() });
         }
 
         // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /
