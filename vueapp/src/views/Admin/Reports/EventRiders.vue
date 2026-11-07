@@ -178,7 +178,11 @@
                     <div v-if="adultResult" class="mt-3 text-body-2">
                         {{ adultResult.sent ? `Sent to ${adultResult.recipientEmail}.`
                             : 'Email isn’t available here, so open this link on the rider’s phone:' }}
-                        <div class="text-caption mt-1" style="word-break: break-all">{{ adultResult.link }}</div>
+                        <div class="d-flex align-center ga-2 mt-1">
+                            <div class="text-caption flex-grow-1" style="word-break: break-all">{{ adultResult.link }}</div>
+                            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy"
+                                @click="copyLink(adultResult.link)">{{ linkCopied ? 'Copied' : 'Copy link' }}</v-btn>
+                        </div>
                     </div>
                 </v-card-text>
                 <v-card-actions>
@@ -445,6 +449,17 @@ const adultSending = ref(false)
 const adultEmail = ref('')
 const adultError = ref('')
 const adultResult = ref<GateWaiverSignRequestResult | null>(null)
+// Copy a signing link (shown when email isn't available) so staff can paste it into a text message.
+const linkCopied = ref(false)
+async function copyLink(link: string) {
+    try {
+        await navigator.clipboard.writeText(link)
+        linkCopied.value = true
+        setTimeout(() => { linkCopied.value = false }, 2000)
+    } catch {
+        linkCopied.value = false
+    }
+}
 const adultBlock = ref<{ message: string; riderEmail: string | null; kind: 'ticket' | 'season_pass';
     purchaseId: string; eventId: string | null } | null>(null)
 

@@ -728,8 +728,37 @@ namespace webapi.Controllers
             if (row.Status is "pending" or "sent")
                 await _signRequests.MarkOpened(row.Id, _tenantContext.TenantId);
 
+            // A link for a specific rider: the page shows the mode SignByToken will enforce, up front, and
+            // doesn't ask for a birthdate the server already knows (and would ignore).
+            string? signAs = null, riderFirst = null, riderLast = null, riderName = null;
+            if (row.EventTicketPurchaseId is not null || row.SeasonPassPurchaseId is not null)
+            {
+                var target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
+                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
+                if (target is not null)
+                {
+                    riderFirst = target.FirstName; riderLast = target.LastName; riderName = target.DisplayName;
+                    // Same rule as SignByToken: the gate's verdict for a rider, else the target's birthdate.
+                    bool? minor = target.Decision is { RiderAudience: true, IsMinor: bool m } ? m
+                        : target.Decision.Birthdate is { } tb ? WaiverPolicy.IsMinor(tb.ToDateTime(TimeOnly.MinValue)) : null;
+                    if (target.Decision.AdultWaiverNeeded) minor = false;
+                    signAs = minor is null ? null : minor.Value ? "guardian" : "adult";
+                }
+            }
+            else if (row.RiderUserId is not null && row.RiderBirthdate is { } rb
+                     && !string.IsNullOrWhiteSpace(row.RiderFirstName) && !string.IsNullOrWhiteSpace(row.RiderLastName))
+            {
+                riderFirst = row.RiderFirstName; riderLast = row.RiderLastName;
+                riderName = $"{row.RiderFirstName} {row.RiderLastName}";
+                signAs = WaiverPolicy.IsMinor(rb) ? "guardian" : "adult";
+            }
+
             return new ApiResponses().OkResult(new PublicWaiverSignRequestResponse
             {
+                SignAs = signAs,
+                RiderName = riderName,
+                RiderFirstName = riderFirst,
+                RiderLastName = riderLast,
                 Status = row.Status == "signed" ? "signed" : "opened",
                 RecipientName = row.RecipientName,
                 RecipientEmail = row.RecipientEmail,

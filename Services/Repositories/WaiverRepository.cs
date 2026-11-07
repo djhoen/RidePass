@@ -485,6 +485,20 @@ namespace Services.Repositories
                     FROM sigs
                     GROUP BY person_key
                 ),
+                -- The gate's fallback (FindAdultSelfSignature), computed ONCE as a set instead of a
+                -- correlated scan per person: per attendee name + birthdate, the latest tenant-local day an
+                -- adult (not guardian) signature on the current waiver was made. Hash-joined below.
+                adult_self AS (
+                    SELECT lower(trim(COALESCE(a.spectator_first_name, '') || ' ' || COALESCE(a.spectator_last_name, ''))) AS nm,
+                           a.spectator_birthdate AS bd,
+                           MAX((a.signed_at AT TIME ZONE @timezone)::date) AS last_local
+                    FROM rider_waiver_signature a
+                    JOIN tenant_waiver aw ON aw.id = a.waiver_id AND aw.tenant_id = a.tenant_id
+                    WHERE a.tenant_id = @tenantId AND aw.is_active AND (aw.expires_at IS NULL OR aw.expires_at > now())
+                      AND a.signed_by_parent = false
+                      AND a.spectator_birthdate IS NOT NULL
+                    GROUP BY 1, 2
+                ),
                 ppl AS (
                     SELECT people.*,
                            (Birthdate IS NOT NULL
@@ -494,19 +508,13 @@ namespace Services.Repositories
                             -- The gate's fallback (FindAdultSelfSignature): an adult signature on the current waiver
                             -- naming them (name + birthdate), made on or after their 18th birthday, counts, even
                             -- when it is filed under another person row (e.g. a link signed into their account).
-                            AND NOT EXISTS (
-                                SELECT 1 FROM rider_waiver_signature a
-                                JOIN tenant_waiver aw ON aw.id = a.waiver_id
-                                WHERE a.tenant_id = @tenantId AND aw.is_active AND (aw.expires_at IS NULL OR aw.expires_at > now())
-                                  AND a.signed_by_parent = false
-                                  AND a.spectator_birthdate = Birthdate
-                                  AND lower(trim(COALESCE(a.spectator_first_name, '') || ' ' || COALESCE(a.spectator_last_name, ''))) = lower(PersonName)
-                                  AND (a.signed_at AT TIME ZONE @timezone)::date >= {eighteenth})) AS NeedsAdultWaiver,
+                            AND NOT COALESCE(adult_self.last_local >= {eighteenth}, false)) AS NeedsAdultWaiver,
                            -- An adult-waiver link already out for this rider (Script0306), so a bulk send skips them.
                            EXISTS (SELECT 1 FROM waiver_sign_request q
                                    WHERE q.tenant_id = @tenantId AND q.rider_user_id = people.RiderAccountId
                                      AND q.status IN ('pending', 'sent', 'opened')) AS AdultLinkOpen
                     FROM people
+                    LEFT JOIN adult_self ON adult_self.nm = lower(people.PersonName) AND adult_self.bd = people.Birthdate
                 )";
 
             var where = new List<string>();

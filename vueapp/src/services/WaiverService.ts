@@ -211,6 +211,11 @@ export interface PublicSignRequestInfo {
     waiverBody: string
     waiverVersion: number
     alreadySigned: boolean
+    /** A link for a specific rider: how the server will require it to be signed (null: it needs the birthdate). */
+    signAs: 'guardian' | 'adult' | null
+    riderName: string | null
+    riderFirstName: string | null
+    riderLastName: string | null
 }
 
 export class WaiverService {

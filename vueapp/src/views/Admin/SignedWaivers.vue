@@ -22,7 +22,8 @@
                 clearable label="Show" style="max-width: 200px" @update:model-value="resetPplPage" />
             <!-- Ahead of the gate: everyone who turned 18 since their waiver gets a link to sign as
                  an adult. Staff-triggered only; nothing goes out on its own. -->
-            <v-btn v-if="pplStatus === 'needs_adult' && pplTotal > 0" color="primary" variant="tonal"
+            <v-btn v-if="pplStatus === 'needs_adult' && pplLoadedStatus === 'needs_adult' && !pplLoading && pplTotal > 0"
+                color="primary" variant="tonal"
                 prepend-icon="mdi-email-fast-outline" :loading="adultSending" :disabled="adultSendable.length === 0"
                 @click="sendAdultLinks">
                 Send signing links ({{ adultSendable.length }})
@@ -34,6 +35,7 @@
             @click:close="adultMessage = ''">{{ adultMessage }}</v-alert>
 
         <v-card variant="outlined">
+            <v-progress-linear v-if="pplLoading" indeterminate color="primary" height="2"></v-progress-linear>
             <v-table density="compact" hover>
                 <thead>
                     <tr>
@@ -88,7 +90,10 @@
                             <td class="text-no-wrap">{{ formatWhen(p.lastSignedAtUtc) }}</td>
                             <td class="text-right">{{ p.signatureCount }}</td>
                             <td>
-                                <v-chip size="x-small" :color="p.hasCurrentWaiver ? 'success' : 'warning'">
+                                <!-- A minor-era signature on the current waiver doesn't count for an adult:
+                                     that is not "Current". -->
+                                <v-chip v-if="p.needsAdultWaiver" size="x-small" color="error">Needs adult waiver</v-chip>
+                                <v-chip v-else size="x-small" :color="p.hasCurrentWaiver ? 'success' : 'warning'">
                                     {{ p.hasCurrentWaiver ? 'Current' : 'Outdated' }}
                                 </v-chip>
                             </td>
@@ -126,6 +131,9 @@
                             </td>
                         </tr>
                     </template>
+                    <tr v-if="pplLoading && people.length === 0">
+                        <td colspan="8" class="text-center text-medium-emphasis py-6">Loading people...</td>
+                    </tr>
                     <tr v-if="!pplLoading && !pplError && people.length === 0">
                         <td colspan="8" class="text-center text-medium-emphasis py-6">No people match these filters.</td>
                     </tr>
@@ -258,11 +266,19 @@ const quickOptions = [
 ]
 
 let pplSeq = 0
+// The filter the rows on screen were loaded for: the bulk-send button only shows for rows that really
+// are the "Needs adult waiver" result, never the previous filter's rows while a new one loads.
+const pplLoadedStatus = ref<string | null>(null)
 async function loadPeople() {
     const seq = ++pplSeq
     pplLoading.value = true
     pplError.value = null
     expandedKey.value = null
+    // Never show the previous filter's rows under the new filter (or its button).
+    people.value = []
+    pplTotal.value = 0
+    pplLoadedStatus.value = null
+    const status = pplStatus.value || null
     try {
         const res = await service.listPeople({
             search: pplSearch.value || undefined,
@@ -275,6 +291,7 @@ async function loadPeople() {
         if (seq !== pplSeq) return
         people.value = res.data.data.items
         pplTotal.value = res.data.data.total
+        pplLoadedStatus.value = status
     } catch (err: any) {
         if (seq !== pplSeq) return
         pplError.value = err.response?.data?.error

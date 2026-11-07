@@ -845,9 +845,15 @@
                         <div class="text-body-2">
                             {{ signRequestResult.sent
                                 ? `Sent to ${signRequestResult.recipientEmail}.`
-                                : 'Email isn’t available here, so open this link on the guardian’s phone or this device:' }}
+                                : signRequestAdult
+                                    ? 'Email isn’t available here, so open this link on the rider’s phone or this device:'
+                                    : 'Email isn’t available here, so open this link on the guardian’s phone or this device:' }}
                         </div>
-                        <div class="text-caption mt-1" style="word-break: break-all">{{ signRequestResult.link }}</div>
+                        <div class="d-flex align-center ga-2 mt-1">
+                            <div class="text-caption flex-grow-1" style="word-break: break-all">{{ signRequestResult.link }}</div>
+                            <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy"
+                                @click="copyLink(signRequestResult.link)">{{ linkCopied ? 'Copied' : 'Copy link' }}</v-btn>
+                        </div>
                         <div class="text-caption text-medium-emphasis mt-2">
                             Once it’s signed, look them up again to check them in.
                         </div>
@@ -1534,6 +1540,17 @@ const signRequestName = ref<string | null>(null)
 const signRequestForMinor = ref(false)
 // Turned 18 since their waiver: the link goes to the RIDER, who signs as an adult.
 const signRequestAdult = ref(false)
+// Copy a signing link (shown when email isn't available) so staff can paste it into a text message.
+const linkCopied = ref(false)
+async function copyLink(link: string) {
+    try {
+        await navigator.clipboard.writeText(link)
+        linkCopied.value = true
+        setTimeout(() => { linkCopied.value = false }, 2000)
+    } catch {
+        linkCopied.value = false
+    }
+}
 const signRequestTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string } | null>(null)
 const signRequestResult = ref<GateWaiverSignRequestResult | null>(null)
 
@@ -1711,8 +1728,9 @@ function birthdateCheckText(verifiedLocalDate: string | null): string {
         : 'Check ID: birthdate never verified.'
 }
 
+// No age (and so no "a parent or guardian has to sign") while the date is invalid or in the future.
 const verifyAge = computed(() => {
-    if (!verifyDob.value) return null
+    if (!verifyDob.value || verifyDobError.value) return null
     const d = dayjs(verifyDob.value)
     return d.isValid() ? dayjs().diff(d, 'year') : null
 })

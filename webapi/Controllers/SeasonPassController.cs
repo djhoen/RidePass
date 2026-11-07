@@ -1763,11 +1763,10 @@ namespace webapi.Controllers
             // waiver to resolve, so fall back to the pass signature and leave the reason null
             // rather than inventing a block staff can't act on.
             var ctx = await _passes.GetPassForGateCheckIn(pass.Id, _tenantContext.TenantId);
-            // Already through the gate today settles it: admission enforces the waiver on every
-            // path, so a checked_in reservation IS the evidence. Without this, a rider who
-            // satisfied it via the event's waiver rather than a signature on the pass would read
-            // as "not signed" for the rest of the day.
-            var admittedToday = reservations.Any(r => r.Status == "checked_in");
+            // An earlier admission today does NOT settle it: the card shows exactly what admission
+            // would apply now (Redeem re-runs the gate every time), judged against the same event.
+            // Things change during a day (an ID check cleared, a signature replaced, a birthday), and
+            // a card that hid a block the Admit button then enforced left staff with no way to act.
             // The gate decides (including the minor / guardian rule) exactly as admission will.
             // Judged against the event staff picked (?eventId, when it is one of today's), else the
             // single event running today, else none.
@@ -1775,8 +1774,8 @@ namespace webapi.Controllers
                 : todaysEvents.Count == 1 ? todaysEvents[0].Id : (Guid?)null;
             var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, judgedEventId);
             var birthdatePolicy = await _waiverGate.BirthdatePolicy(_tenantContext.TenantId);
-            var waiverSigned = admittedToday || waiverDecision.Satisfied;
-            var waiverBlockReason = admittedToday ? null : waiverDecision.BlockReason;
+            var waiverSigned = waiverDecision.Satisfied;
+            var waiverBlockReason = waiverDecision.BlockReason;
 
             // ID / age. Resolved through the shared service so this display and the wristband
             // gate always agree about who counts as verified.
@@ -1826,7 +1825,7 @@ namespace webapi.Controllers
                 PhotoUrl = waiverDecision.PhotoUrl,
                 PhotoTakenAtUtc = waiverDecision.PhotoTakenAtUtc is { } pt ? DateTime.SpecifyKind(pt, DateTimeKind.Utc) : (DateTime?)null,
                 PhotoNeeded = waiverDecision.PhotoNeeded,
-                PhotoBlocked = waiverDecision.PhotoBlocked && !admittedToday,
+                PhotoBlocked = waiverDecision.PhotoBlocked,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
                 // parent who bought the pass), else nobody on file and staff type one in.
                 GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(

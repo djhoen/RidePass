@@ -30,14 +30,22 @@
 
             <v-card variant="outlined">
                 <v-card-text>
-                    <div class="d-flex ga-2 flex-wrap">
+                    <!-- A link for a specific rider: the server already knows who it is for and how it must be
+                         signed, so the page says so up front and asks for no birthdate. -->
+                    <v-alert v-if="info.signAs === 'guardian'" type="info" variant="tonal" density="compact" class="mb-4">
+                        You're signing for {{ info.riderName || 'this rider' }} as their parent or guardian.
+                    </v-alert>
+                    <v-alert v-else-if="info.signAs === 'adult'" type="info" variant="tonal" density="compact" class="mb-4">
+                        Sign as yourself, {{ info.riderName || 'rider' }}.
+                    </v-alert>
+                    <div v-if="!info.signAs || !info.riderFirstName || !info.riderLastName" class="d-flex ga-2 flex-wrap">
                         <v-text-field v-model="firstName" label="First name" density="compact" style="min-width: 180px" />
                         <v-text-field v-model="lastName" label="Last name" density="compact" style="min-width: 180px" />
                     </div>
-                    <v-text-field v-model="birthdate" label="Birthdate" type="date" density="compact" class="mt-4"
+                    <v-text-field v-if="!info.signAs" v-model="birthdate" label="Birthdate" type="date" density="compact" class="mt-4"
                         hint="Needed so we know whether a parent or guardian must sign" persistent-hint />
                     <template v-if="isMinor">
-                        <v-alert type="info" variant="tonal" density="compact" class="mt-4">
+                        <v-alert v-if="!info.signAs" type="info" variant="tonal" density="compact" class="mt-4">
                             Riders under 18 need a parent or guardian to sign on their behalf.
                         </v-alert>
                         <v-text-field v-model="parentName" label="Parent / guardian name" density="compact" class="mt-4" />
@@ -83,8 +91,10 @@ const signature = ref('')
 const saving = ref(false)
 const submitError = ref<string | null>(null)
 
-const isMinor = computed(() =>
-    !!birthdate.value && dayjs().diff(dayjs(birthdate.value), 'year') < 18)
+// A targeted link: the server's mode. Otherwise from the birthdate typed in.
+const isMinor = computed(() => info.value?.signAs
+    ? info.value.signAs === 'guardian'
+    : !!birthdate.value && dayjs().diff(dayjs(birthdate.value), 'year') < 18)
 
 const canSubmit = computed(() =>
     firstName.value.trim().length > 0
@@ -99,7 +109,11 @@ async function load() {
         const res = await service.getSignRequestByToken(token)
         info.value = res.data.data
         // Prefill the name fields from the request when we have one.
-        if (info.value.recipientName && !firstName.value) {
+        // The rider the link is for: the name the signature is recorded under (the server uses it anyway).
+        if (info.value.signAs && info.value.riderFirstName && info.value.riderLastName) {
+            firstName.value = info.value.riderFirstName
+            lastName.value = info.value.riderLastName
+        } else if (info.value.recipientName && !firstName.value) {
             const parts = info.value.recipientName.trim().split(/\s+/)
             firstName.value = parts[0] ?? ''
             lastName.value = parts.slice(1).join(' ')

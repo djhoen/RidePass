@@ -85,7 +85,7 @@
 
                     <!-- Inline pass-discount config: how much the perk is worth. -->
                     <v-expand-transition v-if="f.key === 'seasonPassDiscount'">
-                        <div v-if="f.enabled" class="px-4 pb-4 pl-14">
+                        <div v-if="f.enabled" class="feature-inline pb-4">
                             <div class="d-flex ga-3 flex-wrap align-start" style="max-width: 540px">
                                 <v-select v-model="passDiscountKind"
                                     :items="[{ title: 'Percent off', value: 'percent' }, { title: 'Amount off', value: 'amount' }]"
@@ -144,7 +144,7 @@
 
                     <!-- Inline waitlist config: only shown when the toggle is on. -->
                     <v-expand-transition v-if="f.key === 'waitlist'">
-                        <div v-if="f.enabled" class="px-4 pb-4 pl-14">
+                        <div v-if="f.enabled" class="feature-inline pb-4">
                             <v-text-field v-model.number="waitlistConfirmMinutes"
                                 type="number" min="5" max="240" density="compact"
                                 label="Confirm window (minutes)"
@@ -166,7 +166,7 @@
 
                     <!-- Inline birthdate-check config: how long one ID check counts for. -->
                     <v-expand-transition v-if="f.key === 'birthdateVerify'">
-                        <div v-if="branding.birthdateVerifyMode !== 'off'" class="px-4 pb-4 pl-14">
+                        <div v-if="branding.birthdateVerifyMode !== 'off'" class="feature-inline pb-4">
                             <v-text-field v-model.number="birthdateValidDays"
                                 type="number" min="1" max="3650" density="compact"
                                 label="An ID check counts for (days)"
@@ -188,7 +188,7 @@
 
                     <!-- Inline gift-card config: min/max denominations a buyer can pick. -->
                     <v-expand-transition v-if="f.key === 'giftCards'">
-                        <div v-if="f.enabled" class="px-4 pb-4 pl-14">
+                        <div v-if="f.enabled" class="feature-inline pb-4">
                             <p class="text-caption text-medium-emphasis mb-2" style="max-width: 540px">
                                 Set the smallest and largest amount a buyer can pick when purchasing a gift card.
                             </p>
@@ -759,3 +759,15 @@ onMounted(async () => {
     if (!branding.loaded) await loadBranding()
 })
 </script>
+
+<style scoped>
+/* Inline config under a setting lines up with the setting's TEXT column, not the icon: the list
+   item's 16px padding + 24px icon + 8px icon margin + 32px prepend spacer = 80px. */
+.feature-inline {
+    padding-left: 80px;
+    padding-right: 16px;
+}
+@media (max-width: 599px) {
+    .feature-inline { padding-left: 16px; }
+}
+</style>
