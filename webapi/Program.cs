@@ -107,6 +107,8 @@ builder.Services.AddScoped<IEndOfDayReportRepository, EndOfDayReportRepository>(
 builder.Services.AddScoped<IProfitCenterRepository, ProfitCenterRepository>();
 builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
 builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
+builder.Services.AddScoped<IRiderPhotoRepository, RiderPhotoRepository>();
+builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
 builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
 // Scheduled-task handlers — add one line per kind. The dispatcher resolves

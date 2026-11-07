@@ -206,6 +206,9 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("Birthdate check must be off, prompt or required.");
             if (request.BirthdateVerifyValidDays is < 1 or > 3650)
                 return new ApiResponses().BadRequestResult("A birthdate check can count for 1 to 3650 days.");
+            if (request.RiderPhotoMode is not null
+                && !Services.Riders.IdVerificationWindow.IsValidMode(request.RiderPhotoMode))
+                return new ApiResponses().BadRequestResult("Rider photo must be off, prompt or required.");
 
             await _tenants.UpdateTimezone(_tenantContext.TenantId, request.Timezone);
             await _tenants.UpdateRequireReservation(_tenantContext.TenantId, request.RequireReservationForPasses);
@@ -221,6 +224,9 @@ namespace webapi.Controllers
                 await _tenants.UpdateBirthdateVerification(_tenantContext.TenantId,
                     request.BirthdateVerifyMode, request.BirthdateVerifyValidDays);
             }
+            // Rider photo: only when sent (older settings screens don't), written as-is in SQL.
+            if (request.RiderPhotoMode is not null)
+                await _tenants.UpdateRiderPhotoMode(_tenantContext.TenantId, request.RiderPhotoMode);
             // The resolution cache would otherwise serve the old settings for up to 5 minutes.
             InvalidateTenantCache();
             return await GetBranding();
@@ -664,6 +670,7 @@ namespace webapi.Controllers
                 RequireIdForWristband = tenant.RequireIdForWristband,
                 BirthdateVerifyMode = tenant.BirthdateVerifyMode,
                 BirthdateVerifyValidDays = tenant.BirthdateVerifyValidDays,
+                RiderPhotoMode = tenant.RiderPhotoMode,
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,

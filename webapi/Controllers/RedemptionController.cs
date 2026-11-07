@@ -20,6 +20,7 @@ namespace webapi.Controllers
         private readonly IEventRepository _events;
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
+        private readonly Services.Riders.IRiderPhotos _riderPhotos;
         private readonly ITenantContext _tenantContext;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ISeasonPassRepository _passes;
@@ -41,9 +42,11 @@ namespace webapi.Controllers
             IWaiverSignRequestRepository signRequests,
             ISmtpEmailer emailer,
             IConfiguration config,
-            Services.Riders.IRiderIdVerification idVerification)
+            Services.Riders.IRiderIdVerification idVerification,
+            Services.Riders.IRiderPhotos riderPhotos)
         {
             _idVerification = idVerification;
+            _riderPhotos = riderPhotos;
             _audit = audit;
             _passes = passes;
             _signRequests = signRequests;
@@ -817,6 +820,16 @@ namespace webapi.Controllers
                     AdultWaiverNeeded = ds.Any(d => d.AdultWaiverNeeded && d.BlockReason is not null),
                     TurnedEighteenOn = ds.FirstOrDefault(d => d.TurnedEighteenOn is not null)?.TurnedEighteenOn,
                     RiderEmail = riderFacts?.RiderEmail,
+                    // Rider photo on file, from the same decisions.
+                    RiderPhotoMode = riderFacts?.RiderPhotoMode ?? "off",
+                    HasPhoto = riderFacts?.HasPhoto ?? false,
+                    PhotoSource = riderFacts?.PhotoSource,
+                    RiderPhotoId = riderFacts?.RiderPhotoId,
+                    PhotoUrl = riderFacts?.PhotoUrl,
+                    PhotoTakenAtUtc = ToUtc(riderFacts?.PhotoTakenAtUtc),
+                    PhotoNeeded = ds.Any(d => d.PhotoNeeded),
+                    PhotoBlocked = ds.Any(d => d.PhotoBlocked),
+                    PhotoPurchaseId = riderTicket?.PurchaseId,
                 });
             }
 
@@ -851,6 +864,66 @@ namespace webapi.Controllers
         // tenant (any event, any pass) within the tenant's window needs no re-check. The verified
         // DOB is the age evidence the waiver gate then uses, so a DOB that makes the rider a minor
         // brings the guardian rule into play on the very next lookup.
+        // Gate: take (or replace) a rider's photo. Saved for the RIDER (tenant + buying account, or buyer
+        // email, + rider name; RiderPhotoRules), in the image store's PRIVATE area, so their later visits
+        // and events need none. Staff with sales.redeem (this controller's policy) only.
+        [HttpPost("RiderPhoto")]
+        [RequestSizeLimit(3 * 1024 * 1024)]
+        public async Task<IActionResult> TakeRiderPhoto([FromBody] webapi.Controllers.API.Data.Redemption.TakeRiderPhotoRequest req)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            if (Services.Riders.RiderPhotoRules.DecodePhoto(req.PhotoDataUrl) is not { } image)
+                return new ApiResponses().BadRequestResult("The photo must be a JPEG or PNG image under 1.5 MB.");
+
+            Services.Repositories.Data.RiderData.RiderPhoto? photo;
+            string riderName;
+            string targetKind;
+            if (req.Kind == "ticket")
+            {
+                var ticket = await _tickets.GetById(req.PurchaseId, tenantId);
+                if (ticket is null) return new ApiResponses().NotFoundResult("Ticket not found.");
+                if (ticket.Status is not ("paid" or "redeemed"))
+                    return new ApiResponses().BadRequestResult($"This ticket is {ticket.Status}.");
+                photo = await _riderPhotos.RecordForTicket(ticket, tenantId, image.Bytes, image.Extension, TryGetStaffUserId());
+                riderName = BuildAttendeeName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName;
+                targetKind = "event_ticket_purchase";
+            }
+            else if (req.Kind == "season_pass")
+            {
+                var pass = await _passes.GetPurchase(req.PurchaseId);
+                if (pass is null || pass.TenantId != tenantId) return new ApiResponses().NotFoundResult("Pass not found.");
+                if (pass.Status != "paid") return new ApiResponses().BadRequestResult($"This pass is {pass.Status}.");
+                photo = await _riderPhotos.RecordForPass(pass, tenantId, image.Bytes, image.Extension, TryGetStaffUserId());
+                riderName = BuildAttendeeName(pass.HolderFirstName, pass.HolderLastName) ?? pass.PurchaserName;
+                targetKind = "season_pass_purchase";
+            }
+            else return new ApiResponses().BadRequestResult("Unknown kind.");
+
+            if (photo is null)
+                return new ApiResponses().BadRequestResult("There is no account or email on this purchase to keep the photo under.");
+            await _audit.Log("rider.photo_taken", $"Rider photo taken for {riderName}",
+                targetKind: targetKind, targetId: req.PurchaseId, tenantId: tenantId,
+                metadata: new { riderPhotoId = photo.Id, riderKey = photo.RiderKey, owner = photo.UserId is not null ? "account" : "email" });
+            return new ApiResponses().OkResult(new
+            {
+                RiderPhotoId = photo.Id,
+                PhotoTakenAtUtc = ToUtc(photo.TakenAt),
+            });
+        }
+
+        // A rider photo's image, for this tenant's staff only (this controller's policy). Never a public
+        // URL: the image store keeps rider photos private and the bytes come through here.
+        [HttpGet("RiderPhoto/{id:guid}")]
+        public async Task<IActionResult> GetRiderPhoto(Guid id)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (await _riderPhotos.Open(id, _tenantContext.TenantId) is not { } img)
+                return new ApiResponses().NotFoundResult("Photo not found.");
+            Response.Headers.CacheControl = "private, no-store";
+            return File(img.Bytes, img.ContentType);
+        }
+
         [HttpPost("Order/{token:guid}/VerifyId")]
         public async Task<IActionResult> VerifyOrderRiderId(Guid token,
             [FromBody] webapi.Controllers.API.Data.Redemption.VerifyOrderRiderIdRequest req)

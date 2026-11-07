@@ -59,6 +59,19 @@
                                     :loading="savingKey === 'birthdateVerify'"
                                     :disabled="savingKey !== null && savingKey !== 'birthdateVerify'"
                                     @update:model-value="(v: 'off' | 'prompt' | 'required') => applyBirthdateVerifyMode(v)"></v-select>
+                                <!-- Rider photo on file: same three modes. -->
+                                <v-select v-else-if="f.key === 'riderPhoto'"
+                                    :model-value="branding.riderPhotoMode"
+                                    :items="[
+                                        { title: 'Off', value: 'off' },
+                                        { title: 'Prompt staff', value: 'prompt' },
+                                        { title: 'Required to admit', value: 'required' },
+                                    ]"
+                                    density="compact" hide-details variant="outlined"
+                                    style="min-width: 220px"
+                                    :loading="savingKey === 'riderPhoto'"
+                                    :disabled="savingKey !== null && savingKey !== 'riderPhoto'"
+                                    @update:model-value="(v: 'off' | 'prompt' | 'required') => applyRiderPhotoMode(v)"></v-select>
                                 <v-switch v-else
                                     :model-value="f.enabled"
                                     @update:model-value="(v: boolean | null) => toggle(f, !!v)"
@@ -235,6 +248,7 @@ function saveSettings(overrides: Partial<Parameters<typeof tenantService.updateS
         seasonPassAdmissionTypeId: branding.seasonPassAdmissionTypeId,
         birthdateVerifyMode: branding.birthdateVerifyMode,
         birthdateVerifyValidDays: branding.birthdateVerifyValidDays,
+        riderPhotoMode: branding.riderPhotoMode,
         ...overrides,
     })
 }
@@ -483,6 +497,17 @@ const features = computed<Feature[]>(() => [
         enabled: branding.birthdateVerifyMode !== 'off',
         apply: async () => { /* handled by applyBirthdateVerifyMode */ },
     },
+    {
+        key: 'riderPhoto',
+        title: 'Rider photo on file',
+        description: 'Gate staff see each rider\'s photo next to their waiver: the photo staff took at the gate, '
+            + 'else the season pass photo, else the rider\'s own profile photo. "Prompt staff" shows "No photo '
+            + 'on file" with a Take photo button but still admits; "Required to admit" refuses check-in until a '
+            + 'photo is taken. A photo taken once is kept for the rider\'s later visits and events.',
+        icon: 'mdi-account-box-outline',
+        enabled: branding.riderPhotoMode !== 'off',
+        apply: async () => { /* handled by applyRiderPhotoMode */ },
+    },
 ])
 
 // Super-admin-gated platform features: the tenant can't flip these on/off (that's a
@@ -544,6 +569,22 @@ async function applyBirthdateVerifyMode(next: 'off' | 'prompt' | 'required') {
             : 'A current birthdate check is now required to admit a rider.', 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || "Couldn't save the birthdate check setting.", 'error')
+    } finally {
+        savingKey.value = null
+    }
+}
+
+async function applyRiderPhotoMode(next: 'off' | 'prompt' | 'required') {
+    if (savingKey.value) return
+    savingKey.value = 'riderPhoto'
+    try {
+        await saveSettings({ riderPhotoMode: next })
+        await loadBranding()
+        flash(next === 'off' ? 'Rider photos turned off.'
+            : next === 'prompt' ? 'Gate staff will be prompted to take rider photos.'
+            : 'A rider photo on file is now required to admit a rider.', 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || "Couldn't save the rider photo setting.", 'error')
     } finally {
         savingKey.value = null
     }

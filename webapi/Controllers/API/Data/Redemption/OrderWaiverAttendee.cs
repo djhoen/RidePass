@@ -67,5 +67,21 @@ namespace webapi.Controllers.API.Data.Redemption
         public DateOnly? TurnedEighteenOn { get; set; }
         /// <summary>The rider's own email when known (their account), for a signing link addressed to them.</summary>
         public string? RiderEmail { get; set; }
+
+        // Rider photo on file (tenant.rider_photo_mode)
+        /// <summary>The tenant's mode: off | prompt | required.</summary>
+        public string RiderPhotoMode { get; set; } = "off";
+        public bool HasPhoto { get; set; }
+        /// <summary>rider (fetch via Redemption/RiderPhoto/{RiderPhotoId}) | account (PhotoUrl) | pass.</summary>
+        public string? PhotoSource { get; set; }
+        public Guid? RiderPhotoId { get; set; }
+        public string? PhotoUrl { get; set; }
+        public DateTime? PhotoTakenAtUtc { get; set; }
+        /// <summary>Mode on and no photo on file ('prompt' shows it, admits).</summary>
+        public bool PhotoNeeded { get; set; }
+        /// <summary>'required' mode: admission is blocked until a photo is taken.</summary>
+        public bool PhotoBlocked { get; set; }
+        /// <summary>The rider ticket a photo is recorded against (Redemption/RiderPhoto).</summary>
+        public Guid? PhotoPurchaseId { get; set; }
     }
 }

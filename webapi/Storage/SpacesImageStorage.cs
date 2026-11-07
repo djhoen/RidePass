@@ -75,6 +75,47 @@ namespace webapi.Storage
             await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }, ct);
         }
 
+        // Private images: same bucket, ACL private (no public-read), so the object URL answers 403 to
+        // anyone; the API reads them back with its own credentials and serves them to authorized staff.
+        public async Task<string> SavePrivateAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
+        {
+            var key = PrivateImageKey.New(tenantId, kind, fileExtension);
+            using var ms = new MemoryStream();
+            await content.CopyToAsync(ms, ct);
+            ms.Position = 0;
+            await _s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = _bucket,
+                Key = key,
+                InputStream = ms,
+                ContentType = PrivateImageKey.ContentType(key),
+                CannedACL = S3CannedACL.Private,
+            }, ct);
+            return key;
+        }
+
+        public async Task<(byte[] Bytes, string ContentType)?> OpenPrivateAsync(string key, CancellationToken ct = default)
+        {
+            if (!PrivateImageKey.IsValid(key)) return null;
+            try
+            {
+                using var obj = await _s3.GetObjectAsync(new GetObjectRequest { BucketName = _bucket, Key = key }, ct);
+                using var ms = new MemoryStream();
+                await obj.ResponseStream.CopyToAsync(ms, ct);
+                return (ms.ToArray(), PrivateImageKey.ContentType(key));
+            }
+            catch (AmazonS3Exception e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+        }
+
+        public async Task DeletePrivateAsync(string key, CancellationToken ct = default)
+        {
+            if (!PrivateImageKey.IsValid(key)) return;
+            await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }, ct);
+        }
+
         private static string Require(IConfiguration config, string key) =>
             config[key] ?? throw new InvalidOperationException($"{key} is not configured.");
 

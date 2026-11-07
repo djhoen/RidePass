@@ -239,6 +239,17 @@ export interface PassLookup {
     adultWaiverNeeded: boolean
     turnedEighteenOn: string | null
     riderEmail: string | null
+    /** Rider photo on file (tenant.rider_photo_mode): off | prompt | required. */
+    riderPhotoMode: 'off' | 'prompt' | 'required'
+    hasPhoto: boolean
+    /** rider (fetch via riderPhotoId) | account (photoUrl) | pass (the pass's own photo). */
+    photoSource: 'rider' | 'account' | 'pass' | null
+    riderPhotoId: string | null
+    photoUrl: string | null
+    /** Mode on and no photo on file. */
+    photoNeeded: boolean
+    /** 'required' mode: blocked until a photo is taken. */
+    photoBlocked: boolean
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

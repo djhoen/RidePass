@@ -34,6 +34,9 @@ namespace webapi.Controllers.API.Data.Tenant
 
         /// <summary>How many days a recorded ID/birthdate check counts for (1-3650). Null = unchanged.</summary>
         public int? BirthdateVerifyValidDays { get; set; }
+
+        /// <summary>Rider photo on file: 'off' | 'prompt' | 'required'. Null = leave unchanged.</summary>
+        public string? RiderPhotoMode { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

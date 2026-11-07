@@ -11,12 +11,15 @@ namespace webapi.Helpers
     ///   SeasonPass/Pass/{token}/VerifyId for a pass), so a screen can offer "Verify ID" in place;
     /// - "adult_waiver_needed" (turned 18 since their waiver): the rider's name, their 18th birthday,
     ///   their own email when known, and what Redemption/WaiverSignRequest needs (kind, purchaseId,
-    ///   eventId) so a screen can offer "Send signing link" to the rider.
+    ///   eventId) so a screen can offer "Send signing link" to the rider;
+    /// - "photo_needed" ('required' rider photo, none on file): the rider's name and what
+    ///   Redemption/RiderPhoto needs (photoKind, purchaseId) so a screen can offer "Take photo".
     /// </summary>
     public static class GateBlockResult
     {
         public const string BirthdateUnverified = "birthdate_unverified";
         public const string AdultWaiverNeeded = "adult_waiver_needed";
+        public const string PhotoNeeded = "photo_needed";
 
         /// <summary>The structured part of a refusal, or null when it isn't one of the coded kinds.</summary>
         public static object? Details(WaiverGateDecision d, string verifyKind, Guid? verifyToken, Guid? purchaseId,
@@ -43,6 +46,14 @@ namespace webapi.Helpers
                     purchaseId,
                     eventId,
                 };
+            if (d.PhotoBlocked)
+                return new
+                {
+                    code = PhotoNeeded,
+                    riderName = d.RiderName,
+                    photoKind = verifyKind,  // "ticket" | "season_pass", as Redemption/RiderPhoto takes it
+                    purchaseId,
+                };
             return null;
         }
 
@@ -56,6 +67,7 @@ namespace webapi.Helpers
         public static string? Code(WaiverGateDecision d) =>
             d.BirthdateBlocked ? BirthdateUnverified
             : d.AdultWaiverNeeded && d.BlockReason is not null ? AdultWaiverNeeded
+            : d.PhotoBlocked ? PhotoNeeded
             : null;
     }
 }

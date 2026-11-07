@@ -61,6 +61,23 @@ namespace Services.Waivers
         public DateOnly? TurnedEighteenOn { get; init; }
         /// <summary>The rider's own email (their account, when the buying account is the rider), else null.</summary>
         public string? RiderEmail { get; init; }
+
+        // Rider photo on file (tenant.rider_photo_mode, Script0307)
+        /// <summary>The tenant's mode: off | prompt | required.</summary>
+        public string RiderPhotoMode { get; init; } = Services.Riders.IdVerificationWindow.ModeOff;
+        /// <summary>A photo of this rider is on file (only looked up when the mode is on).</summary>
+        public bool HasPhoto { get; init; }
+        /// <summary>rider | pass | account (RiderPhotoSource), or null when there is none.</summary>
+        public string? PhotoSource { get; init; }
+        /// <summary>The venue's own photo (source "rider"): fetched through the authorized photo endpoint.</summary>
+        public Guid? RiderPhotoId { get; init; }
+        /// <summary>The account's profile photo URL (source "account").</summary>
+        public string? PhotoUrl { get; init; }
+        public DateTime? PhotoTakenAtUtc { get; init; }
+        /// <summary>A rider with no photo on file while the mode is on.</summary>
+        public bool PhotoNeeded { get; init; }
+        /// <summary>Blocked only because there is no photo on file ('required' mode).</summary>
+        public bool PhotoBlocked { get; init; }
     }
 
     /// <summary>The rider a gate signing link is for, resolved by the gate's own rules.</summary>
@@ -128,6 +145,7 @@ namespace Services.Waivers
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly IEventTicketPurchaseRepository _tickets;
+        private readonly IRiderPhotoRepository _photos;
 
         // Per-request memo (the gate is scoped).
         private readonly Dictionary<Guid, EventTicketTier?> _tierCache = new();
@@ -137,6 +155,7 @@ namespace Services.Waivers
         private readonly Dictionary<Guid, User?> _userCache = new();
         private readonly Dictionary<Guid, RiderWaiverSignature?> _sigCache = new();
         private readonly Dictionary<(Guid AccountId, string RiderKey), RiderAccountIdVerification?> _riderCheckCache = new();
+        private readonly Dictionary<(string Owner, string RiderKey), Services.Repositories.Data.RiderData.RiderPhoto?> _photoCache = new();
 
         public WaiverCheckInGate(
             IEventRepository events,
@@ -145,8 +164,10 @@ namespace Services.Waivers
             ISeasonPassRepository passes,
             IUserRepository users,
             ITenantRepository tenants,
-            IEventTicketPurchaseRepository tickets)
+            IEventTicketPurchaseRepository tickets,
+            IRiderPhotoRepository photos)
         {
+            _photos = photos;
             _events = events;
             _tiers = tiers;
             _waivers = waivers;
@@ -193,6 +214,28 @@ namespace Services.Waivers
         }
 
         // ── Tickets ──────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// The rider's photo on file, only when the tenant's mode is on (off = no lookups, no change).
+        /// Filed under the buying account (a platform account or one of this tenant's), else the buyer
+        /// email, plus the rider key (RiderPhotoRules, shared with the photo endpoint that records it).
+        /// </summary>
+        private async Task<PhotoFacts> PhotoFor(Guid tenantId, TenantFacts tenant, User? account, string? buyerEmail,
+            string? riderFirst, string? riderLast, string? passPhotoDataUrl, bool accountIsRider)
+        {
+            if (tenant.PhotoMode == Services.Riders.IdVerificationWindow.ModeOff) return new PhotoFacts(tenant.PhotoMode, null);
+            var owner = account is not null && (account.TenantId is null || account.TenantId == tenantId) ? account : null;
+            var ownerKey = Services.Riders.RiderPhotoRules.OwnerKey(owner?.Id, owner is null ? buyerEmail : null);
+            Services.Repositories.Data.RiderData.RiderPhoto? photo = null;
+            if (ownerKey is not null)
+            {
+                var riderKey = Services.Riders.RiderPhotoRules.RiderKey(riderFirst, riderLast, owner);
+                if (!_photoCache.TryGetValue((ownerKey, riderKey), out photo))
+                    _photoCache[(ownerKey, riderKey)] = photo = await _photos.Get(tenantId, ownerKey, riderKey);
+            }
+            return new PhotoFacts(tenant.PhotoMode,
+                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, account, accountIsRider));
+        }
 
         public async Task<string?> BlockReasonForTicket(Guid tenantId, EventTicketPurchase ticket) =>
             (await EvaluateTicket(tenantId, ticket)).BlockReason;
@@ -241,9 +284,13 @@ namespace Services.Waivers
                 GuardianWaiverRule.ToDateOnly(account?.Birthdate),
                 accountIsRider));
             var tenant = await Tenant(tenantId);
+            var photo = riderAudience
+                ? await PhotoFor(tenantId, tenant, account, ticket.PurchaserEmail, ticket.RiderFirstName,
+                    ticket.RiderLastName, null, accountIsRider)
+                : default;
             var ages = new AgeFacts(birthdate, tenant.Today, riderAudience, tenant.Verify(idCheck),
                 JoinName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName,
-                accountIsRider ? account!.Email : null);
+                accountIsRider ? account!.Email : null, photo);
             var today = tenant.Today;
 
             // Registration must be finished before admission for rider-audience tickets: it is where
@@ -404,8 +451,10 @@ namespace Services.Waivers
                 accountIsHolder));
             var tenant = await Tenant(tenantId);
             var today = tenant.Today;
+            var photo = await PhotoFor(tenantId, tenant, account, pass.PurchaserEmail, pass.HolderFirstName,
+                pass.HolderLastName, pass.PhotoDataUrl, accountIsHolder);
             var ages = new AgeFacts(birthdate, today, RiderAudience: true, tenant.Verify(idCheck), holderName,
-                accountIsHolder ? account!.Email : null);
+                accountIsHolder ? account!.Email : null, photo);
             var required = productDoc is not null || eventDoc is not null;
 
             if (eventMissing)
@@ -616,7 +665,11 @@ namespace Services.Waivers
         private readonly record struct VerifyFacts(string Mode, DateTime? VerifiedAtUtc, DateOnly? VerifiedLocalDate, bool Current);
 
         /// <summary>The tenant's date, zone and birthdate-check policy, loaded once per request.</summary>
-        private sealed record TenantFacts(DateOnly Today, TimeZoneInfo Zone, string Mode, int ValidDays, string TimezoneId)
+        /// <summary>The rider photo requirement as it stands for one rider today.</summary>
+        private readonly record struct PhotoFacts(string? Mode, Services.Riders.RiderPhotoOnFile? OnFile);
+
+        private sealed record TenantFacts(DateOnly Today, TimeZoneInfo Zone, string Mode, int ValidDays, string TimezoneId,
+            string PhotoMode)
         {
             public VerifyFacts Verify(Services.Riders.IdCheck? check)
             {
@@ -634,7 +687,7 @@ namespace Services.Waivers
         /// path that asks the gate (when nothing else already blocks it).
         /// </summary>
         private readonly record struct AgeFacts(DateOnly? Birthdate, DateOnly Today, bool RiderAudience,
-            VerifyFacts Verify = default, string? RiderName = null, string? RiderEmail = null)
+            VerifyFacts Verify = default, string? RiderName = null, string? RiderEmail = null, PhotoFacts Photo = default)
         {
             public WaiverGateDecision Apply(WaiverGateDecision d)
             {
@@ -644,9 +697,24 @@ namespace Services.Waivers
                 var checkNeeded = RiderAudience && mode != Services.Riders.IdVerificationWindow.ModeOff && !Verify.Current;
                 var birthdateBlock = checkNeeded && mode == Services.Riders.IdVerificationWindow.ModeRequired
                     && d.BlockReason is null;
+                // Rider photo on file: same shape, enforced here for every path, after everything else.
+                var photoMode = Photo.Mode ?? Services.Riders.IdVerificationWindow.ModeOff;
+                var photoNeeded = RiderAudience && photoMode != Services.Riders.IdVerificationWindow.ModeOff
+                    && Photo.OnFile is null;
+                var photoBlock = photoNeeded && photoMode == Services.Riders.IdVerificationWindow.ModeRequired
+                    && d.BlockReason is null && !birthdateBlock;
                 return new WaiverGateDecision
                 {
-                    BlockReason = birthdateBlock ? BirthdateBlockMessage(RiderName, Verify.VerifiedLocalDate) : d.BlockReason,
+                    BlockReason = birthdateBlock ? BirthdateBlockMessage(RiderName, Verify.VerifiedLocalDate)
+                        : photoBlock ? PhotoBlockMessage(RiderName) : d.BlockReason,
+                    RiderPhotoMode = photoMode,
+                    HasPhoto = Photo.OnFile is not null,
+                    PhotoSource = Photo.OnFile?.Source,
+                    RiderPhotoId = Photo.OnFile?.RiderPhotoId,
+                    PhotoUrl = Photo.OnFile?.Url,
+                    PhotoTakenAtUtc = Photo.OnFile?.TakenAtUtc,
+                    PhotoNeeded = photoNeeded,
+                    PhotoBlocked = photoBlock,
                     Satisfied = d.Satisfied, Signed = d.Signed, Required = d.Required,
                     RiderAudience = d.RiderAudience, RegistrationIncomplete = d.RegistrationIncomplete,
                     RequiredWaiverId = d.RequiredWaiverId, FixTarget = d.FixTarget,
@@ -667,6 +735,9 @@ namespace Services.Waivers
                 };
             }
         }
+
+        public static string PhotoBlockMessage(string? riderName) =>
+            $"{(string.IsNullOrWhiteSpace(riderName) ? "This rider" : riderName.Trim())} has no photo on file. Take their photo before checking in.";
 
         public static string BirthdateBlockMessage(string? riderName, DateOnly? lastChecked) =>
             $"{(string.IsNullOrWhiteSpace(riderName) ? "This rider" : riderName.Trim())}'s birthdate needs checking against an ID "
@@ -713,7 +784,9 @@ namespace Services.Waivers
                 ? tenant!.BirthdateVerifyMode : Services.Riders.IdVerificationWindow.ModeOff;
             f = new TenantFacts(TenantClock.LocalDate(tenant?.Timezone, DateTime.UtcNow),
                 TenantClock.Resolve(tenant?.Timezone), mode, tenant?.BirthdateVerifyValidDays ?? 365,
-                string.IsNullOrWhiteSpace(tenant?.Timezone) ? "UTC" : tenant!.Timezone);
+                string.IsNullOrWhiteSpace(tenant?.Timezone) ? "UTC" : tenant!.Timezone,
+                Services.Riders.IdVerificationWindow.IsValidMode(tenant?.RiderPhotoMode)
+                    ? tenant!.RiderPhotoMode : Services.Riders.IdVerificationWindow.ModeOff);
             _tenantCache[tenantId] = f;
             return f;
         }

@@ -16,6 +16,7 @@ namespace Services.Repositories
             require_id_for_wristband AS RequireIdForWristband,
             birthdate_verify_mode AS BirthdateVerifyMode,
             birthdate_verify_valid_days AS BirthdateVerifyValidDays,
+            rider_photo_mode AS RiderPhotoMode,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -249,6 +250,12 @@ namespace Services.Repositories
                                      birthdate_verify_valid_days = COALESCE(@validDays, birthdate_verify_valid_days)
                                  WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, mode, validDays });
+        }
+
+        public async Task UpdateRiderPhotoMode(Guid tenantId, string mode)
+        {
+            const string sql = "UPDATE tenant SET rider_photo_mode = @mode WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, mode });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

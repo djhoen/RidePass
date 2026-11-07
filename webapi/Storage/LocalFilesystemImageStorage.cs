@@ -60,6 +60,39 @@ namespace webapi.Storage
             return Task.CompletedTask;
         }
 
+        // Private images live OUTSIDE wwwroot (UseStaticFiles never serves them), under
+        // {ContentRoot}/App_Data/private-images/{key}; the key's shape is checked first, so it can't
+        // escape that folder.
+        public async Task<string> SavePrivateAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
+        {
+            var key = PrivateImageKey.New(tenantId, kind, fileExtension);
+            var path = PrivatePath(key);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await using var file = File.Create(path);
+            await content.CopyToAsync(file, ct);
+            return key;
+        }
+
+        public async Task<(byte[] Bytes, string ContentType)?> OpenPrivateAsync(string key, CancellationToken ct = default)
+        {
+            if (!PrivateImageKey.IsValid(key)) return null;
+            var path = PrivatePath(key);
+            if (!File.Exists(path)) return null;
+            return (await File.ReadAllBytesAsync(path, ct), PrivateImageKey.ContentType(key));
+        }
+
+        public Task DeletePrivateAsync(string key, CancellationToken ct = default)
+        {
+            if (!PrivateImageKey.IsValid(key)) return Task.CompletedTask;
+            var path = PrivatePath(key);
+            if (File.Exists(path)) File.Delete(path);
+            return Task.CompletedTask;
+        }
+
+        private string PrivatePath(string key) =>
+            Path.Combine(_env.ContentRootPath, "App_Data", "private-images",
+                key.Replace('/', Path.DirectorySeparatorChar));
+
         private string GetWebRoot()
         {
             return string.IsNullOrEmpty(_env.WebRootPath)

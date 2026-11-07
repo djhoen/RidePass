@@ -282,6 +282,21 @@
                                         @click="openVerifyRider(a)">Verify ID</v-btn>
                                 </div>
                             </v-alert>
+                            <!-- Rider photo on file (tenant setting): the photo, or "No photo on file". -->
+                            <div v-if="a.riderPhotoMode !== 'off' && a.audience === 'rider'"
+                                 class="d-flex align-center flex-wrap ga-3 mt-2">
+                                <GateRiderPhoto v-if="a.hasPhoto" :source="a.photoSource" :rider-photo-id="a.riderPhotoId"
+                                    :photo-url="a.photoUrl" :size="72" :alt="`Photo of ${a.name || 'the rider'}`" />
+                                <v-alert v-else density="compact" variant="tonal" class="flex-grow-1"
+                                    :type="a.photoBlocked ? 'error' : 'warning'" icon="mdi-account-box-outline">
+                                    No photo on file{{ a.photoBlocked ? ': take one to check them in.' : '.' }}
+                                </v-alert>
+                                <v-btn v-if="a.photoPurchaseId" size="small" prepend-icon="mdi-camera"
+                                    :color="a.hasPhoto ? undefined : 'primary'" :variant="a.hasPhoto ? 'text' : 'flat'"
+                                    @click="openTakePhoto('ticket', a.photoPurchaseId, a.name)">
+                                    {{ a.hasPhoto ? 'Replace photo' : 'Take photo' }}
+                                </v-btn>
+                            </div>
 
                             <v-btn v-if="a.hasSignatureImage" size="small" variant="text" class="mt-1 px-0"
                                 prepend-icon="mdi-draw" :loading="signatureLoadingFor === a.attendeeKey"
@@ -335,6 +350,8 @@
                     <v-avatar v-if="pass.photoDataUrl" size="96" rounded="lg">
                         <v-img :src="pass.photoDataUrl" cover></v-img>
                     </v-avatar>
+                    <GateRiderPhoto v-else-if="pass.hasPhoto && pass.photoSource !== 'pass'" :source="pass.photoSource"
+                        :rider-photo-id="pass.riderPhotoId" :photo-url="pass.photoUrl" :size="96" />
                     <v-avatar v-else size="96" rounded="lg" style="background: var(--rp-raise)">
                         <v-icon size="48" class="text-muted2">mdi-account</v-icon>
                     </v-avatar>
@@ -412,6 +429,21 @@
                     </span>
                 </div>
                 <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
+                <!-- Rider photo on file: none yet (prompt mode admits), or replace the one on file. -->
+                <v-alert v-if="pass.photoNeeded && !pass.photoBlocked" type="warning" variant="tonal"
+                    density="compact" class="mt-3" icon="mdi-account-box-outline">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                        <span>No photo on file.</span>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-camera"
+                            @click="openTakePhoto('season_pass', pass.id, pass.holderName || pass.purchaserName)">Take photo</v-btn>
+                    </div>
+                </v-alert>
+                <v-btn v-else-if="pass.riderPhotoMode !== 'off' && pass.hasPhoto" size="small" variant="text"
+                    class="mt-2 px-0" prepend-icon="mdi-camera"
+                    @click="openTakePhoto('season_pass', pass.id, pass.holderName || pass.purchaserName)">
+                    Replace photo
+                </v-btn>
                 <v-alert v-if="pass.birthdateCheckNeeded && !pass.birthdateBlocked" type="warning" variant="tonal"
                     density="compact" class="mt-3" icon="mdi-card-account-details-outline">
                     <div class="d-flex align-center flex-wrap ga-2">
@@ -426,6 +458,15 @@
                         <span>{{ pass.waiverBlockReason }}</span>
                         <v-spacer></v-spacer>
                         <v-btn size="small" color="primary" variant="flat" @click="openVerifyId">Verify ID</v-btn>
+                    </div>
+                </v-alert>
+                <v-alert v-else-if="pass.waiverBlockReason && pass.photoBlocked" type="error" variant="tonal"
+                    density="compact" class="mt-3" icon="mdi-account-box-outline">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                        <span>{{ pass.waiverBlockReason }}</span>
+                        <v-spacer></v-spacer>
+                        <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-camera"
+                            @click="openTakePhoto('season_pass', pass.id, pass.holderName || pass.purchaserName)">Take photo</v-btn>
                     </div>
                 </v-alert>
                 <v-alert v-else-if="pass.waiverBlockReason" type="error" variant="tonal" density="compact" class="mt-3">
@@ -697,6 +738,28 @@
             </v-card>
         </v-dialog>
 
+        <!-- Take / replace a rider photo: saved for the rider, so later visits need none. -->
+        <v-dialog v-model="takePhotoOpen" max-width="420">
+            <v-card v-if="takePhotoTarget">
+                <v-card-title>{{ takePhotoTarget.name || 'Rider' }}: photo</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-3">
+                        Take a clear photo of the rider's face (camera on a tablet or phone, or pick a file).
+                        It is kept for this rider, so later visits and events need none.
+                    </p>
+                    <PhotoCapture v-model="takePhotoData" button-label="Take photo" />
+                    <div v-if="takePhotoError" class="text-error text-body-2 mt-3">{{ takePhotoError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="takingPhoto" @click="takePhotoOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="takingPhoto" :disabled="!takePhotoData" @click="submitTakePhoto">
+                        Save photo
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-dialog v-model="signatureOpen" max-width="520">
             <v-card>
                 <v-card-title class="d-flex align-center">
@@ -813,6 +876,8 @@ import { branding } from '@/stores/branding'
 import { WristbandService } from '@/services/WristbandService'
 import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService'
 import { CounterService, type CounterRider } from '@/services/CounterService'
+import PhotoCapture from '@/components/PhotoCapture.vue'
+import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
 import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
     type GateScanSource } from '@/composables/useGateScanner'
 
@@ -1531,6 +1596,38 @@ function openVerifyId() {
     if (!pass.value) return
     openVerifyDialog({ kind: 'pass', name: pass.value.holderName || pass.value.purchaserName,
         recordedBirthdate: pass.value.holderBirthdate, purchaseId: null })
+}
+
+// Take / replace a rider photo (ticket rider or pass holder). Re-read afterwards: the gate decides.
+const takePhotoOpen = ref(false)
+const takingPhoto = ref(false)
+const takePhotoData = ref<string | null>(null)
+const takePhotoError = ref('')
+const takePhotoTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string; name: string | null } | null>(null)
+
+function openTakePhoto(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null) {
+    takePhotoTarget.value = { kind, purchaseId, name }
+    takePhotoData.value = null
+    takePhotoError.value = ''
+    takePhotoOpen.value = true
+}
+
+async function submitTakePhoto() {
+    const t = takePhotoTarget.value
+    if (!t || !takePhotoData.value) return
+    takingPhoto.value = true
+    takePhotoError.value = ''
+    try {
+        await service.takeRiderPhoto(t.kind, t.purchaseId, takePhotoData.value)
+        takePhotoOpen.value = false
+        flash('Photo saved.', 'success')
+        if (t.kind === 'season_pass' && passToken.value) await tryLoadPass(passToken.value)
+        else if (orderToken.value) await loadOrder(orderToken.value)
+    } catch (err: any) {
+        takePhotoError.value = err.response?.data?.error || 'Couldn\'t save the photo.'
+    } finally {
+        takingPhoto.value = false
+    }
 }
 
 function openVerifyRider(a: OrderWaiverAttendee) {

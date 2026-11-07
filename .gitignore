@@ -29,3 +29,6 @@ publish/
 
 # Secrets
 appsettings.Development.json
+
+# Private tenant images (rider gate photos) written by LocalFilesystemImageStorage in dev.
+webapi/App_Data/

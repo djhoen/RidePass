@@ -212,6 +212,27 @@
             </v-card>
         </v-dialog>
 
+        <!-- Check-in refused because the tenant requires a rider photo and none is on file: take it
+             here (the gate's own photo endpoint, saved for the rider), then the check-in is retried. -->
+        <v-dialog v-model="photoOpen" max-width="420">
+            <v-card v-if="photoBlock">
+                <v-card-title>Take rider photo</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-2">{{ photoBlock.message }}</p>
+                    <div class="text-h6 mb-3">{{ photoBlock.riderName || 'This rider' }}</div>
+                    <PhotoCapture v-model="photoData" button-label="Take photo" />
+                    <div v-if="photoError" class="text-error text-body-2 mt-3">{{ photoError }}</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="photoSaving" @click="photoOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="photoSaving" :disabled="!photoData" @click="savePhotoAndCheckIn">
+                        Save and check in
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </div>
 </template>
@@ -224,6 +245,7 @@ import { EventService, type EventDto } from '@/services/EventService'
 import { TicketService, type GateWaiverSignRequestResult } from '@/services/TicketService'
 import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
+import PhotoCapture from '@/components/PhotoCapture.vue'
 
 const props = defineProps<{ initialEventId?: string | null }>()
 
@@ -394,6 +416,15 @@ async function toggleCheckIn(row: EventRiderRow) {
             adultOpen.value = true
             return
         }
+        // Required rider photo, none on file: take it right here.
+        if (data?.code === 'photo_needed' && data.purchaseId) {
+            photoBlock.value = { row, message: err.response.data.error, riderName: data.riderName ?? null,
+                kind: data.photoKind, purchaseId: data.purchaseId }
+            photoData.value = null
+            photoError.value = ''
+            photoOpen.value = true
+            return
+        }
         if (data?.code === 'birthdate_unverified' && data.verifyToken) {
             verifyBlock.value = {
                 row, message: err.response.data.error, riderName: data.riderName ?? null,
@@ -457,6 +488,32 @@ async function verifyAndCheckIn() {
     verifying.value = false
     verifyOpen.value = false
     flash('ID and age verified.', 'success')
+    await toggleCheckIn(b.row)
+}
+
+// Take a rider photo from a "no photo on file" refusal.
+const photoOpen = ref(false)
+const photoSaving = ref(false)
+const photoData = ref<string | null>(null)
+const photoError = ref('')
+const photoBlock = ref<{ row: EventRiderRow; message: string; riderName: string | null;
+    kind: 'ticket' | 'season_pass'; purchaseId: string } | null>(null)
+
+async function savePhotoAndCheckIn() {
+    const b = photoBlock.value
+    if (!b || !photoData.value) return
+    photoSaving.value = true
+    photoError.value = ''
+    try {
+        await ticketService.takeRiderPhoto(b.kind, b.purchaseId, photoData.value)
+    } catch (err: any) {
+        photoError.value = err.response?.data?.error || 'Couldn\'t save the photo.'
+        photoSaving.value = false
+        return
+    }
+    photoSaving.value = false
+    photoOpen.value = false
+    flash('Photo saved.', 'success')
     await toggleCheckIn(b.row)
 }
 

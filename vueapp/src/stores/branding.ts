@@ -46,6 +46,8 @@ export interface BrandingState {
     /** Yearly birthdate check at the gate: off | prompt | required, and its window in days. */
     birthdateVerifyMode: 'off' | 'prompt' | 'required'
     birthdateVerifyValidDays: number
+    /** Rider photo on file at the gate: off | prompt | required. */
+    riderPhotoMode: 'off' | 'prompt' | 'required'
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
     stripeChargeMode: string
@@ -189,6 +191,7 @@ const defaults: BrandingState = {
     requireIdForWristband: false,
     birthdateVerifyMode: 'off',
     birthdateVerifyValidDays: 365,
+    riderPhotoMode: 'off',
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
     stripeChargeMode: 'platform',
@@ -366,6 +369,8 @@ export async function loadBranding(): Promise<void> {
         branding.birthdateVerifyMode = data.birthdateVerifyMode === 'prompt' || data.birthdateVerifyMode === 'required'
             ? data.birthdateVerifyMode : 'off'
         branding.birthdateVerifyValidDays = data.birthdateVerifyValidDays ?? 365
+        branding.riderPhotoMode = data.riderPhotoMode === 'prompt' || data.riderPhotoMode === 'required'
+            ? data.riderPhotoMode : 'off'
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'

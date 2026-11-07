@@ -301,6 +301,18 @@ export class TicketService {
 
     // Gate: record that staff checked this rider's photo ID and birthdate (the ticket, the rider's
     // other tickets in the order and, when the account is the rider, the account).
+    // Gate: take (or replace) the photo on file for the rider a ticket or pass admits; saved for the
+    // rider, so later visits and events need none.
+    takeRiderPhoto(kind: 'ticket' | 'season_pass', purchaseId: string, photoDataUrl: string) {
+        return axios.post<{ data: { riderPhotoId: string; photoTakenAtUtc: string } }>(
+            `${this.apiUrl}/Redemption/RiderPhoto`, { kind, purchaseId, photoDataUrl })
+    }
+
+    // A rider photo's image (staff only; never a public URL): fetched with the session's auth.
+    riderPhotoBlob(riderPhotoId: string) {
+        return axios.get<Blob>(`${this.apiUrl}/Redemption/RiderPhoto/${riderPhotoId}`, { responseType: 'blob' })
+    }
+
     verifyOrderRiderId(token: string, purchaseId: string, verifiedDob: string | null) {
         return axios.post<{ data: { idVerified: boolean; idVerifiedAge: number | null; dobMismatch: boolean } }>(
             `${this.apiUrl}/Redemption/Order/${token}/VerifyId`, { purchaseId, verifiedDob })
@@ -394,6 +406,20 @@ export interface OrderWaiverAttendee {
     turnedEighteenOn: string | null
     /** The rider's own email when known, for a signing link addressed to them. */
     riderEmail: string | null
+    /** Rider photo on file (tenant.rider_photo_mode): off | prompt | required. */
+    riderPhotoMode: 'off' | 'prompt' | 'required'
+    hasPhoto: boolean
+    /** rider (fetch via riderPhotoId) | account (photoUrl) | pass (the pass's own photo). */
+    photoSource: 'rider' | 'account' | 'pass' | null
+    riderPhotoId: string | null
+    photoUrl: string | null
+    /** Mode on and no photo on file. */
+    photoNeeded: boolean
+    /** 'required' mode: blocked until a photo is taken. */
+    photoBlocked: boolean
+    photoTakenAtUtc: string | null
+    /** The rider ticket a photo is recorded against. */
+    photoPurchaseId: string | null
 }
 
 export interface GateWaiverSignRequestResult {

@@ -1810,6 +1810,15 @@ namespace webapi.Controllers
                 AdultWaiverNeeded = waiverDecision.AdultWaiverNeeded && waiverDecision.BlockReason is not null,
                 TurnedEighteenOn = waiverDecision.TurnedEighteenOn,
                 RiderEmail = waiverDecision.RiderEmail,
+                // Rider photo on file: the card keeps the pass's own photo; with none, the rider's
+                // photo (RiderPhotoId via Redemption/RiderPhoto/{id}, or the account's PhotoUrl).
+                RiderPhotoMode = waiverDecision.RiderPhotoMode,
+                HasPhoto = waiverDecision.HasPhoto,
+                PhotoSource = waiverDecision.PhotoSource,
+                RiderPhotoId = waiverDecision.RiderPhotoId,
+                PhotoUrl = waiverDecision.PhotoUrl,
+                PhotoNeeded = waiverDecision.PhotoNeeded,
+                PhotoBlocked = waiverDecision.PhotoBlocked && !admittedToday,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
                 // parent who bought the pass), else nobody on file and staff type one in.
                 GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(

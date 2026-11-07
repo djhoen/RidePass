@@ -31,6 +31,8 @@
         // Yearly birthdate check (Script0305): 'off' | 'prompt' | 'required', and how many days a
         // recorded ID/birthdate verification counts for. Enforced in IWaiverCheckInGate.
         public string BirthdateVerifyMode { get; set; } = "off";
+        /// <summary>Rider photo on file (Script0307): 'off' | 'prompt' | 'required'. Enforced in IWaiverCheckInGate.</summary>
+        public string RiderPhotoMode { get; set; } = "off";
         public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted
