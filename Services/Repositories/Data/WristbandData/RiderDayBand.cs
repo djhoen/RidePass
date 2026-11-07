@@ -15,6 +15,8 @@ namespace Services.Repositories.Data.WristbandData
         public Guid? RiderUserId { get; set; }
         public string RiderName { get; set; } = string.Empty;
         public Guid? SeasonPassPurchaseId { get; set; }
+        /// <summary>The ticket the band was issued through (Script0313); null for a pass-issued band.</summary>
+        public Guid? EventTicketPurchaseId { get; set; }
         public Guid? IssuedByUserId { get; set; }
         public string? IssuedByName { get; set; }
         public DateTime IssuedAt { get; set; }

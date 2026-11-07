@@ -269,8 +269,13 @@ namespace Services.Repositories
                     (t.status = 'redeemed') AS CheckedIn,
                     t.redeemed_at_utc AS CheckedInAtUtc,
                     t.created_at AS CreatedAtUtc,
-                    (SELECT w.code FROM event_wristband w
-                      WHERE w.ticket_id = t.id AND w.tenant_id = @tenantId LIMIT 1) AS WristbandCode
+                    COALESCE(
+                        (SELECT b.code FROM rider_day_band_admission a
+                           JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
+                          WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId
+                          ORDER BY b.business_date DESC LIMIT 1),
+                        (SELECT w.code FROM event_wristband w
+                          WHERE w.ticket_id = t.id AND w.tenant_id = @tenantId LIMIT 1)) AS WristbandCode
                 FROM event_ticket_purchase t
                 JOIN event_ticket_tier tier ON tier.id = t.tier_id
                 LEFT JOIN users u ON u.id = t.purchaser_user_id
@@ -366,7 +371,13 @@ namespace Services.Repositories
                        tier.name AS ItemName,
                        (t.status = 'redeemed') AS CheckedIn,
                        t.redeemed_at_utc AS CheckedInAtUtc,
-                       wb.code AS WristbandCode,
+                       -- The rider's day band covering this ticket (Script0313; a camp's latest day), else an older band.
+                       COALESCE(
+                           (SELECT b.code FROM rider_day_band_admission a
+                              JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
+                             WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId
+                             ORDER BY b.business_date DESC LIMIT 1),
+                           wb.code) AS WristbandCode,
                        (t.waiver_signature_id IS NOT NULL OR t.waiver_signed_at IS NOT NULL
                             OR t.waiver_signature_data_url IS NOT NULL) AS SignedForThis,
 {TICKET_PURCHASE_TYPE} AS PurchaseType,

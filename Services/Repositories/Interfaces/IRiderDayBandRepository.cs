@@ -26,13 +26,19 @@ namespace Services.Repositories.Interfaces
         /// <summary>Takes one admission off whatever band covers it (the band stays worn). Returns rows removed.</summary>
         Task<int> UnlinkReservation(Guid tenantId, Guid reservationId);
 
-        /// <summary>The band covers that admission.</summary>
-        Task<bool> Covers(Guid tenantId, Guid bandId, Guid reservationId);
+        /// <summary>Takes one ticket off whatever bands cover it (the bands stay worn). Returns rows removed.</summary>
+        Task<int> UnlinkTicket(Guid tenantId, Guid ticketId);
+
+        /// <summary>The band covers that admission (a reservation or a ticket).</summary>
+        Task<bool> Covers(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId);
 
         /// <summary>The admissions a band covers.</summary>
         Task<List<RiderDayBandAdmissionRow>> ListAdmissions(Guid tenantId, Guid bandId);
 
         /// <summary>Active band codes covering these reservations, keyed by reservation id.</summary>
         Task<Dictionary<Guid, string>> GetActiveCodesForReservations(IEnumerable<Guid> reservationIds, Guid tenantId);
+
+        /// <summary>Active band codes covering these tickets (a multi-day ticket: its latest day's band).</summary>
+        Task<Dictionary<Guid, string>> GetActiveCodesForTickets(IEnumerable<Guid> ticketIds, Guid tenantId);
     }
 }

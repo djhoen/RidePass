@@ -58,6 +58,18 @@ namespace UnitTests
         }
 
         [Test]
+        public void TicketDate_SingleDayIsTheEventsDate_CampIsEachDay()
+        {
+            var d = new DateOnly(2026, 7, 4);
+            // A single-day event: its own date (even checked in the evening before).
+            Assert.That(RiderDayBandRules.TicketDate(d, d, d.AddDays(-1)), Is.EqualTo(d));
+            // A three-day camp: each day is that day's band; outside it, its nearest day.
+            Assert.That(RiderDayBandRules.TicketDate(d, d.AddDays(2), d.AddDays(1)), Is.EqualTo(d.AddDays(1)));
+            Assert.That(RiderDayBandRules.TicketDate(d, d.AddDays(2), d.AddDays(-1)), Is.EqualTo(d));
+            Assert.That(RiderDayBandRules.TicketDate(d, d.AddDays(2), d.AddDays(5)), Is.EqualTo(d.AddDays(2)));
+        }
+
+        [Test]
         public void BusinessDate_IsTheTenantsLocalDate()
         {
             // 03:00 UTC on the 16th is still the 15th in Denver: a band issued then is the 15th's band.

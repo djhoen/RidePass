@@ -71,6 +71,8 @@ namespace webapi.Controllers.API.Data.Redemption
         // Gate-staff attestation that the rider's photo ID was checked against the
         // purchaser name. Required only when the tenant has RequireIdAtCheckin on.
         public bool IdVerified { get; set; }
+        /// <summary>"Admit and band": one band per person, for the tickets of theirs being admitted (Script0313).</summary>
+        public List<BulkRedeemBand> Bands { get; set; } = new();
     }
 
     public class BulkRedeemItem
@@ -83,5 +85,7 @@ namespace webapi.Controllers.API.Data.Redemption
     {
         public int RedeemedCount { get; set; }
         public List<string> Errors { get; set; } = new();
+        /// <summary>People banded (or already banded) by this request.</summary>
+        public int BandedCount { get; set; }
     }
 }

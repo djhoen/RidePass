@@ -273,7 +273,9 @@ export class TicketService {
     // validates each belongs to the scanned token's event+purchaser set before redeeming.
     // idVerified is the gate worker's ID-check attestation (required when the tenant has
     // require-ID-at-check-in on).
-    redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[]; idVerified?: boolean }) {
+    // bands: "Admit and band", one band per person for the tickets of theirs being admitted (Script0313).
+    redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[]; idVerified?: boolean;
+        bands?: { purchaseIds: string[]; code: string }[] }) {
         return axios.post<{ data: BulkRedeemResponse }>(`${this.apiUrl}/Redemption/Order/Redeem`, req)
     }
 
@@ -422,6 +424,9 @@ export interface OrderWaiverAttendee {
     photoTakenAtUtc: string | null
     /** The rider ticket a photo is recorded against. */
     photoPurchaseId: string | null
+    /** The band this person wears for the day (Script0313), if banded. */
+    bandCode?: string | null
+    bandIssuedAtLocal?: string | null
 }
 
 export interface GateWaiverSignRequestResult {
@@ -471,4 +476,6 @@ export interface OrderItem {
 export interface BulkRedeemResponse {
     redeemedCount: number
     errors: string[]
+    /** People banded (or already banded) by the request. */
+    bandedCount?: number
 }

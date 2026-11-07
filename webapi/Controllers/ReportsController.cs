@@ -1217,12 +1217,20 @@ namespace webapi.Controllers
                     {
                         // A required event waiver can't be skipped, even on the admin check-in toggle.
                         var t = await _tickets.GetById(purchaseId, tenantId);
+                        webapi.Helpers.RiderDayBandCheckIn? ticketBand = null;
                         if (t is not null)
                         {
                             var waiverDecision = await _waiverGate.EvaluateTicket(tenantId, t);
                             // Structured, so Event Riders can offer "Verify ID" on a birthdate-check block.
                             if (waiverDecision.BlockReason is not null)
                                 return webapi.Helpers.GateBlockResult.Result(waiverDecision, "ticket", t.RedemptionToken, t.Id);
+                            // The day band (Script0313), the same rule as every check-in path: a band the rider
+                            // wears today covers this admission; a required band must already be worn.
+                            if (_tenantContext.Tenant.WristbandsEnabled)
+                            {
+                                ticketBand = await _dayBands.ForCheckIn(await _dayBands.ForTicket(t), await _dayBands.TicketDate(t));
+                                if (ticketBand.Required && waiverDecision.RiderAudience) return ticketBand.Refusal!;
+                            }
                         }
                         // Only a 'paid' ticket may be checked in. TryMarkRedeemed enforces that in SQL,
                         // so a refunded/cancelled ticket can't be flipped to redeemed (which UndoRedeemed
@@ -1231,7 +1239,9 @@ namespace webapi.Controllers
                         if (!redeemed)
                             return new ApiResponses().BadRequestResult(
                                 "This ticket can't be checked in. It may be refunded, cancelled, or already checked in.");
+                        if (ticketBand is not null) await _dayBands.CompleteTicketCheckIn(ticketBand, purchaseId, staffId);
                     }
+                    // Un-checking takes the ticket off its band (Script0313 trigger); the band stays worn.
                     else await _tickets.UndoRedeemed(purchaseId, tenantId);
                     break;
                 case "season_pass":

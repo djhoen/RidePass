@@ -63,23 +63,6 @@ namespace webapi.Controllers
         /// so resolving one has to ask "today" the way the track does, not the way UTC does.</summary>
         private DateOnly TodayLocal() => _dayBands.Today();
 
-        /// <summary>
-        /// Ticket-anchored bands. Waiver only, deliberately (tenant.require_id_for_wristband).
-        ///
-        /// The storage and the resolution for a ticketed rider's ID both exist
-        /// (event_ticket_purchase.id_verified_*, IRiderIdVerification.StatusForTicket), but the
-        /// gate screen has no way to RECORD one against a ticket yet: that action is built for
-        /// the season pass panel. Enforcing ID here would leave a track unable to band a ticketed
-        /// rider at all, with nothing in the UI to fix it, which is worse than the gap it closes.
-        /// Add the ID clause the moment a ticket-side verify action ships.
-        /// </summary>
-        private async Task<Services.Waivers.WaiverGateDecision?> BandBlockForTicket(EventTicketPurchase ticket)
-        {
-            if (!_tenantContext.Tenant.RequireIdForWristband) return null;
-            var decision = await _waiverGate.EvaluateTicket(TenantId, ticket);
-            return decision.BlockReason is null ? null : decision;
-        }
-
         [HttpPost("Link")]
         public async Task<IActionResult> Link([FromBody] LinkWristbandRequest req)
         {
@@ -97,28 +80,19 @@ namespace webapi.Controllers
 
             if (hasTicket)
             {
-                // The ticket anchors the link; its tier resolves the event the code must be unique in.
+                // A ticket rider wears their day band (Script0313), the same band as on any pass or other ticket
+                // of theirs that day, under the same rules (gate clear, ID when required, one band per rider and
+                // one rider per band a day). A different band on a ticket the rider's band covers corrects it.
                 var ticket = await _tickets.GetById(req.TicketId!.Value, TenantId);
                 if (ticket is null) return new ApiResponses().NotFoundResult("Ticket not found.");
                 if (ticket.Status is not ("paid" or "redeemed"))
                     return new ApiResponses().BadRequestResult($"Only a paid entry can wear a band (this one is {ticket.Status}).");
-                var tier = await _tiers.GetById(ticket.TierId, TenantId);
-                if (tier is null) return new ApiResponses().BadRequestResult("This ticket's tier no longer exists.");
-
-                if (await BandBlockForTicket(ticket) is { } ticketBlock)
-                    return GateBlockResult.Result(ticketBlock, "ticket", ticket.RedemptionToken, ticket.Id);
-
-                // A code on a rider's day band today means that rider (Script0312). (Another ticket's band at this
-                // event is refused by the event-scoped link below, as before.)
-                if (await _dayBands.CodeInUse(code, TodayLocal()) is { DayBand: { } dayBand })
-                    return new ApiResponses().BadRequestResult(
-                        $"That band is already on {dayBand.RiderName} today. Use a different band.");
-
-                var conflictHolder = await _wristbands.Link(TenantId, tier.EventId, ticket.Id, code, UserId);
-                if (conflictHolder is not null)
-                    return new ApiResponses().BadRequestResult(
-                        $"That band is already on {conflictHolder} for this event. Use a different band, or unlink theirs first.");
-                return new ApiResponses().OkResult(new { code });
+                var ticketResult = await _dayBands.IssueForTicket(ticket, code, null, UserId);
+                if (!ticketResult.Ok)
+                    return ticketResult.GateBlock is { } ticketBlock
+                        ? GateBlockResult.Result(ticketBlock, "ticket", ticket.RedemptionToken, ticket.Id)
+                        : new ApiResponses().BadRequestResult(ticketResult.Error!);
+                return new ApiResponses().OkResult(new { code = ticketResult.Band!.Code });
             }
 
             // Season pass admission: the holder's band for the day (Script0312), through the same rules as
@@ -157,7 +131,8 @@ namespace webapi.Controllers
                     "Unlink a band from exactly one of a ticket or a season pass admission.");
 
             var n = hasTicket
-                ? await _wristbands.UnlinkTicket(req.TicketId!.Value, TenantId)
+                // The ticket comes off its day band(s); the band stays worn. Any older row is removed.
+                ? await _dayBands.UnlinkTicket(req.TicketId!.Value) + await _wristbands.UnlinkTicket(req.TicketId!.Value, TenantId)
                 // Only this admission comes off the rider's day band; the band stays worn (it may cover their other
                 // admissions, and it is still on their wrist). Any older row for the admission is removed.
                 : await _dayBands.UnlinkAdmission(req.SeasonPassReservationId!.Value)
@@ -178,37 +153,53 @@ namespace webapi.Controllers
             var use = await _dayBands.CodeInUse(trimmed, TodayLocal());
             if (use?.DayBand is { } day)
             {
+                // The rider's whole day: every admission the band covers, passes and tickets. The card to open is
+                // the latest admission's (the pass card, or the order with that rider's ticket in focus), else the
+                // credential the band was issued through.
                 var admissions = await _dayBands.Admissions(day.Id);
-                var pass = day.SeasonPassPurchaseId is Guid pid ? await _passes.GetPurchase(pid) : null;
-                if (pass is not null && pass.TenantId != TenantId) pass = null;
                 var latest = admissions.OrderByDescending(a => a.CheckedInAt ?? a.LinkedAt).FirstOrDefault();
-                // The rider's photo on file, as the gate shows it (the pass card loads it too).
-                var photo = pass is not null ? await _waiverGate.EvaluatePass(TenantId, pass.Id, latest?.EventId) : null;
+                Guid? token = latest?.RedemptionToken;
+                Guid? focusTicketId = latest?.EventTicketPurchaseId;
+                var pass = (latest?.SeasonPassPurchaseId ?? (latest is null ? day.SeasonPassPurchaseId : null)) is Guid pid
+                    ? await _passes.GetPurchase(pid) : null;
+                if (pass is not null && pass.TenantId != TenantId) pass = null;
+                var ticket = (focusTicketId ?? (latest is null ? day.EventTicketPurchaseId : null)) is Guid tid
+                    ? await _tickets.GetById(tid, TenantId) : null;
+                token ??= pass?.RedemptionToken ?? ticket?.RedemptionToken;
+                focusTicketId ??= ticket?.Id;
+                // The rider's photo on file, as the gate shows it (the card loads it too).
+                var photo = ticket is not null ? await _waiverGate.EvaluateTicket(TenantId, ticket)
+                    : pass is not null ? await _waiverGate.EvaluatePass(TenantId, pass.Id, latest?.EventId) : null;
                 return new ApiResponses().OkResult(new
                 {
                     Source = "rider_day",
                     BandId = day.Id,
-                    TicketId = (Guid?)null,
+                    TicketId = focusTicketId,
                     ReservationId = latest?.SeasonPassReservationId,
-                    PassPurchaseId = day.SeasonPassPurchaseId,
+                    PassPurchaseId = pass?.Id ?? day.SeasonPassPurchaseId,
                     EventId = latest?.EventId,
                     day.Code,
-                    RedemptionToken = pass?.RedemptionToken,
+                    RedemptionToken = token,
+                    // What the token opens: "pass" (the pass card) or "order" (focus FocusTicketId's rider).
+                    Opens = ticket is not null && focusTicketId is not null ? "order" : "pass",
+                    FocusTicketId = focusTicketId,
                     EventTitle = latest?.EventTitle ?? "Day pass",
                     TierName = (string?)null,
                     Status = latest?.Status ?? "checked_in",
                     Name = day.RiderName,
-                    RaceNumber = (string?)null,
+                    RaceNumber = ticket?.RaceNumber,
                     LinkedAt = DateTime.SpecifyKind(day.IssuedAt, DateTimeKind.Utc),
                     day.BusinessDate,
                     IssuedAtLocal = _dayBands.IssuedTime(day),
                     Admissions = admissions.Select(a => new
                     {
+                        a.Kind,
                         a.SeasonPassReservationId,
                         a.EventTicketPurchaseId,
                         a.EventId,
                         EventTitle = a.EventTitle ?? "Walk-up admission",
                         a.Status,
+                        a.RedemptionToken,
                         CheckedInAtUtc = a.CheckedInAt is { } ci ? DateTime.SpecifyKind(ci, DateTimeKind.Utc) : (DateTime?)null,
                     }),
                     HasPhoto = photo?.HasPhoto ?? false,
@@ -252,6 +243,10 @@ namespace webapi.Controllers
             var ticketMap = req.TicketIds.Count > 0
                 ? await _wristbands.GetCodesForTickets(req.TicketIds, TenantId)
                 : new Dictionary<Guid, string>();
+            // A day band covering the ticket wins over an older row.
+            if (req.TicketIds.Count > 0)
+                foreach (var kv in await _dayBands.CodesForTickets(req.TicketIds))
+                    ticketMap[kv.Key] = kv.Value;
             var reservationMap = req.ReservationIds.Count > 0
                 ? await _wristbands.GetCodesForReservations(req.ReservationIds, TenantId)
                 : new Dictionary<Guid, string>();

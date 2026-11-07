@@ -214,7 +214,7 @@
 
                         <div v-for="a in order.waivers" :key="a.attendeeKey"
                              class="attendee pa-3 mb-2"
-                             :class="{ 'attendee-blocked': !!a.blockReason }">
+                             :class="{ 'attendee-blocked': !!a.blockReason, 'attendee-focus': focusedAttendeeKey === a.attendeeKey }">
                             <div class="d-flex align-center flex-wrap ga-2">
                                 <v-icon :icon="attendeeIcon(a)" :color="attendeeColor(a)"></v-icon>
                                 <span class="text-body-1 font-weight-bold">
@@ -245,6 +245,20 @@
 
                             <div v-if="a.items.length" class="text-caption text-medium-emphasis">
                                 {{ a.items.join(' / ') }}
+                            </div>
+
+                            <!-- The person's band for the day (Script0313): one band per person, worn already
+                                 (a pass, another ticket) or scanned here and put on with their admission. -->
+                            <div v-if="branding.wristbandsEnabled && a.audience === 'rider'" class="d-flex align-center flex-wrap ga-2 mt-2">
+                                <v-chip v-if="a.bandCode" size="small" color="indigo" variant="tonal" prepend-icon="mdi-watch">
+                                    Band #{{ a.bandCode }}<template v-if="a.bandIssuedAtLocal"> · issued {{ a.bandIssuedAtLocal }}</template>
+                                </v-chip>
+                                <template v-else>
+                                    <v-text-field v-model="personBands[a.attendeeKey]" density="compact" hide-details
+                                        prepend-inner-icon="mdi-watch" autocomplete="off" style="max-width: 260px"
+                                        :label="branding.wristbandRequiredAtCheckin ? 'Band (required): scan or type' : 'Band: scan or type'"></v-text-field>
+                                    <span class="text-caption text-medium-emphasis">goes on with this person's admission (Redeem)</span>
+                                </template>
                             </div>
 
                             <div v-if="a.waiverSigned" class="text-caption text-medium-emphasis mt-1">
@@ -1415,6 +1429,11 @@ function passResultSummary(r: GateSearchResult): string {
 const bandLookupInput = ref('')
 const bandLookupBusy = ref(false)
 const bandsByTicket = ref<Record<string, string>>({})
+// "Admit and band" on the order screen (Script0313): the band typed or scanned for each person, by attendee key.
+const personBands = ref<Record<string, string>>({})
+// The person a band scan opened this order for (highlighted in the people panel).
+const focusedAttendeeKey = ref<string | null>(null)
+watch(orderToken, () => { personBands.value = {}; focusedAttendeeKey.value = null })
 const bandDialogOpen = ref(false)
 const bandDialogBusy = ref(false)
 const bandDialogError = ref('')
@@ -1446,6 +1465,12 @@ async function resolveBand(code: string, opts: { quietNotFound?: boolean } = {})
         const hit = (await wristbands.resolve(code)).data.data
         if (!hit.redemptionToken) { flash(`Band ${hit.code} is on ${hit.name}, but their credential can't be opened here.`, 'warning'); return 'failed' }
         const ok = await loadOrder(hit.redemptionToken)
+        // A rider's day band opening an order: bring that person forward in the people panel.
+        if (ok && hit.opens === 'order' && hit.focusTicketId) {
+            await nextTick()   // after the new order's reset of the focus
+            const person = order.value?.waivers.find(w => w.purchaseIds.includes(hit.focusTicketId!))
+            if (person) { focusedAttendeeKey.value = person.attendeeKey; tab.value = 'waivers' }
+        }
         // A rider's day band (Script0312): who it is and what it covers today; the card shows the photo.
         if (ok && hit.source === 'rider_day') {
             const what = (hit.admissions ?? []).map(a => a.eventTitle).join(', ') || 'day pass'
@@ -2041,10 +2066,15 @@ async function redeemSelected() {
         const items = order.value.items
             .filter(i => selectedIds.value.includes(i.purchaseId))
             .map(i => ({ kind: i.kind, purchaseId: i.purchaseId }))
-        const r = await service.redeemBulk({ orderToken: orderToken.value, items, idVerified: idVerified.value })
+        // "Admit and band": one band per person, for the tickets of theirs being redeemed (Script0313).
+        const bands = (order.value.waivers ?? [])
+            .filter(a => !a.bandCode && personBands.value[a.attendeeKey]?.trim())
+            .map(a => ({ purchaseIds: a.purchaseIds, code: personBands.value[a.attendeeKey].trim() }))
+        const r = await service.redeemBulk({ orderToken: orderToken.value, items, idVerified: idVerified.value, bands })
         const data = (r.data as any).data
         const n = data.redeemedCount ?? 0
         const errs: string[] = data.errors ?? []
+        if (data.bandedCount) personBands.value = {}
         if (errs.length && n > 0) flash(`Redeemed ${n}; ${errs.length} skipped: ${errs.join(' ')}`, 'warning')
         else if (errs.length) flash(errs.join(' '), 'error')
         else flash(`Redeemed ${n}.`, 'success')
@@ -2188,6 +2218,10 @@ onBeforeUnmount(() => {
 .attendee-blocked {
     border: 2px solid rgb(var(--v-theme-error));
     background: rgba(var(--v-theme-error), 0.06);
+}
+.attendee-focus {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: 2px;
 }
 .signature-image {
     border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));

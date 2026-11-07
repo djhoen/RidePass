@@ -13,7 +13,8 @@ namespace Services.Repositories
         private const string Columns = @"
             b.id, b.tenant_id AS TenantId, b.business_date AS BusinessDate, b.code, b.owner_key AS OwnerKey,
             b.rider_key AS RiderKey, b.rider_user_id AS RiderUserId, b.rider_name AS RiderName,
-            b.season_pass_purchase_id AS SeasonPassPurchaseId, b.issued_by_user_id AS IssuedByUserId,
+            b.season_pass_purchase_id AS SeasonPassPurchaseId, b.event_ticket_purchase_id AS EventTicketPurchaseId,
+            b.issued_by_user_id AS IssuedByUserId,
             NULLIF(TRIM(CONCAT_WS(' ', iu.first_name, iu.last_name)), '') AS IssuedByName,
             b.issued_at AS IssuedAt, b.voided_at AS VoidedAt, b.voided_by_user_id AS VoidedByUserId,
             b.void_reason AS VoidReason, b.replaced_by_band_id AS ReplacedByBandId";
@@ -36,9 +37,9 @@ namespace Services.Repositories
 
         private const string InsertBand = @"
             INSERT INTO rider_day_band (id, tenant_id, business_date, code, owner_key, rider_key, rider_user_id,
-                                        rider_name, season_pass_purchase_id, issued_by_user_id)
+                                        rider_name, season_pass_purchase_id, event_ticket_purchase_id, issued_by_user_id)
             VALUES (@Id, @TenantId, @BusinessDate, @Code, @OwnerKey, @RiderKey, @RiderUserId,
-                    @RiderName, @SeasonPassPurchaseId, @IssuedByUserId)";
+                    @RiderName, @SeasonPassPurchaseId, @EventTicketPurchaseId, @IssuedByUserId)";
 
         private const string InsertLink = @"
             INSERT INTO rider_day_band_admission (tenant_id, band_id, season_pass_reservation_id, event_ticket_purchase_id,
@@ -113,24 +114,35 @@ namespace Services.Repositories
             DELETE FROM rider_day_band_admission WHERE tenant_id = @tenantId AND season_pass_reservation_id = @reservationId",
             new { tenantId, reservationId });
 
-        public async Task<bool> Covers(Guid tenantId, Guid bandId, Guid reservationId) =>
+        public Task<int> UnlinkTicket(Guid tenantId, Guid ticketId) => _db.Execute(@"
+            DELETE FROM rider_day_band_admission WHERE tenant_id = @tenantId AND event_ticket_purchase_id = @ticketId",
+            new { tenantId, ticketId });
+
+        public async Task<bool> Covers(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId) =>
             await _db.ExecuteScalar(@"
                 SELECT count(*)::int FROM rider_day_band_admission
-                 WHERE tenant_id = @tenantId AND band_id = @bandId AND season_pass_reservation_id = @reservationId",
-                new { tenantId, bandId, reservationId }) > 0;
+                 WHERE tenant_id = @tenantId AND band_id = @bandId
+                   AND (season_pass_reservation_id = @reservationId OR event_ticket_purchase_id = @ticketId)",
+                new { tenantId, bandId, reservationId, ticketId }) > 0;
 
         public async Task<List<RiderDayBandAdmissionRow>> ListAdmissions(Guid tenantId, Guid bandId) =>
             (await _db.Query<RiderDayBandAdmissionRow>(@"
                 SELECT a.band_id AS BandId, a.season_pass_reservation_id AS SeasonPassReservationId,
                        a.event_ticket_purchase_id AS EventTicketPurchaseId,
+                       CASE WHEN a.event_ticket_purchase_id IS NOT NULL THEN 'ticket' ELSE 'season_pass' END AS Kind,
                        COALESCE(r.event_id, tier.event_id) AS EventId,
                        COALESCE(e.title, CASE WHEN r.id IS NOT NULL THEN 'Walk-up admission' END) AS EventTitle,
                        COALESCE(r.status, t.status) AS Status,
-                       COALESCE(r.checked_in_at, t.redeemed_at_utc) AS CheckedInAt,
-                       a.linked_at AS LinkedAt
+                       COALESCE(r.checked_in_at, att.checked_in_at, t.redeemed_at_utc) AS CheckedInAt,
+                       a.linked_at AS LinkedAt,
+                       COALESCE(t.redemption_token, sp.redemption_token) AS RedemptionToken,
+                       sp.id AS SeasonPassPurchaseId
                 FROM rider_day_band_admission a
+                JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId
                 LEFT JOIN season_pass_reservation r ON r.id = a.season_pass_reservation_id
+                LEFT JOIN season_pass_purchase sp ON sp.id = r.season_pass_purchase_id AND sp.tenant_id = @tenantId
                 LEFT JOIN event_ticket_purchase t ON t.id = a.event_ticket_purchase_id AND t.tenant_id = @tenantId
+                LEFT JOIN event_ticket_attendance att ON att.ticket_id = t.id AND att.on_date = b.business_date
                 LEFT JOIN event_ticket_tier tier ON tier.id = t.tier_id
                 LEFT JOIN event e ON e.id = COALESCE(r.event_id, tier.event_id) AND e.tenant_id = @tenantId
                 WHERE a.tenant_id = @tenantId AND a.band_id = @bandId
@@ -148,6 +160,21 @@ namespace Services.Repositories
                 WHERE a.tenant_id = @tenantId AND a.season_pass_reservation_id = ANY(@ids)",
                 new { ids, tenantId });
             return rows.GroupBy(r => r.ReservationId).ToDictionary(g => g.Key, g => g.First().Code);
+        }
+
+        public async Task<Dictionary<Guid, string>> GetActiveCodesForTickets(IEnumerable<Guid> ticketIds, Guid tenantId)
+        {
+            var ids = ticketIds.Distinct().ToArray();
+            if (ids.Length == 0) return new Dictionary<Guid, string>();
+            // A multi-day ticket can sit on several days' bands: the latest day's is the one to show.
+            var rows = await _db.Query<(Guid TicketId, string Code)>(@"
+                SELECT DISTINCT ON (a.event_ticket_purchase_id) a.event_ticket_purchase_id AS TicketId, b.code AS Code
+                FROM rider_day_band_admission a
+                JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
+                WHERE a.tenant_id = @tenantId AND a.event_ticket_purchase_id = ANY(@ids)
+                ORDER BY a.event_ticket_purchase_id, b.business_date DESC",
+                new { ids, tenantId });
+            return rows.ToDictionary(r => r.TicketId, r => r.Code);
         }
     }
 }

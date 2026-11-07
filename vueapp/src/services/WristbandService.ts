@@ -21,12 +21,15 @@ export interface WristbandResolution {
     raceNumber: string | null
     linkedAt: string
     // ── rider_day only ──
+    /** What redemptionToken opens: the pass card, or the order with focusTicketId's rider in focus. */
+    opens?: 'pass' | 'order'
+    focusTicketId?: string | null
     bandId?: string
     businessDate?: string
     issuedAtLocal?: string
     /** Every admission the band covers today. */
-    admissions?: { seasonPassReservationId: string | null; eventTicketPurchaseId: string | null; eventId: string | null;
-        eventTitle: string; status: string; checkedInAtUtc: string | null }[]
+    admissions?: { kind: 'ticket' | 'season_pass'; seasonPassReservationId: string | null; eventTicketPurchaseId: string | null;
+        eventId: string | null; eventTitle: string; status: string; redemptionToken: string | null; checkedInAtUtc: string | null }[]
     hasPhoto?: boolean
     photoSource?: string | null
     riderPhotoId?: string | null

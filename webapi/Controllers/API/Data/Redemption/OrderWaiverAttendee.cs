@@ -83,5 +83,8 @@ namespace webapi.Controllers.API.Data.Redemption
         public bool PhotoBlocked { get; set; }
         /// <summary>The rider ticket a photo is recorded against (Redemption/RiderPhoto).</summary>
         public Guid? PhotoPurchaseId { get; set; }
+        /// <summary>The band this person wears for the day (Script0313), if banded: from a pass, another ticket, or this order.</summary>
+        public string? BandCode { get; set; }
+        public string? BandIssuedAtLocal { get; set; }
     }
 }
