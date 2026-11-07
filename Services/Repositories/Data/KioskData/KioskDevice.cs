@@ -11,6 +11,8 @@ namespace Services.Repositories.Data.KioskData
         public DateTime? PairingExpiresAt { get; set; }
         public DateTime? PairedAt { get; set; }
         public DateTime? LastSeenAt { get; set; }
+        /// <summary>When the kiosk last asked for pushed work (it asks only while idle, Script0311).</summary>
+        public DateTime? LastPollAt { get; set; }
         public DateTime? RevokedAt { get; set; }
         public Guid? RevokedByUserId { get; set; }
         public Guid? CreatedByUserId { get; set; }

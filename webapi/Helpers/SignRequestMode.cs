@@ -35,5 +35,18 @@ namespace webapi.Helpers
 
         /// <summary>Blank-or-missing is "unknown", trimmed otherwise: the same test everywhere.</summary>
         public static string? Clean(string? name) => string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+
+        /// <summary>
+        /// For a ticket / pass target (a gate signing link, or a waiver pushed to a kiosk): the gate's own view
+        /// of that rider decides: their name, the birthdate the gate uses, and its minor verdict, else that
+        /// birthdate. One rule for both, so a kiosk signs exactly as a link would.
+        /// </summary>
+        public static SignRequestMode ForTarget(WaiverSignTarget target)
+        {
+            var dob = target.Decision.Birthdate is { } tb ? tb.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
+            bool? minor = target.Decision is { RiderAudience: true, IsMinor: bool m } ? m
+                : dob is { } b ? WaiverPolicy.IsMinor(b) : null;
+            return new SignRequestMode(target, null, false, Clean(target.FirstName), Clean(target.LastName), dob, minor);
+        }
     }
 }

@@ -82,6 +82,77 @@ export class KioskDeviceApi {
     signup(body: KioskSignupBody) {
         return kioskClient().post<{ data: { checkedIn: boolean } }>('/Kiosk/Signup', body)
     }
+    /** A step staff pushed to this kiosk (asked only while idle), or null. */
+    pollPush() {
+        return kioskClient().get<{ data: KioskPushPayload | null }>('/Kiosk/Push')
+    }
+    startPush(id: string) {
+        return kioskClient().post(`/Kiosk/Push/${id}/Start`)
+    }
+    completePush(id: string, body: KioskPushCompleteBody) {
+        return kioskClient().post<{ data: { done: boolean } }>(`/Kiosk/Push/${id}/Complete`, body)
+    }
+}
+
+/** What a pushed step shows: first name only, the steps, the signing mode and the waiver text. */
+export interface KioskPushPayload {
+    pushId: string
+    firstName: string
+    wantWaiver: boolean
+    wantPhoto: boolean
+    signAs: 'guardian' | 'adult' | null
+    waiverId: string | null
+    waiverTitle: string | null
+    waiverBody: string | null
+    expiresAtUtc: string
+}
+
+export interface KioskPushCompleteBody {
+    waiverId: string | null
+    agreedToWaiver: boolean
+    signatureDataUrl: string | null
+    guardianName: string | null
+    guardianPhone: string | null
+    photoDataUrl: string | null
+}
+
+// ── Staff: send a waiver / photo step to a kiosk (Script0311) ───────────────────────────────────
+
+export interface ActiveKiosk {
+    id: string
+    name: string
+    lastSeenAtUtc: string | null
+    idle: boolean
+    busy: boolean
+    activePushId: string | null
+}
+
+export type KioskPushTarget =
+    | { targetKind: 'ticket'; purchaseId: string }
+    | { targetKind: 'season_pass'; purchaseId: string; eventId?: string | null }
+    | { targetKind: 'kiosk_signup'; kioskSignupId: string }
+
+export interface KioskPushStatus {
+    id: string
+    status: 'pending' | 'in_progress' | 'completing' | 'done' | 'cancelled' | 'expired'
+    kioskName: string
+    kioskIdle: boolean
+    riderFirstName: string
+    wantWaiver: boolean
+    wantPhoto: boolean
+    expiresAtUtc: string
+    completedAtUtc: string | null
+}
+
+export class KioskPushService {
+    private apiUrl = API_BASE
+
+    activeKiosks() { return axios.get<{ data: ActiveKiosk[] }>(`${this.apiUrl}/KioskPushes/Kiosks`) }
+    send(kioskDeviceId: string, target: KioskPushTarget, waiver: boolean, photo: boolean) {
+        return axios.post<{ data: KioskPushStatus }>(`${this.apiUrl}/KioskPushes`, { kioskDeviceId, ...target, waiver, photo })
+    }
+    status(id: string) { return axios.get<{ data: KioskPushStatus }>(`${this.apiUrl}/KioskPushes/${id}`) }
+    cancel(id: string) { return axios.post(`${this.apiUrl}/KioskPushes/${id}/Cancel`) }
 }
 
 // ── Staff side: Admin > Kiosks and the gate's kiosk sign-ups ────────────────────────────────────

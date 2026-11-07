@@ -854,7 +854,8 @@ namespace webapi.Controllers
             {
                 // Put the signature where the gate reads it, by the request's target ids; the gate
                 // fills only what is missing or failing and never replaces a valid guardian signature.
-                var linked = await _waiverGate.LinkSignedWaiver(_tenantContext.TenantId, target, sigId, waiver.Id);
+                var (linked, stillBlocked) = await GateWaiverLinking.LinkAndCheck(_waiverGate, _tenantContext.TenantId,
+                    target, sigId, waiver.Id);
                 await _audit.Log("waiver.gate_sign_request.signed",
                     $"Gate waiver link signed for {target.DisplayName}"
                         + (isMinor ? $" by guardian {parentName}" : "")
@@ -868,20 +869,17 @@ namespace webapi.Controllers
                 // the signature could not be put where the gate reads it (e.g. the credential changed):
                 // say so and keep the link usable rather than marking it signed with nothing fixed. The
                 // signature itself is kept as the record.
-                var after = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
-                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
-                if (linked == 0 && after?.Decision is { BlockReason: not null, FixTarget: not null } still
-                    && still.RequiredWaiverId == waiver.Id)
+                if (stillBlocked is not null)
                 {
                     await _audit.Log("waiver.gate_sign_request.link_failed",
                         $"Gate waiver link for {target.DisplayName} was signed but could not be applied",
                         targetKind: target.TicketId is not null ? "event_ticket_purchase" : "season_pass_purchase",
                         targetId: target.TicketId ?? target.PassPurchaseId,
                         tenantId: _tenantContext.TenantId,
-                        metadata: new { requestId = row.Id, signatureId = sigId, blockReason = still.BlockReason });
+                        metadata: new { requestId = row.Id, signatureId = sigId, blockReason = stillBlocked });
                     return new ApiResponses().BadRequestResult(
                         $"Your signature was saved, but it couldn't be applied to {target.DisplayName}'s "
-                        + $"{(target.TicketId is not null ? "ticket" : "pass")}: {still.BlockReason} "
+                        + $"{(target.TicketId is not null ? "ticket" : "pass")}: {stillBlocked} "
                         + "Please show this to the staff at the gate; this link stays open so it can be signed again.");
                 }
             }
@@ -906,11 +904,7 @@ namespace webapi.Controllers
                 var target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
                     row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
                 if (target is null) return new SignRequestMode(null, null, true, null, null, null, null);
-                var dob = target.Decision.Birthdate is { } tb ? tb.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
-                bool? minor = target.Decision is { RiderAudience: true, IsMinor: bool m } ? m
-                    : dob is { } b ? WaiverPolicy.IsMinor(b) : null;
-                return new SignRequestMode(target, null, false, SignRequestMode.Clean(target.FirstName),
-                    SignRequestMode.Clean(target.LastName), dob, minor);
+                return SignRequestMode.ForTarget(target);
             }
             if (row.RiderUserId is Guid riderUserId && row.RiderBirthdate is { } rb
                 && SignRequestMode.Clean(row.RiderFirstName) is { } rf && SignRequestMode.Clean(row.RiderLastName) is { } rl)

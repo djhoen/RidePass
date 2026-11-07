@@ -103,10 +103,64 @@
                 </div>
             </section>
 
+            <!-- A step staff sent to this kiosk for one rider: first name only, then only those steps. -->
+            <section v-else-if="step === 'push-intro' && push" class="kiosk-card kiosk-center">
+                <v-icon size="72" color="primary">mdi-account-arrow-right</v-icon>
+                <h1>Staff sent this to you</h1>
+                <p class="kiosk-sub">For <strong>{{ push.firstName }}</strong>:
+                    {{ push.wantWaiver && push.wantPhoto ? 'the waiver and a photo' : push.wantWaiver ? 'the waiver' : 'a photo' }}.</p>
+                <v-btn size="x-large" color="primary" class="kiosk-big" @click="beginPush">Begin</v-btn>
+            </section>
+
+            <section v-else-if="step === 'push-waiver' && push" class="kiosk-card">
+                <h1>{{ push.waiverTitle || 'Waiver' }}</h1>
+                <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+                    {{ push.signAs === 'guardian'
+                        ? `You're signing for ${push.firstName} as their parent or guardian.`
+                        : `Sign as yourself, ${push.firstName}.` }}
+                </v-alert>
+                <div class="kiosk-waiver"><RichTextView :html="push.waiverBody || ''" /></div>
+                <template v-if="push.signAs === 'guardian'">
+                    <div class="kiosk-grid">
+                        <v-text-field v-model="pushForm.guardianName" label="Parent or guardian name" variant="outlined" class="kiosk-input" autocomplete="off"></v-text-field>
+                        <v-text-field v-model="pushForm.guardianPhone" type="tel" label="Parent or guardian phone" variant="outlined" class="kiosk-input" autocomplete="off"></v-text-field>
+                    </div>
+                </template>
+                <v-checkbox v-model="pushForm.agreed" hide-details class="kiosk-check"
+                    :label="push.signAs === 'guardian' ? `I am ${push.firstName}'s parent or guardian and I agree to this waiver for them` : 'I have read and agree to this waiver'"></v-checkbox>
+                <div class="kiosk-label mt-2">{{ push.signAs === 'guardian' ? 'Parent or guardian signs here' : 'Sign here' }}</div>
+                <SignaturePad v-model="pushForm.signature" />
+                <v-alert v-if="error" type="error" variant="tonal" class="my-4">{{ error }}</v-alert>
+                <div class="kiosk-actions">
+                    <v-btn size="x-large" variant="text" @click="reset">Cancel</v-btn>
+                    <v-btn size="x-large" color="primary" :loading="busy" :disabled="!pushWaiverComplete"
+                        @click="push.wantPhoto ? (step = 'push-photo') : completePush()">{{ push.wantPhoto ? 'Next' : 'Finish' }}</v-btn>
+                </div>
+            </section>
+
+            <section v-else-if="step === 'push-photo' && push" class="kiosk-card kiosk-center">
+                <h1>Photo</h1>
+                <p class="kiosk-sub">A photo of {{ push.firstName }}, so the gate knows them.</p>
+                <PhotoCapture v-model="pushForm.photo" button-label="Take photo" :max-dimension="720" class="kiosk-photo" />
+                <v-alert v-if="error" type="error" variant="tonal" class="my-4">{{ error }}</v-alert>
+                <div class="kiosk-actions">
+                    <v-btn size="x-large" variant="text" :disabled="busy" @click="push.wantWaiver ? (step = 'push-waiver') : reset()">
+                        {{ push.wantWaiver ? 'Back' : 'Cancel' }}</v-btn>
+                    <v-btn size="x-large" color="primary" :loading="busy" :disabled="!pushForm.photo" @click="completePush">Finish</v-btn>
+                </div>
+            </section>
+
+            <section v-else-if="step === 'push-aborted'" class="kiosk-card kiosk-center">
+                <v-icon size="72" color="warning">mdi-information-outline</v-icon>
+                <h1>This request ended</h1>
+                <p class="kiosk-sub">Staff cancelled it or it timed out. Please see the front desk.</p>
+                <v-btn size="x-large" variant="outlined" class="mt-6" @click="reset">OK</v-btn>
+            </section>
+
             <section v-else-if="step === 'done'" class="kiosk-card kiosk-center">
                 <v-icon size="96" color="success">mdi-check-circle</v-icon>
-                <h1>You're checked in</h1>
-                <p class="kiosk-sub kiosk-done">You're checked in at the front desk. Tell the cashier your name.</p>
+                <h1>{{ doneFromPush ? 'All done' : "You're checked in" }}</h1>
+                <p class="kiosk-sub kiosk-done">{{ doneFromPush ? 'Thank you. The front desk can see it now.' : "You're checked in at the front desk. Tell the cashier your name." }}</p>
                 <v-btn size="x-large" variant="outlined" class="mt-6" @click="reset">Done ({{ doneCountdown }})</v-btn>
             </section>
         </main>
@@ -119,9 +173,10 @@ import RichTextView from '@/components/RichTextView.vue'
 import SignaturePad from '@/components/SignaturePad.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import authHelper from '@/helpers/AuthHelper'
-import { KioskDeviceApi, getKioskToken, saveKioskPairing, forgetKioskPairing, type KioskConfig } from '@/services/KioskService'
+import { KioskDeviceApi, getKioskToken, saveKioskPairing, forgetKioskPairing, type KioskConfig, type KioskPushPayload } from '@/services/KioskService'
 
 type Step = 'pair' | 'loading' | 'start' | 'who' | 'guardian' | 'waiver' | 'photo' | 'done'
+    | 'push-intro' | 'push-waiver' | 'push-photo' | 'push-aborted'
 
 const IDLE_RESET_MS = 90_000      // nobody touched the screen mid-flow: start over, data cleared
 const DONE_RESET_SECONDS = 12     // the done screen clears itself
@@ -177,7 +232,7 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null
 let doneTimer: ReturnType<typeof setInterval> | null = null
 function touch() {
     if (idleTimer) clearTimeout(idleTimer)
-    if (['who', 'guardian', 'waiver', 'photo'].includes(step.value))
+    if (['who', 'guardian', 'waiver', 'photo', 'push-intro', 'push-waiver', 'push-photo'].includes(step.value))
         idleTimer = setTimeout(() => reset(), IDLE_RESET_MS)
 }
 function clearTimers() {
@@ -188,6 +243,9 @@ function clearTimers() {
 function reset() {
     clearTimers()
     form.value = blankForm()
+    push.value = null
+    pushForm.value = blankPushForm()
+    doneFromPush.value = false
     error.value = null
     busy.value = false
     step.value = getKioskToken() ? 'start' : 'pair'
@@ -302,13 +360,7 @@ async function submit() {
         })
         // Done: nothing they typed stays on the page.
         form.value = blankForm()
-        clearTimers()
-        step.value = 'done'
-        doneCountdown.value = DONE_RESET_SECONDS
-        doneTimer = setInterval(() => {
-            doneCountdown.value--
-            if (doneCountdown.value <= 0) reset()
-        }, 1000)
+        showDone(false)
     } catch (err: any) {
         if (err.response?.status === 401) { forgetKioskPairing(); reset(); return }
         error.value = err.response?.data?.error || 'That didn’t go through. Please try again or see the front desk.'
@@ -317,7 +369,98 @@ async function submit() {
     }
 }
 
+function showDone(fromPush: boolean) {
+    clearTimers()
+    doneFromPush.value = fromPush
+    step.value = 'done'
+    doneCountdown.value = DONE_RESET_SECONDS
+    doneTimer = setInterval(() => {
+        doneCountdown.value--
+        if (doneCountdown.value <= 0) reset()
+    }, 1000)
+}
+
+// ── Steps staff pushed to this kiosk ────────────────────────────────────────────────────────
+// Asked for only while idle on the start screen, so a walk-up mid sign-up is never interrupted. While a
+// pushed step is on screen the kiosk keeps asking, and aborts cleanly if staff cancel it or it expires.
+const PUSH_POLL_MS = 3000
+const push = ref<KioskPushPayload | null>(null)
+const doneFromPush = ref(false)
+const blankPushForm = () => ({ guardianName: '', guardianPhone: '', agreed: false, signature: null as string | null, photo: null as string | null })
+const pushForm = ref(blankPushForm())
+const pushWaiverComplete = computed(() => {
+    const f = pushForm.value
+    if (!f.agreed || !f.signature) return false
+    return push.value?.signAs !== 'guardian' || (!!f.guardianName.trim() && digits(f.guardianPhone) >= 7)
+})
+let pushTimer: ReturnType<typeof setInterval> | null = null
+let polling = false
+
+async function pollPush() {
+    if (polling || !getKioskToken()) return
+    const onPush = ['push-intro', 'push-waiver', 'push-photo'].includes(step.value)
+    if (step.value !== 'start' && !onPush) return
+    polling = true
+    try {
+        const p = (await api.pollPush()).data.data
+        if (onPush) {
+            // The request on screen was cancelled or expired: stop, clear what was entered.
+            if (!busy.value && (!p || p.pushId !== push.value?.pushId)) {
+                clearTimers()
+                push.value = null
+                pushForm.value = blankPushForm()
+                step.value = 'push-aborted'
+            }
+        } else if (p && step.value === 'start') {
+            push.value = p
+            pushForm.value = blankPushForm()
+            error.value = null
+            step.value = 'push-intro'
+            touch()
+            try { await api.startPush(p.pushId) } catch { /* shown anyway; staff see "waiting" a moment longer */ }
+        }
+    } catch (err: any) {
+        if (err.response?.status === 401) { forgetKioskPairing(); reset() }
+    } finally {
+        polling = false
+    }
+}
+
+function beginPush() {
+    if (!push.value) return
+    step.value = push.value.wantWaiver ? 'push-waiver' : 'push-photo'
+    touch()
+}
+
+async function completePush() {
+    const p = push.value
+    if (!p) return
+    busy.value = true
+    error.value = null
+    try {
+        const f = pushForm.value
+        await api.completePush(p.pushId, {
+            waiverId: p.wantWaiver ? p.waiverId : null,
+            agreedToWaiver: f.agreed,
+            signatureDataUrl: p.wantWaiver ? f.signature : null,
+            guardianName: p.signAs === 'guardian' ? f.guardianName.trim() : null,
+            guardianPhone: p.signAs === 'guardian' ? f.guardianPhone.trim() : null,
+            photoDataUrl: p.wantPhoto ? f.photo : null,
+        })
+        push.value = null
+        pushForm.value = blankPushForm()
+        showDone(true)
+    } catch (err: any) {
+        if (err.response?.status === 401) { forgetKioskPairing(); reset(); return }
+        if (err.response?.status === 409) { push.value = null; pushForm.value = blankPushForm(); step.value = 'push-aborted'; return }
+        error.value = err.response?.data?.error || 'That didn’t go through. Please try again or see the front desk.'
+    } finally {
+        busy.value = false
+    }
+}
+
 onMounted(async () => {
+    pushTimer = setInterval(() => { void pollPush() }, PUSH_POLL_MS)
     if (getKioskToken()) {
         // A paired kiosk never carries a staff session.
         if (authHelper.isAuthenticated()) authHelper.logout()
@@ -326,7 +469,10 @@ onMounted(async () => {
         step.value = 'pair'
     }
 })
-onBeforeUnmount(clearTimers)
+onBeforeUnmount(() => {
+    clearTimers()
+    if (pushTimer) clearInterval(pushTimer)
+})
 </script>
 
 <style scoped>

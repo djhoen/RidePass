@@ -187,6 +187,9 @@
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
+                    <v-btn v-if="!adultResult" variant="text" prepend-icon="mdi-tablet-cellphone"
+                        @click="sendBlockToKiosk(adultBlock.kind, adultBlock.purchaseId, adultBlock.eventId, null, true, false); adultOpen = false">
+                        Send to kiosk</v-btn>
                     <v-btn :disabled="adultSending" @click="adultOpen = false">{{ adultResult ? 'Done' : 'Cancel' }}</v-btn>
                     <v-btn v-if="!adultResult" color="primary" :loading="adultSending" :disabled="!adultEmail.includes('@')"
                         @click="sendAdultLink">Send link</v-btn>
@@ -229,6 +232,9 @@
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
+                    <v-btn variant="text" prepend-icon="mdi-tablet-cellphone"
+                        @click="sendBlockToKiosk(photoBlock.kind, photoBlock.purchaseId, null, photoBlock.riderName, false, true); photoOpen = false">
+                        Send to kiosk</v-btn>
                     <v-btn :disabled="photoSaving" @click="photoOpen = false">Cancel</v-btn>
                     <v-btn color="primary" :loading="photoSaving" :disabled="!photoData" @click="savePhotoAndCheckIn">
                         Save and check in
@@ -236,6 +242,9 @@
                 </v-card-actions>
             </v-card>
         </v-dialog>
+
+        <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="onKioskDone" />
 
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </div>
@@ -250,6 +259,8 @@ import { TicketService, type GateWaiverSignRequestResult } from '@/services/Tick
 import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 import PhotoCapture from '@/components/PhotoCapture.vue'
+import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
+import type { KioskPushTarget } from '@/services/KioskService'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
 
 const props = defineProps<{ initialEventId?: string | null }>()
@@ -604,6 +615,27 @@ async function cancelScheduled(m: ScheduledRiderMessage) {
     } finally {
         cancellingId.value = null
     }
+}
+
+// A check-in block a kiosk can fix (Script0311): send the waiver or photo step there, reload when done.
+const kioskOpen = ref(false)
+const kioskTarget = ref<KioskPushTarget | null>(null)
+const kioskRider = ref<string | null>(null)
+const kioskAllowWaiver = ref(true)
+const kioskAllowPhoto = ref(true)
+function sendBlockToKiosk(kind: 'ticket' | 'season_pass', purchaseId: string, eventId: string | null,
+    riderName: string | null, allowWaiver: boolean, allowPhoto: boolean) {
+    kioskTarget.value = kind === 'season_pass'
+        ? { targetKind: 'season_pass', purchaseId, eventId: eventId ?? selectedEventId.value }
+        : { targetKind: 'ticket', purchaseId }
+    kioskRider.value = riderName
+    kioskAllowWaiver.value = allowWaiver
+    kioskAllowPhoto.value = allowPhoto
+    kioskOpen.value = true
+}
+async function onKioskDone() {
+    flash('The kiosk finished: check them in again.', 'success')
+    await loadReport()
 }
 
 function flash(text: string, color: 'success' | 'error' = 'error') {

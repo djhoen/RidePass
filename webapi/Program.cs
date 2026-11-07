@@ -115,6 +115,7 @@ builder.Services.AddScoped<IKioskRepository, KioskRepository>();
 builder.Services.AddScoped<webapi.Security.IKioskAuthenticator, webapi.Security.KioskAuthenticator>();
 builder.Services.AddSingleton<webapi.Security.KioskCredentialCache>();
 builder.Services.AddScoped<webapi.Helpers.IKioskSignupWriter, webapi.Helpers.KioskSignupWriter>();
+builder.Services.AddScoped<webapi.Helpers.IKioskPushService, webapi.Helpers.KioskPushService>();
 builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
@@ -289,6 +290,17 @@ builder.Services.AddRateLimiter(opts =>
             AutoReplenishment = true,
         });
     });
+    // An idle kiosk asks for pushed work every 3 seconds (Script0311): its own, larger allowance, same partitioning.
+    opts.AddPolicy("kiosk-poll", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            "poll:" + ctx.RequestServices.GetRequiredService<webapi.Security.KioskCredentialCache>().PartitionFor(ctx),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 40,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
     // Pairing codes are guessable only by brute force: a handful of tries per address and venue.
     opts.AddPolicy("kiosk-pair", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(

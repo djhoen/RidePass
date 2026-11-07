@@ -274,6 +274,12 @@
                                 @click="openSignRequest('ticket', a.purchaseIds[0], a.name, a.adultWaiverNeeded ? a.riderEmail : a.guardianEmail, a.isMinor, a.adultWaiverNeeded)">
                                 Send signing link{{ a.adultWaiverNeeded ? ' to the rider' : a.isMinor ? ' to a guardian' : '' }}
                             </v-btn>
+                            <v-btn v-if="(a.canRequestSignature && a.purchaseIds.length) || (a.photoPurchaseId && a.riderPhotoMode !== 'off' && !a.hasPhoto)"
+                                size="small" variant="text" class="mt-2 ml-1" prepend-icon="mdi-tablet-cellphone"
+                                @click="openSendToKiosk('ticket', (a.canRequestSignature ? a.purchaseIds[0] : a.photoPurchaseId)!, a.name,
+                                    !!a.canRequestSignature, !!a.photoPurchaseId && a.riderPhotoMode !== 'off')">
+                                Send to kiosk
+                            </v-btn>
                             <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
                             <v-alert v-if="a.birthdateCheckNeeded" density="compact" variant="tonal"
                                 :type="a.birthdateBlocked ? 'error' : 'warning'" class="mt-2"
@@ -440,6 +446,8 @@
                     <div class="d-flex align-center flex-wrap ga-2">
                         <span>No photo on file.</span>
                         <v-spacer></v-spacer>
+                        <v-btn size="small" variant="text" prepend-icon="mdi-tablet-cellphone"
+                            @click="openSendToKiosk('season_pass', pass.id, pass.holderName || pass.purchaserName, false, true)">Send to kiosk</v-btn>
                         <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-camera"
                             @click="openTakePhoto('season_pass', pass.id, pass.holderName || pass.purchaserName)">Take photo</v-btn>
                     </div>
@@ -480,6 +488,10 @@
                         <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-email-fast-outline"
                             @click="openSignRequest('season_pass', pass.id, pass.holderName || pass.purchaserName, pass.adultWaiverNeeded ? pass.riderEmail : pass.guardianEmail, !!pass.holderIsMinor, pass.adultWaiverNeeded)">
                             Send signing link{{ pass.adultWaiverNeeded ? ' to the rider' : pass.holderIsMinor ? ' to a guardian' : '' }}
+                        </v-btn>
+                        <v-btn size="small" variant="text" class="ml-1" prepend-icon="mdi-tablet-cellphone"
+                            @click="openSendToKiosk('season_pass', pass.id, pass.holderName || pass.purchaserName, true, pass.riderPhotoMode !== 'off')">
+                            Send to kiosk
                         </v-btn>
                     </div>
                 </v-alert>
@@ -820,6 +832,9 @@
 
         <!-- Waiver fix-up: email the waiver signing link (to a parent / guardian for a minor). Once
              signed, the signature is linked to this ticket / pass and a re-scan admits them. -->
+        <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="onKioskDone" />
+
         <v-dialog v-model="signRequestOpen" max-width="460">
             <v-card>
                 <v-card-title>Send a waiver signing link</v-card-title>
@@ -890,6 +905,8 @@ import { CounterService, type CounterRider } from '@/services/CounterService'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
 import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
+import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
+import type { KioskPushTarget } from '@/services/KioskService'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
 import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
     type GateScanSource } from '@/composables/useGateScanner'
@@ -1645,6 +1662,29 @@ const takingPhoto = ref(false)
 const takePhotoData = ref<string | null>(null)
 const takePhotoError = ref('')
 const takePhotoTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string; name: string | null } | null>(null)
+
+// Send a waiver / photo step for this rider to a front-desk kiosk (Script0311); refresh when it's done.
+const kioskOpen = ref(false)
+const kioskTarget = ref<KioskPushTarget | null>(null)
+const kioskRider = ref<string | null>(null)
+const kioskAllowWaiver = ref(true)
+const kioskAllowPhoto = ref(true)
+const kioskKind = ref<'ticket' | 'season_pass'>('ticket')
+function openSendToKiosk(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null,
+    allowWaiver: boolean, allowPhoto: boolean) {
+    kioskKind.value = kind
+    kioskTarget.value = kind === 'season_pass'
+        ? { targetKind: 'season_pass', purchaseId, eventId: passEventId.value }
+        : { targetKind: 'ticket', purchaseId }
+    kioskRider.value = name
+    kioskAllowWaiver.value = allowWaiver
+    kioskAllowPhoto.value = allowPhoto
+    kioskOpen.value = true
+}
+async function onKioskDone() {
+    flash('The kiosk finished: the gate is updated.', 'success')
+    await refreshAfterPhoto(kioskKind.value)
+}
 
 function openTakePhoto(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null) {
     takePhotoTarget.value = { kind, purchaseId, name }

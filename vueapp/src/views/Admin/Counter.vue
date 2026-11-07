@@ -628,6 +628,8 @@
                                             :loading="linkBusy[li.purchaseId] === 'device'" @click="signOnDevice(li)">
                                             Sign on this device
                                         </v-btn>
+                                        <v-btn size="small" variant="text" prepend-icon="mdi-tablet-cellphone"
+                                            @click="sendRiderToKiosk(li)">Send to kiosk</v-btn>
                                     </div>
                                     <div v-if="riderLinks[li.purchaseId]" class="d-flex align-start ga-3 mt-2">
                                         <QrCode v-if="riderLinks[li.purchaseId]!.link" :value="riderLinks[li.purchaseId]!.link!" :size="96" />
@@ -785,6 +787,9 @@
             </v-card>
         </v-dialog>
 
+        <SendToKioskDialog v-model="kioskPushOpen" :target="kioskPushTarget" :rider-name="kioskPushRider"
+            @done="refreshRiderWaivers" />
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
@@ -812,7 +817,8 @@ import CreditLookupField from '@/components/CreditLookupField.vue'
 import { type CreditLookupResult } from '@/services/CreditService'
 import PhoneField from '@/components/PhoneField.vue'
 import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
-import type { KioskSignupItem } from '@/services/KioskService'
+import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
+import type { KioskSignupItem, KioskPushTarget } from '@/services/KioskService'
 
 type Customer = CounterRider
 type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
@@ -1456,6 +1462,16 @@ async function refreshRiderWaivers() {
     } finally {
         refreshingWaivers.value = false
     }
+}
+
+// Another rider can finish their waiver / photo on a front-desk kiosk instead (Script0311).
+const kioskPushOpen = ref(false)
+const kioskPushTarget = ref<KioskPushTarget | null>(null)
+const kioskPushRider = ref<string | null>(null)
+function sendRiderToKiosk(li: { purchaseId: string; riderName: string }) {
+    kioskPushTarget.value = { targetKind: 'ticket', purchaseId: li.purchaseId }
+    kioskPushRider.value = li.riderName
+    kioskPushOpen.value = true
 }
 
 function stopWaiverPoll() {

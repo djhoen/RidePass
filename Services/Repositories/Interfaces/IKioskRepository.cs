@@ -37,5 +37,22 @@ namespace Services.Repositories.Interfaces
             Guid? signatureId, Guid? photoId, Guid? byUserId);
         /// <summary>Dismissed: also drops a held signature image.</summary>
         Task<bool> Dismiss(Guid id, Guid tenantId, Guid? byUserId);
+
+        // ── Pushed steps (Script0311). Expired requests are expired lazily on every read. ──
+        /// <summary>A new request, or null when the kiosk already has an active one (one at a time).</summary>
+        Task<KioskPush?> CreatePush(KioskPush push);
+        Task<KioskPush?> GetPush(Guid id, Guid tenantId);
+        /// <summary>The kiosk's active request (pending, on screen or being completed), if any.</summary>
+        Task<KioskPush?> GetActivePush(Guid tenantId, Guid kioskDeviceId);
+        /// <summary>The kiosk put it on screen.</summary>
+        Task<bool> StartPush(Guid id, Guid tenantId, Guid kioskDeviceId);
+        /// <summary>Takes the request for completion: only its own kiosk, once, before expiry (one statement).</summary>
+        Task<KioskPush?> ClaimPush(Guid id, Guid tenantId, Guid kioskDeviceId);
+        Task FinishPush(Guid id, Guid tenantId, Guid? signatureId, Guid? photoId);
+        /// <summary>Completion failed: the kiosk may try again (while it hasn't expired).</summary>
+        Task ReleasePush(Guid id, Guid tenantId);
+        Task<bool> CancelPush(Guid id, Guid tenantId, Guid? byUserId);
+        /// <summary>The kiosk is idle and asking for work.</summary>
+        Task TouchPoll(Guid kioskDeviceId, Guid tenantId);
     }
 }

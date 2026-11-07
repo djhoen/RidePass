@@ -9,7 +9,7 @@ namespace Services.Repositories
         private const string DeviceColumns = @"
             id, tenant_id AS TenantId, name, credential_hash AS CredentialHash,
             pairing_code_hash AS PairingCodeHash, pairing_expires_at AS PairingExpiresAt, paired_at AS PairedAt,
-            last_seen_at AS LastSeenAt, revoked_at AS RevokedAt, revoked_by_user_id AS RevokedByUserId,
+            last_seen_at AS LastSeenAt, last_poll_at AS LastPollAt, revoked_at AS RevokedAt, revoked_by_user_id AS RevokedByUserId,
             created_by_user_id AS CreatedByUserId, created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string SignupColumns = @"
@@ -191,5 +191,94 @@ namespace Services.Repositories
                        held_signature_data_url = NULL
                  WHERE id = @id AND tenant_id = @tenantId AND dismissed_at IS NULL",
                 new { id, tenantId, byUserId }) == 1;
+
+        // ── Pushed steps (Script0311) ────────────────────────────────────────────────────────────
+
+        private const string PushColumns = @"
+            id, tenant_id AS TenantId, kiosk_device_id AS KioskDeviceId, created_by_user_id AS CreatedByUserId,
+            created_at AS CreatedAt, expires_at AS ExpiresAt, want_waiver AS WantWaiver, want_photo AS WantPhoto,
+            target_kind AS TargetKind, event_ticket_purchase_id AS EventTicketPurchaseId,
+            season_pass_purchase_id AS SeasonPassPurchaseId, event_id AS EventId, kiosk_signup_id AS KioskSignupId,
+            sign_mode AS SignMode, waiver_id AS WaiverId, rider_first_name AS RiderFirstName, status,
+            started_at AS StartedAt, completed_at AS CompletedAt, cancelled_at AS CancelledAt,
+            cancelled_by_user_id AS CancelledByUserId, result_signature_id AS ResultSignatureId,
+            result_photo_id AS ResultPhotoId";
+
+        /// <summary>Requests past their expiry are expired (lazily, whenever pushes are read).</summary>
+        private Task ExpireStale(Guid tenantId) => _db.Execute(@"
+            UPDATE kiosk_push SET status = 'expired'
+             WHERE tenant_id = @tenantId AND status IN ('pending', 'in_progress') AND expires_at <= now()",
+            new { tenantId });
+
+        public async Task<KioskPush?> CreatePush(KioskPush p)
+        {
+            await ExpireStale(p.TenantId);
+            var sql = $@"
+                INSERT INTO kiosk_push
+                    (tenant_id, kiosk_device_id, created_by_user_id, expires_at, want_waiver, want_photo, target_kind,
+                     event_ticket_purchase_id, season_pass_purchase_id, event_id, kiosk_signup_id,
+                     sign_mode, waiver_id, rider_first_name)
+                VALUES (@TenantId, @KioskDeviceId, @CreatedByUserId, @ExpiresAt, @WantWaiver, @WantPhoto, @TargetKind,
+                        @EventTicketPurchaseId, @SeasonPassPurchaseId, @EventId, @KioskSignupId,
+                        @SignMode, @WaiverId, @RiderFirstName)
+                ON CONFLICT (kiosk_device_id) WHERE status IN ('pending', 'in_progress', 'completing') DO NOTHING
+                RETURNING {PushColumns}";
+            return (await _db.Query<KioskPush>(sql, p)).FirstOrDefault();
+        }
+
+        public async Task<KioskPush?> GetPush(Guid id, Guid tenantId)
+        {
+            await ExpireStale(tenantId);
+            var sql = $"SELECT {PushColumns} FROM kiosk_push WHERE id = @id AND tenant_id = @tenantId";
+            return (await _db.Query<KioskPush>(sql, new { id, tenantId })).FirstOrDefault();
+        }
+
+        public async Task<KioskPush?> GetActivePush(Guid tenantId, Guid kioskDeviceId)
+        {
+            await ExpireStale(tenantId);
+            var sql = $@"SELECT {PushColumns} FROM kiosk_push
+                         WHERE tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
+                           AND status IN ('pending', 'in_progress', 'completing')
+                         LIMIT 1";
+            return (await _db.Query<KioskPush>(sql, new { tenantId, kioskDeviceId })).FirstOrDefault();
+        }
+
+        public async Task<bool> StartPush(Guid id, Guid tenantId, Guid kioskDeviceId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET status = 'in_progress', started_at = COALESCE(started_at, now())
+                 WHERE id = @id AND tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
+                   AND status IN ('pending', 'in_progress') AND expires_at > now()",
+                new { id, tenantId, kioskDeviceId }) == 1;
+
+        public async Task<KioskPush?> ClaimPush(Guid id, Guid tenantId, Guid kioskDeviceId)
+        {
+            var sql = $@"
+                UPDATE kiosk_push SET status = 'completing'
+                 WHERE id = @id AND tenant_id = @tenantId AND kiosk_device_id = @kioskDeviceId
+                   AND status IN ('pending', 'in_progress') AND expires_at > now()
+                RETURNING {PushColumns}";
+            return (await _db.Query<KioskPush>(sql, new { id, tenantId, kioskDeviceId })).FirstOrDefault();
+        }
+
+        public Task FinishPush(Guid id, Guid tenantId, Guid? signatureId, Guid? photoId) => _db.Execute(@"
+            UPDATE kiosk_push SET status = 'done', completed_at = now(),
+                   result_signature_id = @signatureId, result_photo_id = @photoId
+             WHERE id = @id AND tenant_id = @tenantId AND status = 'completing'",
+            new { id, tenantId, signatureId, photoId });
+
+        public Task ReleasePush(Guid id, Guid tenantId) => _db.Execute(@"
+            UPDATE kiosk_push SET status = 'in_progress'
+             WHERE id = @id AND tenant_id = @tenantId AND status = 'completing'",
+            new { id, tenantId });
+
+        public async Task<bool> CancelPush(Guid id, Guid tenantId, Guid? byUserId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_push SET status = 'cancelled', cancelled_at = now(), cancelled_by_user_id = @byUserId
+                 WHERE id = @id AND tenant_id = @tenantId AND status IN ('pending', 'in_progress')",
+                new { id, tenantId, byUserId }) == 1;
+
+        public Task TouchPoll(Guid kioskDeviceId, Guid tenantId) => _db.Execute(
+            "UPDATE kiosk_device SET last_poll_at = now() WHERE id = @kioskDeviceId AND tenant_id = @tenantId",
+            new { kioskDeviceId, tenantId });
     }
 }

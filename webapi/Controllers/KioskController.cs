@@ -37,13 +37,14 @@ namespace webapi.Controllers
         private readonly ITenantRepository _tenants;
         private readonly IRiderPhotos _photos;
         private readonly IKioskSignupWriter _writer;
+        private readonly IKioskPushService _pushes;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ITenantContext _tenantContext;
 
         public KioskController(IKioskAuthenticator auth, IKioskRepository kiosks, ICounterRiderProfiles profiles,
             IUserRepository users, IWaiverRepository waivers, Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantRepository tenants, IRiderPhotos photos, Services.Audit.IAuditLogger audit, ITenantContext tenantContext,
-            IKioskSignupWriter writer)
+            IKioskSignupWriter writer, IKioskPushService pushes)
         {
             _auth = auth;
             _kiosks = kiosks;
@@ -54,6 +55,7 @@ namespace webapi.Controllers
             _tenants = tenants;
             _photos = photos;
             _writer = writer;
+            _pushes = pushes;
             _audit = audit;
             _tenantContext = tenantContext;
         }
@@ -264,6 +266,91 @@ namespace webapi.Controllers
                 targetId: signupId, tenantId: tenantId,
                 metadata: new { kioskDeviceId = device.Id, minor = plan.IsMinor, signed = attached.SignatureId is not null, photo = attached.PhotoId is not null });
             return new ApiResponses().OkResult(new { CheckedIn = true });
+        }
+
+        // ── Steps staff pushed to this kiosk (Script0311) ─────────────────────────────────────────
+
+        /// <summary>
+        /// The idle kiosk asks for work (every few seconds, while on its start screen). Returns this kiosk's
+        /// pending or on-screen request, with only what the screens need: the rider's first name, the steps,
+        /// how the waiver is signed and its text. Never an email, phone, birthdate or last name.
+        /// </summary>
+        [HttpGet("Push")]
+        [EnableRateLimiting("kiosk-poll")]
+        public async Task<IActionResult> Push()
+        {
+            var device = await _auth.Authenticate(Request);
+            if (device is null) return NotPaired();
+            await _kiosks.TouchPoll(device.Id, device.TenantId);
+            var push = await _kiosks.GetActivePush(device.TenantId, device.Id);
+            if (push is null || push.Status == KioskPush.StatusCompleting) return new ApiResponses().OkResult(null);
+            var waiver = push.WantWaiver && push.WaiverId is Guid wid ? await _waivers.GetById(wid, device.TenantId) : null;
+            return new ApiResponses().OkResult(new KioskPushPayload
+            {
+                PushId = push.Id,
+                FirstName = push.RiderFirstName,
+                WantWaiver = push.WantWaiver,
+                WantPhoto = push.WantPhoto,
+                SignAs = push.WantWaiver ? push.SignMode : null,
+                WaiverId = waiver?.Id,
+                WaiverTitle = waiver?.Title,
+                WaiverBody = waiver?.Body,
+                ExpiresAtUtc = DateTime.SpecifyKind(push.ExpiresAt, DateTimeKind.Utc),
+            });
+        }
+
+        /// <summary>The kiosk put the request on screen (staff see "On screen").</summary>
+        [HttpPost("Push/{id:guid}/Start")]
+        [EnableRateLimiting("kiosk")]
+        public async Task<IActionResult> StartPush(Guid id)
+        {
+            var device = await _auth.Authenticate(Request);
+            if (device is null) return NotPaired();
+            return await _kiosks.StartPush(id, device.TenantId, device.Id)
+                ? new ApiResponses().OkResult()
+                : new ApiResponses().ConflictResult("This request is no longer active.");
+        }
+
+        /// <summary>
+        /// Completes this kiosk's own request, once, before it expires: the waiver through the signing-link path
+        /// (guardian rules and the gate's linking), the photo through the gate's photo store.
+        /// </summary>
+        [HttpPost("Push/{id:guid}/Complete")]
+        [EnableRateLimiting("kiosk")]
+        public async Task<IActionResult> CompletePush(Guid id, [FromBody] KioskPushCompleteRequest req)
+        {
+            var device = await _auth.Authenticate(Request);
+            if (device is null) return NotPaired();
+            var current = await _kiosks.GetPush(id, device.TenantId);
+            // Another kiosk's request reads as gone: a kiosk can't even tell it exists.
+            if (current is null || current.KioskDeviceId != device.Id
+                || current.Status is not (KioskPush.StatusPending or KioskPush.StatusInProgress))
+                return new ApiResponses().ConflictResult("This request is no longer active.");
+            var invalid = _pushes.ValidateCompletion(current, req);
+            if (invalid is not null) return new ApiResponses().BadRequestResult(invalid);
+
+            var claimed = await _kiosks.ClaimPush(id, device.TenantId, device.Id);
+            if (claimed is null) return new ApiResponses().ConflictResult("This request is no longer active.");
+            (Guid? SignatureId, Guid? PhotoId, string? Error) done;
+            try
+            {
+                done = await _pushes.Complete(claimed, req, HttpContext.Connection.RemoteIpAddress?.ToString());
+            }
+            catch
+            {
+                await _kiosks.ReleasePush(id, device.TenantId);
+                throw;
+            }
+            if (done.Error is not null)
+            {
+                await _kiosks.ReleasePush(id, device.TenantId);
+                return new ApiResponses().BadRequestResult(done.Error);
+            }
+            await _kiosks.FinishPush(id, device.TenantId, done.SignatureId, done.PhotoId);
+            await _audit.Log("kiosk.push_completed", $"Kiosk \"{device.Name}\" completed the request for {claimed.RiderFirstName}",
+                targetKind: "kiosk_push", targetId: id, tenantId: device.TenantId,
+                metadata: new { signatureId = done.SignatureId, photoId = done.PhotoId });
+            return new ApiResponses().OkResult(new { Done = true });
         }
 
         private async Task<Services.Repositories.Data.PaymentData.TenantWaiver?> ActiveWaiver(Guid tenantId)

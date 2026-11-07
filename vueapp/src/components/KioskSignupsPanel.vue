@@ -39,6 +39,9 @@
                     <span v-if="s.matchedGuardianName">(guardian {{ s.matchedGuardianName }})</span>
                 </div>
             </div>
+            <!-- A confirmed sign-up still missing its waiver or photo (e.g. the waiver changed): finish it on a kiosk. -->
+            <v-btn v-if="!s.matchPending && !s.dismissedAtUtc && (!s.waiverSigned || !s.photoId)"
+                size="small" variant="text" icon="mdi-tablet-cellphone" aria-label="Send to kiosk" @click="sendToKiosk(s)"></v-btn>
             <template v-if="selectable && !s.handledAtUtc">
                 <v-btn size="small" color="primary" variant="tonal" @click="pick(s)">{{ s.matchPending ? 'Check ID' : 'Select' }}</v-btn>
                 <v-btn size="small" variant="text" icon="mdi-close" aria-label="Dismiss" @click="dismiss(s)"></v-btn>
@@ -47,6 +50,9 @@
         <div v-if="hiddenHandled > 0" class="text-caption mt-1">
             <a href="#" @click.prevent="showHandled = !showHandled">{{ showHandled ? 'Hide' : 'Show' }} {{ hiddenHandled }} already served</a>
         </div>
+
+        <SendToKioskDialog v-model="kioskOpen" :target="kioskTarget" :rider-name="kioskRider"
+            :allow-waiver="kioskAllowWaiver" :allow-photo="kioskAllowPhoto" @done="load" />
 
         <!-- A sign-up that matched an existing account: attached only after staff check ID. -->
         <v-dialog v-model="confirmOpen" max-width="480">
@@ -82,7 +88,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
-import { KioskAdminService, type KioskSignupItem } from '@/services/KioskService'
+import { KioskAdminService, type KioskSignupItem, type KioskPushTarget } from '@/services/KioskService'
+import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
@@ -117,6 +124,20 @@ async function load() {
     } finally {
         loading.value = false
     }
+}
+
+// Finish a confirmed sign-up's missing waiver / photo on a kiosk (Script0311).
+const kioskOpen = ref(false)
+const kioskTarget = ref<KioskPushTarget | null>(null)
+const kioskRider = ref<string | null>(null)
+const kioskAllowWaiver = ref(true)
+const kioskAllowPhoto = ref(true)
+function sendToKiosk(s: KioskSignupItem) {
+    kioskTarget.value = { targetKind: 'kiosk_signup', kioskSignupId: s.id }
+    kioskRider.value = `${s.firstName} ${s.lastName}`
+    kioskAllowWaiver.value = !s.waiverSigned
+    kioskAllowPhoto.value = true
+    kioskOpen.value = true
 }
 
 async function dismiss(s: KioskSignupItem) {
