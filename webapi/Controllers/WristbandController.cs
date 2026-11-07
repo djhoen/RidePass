@@ -108,8 +108,9 @@ namespace webapi.Controllers
                 if (await BandBlockForTicket(ticket) is { } ticketBlock)
                     return GateBlockResult.Result(ticketBlock, "ticket", ticket.RedemptionToken, ticket.Id);
 
-                // A code on a rider's day band today means that rider (Script0312).
-                if (await _dayBands.ActiveByCodeToday(code) is { } dayBand)
+                // A code on a rider's day band today means that rider (Script0312). (Another ticket's band at this
+                // event is refused by the event-scoped link below, as before.)
+                if (await _dayBands.CodeInUse(code, TodayLocal()) is { DayBand: { } dayBand })
                     return new ApiResponses().BadRequestResult(
                         $"That band is already on {dayBand.RiderName} today. Use a different band.");
 
@@ -132,7 +133,11 @@ namespace webapi.Controllers
             var pass = await _passes.GetPurchase(reservation.SeasonPassPurchaseId);
             if (pass is null || pass.TenantId != TenantId) return new ApiResponses().NotFoundResult("That pass no longer exists.");
             var product = await _passes.GetProduct(pass.ProductId, TenantId);
-            var result = await _dayBands.IssueForPass(pass, product, reservationId, reservation.EventId, code, null, UserId);
+            // The band is for the admission's own business day (its walk-up date, else its event's local day),
+            // judged against its own event. Linking a different band to an admission that already carries the
+            // rider's band corrects it (a replacement "corrected at the gate", audited).
+            var result = await _dayBands.IssueForPass(pass, product, reservationId, reservation.EventId, code, null, UserId,
+                businessDate: reservation.BusinessDate ?? TodayLocal(), correcting: reservationId);
             if (!result.Ok)
                 return result.GateBlock is { } block
                     ? GateBlockResult.Result(block, "season_pass", pass.RedemptionToken, pass.Id, reservation.EventId)
@@ -153,8 +158,9 @@ namespace webapi.Controllers
 
             var n = hasTicket
                 ? await _wristbands.UnlinkTicket(req.TicketId!.Value, TenantId)
-                // The day band is voided (kept, with the reason), and any older row removed.
-                : await _dayBands.VoidForReservation(req.SeasonPassReservationId!.Value, "unlinked at the gate", UserId)
+                // Only this admission comes off the rider's day band; the band stays worn (it may cover their other
+                // admissions, and it is still on their wrist). Any older row for the admission is removed.
+                : await _dayBands.UnlinkAdmission(req.SeasonPassReservationId!.Value)
                   + await _wristbands.UnlinkReservation(req.SeasonPassReservationId!.Value, TenantId);
             return n == 0 ? new ApiResponses().NotFoundResult("No band is linked to that entry.") : new ApiResponses().OkResult();
         }
@@ -168,7 +174,9 @@ namespace webapi.Controllers
             var trimmed = (code ?? "").Trim();
             if (trimmed.Length == 0) return new ApiResponses().BadRequestResult("Scan or enter the band's code.");
 
-            if (await _dayBands.ActiveByCodeToday(trimmed) is { } day)
+            // One question for both stores, the same one a band issue asks: who has this code today?
+            var use = await _dayBands.CodeInUse(trimmed, TodayLocal());
+            if (use?.DayBand is { } day)
             {
                 var admissions = await _dayBands.Admissions(day.Id);
                 var pass = day.SeasonPassPurchaseId is Guid pid ? await _passes.GetPurchase(pid) : null;
@@ -210,7 +218,7 @@ namespace webapi.Controllers
                 });
             }
 
-            var hit = await _wristbands.ResolveCode(TenantId, trimmed, TodayLocal());
+            var hit = use?.Legacy;
             if (hit is null)
                 return new ApiResponses().NotFoundResult("No rider wears that band today.");
             var riderName = $"{hit.RiderFirstName} {hit.RiderLastName}".Trim();

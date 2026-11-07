@@ -2096,20 +2096,15 @@ namespace webapi.Controllers
             // The day's wristband (Script0312). This flip has no band field: when the track requires a band
             // at check-in, the holder must already wear today's band (else admit from the gate screen, which
             // bands in the same step). A band already worn covers this admission too.
-            var bandPass = ctx is not null && _tenantContext.Tenant.WristbandsEnabled
-                ? await _passes.GetPurchase(ctx.PassPurchaseId) : null;
-            var worn = bandPass is not null && bandPass.TenantId == _tenantContext.TenantId
-                ? await _dayBands.TodayForPass(bandPass) : null;
-            if (ctx is not null && _dayBands.RequiredAtCheckin && worn is null)
-                return new ApiResponses().BadRequestResult(
-                    "A wristband is required to check in. Admit this pass from the gate screen and scan the band.",
-                    new { code = "band_required" });
+            var bandRule = await _dayBands.ForCheckIn(ctx is not null && _tenantContext.Tenant.WristbandsEnabled
+                ? await _passes.GetPurchase(ctx.PassPurchaseId) : null);
+            if (bandRule.Refusal is { } needBand) return needBand;
 
             var affected = await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
             if (affected == 0)
                 return new ApiResponses().BadRequestResult(
                     "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
-            if (worn is not null) await _dayBands.LinkAdmission(worn.Id, id, staffId);
+            await _dayBands.CompleteCheckIn(bandRule, id, staffId);
             return new ApiResponses().OkResult();
         }
 
@@ -2199,6 +2194,7 @@ namespace webapi.Controllers
             // Registration gate (photo to verify the holder, product waiver when required),
             // then the event's own rider waiver, same standards as reservation check-in.
             var ctx = await _passes.GetPassForGateCheckIn(pass.Id, _tenantContext.TenantId);
+            Services.Waivers.WaiverGateDecision? gateDecision = null;
             if (ctx is not null)
             {
                 var registrationBlock = await RegistrationBlockReason(ctx);
@@ -2207,10 +2203,29 @@ namespace webapi.Controllers
                 // The gate decides, with or without an event: the pass's own signature (the
                 // product waiver, whose presence was checked just above) and, when an event is in
                 // play, the event's rider waiver; a minor needs a guardian's signature either way.
-                var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId);
-                if (waiverDecision.BlockReason is not null)
-                    return GateBlockResult.Result(waiverDecision, "season_pass", pass.RedemptionToken, pass.Id, eventId);
+                gateDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId);
+                if (gateDecision.BlockReason is not null)
+                    return GateBlockResult.Result(gateDecision, "season_pass", pass.RedemptionToken, pass.Id, eventId);
             }
+
+            // ── The day's wristband (Script0312) ──────────────────────────────────────────
+            // "Admit and band": a band scanned with the admission is checked in full BEFORE anything is
+            // written (the gate decision just made, the ID rule, one band per rider per day, one rider per
+            // band), so a band that can't go on leaves the rider un-admitted and their credit unspent. Under
+            // the lock only the write runs (a race since the check is caught by the unique indexes).
+            var wantBand = !string.IsNullOrWhiteSpace(request.BandCode);
+            RiderDayBandResult? bandCheck = null;
+            if (wantBand)
+            {
+                bandCheck = await _dayBands.Check(pass, product, eventId, request.BandCode, null, decided: gateDecision);
+                if (!bandCheck.Ok)
+                    return bandCheck.GateBlock is { } bandGate
+                        ? GateBlockResult.Result(bandGate, "season_pass", pass.RedemptionToken, pass.Id, eventId)
+                        : new ApiResponses().BadRequestResult(bandCheck.Error!, new { code = "band_refused" });
+            }
+            // The track's "wristband required at check-in" (one rule for every check-in path): a NEW admission
+            // needs a band, scanned now or already worn. A band already worn covers this admission too.
+            var bandRule = await _dayBands.ForCheckIn(pass, bandCheck);
 
             // Serialize double-scans of the same pass; the pre-checks below and the atomic
             // burn/upsert in both CreateGateCheckIn and CreateWalkUpGateCheckIn depend on it.
@@ -2218,43 +2233,22 @@ namespace webapi.Controllers
             // against today, event or no event.
             await using var redeemLock = await _db.AcquireAdvisoryLock($"season-pass-redeem:{pass.Id}");
 
-            // ── The day's wristband (Script0312) ──────────────────────────────────────────
-            // "Admit and band": a band scanned with the admission is checked in full BEFORE anything is
-            // written (gate, ID rule, one band per rider per day, one rider per band), so a band that
-            // can't go on leaves the rider un-admitted and their credit unspent. A band already worn
-            // today covers this admission too (a second event the same day).
-            var wantBand = !string.IsNullOrWhiteSpace(request.BandCode);
-            var worn = _tenantContext.Tenant.WristbandsEnabled ? await _dayBands.TodayForPass(pass) : null;
-            if (wantBand)
-            {
-                var bandCheck = await _dayBands.Check(pass, product, eventId, request.BandCode, null);
-                if (!bandCheck.Ok)
-                    return bandCheck.GateBlock is { } bandGate
-                        ? GateBlockResult.Result(bandGate, "season_pass", pass.RedemptionToken, pass.Id, eventId)
-                        : new ApiResponses().BadRequestResult(bandCheck.Error!, new { code = "band_refused" });
-            }
-            // The track requires a band to complete check-in: a NEW admission needs one, scanned now or
-            // already on the wrist. (An admission that already happened is reported as it is.)
-            IActionResult? BandRequired() =>
-                _dayBands.RequiredAtCheckin && !wantBand && worn is null
-                    ? new ApiResponses().BadRequestResult(
-                        "A wristband is required to check in. Scan the band, then Admit and band.", new { code = "band_required" })
-                    : null;
+            IActionResult? BandRequired() => bandRule.Refusal;
 
             async Task<IActionResult> Admitted(Guid reservationId, bool already, DateTime? checkedInAtUtc, int? creditsRemaining)
             {
-                Services.Repositories.Data.WristbandData.RiderDayBand? band = worn;
+                var band = bandRule.Worn;
                 string? bandError = null;
-                if (wantBand)
+                if (bandCheck is not null)
                 {
-                    // Re-checked inside IssueForPass; a refusal now can only be a race lost since the
-                    // pre-check, and the admission stands.
-                    var issued = await _dayBands.IssueForPass(pass, product, reservationId, eventId, request.BandCode, null, staffId);
+                    // Write only: everything was checked above. A refusal now can only be a race lost since
+                    // the check, and the admission stands.
+                    var issued = await _dayBands.Write(bandCheck, pass, reservationId, staffId);
                     if (issued.Ok) band = issued.Band; else bandError = issued.Error;
                 }
-                else if (worn is not null)
+                else
                 {
-                    await _dayBands.LinkAdmission(worn.Id, reservationId, staffId);
+                    await _dayBands.CompleteCheckIn(bandRule, reservationId, staffId);
                 }
                 return new ApiResponses().OkResult(new
                 {

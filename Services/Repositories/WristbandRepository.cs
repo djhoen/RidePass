@@ -54,12 +54,23 @@ namespace Services.Repositories
             "DELETE FROM event_wristband WHERE ticket_id = @ticketId AND tenant_id = @tenantId",
             new { ticketId, tenantId });
 
-        public async Task<WristbandResolution?> ResolveCode(Guid tenantId, string code, DateOnly todayLocal)
+        /// <summary>
+        /// The ONE validity window for a band in event_wristband (Script0189 / Script0237), used both to
+        /// resolve a scan and to ask whether a code is in use on a date: an event-scoped band counts on every
+        /// tenant-local date from its event's start through its end plus one day; a walk-up band counts on its
+        /// own date.
+        /// </summary>
+        private const string LiveOnDate = @"
+            ((w.event_id IS NOT NULL
+                AND (e.starts_at AT TIME ZONE @timezone)::date <= @date
+                AND ((e.ends_at + interval '1 day') AT TIME ZONE @timezone)::date >= @date)
+             OR (w.event_id IS NULL AND w.valid_on_date = @date))";
+
+        public async Task<WristbandResolution?> ResolveCodeOn(Guid tenantId, string code, DateOnly date, string timezone)
         {
-            // Codes repeat across events and days (cheap number packs restart ranges), so prefer the
-            // scope that's actually live: an event not over for more than a day, or a walk-up band
-            // issued for today. Newest first when several match.
-            const string sql = @"
+            // Codes repeat across events and days (cheap number packs restart ranges), so match only bands
+            // live on that date. Newest first when several match.
+            var sql = $@"
                 SELECT 'ticket' AS Source, w.ticket_id AS TicketId, w.event_id AS EventId,
                        NULL::uuid AS ReservationId, NULL::uuid AS PassPurchaseId,
                        w.code, w.linked_at AS LinkedAt,
@@ -68,11 +79,10 @@ namespace Services.Repositories
                        t.purchaser_name AS PurchaserName, t.race_number AS RaceNumber,
                        tt.name AS TierName, e.title AS EventTitle, e.starts_at AS SortKey
                 FROM event_wristband w
-                JOIN event_ticket_purchase t ON t.id = w.ticket_id
+                JOIN event_ticket_purchase t ON t.id = w.ticket_id AND t.tenant_id = @tenantId
                 JOIN event_ticket_tier tt ON tt.id = t.tier_id
-                JOIN event e ON e.id = w.event_id
-                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code)
-                  AND e.ends_at > now() - interval '1 day'
+                JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
+                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code) AND {LiveOnDate}
 
                 UNION ALL
 
@@ -80,23 +90,19 @@ namespace Services.Repositories
                        w.season_pass_reservation_id AS ReservationId, r.season_pass_purchase_id AS PassPurchaseId,
                        w.code, w.linked_at AS LinkedAt,
                        p.redemption_token AS RedemptionToken, p.status AS Status,
-                       NULL AS RiderFirstName, NULL AS RiderLastName,
+                       p.holder_first_name AS RiderFirstName, p.holder_last_name AS RiderLastName,
                        p.purchaser_name AS PurchaserName, NULL AS RaceNumber,
-                       NULL AS TierName, COALESCE(e2.title, 'Walk-up admission') AS EventTitle,
-                       COALESCE(e2.starts_at, w.linked_at) AS SortKey
+                       NULL AS TierName, COALESCE(e.title, 'Walk-up admission') AS EventTitle,
+                       COALESCE(e.starts_at, w.linked_at) AS SortKey
                 FROM event_wristband w
                 JOIN season_pass_reservation r ON r.id = w.season_pass_reservation_id
-                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
-                LEFT JOIN event e2 ON e2.id = w.event_id
-                WHERE w.tenant_id = @tenantId AND p.tenant_id = @tenantId AND lower(w.code) = lower(@code)
-                  AND (
-                        (w.event_id IS NOT NULL AND e2.ends_at > now() - interval '1 day')
-                     OR (w.event_id IS NULL AND w.valid_on_date = @todayLocal)
-                      )
+                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id AND p.tenant_id = @tenantId
+                LEFT JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
+                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code) AND {LiveOnDate}
 
                 ORDER BY SortKey DESC
                 LIMIT 1";
-            return (await _db.Query<WristbandResolution>(sql, new { tenantId, code, todayLocal })).FirstOrDefault();
+            return (await _db.Query<WristbandResolution>(sql, new { tenantId, code, date, timezone })).FirstOrDefault();
         }
 
         /// <summary>Links a band code to a season pass admission, replacing any band that admission
@@ -181,33 +187,6 @@ namespace Services.Repositories
                 new { ids, tenantId });
             // TicketId is non-null on every row here: the query filters on ticket_id = ANY(@ids).
             return rows.ToDictionary(r => r.TicketId!.Value, r => r.Code);
-        }
-
-        public async Task<string?> HolderOnDate(Guid tenantId, string code, DateOnly date, string timezone, Guid? exceptPassPurchaseId)
-        {
-            // A legacy (Script0189 / Script0237) band in use on that tenant-local date: a ticket band for an
-            // event starting that day, or a pass band for such an event or a walk-up on that date.
-            const string sql = @"
-                SELECT COALESCE(NULLIF(TRIM(COALESCE(t.rider_first_name,'') || ' ' || COALESCE(t.rider_last_name,'')), ''),
-                                t.purchaser_name)
-                FROM event_wristband w
-                JOIN event_ticket_purchase t ON t.id = w.ticket_id AND t.tenant_id = @tenantId
-                JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
-                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code)
-                  AND (e.starts_at AT TIME ZONE @timezone)::date = @date
-                UNION ALL
-                SELECT COALESCE(NULLIF(TRIM(COALESCE(p.holder_first_name,'') || ' ' || COALESCE(p.holder_last_name,'')), ''),
-                                p.purchaser_name)
-                FROM event_wristband w
-                JOIN season_pass_reservation r ON r.id = w.season_pass_reservation_id
-                JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id AND p.tenant_id = @tenantId
-                LEFT JOIN event e ON e.id = w.event_id AND e.tenant_id = @tenantId
-                WHERE w.tenant_id = @tenantId AND lower(w.code) = lower(@code)
-                  AND (@exceptPassPurchaseId::uuid IS NULL OR p.id <> @exceptPassPurchaseId::uuid)
-                  AND ((w.event_id IS NULL AND w.valid_on_date = @date)
-                    OR (w.event_id IS NOT NULL AND (e.starts_at AT TIME ZONE @timezone)::date = @date))
-                LIMIT 1";
-            return (await _db.Query<string>(sql, new { tenantId, code, date, timezone, exceptPassPurchaseId })).FirstOrDefault();
         }
     }
 }

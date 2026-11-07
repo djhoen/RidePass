@@ -1334,11 +1334,16 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT r.status, r.event_id AS EventId, r.check_in_date AS CheckInDate,
+                       -- The admission's business date: its walk-up date, else its event's tenant-local day.
+                       COALESCE(r.check_in_date,
+                                (e.starts_at AT TIME ZONE COALESCE(NULLIF(t.timezone, ''), 'UTC'))::date) AS BusinessDate,
                        p.purchaser_name AS PurchaserName,
                        p.id AS SeasonPassPurchaseId,
                        p.holder_first_name AS HolderFirstName, p.holder_last_name AS HolderLastName
                 FROM season_pass_reservation r
                 JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id
+                JOIN tenant t ON t.id = p.tenant_id
+                LEFT JOIN event e ON e.id = r.event_id AND e.tenant_id = p.tenant_id
                 WHERE r.id = @reservationId AND p.tenant_id = @tenantId
                 LIMIT 1";
             return (await _db.Query<SeasonPassReservationLinkContext>(sql, new { reservationId, tenantId })).FirstOrDefault();

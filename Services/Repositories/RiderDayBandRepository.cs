@@ -109,14 +109,15 @@ namespace Services.Repositories
                AND EXISTS (SELECT 1 FROM rider_day_band WHERE id = @bandId AND tenant_id = @tenantId AND voided_at IS NULL)",
                 new { tenantId, bandId, reservationId, ticketId, staffUserId });
 
-        public Task<int> VoidForReservation(Guid tenantId, Guid reservationId, string reason, Guid? staffUserId) =>
-            _db.Execute(@"
-                UPDATE rider_day_band b SET voided_at = now(), voided_by_user_id = @staffUserId, void_reason = @reason
-                 WHERE b.tenant_id = @tenantId AND b.voided_at IS NULL
-                   AND EXISTS (SELECT 1 FROM rider_day_band_admission a
-                                WHERE a.band_id = b.id AND a.tenant_id = @tenantId
-                                  AND a.season_pass_reservation_id = @reservationId)",
-                new { tenantId, reservationId, reason, staffUserId });
+        public Task<int> UnlinkReservation(Guid tenantId, Guid reservationId) => _db.Execute(@"
+            DELETE FROM rider_day_band_admission WHERE tenant_id = @tenantId AND season_pass_reservation_id = @reservationId",
+            new { tenantId, reservationId });
+
+        public async Task<bool> Covers(Guid tenantId, Guid bandId, Guid reservationId) =>
+            await _db.ExecuteScalar(@"
+                SELECT count(*)::int FROM rider_day_band_admission
+                 WHERE tenant_id = @tenantId AND band_id = @bandId AND season_pass_reservation_id = @reservationId",
+                new { tenantId, bandId, reservationId }) > 0;
 
         public async Task<List<RiderDayBandAdmissionRow>> ListAdmissions(Guid tenantId, Guid bandId) =>
             (await _db.Query<RiderDayBandAdmissionRow>(@"

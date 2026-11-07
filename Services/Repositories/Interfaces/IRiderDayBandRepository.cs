@@ -23,8 +23,11 @@ namespace Services.Repositories.Interfaces
         /// <summary>Ties another admission to a band (idempotent).</summary>
         Task LinkAdmission(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId, Guid? staffUserId);
 
-        /// <summary>Voids the active band covering a reservation. Returns rows voided.</summary>
-        Task<int> VoidForReservation(Guid tenantId, Guid reservationId, string reason, Guid? staffUserId);
+        /// <summary>Takes one admission off whatever band covers it (the band stays worn). Returns rows removed.</summary>
+        Task<int> UnlinkReservation(Guid tenantId, Guid reservationId);
+
+        /// <summary>The band covers that admission.</summary>
+        Task<bool> Covers(Guid tenantId, Guid bandId, Guid reservationId);
 
         /// <summary>The admissions a band covers.</summary>
         Task<List<RiderDayBandAdmissionRow>> ListAdmissions(Guid tenantId, Guid bandId);

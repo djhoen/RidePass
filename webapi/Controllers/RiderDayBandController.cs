@@ -67,7 +67,8 @@ namespace webapi.Controllers
                     ? GateBlockResult.Result(block, "season_pass", pass.RedemptionToken, pass.Id, latest.EventId)
                     : new ApiResponses().BadRequestResult(result.Error!, new { code = "band_refused" });
             // Every admission the holder has today is covered by the one band.
-            foreach (var r in admitted.Skip(1)) await _dayBands.LinkAdmission(result.Band!.Id, r.Id, StaffId());
+            var covered = new RiderDayBandCheckIn(result.Band, false);
+            foreach (var r in admitted.Skip(1)) await _dayBands.CompleteCheckIn(covered, r.Id, StaffId());
             var band = result.Band!;
             return new ApiResponses().OkResult(new
             {

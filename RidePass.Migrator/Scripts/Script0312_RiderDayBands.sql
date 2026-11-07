@@ -82,3 +82,18 @@ CREATE INDEX IF NOT EXISTS idx_rider_day_band_admission_ticket
     ON rider_day_band_admission (event_ticket_purchase_id) WHERE event_ticket_purchase_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_rider_day_band_admission_tenant
     ON rider_day_band_admission (tenant_id, band_id);
+
+-- Review round (amended in place, unpushed): an admission that stops being checked in (un-checked at the
+-- gate, cancelled, refunded) no longer counts toward a band. Done here, once, for every path that changes a
+-- reservation's status, current and future; the band itself stays (the rider still wears it).
+CREATE OR REPLACE FUNCTION rider_day_band_unlink_reservation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM rider_day_band_admission WHERE season_pass_reservation_id = NEW.id;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_rider_day_band_unlink_reservation ON season_pass_reservation;
+CREATE TRIGGER trg_rider_day_band_unlink_reservation
+    AFTER UPDATE OF status ON season_pass_reservation
+    FOR EACH ROW WHEN (OLD.status = 'checked_in' AND NEW.status IS DISTINCT FROM 'checked_in')
+    EXECUTE FUNCTION rider_day_band_unlink_reservation();

@@ -8,6 +8,8 @@ namespace Services.Repositories.Data.PaymentData
         public string Status { get; set; } = null!;
         public Guid? EventId { get; set; }
         public DateOnly? CheckInDate { get; set; }
+        /// <summary>The tenant-local date the admission is for: CheckInDate, else its event's local day (Script0312).</summary>
+        public DateOnly? BusinessDate { get; set; }
         public string PurchaserName { get; set; } = null!;
         // The pass behind the admission, so a band-issuing gate can check what the tenant requires
         // of the HOLDER (a verified ID) before the band goes on their wrist. No waiver field: the

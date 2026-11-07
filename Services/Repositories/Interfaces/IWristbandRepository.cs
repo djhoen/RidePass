@@ -16,12 +16,11 @@ namespace Services.Repositories.Interfaces
         Task<int> UnlinkTicket(Guid ticketId, Guid tenantId);
 
         /// <summary>
-        /// Resolves a band code back to its wearer, ticket or season pass admission alike. Codes are
-        /// unique per scope but reused across scopes, so this matches within the tenant and prefers
-        /// what is live: events not over for more than a day, or a walk-up band issued for
-        /// <paramref name="todayLocal"/>, newest first.
+        /// The band in this store live on that tenant-local date with that code (ticket or pass admission alike),
+        /// newest first: an event band from its event's start through its end plus one day, a walk-up band on its
+        /// own date. The one window used both to resolve a scan and to ask whether a code is in use that day.
         /// </summary>
-        Task<WristbandResolution?> ResolveCode(Guid tenantId, string code, DateOnly todayLocal);
+        Task<WristbandResolution?> ResolveCodeOn(Guid tenantId, string code, DateOnly date, string timezone);
 
         /// <summary>Band codes for a set of tickets (the gate order view), keyed by ticket id.</summary>
         Task<Dictionary<Guid, string>> GetCodesForTickets(IEnumerable<Guid> ticketIds, Guid tenantId);
@@ -41,10 +40,5 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Band codes for a set of season pass admissions, keyed by reservation id.</summary>
         Task<Dictionary<Guid, string>> GetCodesForReservations(IEnumerable<Guid> reservationIds, Guid tenantId);
-
-        /// <summary>Who wears this code in event_wristband on that tenant-local date (a ticket band for an event
-        /// that day, or a pass band for such an event or a walk-up that date), other than this pass; null if nobody.
-        /// Day bands (rider_day_band) check it so one code never means two riders on the same day.</summary>
-        Task<string?> HolderOnDate(Guid tenantId, string code, DateOnly date, string timezone, Guid? exceptPassPurchaseId);
     }
 }

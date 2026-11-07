@@ -23,7 +23,13 @@ namespace UnitTests
         {
             var mine = Band("AbC-1");
             Assert.That(RiderDayBandRules.Decide(mine, mine, "abc-1", false), Is.EqualTo(DayBandAction.AlreadyWorn));
-            Assert.That(RiderDayBandRules.Decide(mine, mine, "ABC-1", true), Is.EqualTo(DayBandAction.AlreadyWorn));
+        }
+
+        [Test]
+        public void ReplacingWithTheBandAlreadyWorn_IsItsOwnRefusal()
+        {
+            var mine = Band("AbC-1");
+            Assert.That(RiderDayBandRules.Decide(mine, mine, "ABC-1", true), Is.EqualTo(DayBandAction.ReplaceWithSameBand));
         }
 
         [Test]

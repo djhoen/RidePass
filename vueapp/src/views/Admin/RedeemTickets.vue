@@ -539,6 +539,8 @@
                         <v-text-field v-model="passBandCode" label="Wristband (scan or type)" density="compact"
                             hide-details prepend-inner-icon="mdi-watch" autocomplete="off"
                             @keyup.enter="bandAdmittedHolder"></v-text-field>
+                        <v-btn size="small" variant="text" :color="bandArmed ? 'primary' : undefined" prepend-icon="mdi-barcode-scan"
+                            @click="armBandScan">{{ bandArmed ? 'Waiting for the band scan…' : 'Scan band now' }}</v-btn>
                         <v-btn color="primary" :loading="bandBusy" :disabled="!passBandCode.trim()"
                             @click="bandAdmittedHolder">Band</v-btn>
                     </div>
@@ -571,6 +573,8 @@
                             class="mb-2" prepend-inner-icon="mdi-watch" autocomplete="off"
                             :label="pass.wristbandRequiredAtCheckin ? 'Wristband (required): scan or type' : 'Wristband (optional): scan or type'"
                             @keyup.enter="admitPass"></v-text-field>
+                        <div v-if="admitBandField" class="mb-2"><v-btn size="small" variant="text" :color="bandArmed ? 'primary' : undefined" prepend-icon="mdi-barcode-scan"
+                            @click="armBandScan">{{ bandArmed ? 'Waiting for the band scan…' : 'Scan band now' }}</v-btn></div>
                         <div class="d-flex align-center ga-2">
                             <v-spacer></v-spacer>
                             <span v-if="passAdmitBlock || admitBandBlock" class="text-caption text-medium-emphasis">{{ passAdmitBlock || admitBandBlock }}</span>
@@ -594,6 +598,8 @@
                         class="mb-2" prepend-inner-icon="mdi-watch" autocomplete="off"
                         :label="pass.wristbandRequiredAtCheckin ? 'Wristband (required): scan or type' : 'Wristband (optional): scan or type'"
                         @keyup.enter="admitPass"></v-text-field>
+                        <div v-if="admitBandField" class="mb-2"><v-btn size="small" variant="text" :color="bandArmed ? 'primary' : undefined" prepend-icon="mdi-barcode-scan"
+                            @click="armBandScan">{{ bandArmed ? 'Waiting for the band scan…' : 'Scan band now' }}</v-btn></div>
                     <div class="d-flex align-center ga-2">
                         <!-- Sign-up track: warn before the click that this event has no reservation
                              on file. The server enforces it either way. -->
@@ -1246,10 +1252,11 @@ async function handleScan(scan: GateScan, raw: string, source: GateScanSource) {
     if (scanning.value) await stopScan()
     if (source === 'codes') manualInput.value = raw.trim()
 
-    // A band scanned while the open pass card is waiting for one goes into its band field ("Admit and
+    // A band scanned while staff armed the open pass card ("Scan band now") goes into its band field ("Admit and
     // band" / "Band"), not to a lookup. The server still refuses a band already on someone else.
     if (scan.kind === 'band' && source === 'page' && passAwaitingBand.value) {
         passBandCode.value = scan.code
+        disarmBandScan()
         flash(`Band ${scan.code} scanned. ${passAdmittedToday.value ? 'Press Band.' : 'Press Admit and band.'}`, 'success')
         return
     }
@@ -1900,7 +1907,24 @@ const replaceBandCode = ref('')
 const replaceBandReason = ref<'lost' | 'broken' | 'other'>('lost')
 const replaceBandError = ref('')
 const replaceBandBusy = ref(false)
-watch(passToken, () => { passBandCode.value = '' })
+watch(passToken, () => { passBandCode.value = ''; disarmBandScan() })
+
+// A band scanned anywhere on the page goes into the card's band field only when staff armed it ("Scan
+// band now", for 30 s). Otherwise a scan resolves as usual (looking up whoever wears it). Typing or
+// scanning into the focused band field always works: the page scanner leaves that field alone.
+const BAND_ARM_MS = 30_000
+const bandArmed = ref(false)
+let bandArmTimer: ReturnType<typeof setTimeout> | null = null
+function armBandScan() {
+    disarmBandScan()
+    bandArmed.value = true
+    bandArmTimer = setTimeout(disarmBandScan, BAND_ARM_MS)
+}
+function disarmBandScan() {
+    if (bandArmTimer) { clearTimeout(bandArmTimer); bandArmTimer = null }
+    bandArmed.value = false
+}
+onBeforeUnmount(disarmBandScan)
 
 const passAdmittedToday = computed(() =>
     pass.value?.todaysReservations.some(r => r.status === 'checked_in') ?? false)
@@ -1917,8 +1941,8 @@ const dayPassLabel = computed(() => {
 /** The admit row offers a band field: wristbands on and the holder not banded today. */
 const admitBandField = computed(() => !!branding.wristbandsEnabled && !!pass.value && !pass.value.todaysBand)
 
-/** Waiting for a band: a scanned band fills the field instead of looking someone up. */
-const passAwaitingBand = computed(() => admitBandField.value && !passAdmitBlock.value)
+/** Armed and waiting for a band: a page-level band scan fills the field instead of looking someone up. */
+const passAwaitingBand = computed(() => bandArmed.value && admitBandField.value)
 
 const admitBandBlock = computed(() =>
     admitBandField.value && pass.value?.wristbandRequiredAtCheckin && !passBandCode.value.trim()

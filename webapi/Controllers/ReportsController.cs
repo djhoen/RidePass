@@ -1235,6 +1235,7 @@ namespace webapi.Controllers
                     else await _tickets.UndoRedeemed(purchaseId, tenantId);
                     break;
                 case "season_pass":
+                    webapi.Helpers.RiderDayBandCheckIn? bandRule = null;
                     if (req.CheckedIn)
                     {
                         // A season-pass holder is a rider; enforce the event's rider waiver at check-in.
@@ -1244,39 +1245,29 @@ namespace webapi.Controllers
                             // Same verdict as the gate screen: the pass's own signature or the
                             // event waiver, and a guardian's signature for a minor.
                             var waiverDecision = await _waiverGate.EvaluatePass(tenantId, ctx.PassPurchaseId, ctx.EventId);
+                            // The pass itself, read once: its token for a block's verify action and its
+                            // holder for the day band. Only when one of them needs it.
+                            var sp = waiverDecision.BirthdateBlocked || _tenantContext.Tenant.WristbandsEnabled
+                                ? await _seasonPasses.GetPurchase(ctx.PassPurchaseId) : null;
+                            if (sp is not null && sp.TenantId != tenantId) sp = null;
                             if (waiverDecision.BlockReason is not null)
-                            {
-                                // The pass's own token is what its verify endpoint takes; loaded only
-                                // on a block, when the screen needs it.
-                                var passToken = waiverDecision.BirthdateBlocked
-                                    ? (await _seasonPasses.GetPurchase(ctx.PassPurchaseId)) is { } sp && sp.TenantId == tenantId
-                                        ? sp.RedemptionToken : (Guid?)null
-                                    : null;
-                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "season_pass", passToken, ctx.PassPurchaseId, ctx.EventId);
-                            }
+                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "season_pass",
+                                    waiverDecision.BirthdateBlocked ? sp?.RedemptionToken : null, ctx.PassPurchaseId, ctx.EventId);
+                            // The day's wristband (Script0312), the same rule as every check-in path: this toggle
+                            // has no band field, so a required band must already be worn; a worn band covers this
+                            // admission too.
+                            bandRule = await _dayBands.ForCheckIn(sp);
+                            if (bandRule.Refusal is { } needBand) return needBand;
                         }
                     }
-                    // The day's wristband (Script0312): this toggle has no band field, so when the track
-                    // requires a band at check-in the holder must already wear today's; a worn band covers
-                    // this admission too.
-                    Services.Repositories.Data.WristbandData.RiderDayBand? worn = null;
-                    if (req.CheckedIn && _tenantContext.Tenant.WristbandsEnabled
-                        && await _seasonPasses.GetReservationForCheckIn(purchaseId, tenantId) is { } bandCtx
-                        && await _seasonPasses.GetPurchase(bandCtx.PassPurchaseId) is { } bandPass && bandPass.TenantId == tenantId)
-                    {
-                        worn = await _dayBands.TodayForPass(bandPass);
-                        if (worn is null && _dayBands.RequiredAtCheckin)
-                            return new ApiResponses().BadRequestResult(
-                                "A wristband is required to check in. Admit this pass from the gate screen and scan the band.",
-                                new { code = "band_required" });
-                    }
+                    // Un-checking takes the admission off its band (Script0312 trigger), the band stays worn.
                     var affected = await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,
                         req.CheckedIn ? "checked_in" : "reserved",
                         req.CheckedIn ? staffId : null);
                     if (req.CheckedIn && affected == 0)
                         return new ApiResponses().BadRequestResult(
                             "This pass can't be checked in. It may be refunded, cancelled, or already checked in.");
-                    if (worn is not null) await _dayBands.LinkAdmission(worn.Id, purchaseId, staffId);
+                    if (bandRule is not null) await _dayBands.CompleteCheckIn(bandRule, purchaseId, staffId);
                     break;
                 default:
                     return new ApiResponses().BadRequestResult("Unknown source.");
