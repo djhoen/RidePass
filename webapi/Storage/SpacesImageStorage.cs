@@ -105,12 +105,20 @@ namespace webapi.Storage
             return key;
         }
 
+        // A HEAD request per photo per gate lookup would be a network round-trip on every scan, so a
+        // "yes, it exists" is remembered for a few minutes (this storage is a singleton). Deleting through
+        // this class forgets it at once; a "missing" answer is never cached, so a retake shows up at once.
+        private static readonly TimeSpan ExistsTtl = TimeSpan.FromMinutes(5);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _knownToExist = new();
+
         public async Task<bool> PrivateExistsAsync(string key, CancellationToken ct = default)
         {
             if (!PrivateImageKey.IsValid(key)) return false;
+            if (_knownToExist.TryGetValue(key, out var until) && until > DateTime.UtcNow) return true;
             try
             {
                 await _s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = _bucket, Key = key }, ct);
+                _knownToExist[key] = DateTime.UtcNow.Add(ExistsTtl);
                 return true;
             }
             catch (AmazonS3Exception e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -138,6 +146,7 @@ namespace webapi.Storage
         public async Task DeletePrivateAsync(string key, CancellationToken ct = default)
         {
             if (!PrivateImageKey.IsValid(key)) return;
+            _knownToExist.TryRemove(key, out _);
             await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }, ct);
         }
 

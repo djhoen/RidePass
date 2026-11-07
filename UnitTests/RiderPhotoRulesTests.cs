@@ -38,9 +38,16 @@ namespace UnitTests
             Assert.That(RiderPhotoRules.OwnerKey(id, "x@y.test"), Is.EqualTo($"user:{id:D}"));
             Assert.That(RiderPhotoRules.OwnerKey(null, "  Walk.Up@Y.test "), Is.EqualTo("email:walk.up@y.test"));
             Assert.That(RiderPhotoRules.OwnerKey(null, " "), Is.Null);
-            // The child under the parent's account, and the parent's own (credential naming nobody).
-            Assert.That(RiderPhotoRules.RiderKey("Ana", "Rojas", Parent), Is.EqualTo("ana rojas"));
-            Assert.That(RiderPhotoRules.RiderKey(null, null, Parent), Is.EqualTo("pat rojas"));
+            // The credential's OWN rider name, never the buyer's: naming nobody files it under the credential.
+            var kid = RiderPhotoRules.Key(Parent, "p@y.test", "Ana", "Rojas", "pass", Guid.NewGuid());
+            Assert.That((kid.OwnerKey, kid.RiderKey), Is.EqualTo(($"user:{Parent.Id:D}", "ana rojas")));
+            var passId = Guid.NewGuid();
+            var unregistered = RiderPhotoRules.Key(Parent, "p@y.test", null, null, "pass", passId);
+            Assert.That((unregistered.OwnerKey, unregistered.RiderKey), Is.EqualTo(($"pass:{passId:D}", "credential")));
+            // A parent's profile photo: only for a credential that names them.
+            Assert.That(RiderPhotoRules.AccountIsNamedRider(Parent, null, null), Is.False);
+            Assert.That(RiderPhotoRules.AccountIsNamedRider(Parent, "Ana", "Rojas"), Is.False);
+            Assert.That(RiderPhotoRules.AccountIsNamedRider(Parent, "pat", "ROJAS"), Is.True);
         }
 
         [Test]

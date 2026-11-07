@@ -15,6 +15,7 @@ namespace webapi.Workers
         private readonly IServiceProvider _services;
         private readonly ILogger<PrivateImageTrashWorker> _logger;
         private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(5);
+        public const int MaxAttempts = 10;
 
         public PrivateImageTrashWorker(IServiceProvider services, ILogger<PrivateImageTrashWorker> logger)
         {
@@ -42,13 +43,25 @@ namespace webapi.Workers
             var photos = scope.ServiceProvider.GetRequiredService<IRiderPhotoRepository>();
             var storage = scope.ServiceProvider.GetRequiredService<IImageStorage>();
             var done = 0;
-            foreach (var item in await photos.ListTrash(200))
+            foreach (var item in await photos.ListTrash(200, MaxAttempts))
             {
                 if (ct.IsCancellationRequested) break;
-                if (!await photos.IsReferenced(item.TenantId, item.StorageKey))
-                    await storage.DeletePrivateAsync(item.StorageKey, ct);
-                await photos.RemoveFromTrash(item.Id, item.TenantId);
-                done++;
+                // One bad key never blocks the rest: each item is tried on its own; a failure is
+                // recorded on its queue row (attempts, last_error) and retried with backoff, and after
+                // MaxAttempts it is left on the queue for someone to look at.
+                try
+                {
+                    if (!await photos.IsReferenced(item.TenantId, item.StorageKey))
+                        await storage.DeletePrivateAsync(item.StorageKey, ct);
+                    await photos.RemoveFromTrash(item.Id, item.TenantId);
+                    done++;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "Could not delete private image {Key} (attempt {Attempt})", item.StorageKey, item.Attempts + 1);
+                    try { await photos.RecordTrashFailure(item.Id, item.TenantId, ex.Message); }
+                    catch (Exception inner) { _logger.LogError(inner, "Could not record the failure for {Key}", item.StorageKey); }
+                }
             }
             if (done > 0) _logger.LogInformation("Deleted {Count} dropped private images", done);
             return done;

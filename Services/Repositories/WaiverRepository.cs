@@ -180,14 +180,14 @@ namespace Services.Repositories
             // reads the same signature); (2) the new signature takes the account slot, but only if
             // the slot is now free, so a valid guardian signature is never replaced. replaceMinorEra:
             // the holder has turned 18, so a guardian's signature is detached too (kept as a record).
-            const string detach = @"
+            var detach = $@"
                 UPDATE rider_waiver_signature s
                    SET user_id = NULL,
                        former_user_id = @userId,
                        signer_email = COALESCE(s.signer_email, (SELECT u.email FROM users u WHERE u.id = @userId))
                  WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
                    AND s.id <> @signatureId
-                   AND (@replaceMinorEra OR NOT (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> ''))";
+                   AND (@replaceMinorEra OR NOT {Services.Waivers.GuardianSql.IsGuardianSigned("s")})";
             const string attach = @"
                 UPDATE rider_waiver_signature s
                    SET user_id = @userId
@@ -257,7 +257,8 @@ namespace Services.Repositories
         }
 
         public async Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
-            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false)
+            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false,
+            string? attendeeFirstName = null, string? attendeeLastName = null, DateTime? attendeeBirthdate = null)
         {
             // Don't overwrite an existing signature image on conflict — the original signature
             // is the legal artifact. A re-sign of the same kind just refreshes the timestamp.
@@ -276,18 +277,29 @@ namespace Services.Repositories
                        former_user_id = @userId
                  WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
                    AND (@supersede OR s.signed_by_parent <> @signedByParent)";
+            // The attendee (who the signature is FOR) is written when given: an adult signing for
+            // themselves records their own name and birthdate, so the gate's adult-signature lookup
+            // (FindAdultSelfSignature) recognises it for their tickets and passes too. A same-kind
+            // refresh only fills an attendee the row doesn't have yet.
             const string upsert = @"
                 INSERT INTO rider_waiver_signature
                     (tenant_id, user_id, waiver_id, ip_address, signature_data_url,
-                     signed_by_parent, parent_name, parent_phone)
+                     signed_by_parent, parent_name, parent_phone,
+                     spectator_first_name, spectator_last_name, spectator_birthdate)
                 VALUES (@tenantId, @userId, @waiverId, @ipAddress, @signatureDataUrl,
-                        @signedByParent, @parentName, @parentPhone)
+                        @signedByParent, @parentName, @parentPhone,
+                        @attendeeFirstName, @attendeeLastName, @attendeeBirthdate::date)
                 -- uk_rider_waiver_once_user is PARTIAL (user_id IS NOT NULL): the conflict target must say so.
-                ON CONFLICT (user_id, waiver_id) WHERE user_id IS NOT NULL DO UPDATE SET signed_at = EXCLUDED.signed_at";
+                ON CONFLICT (user_id, waiver_id) WHERE user_id IS NOT NULL DO UPDATE
+                   SET signed_at = EXCLUDED.signed_at,
+                       spectator_first_name = COALESCE(rider_waiver_signature.spectator_first_name, EXCLUDED.spectator_first_name),
+                       spectator_last_name = COALESCE(rider_waiver_signature.spectator_last_name, EXCLUDED.spectator_last_name),
+                       spectator_birthdate = COALESCE(rider_waiver_signature.spectator_birthdate, EXCLUDED.spectator_birthdate)";
             var args = new
             {
                 tenantId, userId, waiverId, ipAddress, signatureDataUrl,
                 signedByParent, parentName, parentPhone, supersede,
+                attendeeFirstName, attendeeLastName, attendeeBirthdate,
             };
             await _db.ExecuteBatch(new (string, object?)[] { (detach, args), (upsert, args) });
             var result = await _db.Query<Guid>(
@@ -399,7 +411,7 @@ namespace Services.Repositories
 
         public async Task<(List<WaiverPersonRow> Rows, int Total)> ListPeople(Guid tenantId,
             string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize,
-            DateTime? todayLocal = null, string? timezone = null)
+            DateTime? todayLocal = null, string? timezone = null, IReadOnlyCollection<string>? personKeys = null)
         {
             // "Needs adult waiver" (gate item 4): already 18 on the tenant's today, and their latest
             // signature dates from when they were a minor (a guardian's, or signed before their 18th
@@ -425,7 +437,7 @@ namespace Services.Repositories
                            ra.id AS rider_account_id,
                            ra.email AS account_email,
                            -- A guardian's signature, by the gate's own rule (GuardianWaiverRule.IsGuardianSigned).
-                           (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> '') AS by_guardian,
+                           {Services.Waivers.GuardianSql.IsGuardianSigned("s")} AS by_guardian,
                            COALESCE(COALESCE(s.user_id, s.former_user_id)::text,
                                lower(COALESCE(
                                    NULLIF(TRIM(COALESCE(s.spectator_first_name,'') || ' ' || COALESCE(s.spectator_last_name,'')), ''),
@@ -511,6 +523,8 @@ namespace Services.Repositories
                 AND Birthdate + INTERVAL '18 years' <= now() + INTERVAL '90 days')");
             if (minorsOnly) where.Add(@"((Birthdate IS NOT NULL AND Birthdate + INTERVAL '18 years' > now())
                 OR (Birthdate IS NULL AND HasGuardianSignature))");
+            // Exactly these people (the bulk adult send re-checks the ones on screen in one query).
+            if (personKeys is not null) where.Add("PersonKey = ANY(@personKeys)");
             var whereSql = where.Count > 0 ? "WHERE " + string.Join("\n  AND ", where) : "";
 
             var args = new
@@ -520,7 +534,10 @@ namespace Services.Repositories
                 pageSize,
                 offset = (page - 1) * pageSize,
                 todayLocal = (todayLocal ?? DateTime.UtcNow).Date,
-                timezone = string.IsNullOrWhiteSpace(timezone) ? "UTC" : timezone,
+                // Callers pass TenantClock.IanaId (never the raw tenant setting); resolved again here so
+                // a stray Windows-style id can't reach AT TIME ZONE.
+                timezone = Services.Helpers.TenantClock.IanaId(timezone),
+                personKeys = personKeys?.ToArray() ?? Array.Empty<string>(),
             };
 
             var total = (await _db.Query<int>(

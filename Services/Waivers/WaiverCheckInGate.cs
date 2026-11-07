@@ -28,7 +28,8 @@ namespace Services.Waivers
         /// <summary>The document that has to be signed to clear a waiver block.</summary>
         public Guid? RequiredWaiverId { get; init; }
         /// <summary>Where a fixing signature belongs: "ticket" (the ticket's waiver_signature_id),
-        /// "pass" (the pass's own waiver_signature_id) or "account" (a signature on the pass buyer's
+        /// "pass" (the pass's own waiver_signature_id), "pass_doc" (this pass's holder's signature for an
+        /// event document, season_pass_waiver_signature) or "account" (a signature on the pass buyer's
         /// account for an event document). Null when there is nothing to fix.</summary>
         public string? FixTarget { get; init; }
         public DateOnly? Birthdate { get; init; }
@@ -131,6 +132,14 @@ namespace Services.Waivers
         /// </summary>
         Task<int> LinkSignedWaiver(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId);
 
+        /// <summary>
+        /// A rider who is now 18 re-signed on their own account (app or counter): their paid, unredeemed
+        /// tickets and in-season passes that are THEIRS (the account is the rider / holder) and still fail
+        /// on a minor-era signature for this document are relinked to the new one, by the same linking
+        /// rules as a gate signing link. Returns how many places were relinked.
+        /// </summary>
+        Task<int> RelinkAfterAdultResign(Guid tenantId, Guid userId, Guid signatureId, Guid waiverId);
+
         /// <summary>The tenant's birthdate-check policy as the gate sees it (read fresh, not from the
         /// tenant resolution cache), so screens echo exactly what is enforced.</summary>
         Task<(string Mode, int ValidDays)> BirthdatePolicy(Guid tenantId);
@@ -146,6 +155,7 @@ namespace Services.Waivers
         private readonly ITenantRepository _tenants;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly Services.Riders.IRiderPhotos _photos;
+        private readonly IWaiverSignRequestRepository _signRequests;
 
         // Per-request memo (the gate is scoped).
         private readonly Dictionary<Guid, EventTicketTier?> _tierCache = new();
@@ -165,8 +175,10 @@ namespace Services.Waivers
             IUserRepository users,
             ITenantRepository tenants,
             IEventTicketPurchaseRepository tickets,
-            Services.Riders.IRiderPhotos photos)
+            Services.Riders.IRiderPhotos photos,
+            IWaiverSignRequestRepository signRequests)
         {
+            _signRequests = signRequests;
             _photos = photos;
             _events = events;
             _tiers = tiers;
@@ -231,7 +243,8 @@ namespace Services.Waivers
             var key = Services.Riders.RiderPhotoRules.Key(owner, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
             var photo = await _photos.Find(tenantId, key);
             return new PhotoFacts(tenant.PhotoMode,
-                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, owner, accountIsRider && owner is not null));
+                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, owner,
+                    Services.Riders.RiderPhotoRules.AccountIsNamedRider(owner, riderFirst, riderLast)));
         }
 
         public async Task<string?> BlockReasonForTicket(Guid tenantId, EventTicketPurchase ticket) =>
@@ -415,16 +428,28 @@ namespace Services.Waivers
                     // The holder's own signature IS this event's document.
                     if (!checks.Any(c => c.Sig.Id == own.Id)) checks.Add((own, "pass", ed, true));
                 }
+                else if (await _passes.GetHolderDocSignature(pass.Id, tenantId, ed) is { } holderDocSig)
+                {
+                    // This pass's holder's own signature for the event document (Script0308).
+                    checks.Add((holderDocSig, "pass_doc", ed, true));
+                }
                 else
                 {
-                    // Otherwise the event document is looked up for the pass's account (the existing
-                    // standard). By email only when there is no account.
+                    // Else the account's signature for the event document, but only one that is the
+                    // HOLDER's: the account is the holder (it names nobody or the holder), or it names
+                    // the holder. A parent's own signature, or a guardian signature for another child,
+                    // never covers this holder. By email only when there is no account.
                     accountSig = pass.PurchaserUserId != Guid.Empty
                         ? await _waivers.GetSignature(pass.PurchaserUserId, ed)
                         : string.IsNullOrWhiteSpace(pass.PurchaserEmail) ? null
                             : await _waivers.GetSignatureBySignerEmailForSelf(pass.PurchaserEmail, ed);
-                    if (accountSig is null || accountSig.TenantId != tenantId) { accountSig = null; eventMissing = true; }
-                    else checks.Add((accountSig, "account", ed, SignatureCoversHolder(accountSig, pass, accountIsHolder)));
+                    if (accountSig is null || accountSig.TenantId != tenantId
+                        || !SignatureCoversHolder(accountSig, pass, accountIsHolder))
+                    {
+                        accountSig = null;
+                        eventMissing = true;
+                    }
+                    else checks.Add((accountSig, accountIsHolder ? "account" : "pass_doc", ed, true));
                 }
             }
 
@@ -457,7 +482,9 @@ namespace Services.Waivers
             if (eventMissing)
                 return ages.Apply(new WaiverGateDecision
                 {
-                    Required = true, RequiredWaiverId = eventDoc, FixTarget = "account", Signed = own is not null,
+                    // Where a fix goes: the account slot only when the account IS the holder; else this pass.
+                    Required = true, RequiredWaiverId = eventDoc, FixTarget = accountIsHolder ? "account" : "pass_doc",
+                    Signed = own is not null,
                     BlockReason = $"This event requires a signed rider waiver. {holderName} must sign the waiver before checking in.",
                 });
 
@@ -560,14 +587,9 @@ namespace Services.Waivers
             return null;
         }
 
+        // Judges the CURRENT links (adultFallback: false), not a just-signed adult signature the fallback
+        // would find: the point is to put the new signature where the gate reads it.
         public async Task<int> LinkSignedWaiver(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId)
-        {
-            // Judge the CURRENT links here (adultFallback: false), not a just-signed adult signature
-            // the fallback would find: the point is to put the new signature where the gate reads it.
-            return await LinkSignedWaiverCore(tenantId, target, signatureId, waiverId);
-        }
-
-        private async Task<int> LinkSignedWaiverCore(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId)
         {
             if (target.TicketId is Guid tid)
             {
@@ -594,23 +616,71 @@ namespace Services.Waivers
             {
                 // Decided again now, so a link signed after something else fixed the pass is a no-op.
                 var p = await _passes.GetPurchase(pid);
-                var now = p is null || p.TenantId != tenantId ? null
-                    : await EvaluatePassCore(tenantId, p, await _passes.GetProduct(p.ProductId, tenantId),
-                        target.EventId, adultFallback: false);
-                if (now is null || now.RequiredWaiverId != waiverId) return 0;
+                if (p is null || p.TenantId != tenantId) return 0;
+                var product = await _passes.GetProduct(p.ProductId, tenantId);
+                var now = await EvaluatePassCore(tenantId, p, product, target.EventId, adultFallback: false);
+                if (now.RequiredWaiverId != waiverId) return 0;
                 return now.FixTarget switch
                 {
-                    // The pass's own signature for its own document: fill / fix it.
+                    // The pass's own signature for its own document: fill / fix it (an outdated version or a
+                    // document no longer required may be replaced).
                     "pass" => await _passes.LinkWaiverSignatureForHolder(pid, tenantId, signatureId, waiverId,
+                        now.AdultWaiverNeeded, await RequiredPassDocs(tenantId, product, target.EventId)),
+                    // An event document for a holder who isn't the account: linked to THIS pass only.
+                    "pass_doc" => await _passes.LinkHolderDocSignature(pid, tenantId, waiverId, signatureId,
                         now.AdultWaiverNeeded),
-                    // An event document: a signature on the account the gate reads for that event,
-                    // leaving the pass's product signature alone.
-                    "account" when target.PassAccountUserId is Guid uid =>
-                        await _waivers.AttachAccountSignature(tenantId, uid, waiverId, signatureId, now.AdultWaiverNeeded),
+                    // An event document for the account holder: their account's signature.
+                    "account" when AccountIsRider(await User(p.PurchaserUserId), p.HolderFirstName, p.HolderLastName) =>
+                        await _waivers.AttachAccountSignature(tenantId, p.PurchaserUserId, waiverId, signatureId,
+                            now.AdultWaiverNeeded),
                     _ => 0,
                 };
             }
             return 0;
+        }
+
+        /// <summary>The documents a pass is judged against here: the product's (when it requires one)
+        /// and the event's rider waiver (when the event requires one).</summary>
+        private async Task<IReadOnlyCollection<Guid>> RequiredPassDocs(Guid tenantId, SeasonPassProduct? product, Guid? eventId)
+        {
+            var docs = new List<Guid>();
+            if ((product?.RequiresWaiver ?? false) && await ActiveDoc(tenantId) is Guid pd) docs.Add(pd);
+            if (eventId is Guid eid && await Event(eid, tenantId) is { RequiresRiderWaiver: true } ev
+                && (ev.RacerWaiverId ?? await ActiveDoc(tenantId)) is Guid ed) docs.Add(ed);
+            return docs;
+        }
+
+        public async Task<int> RelinkAfterAdultResign(Guid tenantId, Guid userId, Guid signatureId, Guid waiverId)
+        {
+            var account = await User(userId);
+            if (Services.Riders.BuyerAccounts.ForTenant(account, tenantId) is null) return 0;
+            var relinked = 0;
+            foreach (var c in await _signRequests.UpcomingCredentialsForAccount(tenantId, userId))
+            {
+                // Only the account's OWN credentials: a child's ticket or pass is never touched.
+                if (!AccountIsRider(account, c.FirstName, c.LastName)) continue;
+                // Judged on what is LINKED (adultFallback: false): the new signature names the rider, so
+                // the fallback would already accept it and hide the minor-era link that needs replacing.
+                WaiverSignTarget? target = null;
+                if (c.Kind == "ticket" && await _tickets.GetById(c.Id, tenantId) is { } t)
+                    target = new WaiverSignTarget
+                    {
+                        TicketId = t.Id, EventId = c.EventId, FirstName = t.RiderFirstName, LastName = t.RiderLastName,
+                        Decision = await EvaluateTicketCore(tenantId, t, adultFallback: false),
+                    };
+                else if (c.Kind == "season_pass" && await _passes.GetPurchase(c.Id) is { } p && p.TenantId == tenantId)
+                    target = new WaiverSignTarget
+                    {
+                        PassPurchaseId = p.Id, PassAccountUserId = p.PurchaserUserId,
+                        FirstName = p.HolderFirstName, LastName = p.HolderLastName,
+                        Decision = await EvaluatePassCore(tenantId, p, await _passes.GetProduct(p.ProductId, tenantId), null,
+                            adultFallback: false),
+                    };
+                if (target?.Decision is not { AdultWaiverNeeded: true, FixTarget: not null } d || d.RequiredWaiverId != waiverId)
+                    continue;
+                relinked += await LinkSignedWaiver(tenantId, target, signatureId, waiverId);
+            }
+            return relinked;
         }
 
         /// <summary>
@@ -781,7 +851,7 @@ namespace Services.Waivers
                 ? tenant!.BirthdateVerifyMode : Services.Riders.IdVerificationWindow.ModeOff;
             f = new TenantFacts(TenantClock.LocalDate(tenant?.Timezone, DateTime.UtcNow),
                 TenantClock.Resolve(tenant?.Timezone), mode, tenant?.BirthdateVerifyValidDays ?? 365,
-                string.IsNullOrWhiteSpace(tenant?.Timezone) ? "UTC" : tenant!.Timezone,
+                TenantClock.IanaId(tenant?.Timezone),
                 Services.Riders.IdVerificationWindow.IsValidMode(tenant?.RiderPhotoMode)
                     ? tenant!.RiderPhotoMode : Services.Riders.IdVerificationWindow.ModeOff);
             _tenantCache[tenantId] = f;

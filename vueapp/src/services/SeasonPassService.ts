@@ -426,8 +426,11 @@ export class SeasonPassService {
     reserve(passPurchaseId: string, eventId: string) {
         return axios.post(`${this.apiUrl}/SeasonPass/Reserve`, { passPurchaseId, eventId })
     }
-    lookupByToken(token: string) {
-        return axios.get<{ data: PassLookup }>(`${this.apiUrl}/SeasonPass/Pass/${token}`)
+    // eventId: the event the gate will admit to (staff's pick, or the only one today), so the card's
+    // waiver / photo / registration verdict is the one admission will apply.
+    lookupByToken(token: string, eventId?: string | null) {
+        return axios.get<{ data: PassLookup }>(`${this.apiUrl}/SeasonPass/Pass/${token}`,
+            { params: eventId ? { eventId } : undefined })
     }
     checkIn(reservationId: string) {
         return axios.post(`${this.apiUrl}/SeasonPass/Reservations/${reservationId}/CheckIn`)

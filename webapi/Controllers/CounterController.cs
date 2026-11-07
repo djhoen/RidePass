@@ -53,6 +53,7 @@ namespace webapi.Controllers
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ISeasonPassRepository _passes;
         private readonly Services.Email.IPurchaseConfirmationEmailer _purchaseEmails;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
 
         public CounterController(
             IUserRepository users,
@@ -81,8 +82,10 @@ namespace webapi.Controllers
             webapi.Security.IManagerPinService managerPin,
             Services.Audit.IAuditLogger audit,
             ISeasonPassRepository passes,
-            Services.Email.IPurchaseConfirmationEmailer purchaseEmails)
+            Services.Email.IPurchaseConfirmationEmailer purchaseEmails,
+            Services.Waivers.IWaiverCheckInGate waiverGate)
         {
+            _waiverGate = waiverGate;
             _discounts = discounts;
             _managerPin = managerPin;
             _audit = audit;
@@ -198,7 +201,7 @@ namespace webapi.Controllers
                 HasSignedCurrentWaiver = signedCurrent,
                 WaiverSignedAtUtc = signedAt,
                 WaiverSignatureDataUrl = signatureDataUrl,
-                IsMinor = WaiverPolicy.IsMinor(rider.Birthdate),
+                IsMinor = AccountWaiverStatus.IsMinorToday(rider, _tenantContext.Tenant.Timezone, DateTime.UtcNow),
                 WaiverSignedByParent = signedByParent,
                 WaiverParentName = parentName,
                 WaiverParentPhone = parentPhone,
@@ -820,7 +823,8 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult("A handwritten signature is required to sign the waiver.");
                     }
-                    var isMinor = WaiverPolicy.IsMinor(rider.Birthdate);
+                    // Minor by the gate's own birthdate source and the tenant's date (shared helper).
+                    var isMinor = AccountWaiverStatus.IsMinorToday(rider, _tenantContext.Tenant.Timezone, DateTime.UtcNow);
                     string? parentName = null;
                     string? parentPhone = null;
                     if (isMinor)
@@ -833,8 +837,16 @@ namespace webapi.Controllers
                         }
                     }
                     var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+                    // An adult signing for themselves records who it is for (their name and birthdate),
+                    // so the gate recognises it on their tickets and passes.
                     waiverSignatureId = await _waivers.Sign(_tenantContext.TenantId, rider.Id, activeWaiver.Id, ip, request.SignatureDataUrl,
-                        signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede);
+                        signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede,
+                        attendeeFirstName: isMinor ? null : rider.FirstName, attendeeLastName: isMinor ? null : rider.LastName,
+                        attendeeBirthdate: isMinor ? null : AccountWaiverStatus.Birthdate(rider)?.ToDateTime(TimeOnly.MinValue));
+                    // Re-signed as an adult over a minor-era signature: their own credentials still
+                    // pointing at the old one are relinked (gate linking rules).
+                    if (supersede && waiverSignatureId is Guid newSig)
+                        await _waiverGate.RelinkAfterAdultResign(_tenantContext.TenantId, rider.Id, newSig, activeWaiver.Id);
                 }
                 else
                 {

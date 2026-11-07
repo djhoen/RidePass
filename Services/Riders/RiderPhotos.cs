@@ -53,22 +53,26 @@ namespace Services.Riders
             return string.IsNullOrEmpty(email) ? null : $"email:{email}";
         }
 
-        /// <summary>The rider under that owner: the credential's rider / holder name, or the account
-        /// owner's own name when it names nobody (IdCheckRules.RiderKey, the item-3 key).</summary>
-        public static string RiderKey(string? riderFirst, string? riderLast, User? account) =>
-            IdCheckRules.RiderKey(riderFirst, riderLast, account?.FirstName, account?.LastName);
+        /// <summary>The account's profile photo may stand for this rider only when the credential NAMES
+        /// the rider and that name is the account owner's (never for a credential naming nobody).</summary>
+        public static bool AccountIsNamedRider(User? buyerAccount, string? riderFirst, string? riderLast) =>
+            buyerAccount is not null
+            && IdCheckRules.Normalize($"{riderFirst} {riderLast}").Length > 0
+            && IdCheckRules.AccountIsRider(riderFirst, riderLast, buyerAccount.FirstName, buyerAccount.LastName);
 
         /// <summary>
         /// Where one credential's rider photo is filed. <paramref name="buyerAccount"/> must already be
-        /// tenant-filtered (BuyerAccounts.ForTenant). With no owner or no rider name to key by, the photo
-        /// is filed under the credential itself ("ticket:{id}" / "pass:{id}"), so a photo staff take for it
-        /// still satisfies the gate for that credential.
+        /// tenant-filtered (BuyerAccounts.ForTenant). The rider key is the credential's OWN rider / holder
+        /// name, never the buyer's: a credential that names nobody (an unregistered pass, a ticket with
+        /// no rider name) is filed under the credential itself ("ticket:{id}" / "pass:{id}"), so a photo
+        /// staff take for it satisfies the gate for that credential and a parent's photo can never stand
+        /// in for it. Same with no owner to key by.
         /// </summary>
         public static RiderPhotoKey Key(User? buyerAccount, string? buyerEmail, string? riderFirst, string? riderLast,
             string credentialKind, Guid credentialId)
         {
             var owner = OwnerKey(buyerAccount?.Id, buyerAccount is null ? buyerEmail : null);
-            var rider = RiderKey(riderFirst, riderLast, buyerAccount);
+            var rider = IdCheckRules.Normalize($"{riderFirst} {riderLast}");
             if (owner is null || rider.Length == 0)
                 return new RiderPhotoKey($"{credentialKind}:{credentialId:D}", CredentialRiderKey, null, null);
             return new RiderPhotoKey(owner, rider, buyerAccount?.Id,

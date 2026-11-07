@@ -14,6 +14,18 @@ namespace Services.Helpers
         /// </summary>
         public static DateTime AsUtc(DateTime d) => DateTime.SpecifyKind(d.ToUniversalTime(), DateTimeKind.Utc);
 
+        /// <summary>
+        /// The IANA name of the zone <see cref="Resolve"/> picks for this tenant setting, for SQL (Postgres
+        /// AT TIME ZONE only knows IANA names): a Windows-style id ("Eastern Standard Time") is converted,
+        /// an unknown or empty one falls back to UTC exactly as Resolve does. Never pass the raw setting.
+        /// </summary>
+        public static string IanaId(string? timezoneId)
+        {
+            var tz = Resolve(timezoneId);
+            if (tz.HasIanaId) return tz.Id;
+            return TimeZoneInfo.TryConvertWindowsIdToIanaId(tz.Id, out var iana) && !string.IsNullOrEmpty(iana) ? iana : "Etc/UTC";
+        }
+
         public static TimeZoneInfo Resolve(string? timezoneId)
         {
             try { return TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(timezoneId) ? "UTC" : timezoneId); }

@@ -1070,6 +1070,23 @@ async function redeemBuddy() {
 }
 const passToken = ref<string | null>(null)
 const passEventId = ref<string | null>(null)
+// The event the pass card's verdict (waiver, photo, registration) was judged against. When staff pick
+// a different event, the card is looked up again for it, so the card and admission always agree.
+const passJudgedEventId = ref<string | null>(null)
+let passEventSeq = 0
+watch(passEventId, async (id) => {
+    if (!pass.value || !passToken.value || !id || id === passJudgedEventId.value) return
+    const token = passToken.value
+    const seq = ++passEventSeq
+    try {
+        const r = await seasonPasses.lookupByToken(token, id)
+        if (seq !== passEventSeq || passToken.value !== token || passEventId.value !== id) return
+        pass.value = (r.data as any).data
+        passJudgedEventId.value = id
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn\'t check the pass for that event. Pick it again.', 'error')
+    }
+})
 const admitting = ref(false)
 
 const signatureOpen = ref(false)
@@ -1129,7 +1146,7 @@ useGateScanner({
     onScan: (scan, raw, source) => { void handleScan(scan, raw, source) },
     wristbandsEnabled: () => !!branding.wristbandsEnabled,
     enabled: () => !buddyOpen.value && !verifyIdOpen.value && !signatureOpen.value && !bandDialogOpen.value
-        && !signRequestOpen.value,
+        && !signRequestOpen.value && !takePhotoOpen.value,
 })
 
 // A scan that arrives mid-lookup or mid-check-in waits; only the latest one is kept.
@@ -1437,16 +1454,23 @@ async function loadOrder(token: string): Promise<boolean> {
 
 // 'ok': the pass card is showing. 'not_found': no pass has this token (the caller words that).
 // 'error': the lookup failed and was already surfaced. 'stale': a newer lookup took over.
-async function tryLoadPass(token: string, seq = ++lookupSeq): Promise<'ok' | 'not_found' | 'error' | 'stale'> {
+// keepEventId: a re-read of the same pass (after an ID check or an admission) stays on the event staff
+// picked and is judged against it; a fresh scan passes none.
+async function tryLoadPass(token: string, seq = ++lookupSeq, keepEventId: string | null = null): Promise<'ok' | 'not_found' | 'error' | 'stale'> {
     try {
-        const r = await seasonPasses.lookupByToken(token)
+        const r = await seasonPasses.lookupByToken(token, keepEventId)
         if (seq !== lookupSeq) return 'stale'
         pass.value = (r.data as any).data
         passToken.value = token
         order.value = null
         orderToken.value = null
         selectedIds.value = []
-        passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
+        const events = pass.value?.todaysEvents ?? []
+        passEventId.value = keepEventId && events.some(e => e.id === keepEventId) ? keepEventId
+            : events.length === 1 ? events[0].id : null
+        // The event the server judged the card against: the one sent, else the single event running
+        // today (if any).
+        passJudgedEventId.value = keepEventId ?? (events.length === 1 ? events[0].id : null)
         return 'ok'
     } catch (err: any) {
         if (seq !== lookupSeq) return 'stale'
@@ -1637,10 +1661,11 @@ async function refreshAfterPhoto(kind: 'ticket' | 'season_pass') {
     try {
         if (kind === 'season_pass' && passToken.value) {
             const token = passToken.value
-            const r = await seasonPasses.lookupByToken(token)
-            if (passToken.value !== token) return
             const keepEvent = passEventId.value
+            const r = await seasonPasses.lookupByToken(token, keepEvent)
+            if (passToken.value !== token) return
             pass.value = (r.data as any).data
+            passJudgedEventId.value = keepEvent
             if (keepEvent && !pass.value?.todaysEvents.some(e => e.id === keepEvent))
                 passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
         } else if (orderToken.value) {
@@ -1720,7 +1745,7 @@ async function submitVerifyId() {
         // Re-read rather than patching locally: the server decides whether this stuck to the
         // rider's account, and a verified DOB that makes the rider a minor brings the guardian
         // rule into the verdict, which only the gate can say.
-        if (target.kind === 'pass') await tryLoadPass(passToken.value!)
+        if (target.kind === 'pass') await tryLoadPass(passToken.value!, ++lookupSeq, passEventId.value)
         else await loadOrder(orderToken.value!)
     } catch (err: any) {
         verifyIdError.value = err.response?.data?.error
@@ -1747,7 +1772,7 @@ async function admitPass() {
             flash('Admitted.', 'success')
         }
         markOpenedResult(row => { row.redeemedCount = 1 })   // the search row now reads "In today"
-        await tryLoadPass(passToken.value)   // refresh credits + today's check-in state
+        await tryLoadPass(passToken.value, ++lookupSeq, passEventId.value)   // refresh credits + today's check-in state
         await readyForNextScan()
     } catch (err: any) {
         flash(err.response?.data?.error || 'Couldn’t admit this pass. Check the connection and try again.', 'error')

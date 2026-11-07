@@ -23,7 +23,8 @@ namespace Services.Repositories.Interfaces
         /// <paramref name="supersede"/> (the existing one is from the rider's minor years), keeps the old
         /// row as the record (detached, former_user_id) and writes a new one; otherwise refreshes signed_at.</summary>
         Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
-            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false);
+            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false,
+            string? attendeeFirstName = null, string? attendeeLastName = null, DateTime? attendeeBirthdate = null);
 
         /// <summary>Email lookup for guest spectator buyers — checks whether this
         /// email has already signed THIS waiver for themselves (not on behalf of a child).</summary>
@@ -74,7 +75,7 @@ namespace Services.Repositories.Interfaces
         /// a minor). agingOut = minors turning 18 within 90 days. todayLocal / timezone are the tenant's.</summary>
         Task<(List<WaiverPersonRow> Rows, int Total)> ListPeople(Guid tenantId,
             string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize,
-            DateTime? todayLocal = null, string? timezone = null);
+            DateTime? todayLocal = null, string? timezone = null, IReadOnlyCollection<string>? personKeys = null);
 
         /// <summary>Full detail for one signature (image, waiver, signing context) for the
         /// admin drill-in / print view.</summary>

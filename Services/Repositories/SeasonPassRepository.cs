@@ -1031,26 +1031,81 @@ namespace Services.Repositories
         }
 
         public async Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId,
-            bool replaceMinorEra = false)
+            bool replaceMinorEra, IReadOnlyCollection<Guid> requiredWaiverIds)
         {
             // Defense in depth behind the gate's decision: this tenant's pass and signature, the new
-            // signature is for the stated document, the pass's current signature (if any) is the SAME
-            // document (a product-waiver signature is never re-pointed at another one), and it is not
-            // still a valid guardian signature (replaceMinorEra: the holder has turned 18, so their
-            // guardian's no longer counts). Check-in history (reservations) is not touched.
-            const string sql = @"
+            // signature is for the document the gate requires (@waiverId), and the pass's current
+            // signature (if any) may be replaced only when it is
+            //   - for the same document, or an older version of it (same name, lower version), or
+            //   - for a document the gate no longer requires here (not in @requiredWaiverIds),
+            // and it is not still a valid guardian signature for this document (replaceMinorEra: the
+            // holder has turned 18, so their guardian's no longer counts). Check-in history
+            // (reservations) is not touched.
+            var sql = $@"
                 UPDATE season_pass_purchase sp
                    SET waiver_signature_id = @signatureId, updated_at = now()
                  WHERE sp.id = @passPurchaseId
                    AND sp.tenant_id = @tenantId
                    AND EXISTS (SELECT 1 FROM rider_waiver_signature s
                                WHERE s.id = @signatureId AND s.tenant_id = @tenantId AND s.waiver_id = @waiverId)
-                   AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
-                                   WHERE cur.id = sp.waiver_signature_id
-                                     AND (cur.waiver_id <> @waiverId
-                                          OR (NOT @replaceMinorEra AND cur.signed_by_parent
-                                              AND COALESCE(trim(cur.parent_name), '') <> '')))";
-            return await _db.Execute(sql, new { passPurchaseId, tenantId, signatureId, waiverId, replaceMinorEra });
+                   AND NOT EXISTS (
+                        SELECT 1 FROM rider_waiver_signature cur
+                        JOIN tenant_waiver cw ON cw.id = cur.waiver_id
+                        JOIN tenant_waiver nw ON nw.id = @waiverId AND nw.tenant_id = @tenantId
+                        WHERE cur.id = sp.waiver_signature_id
+                          AND NOT (
+                                -- replaceable document: the same, an older version of it, or no longer required
+                                (cur.waiver_id = @waiverId
+                                 OR (lower(trim(COALESCE(NULLIF(cw.name, ''), cw.title))) = lower(trim(COALESCE(NULLIF(nw.name, ''), nw.title)))
+                                     AND cw.version < nw.version)
+                                 OR cur.waiver_id <> ALL(@requiredWaiverIds))
+                                -- and not a guardian's signature that still counts for this document
+                                AND (@replaceMinorEra OR cur.waiver_id <> @waiverId OR NOT {Services.Waivers.GuardianSql.IsGuardianSigned("cur")})))";
+            return await _db.Execute(sql, new
+            {
+                passPurchaseId, tenantId, signatureId, waiverId, replaceMinorEra,
+                requiredWaiverIds = requiredWaiverIds.ToArray(),
+            });
+        }
+
+        public async Task<RiderWaiverSignature?> GetHolderDocSignature(Guid passPurchaseId, Guid tenantId, Guid waiverId)
+        {
+            const string sql = @"
+                SELECT s.id, s.tenant_id AS TenantId, s.user_id AS UserId, s.waiver_id AS WaiverId,
+                       s.signed_at AS SignedAt, s.signature_data_url AS SignatureDataUrl,
+                       s.signed_by_parent AS SignedByParent, s.parent_name AS ParentName, s.parent_phone AS ParentPhone,
+                       s.signer_name AS SignerName, s.signer_email AS SignerEmail,
+                       s.spectator_first_name AS SpectatorFirstName, s.spectator_last_name AS SpectatorLastName,
+                       s.spectator_birthdate AS SpectatorBirthdate
+                FROM season_pass_waiver_signature l
+                JOIN rider_waiver_signature s ON s.id = l.rider_waiver_signature_id AND s.tenant_id = l.tenant_id
+                WHERE l.season_pass_purchase_id = @passPurchaseId AND l.tenant_id = @tenantId AND l.waiver_id = @waiverId
+                LIMIT 1";
+            return (await _db.Query<RiderWaiverSignature>(sql, new { passPurchaseId, tenantId, waiverId })).FirstOrDefault();
+        }
+
+        public async Task<int> LinkHolderDocSignature(Guid passPurchaseId, Guid tenantId, Guid waiverId, Guid signatureId,
+            bool replaceMinorEra)
+        {
+            // This pass's holder's signature for one (event) document. Guards: this tenant's pass and
+            // signature, the signature is for that document, and an existing link is replaced only when
+            // it is not still a valid guardian signature (replaceMinorEra: the holder has turned 18).
+            var sql = $@"
+                INSERT INTO season_pass_waiver_signature
+                    (tenant_id, season_pass_purchase_id, waiver_id, rider_waiver_signature_id)
+                SELECT @tenantId, sp.id, @waiverId, @signatureId
+                FROM season_pass_purchase sp
+                WHERE sp.id = @passPurchaseId AND sp.tenant_id = @tenantId
+                  AND EXISTS (SELECT 1 FROM rider_waiver_signature s
+                              WHERE s.id = @signatureId AND s.tenant_id = @tenantId AND s.waiver_id = @waiverId)
+                ON CONFLICT (season_pass_purchase_id, waiver_id) DO UPDATE
+                   SET rider_waiver_signature_id = EXCLUDED.rider_waiver_signature_id, updated_at = now()
+                 WHERE season_pass_waiver_signature.tenant_id = @tenantId
+                   AND (@replaceMinorEra OR NOT EXISTS (
+                        SELECT 1 FROM rider_waiver_signature cur
+                        WHERE cur.id = season_pass_waiver_signature.rider_waiver_signature_id
+                          AND {Services.Waivers.GuardianSql.IsGuardianSigned("cur")}))";
+            return await _db.Execute(sql, new { passPurchaseId, tenantId, waiverId, signatureId, replaceMinorEra });
         }
 
         public async Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId)

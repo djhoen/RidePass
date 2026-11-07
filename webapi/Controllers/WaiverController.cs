@@ -210,7 +210,7 @@ namespace webapi.Controllers
                 SignatureId = sig?.Id,
                 SignedAt = sig?.SignedAt,
                 SignatureDataUrl = sig?.SignatureDataUrl,
-                RiderIsMinor = WaiverPolicy.IsMinor(user?.Birthdate),
+                RiderIsMinor = AccountWaiverStatus.IsMinorToday(user, _tenantContext.Tenant.Timezone, DateTime.UtcNow),
                 SignedByParent = sig?.SignedByParent ?? false,
                 ParentName = sig?.ParentName,
                 ParentPhone = sig?.ParentPhone,
@@ -238,7 +238,7 @@ namespace webapi.Controllers
                 SignatureId = sig?.Id,
                 SignedAt = sig?.SignedAt,
                 SignatureDataUrl = sig?.SignatureDataUrl,
-                RiderIsMinor = WaiverPolicy.IsMinor(user?.Birthdate),
+                RiderIsMinor = AccountWaiverStatus.IsMinorToday(user, _tenantContext.Tenant.Timezone, DateTime.UtcNow),
                 SignedByParent = sig?.SignedByParent ?? false,
                 ParentName = sig?.ParentName,
                 ParentPhone = sig?.ParentPhone,
@@ -295,7 +295,9 @@ namespace webapi.Controllers
             }
 
             var user = await _users.GetById(userId);
-            var isMinor = WaiverPolicy.IsMinor(user?.Birthdate);
+            // Minor by the gate's own birthdate source (ID-verified, else self-reported) and the
+            // tenant's local date: the shared helper, so the app can't disagree with the gate.
+            var isMinor = AccountWaiverStatus.IsMinorToday(user, _tenantContext.Tenant.Timezone, DateTime.UtcNow);
             string? parentName = null;
             string? parentPhone = null;
             if (isMinor)
@@ -313,8 +315,16 @@ namespace webapi.Controllers
             var supersede = !isMinor && AccountWaiverStatus.IsMinorEraForAdult(user,
                 await _repo.GetSignature(userId, waiver.Id), _tenantContext.Tenant.Timezone, DateTime.UtcNow);
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            // An adult signing for themselves records who it is for (their name and birthdate), so the
+            // gate's adult-signature lookup recognises it on their tickets and passes.
             var sigId = await _repo.Sign(_tenantContext.TenantId, userId, waiver.Id, ip, dataUrl,
-                signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede);
+                signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede,
+                attendeeFirstName: isMinor ? null : user?.FirstName, attendeeLastName: isMinor ? null : user?.LastName,
+                attendeeBirthdate: isMinor ? null : AccountWaiverStatus.Birthdate(user)?.ToDateTime(TimeOnly.MinValue));
+            // Re-signed as an adult over a minor-era signature: their own paid credentials still pointing
+            // at the old one are relinked (gate linking rules).
+            if (supersede)
+                await _waiverGate.RelinkAfterAdultResign(_tenantContext.TenantId, userId, sigId, waiver.Id);
 
             // Report what is STORED: an adult re-signing over their guardian's signature gets a new
             // row (the old one is kept detached), a same-kind re-sign keeps the original row.
@@ -386,7 +396,7 @@ namespace webapi.Controllers
             pageSize = Math.Clamp(pageSize, 1, 200);
             var (rows, total) = await _repo.ListPeople(_tenantContext.TenantId,
                 search, status, agingOut, minorsOnly, page, pageSize,
-                TenantLocalToday(), _tenantContext.Tenant.Timezone);
+                TenantLocalToday(), TenantClock.IanaId(_tenantContext.Tenant.Timezone));
             var now = DateTime.UtcNow;
             return new ApiResponses().OkResult(new WaiverPeoplePageResponse
             {
@@ -452,15 +462,11 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("This tenant has no active waiver to request signatures for.");
             var tenantId = _tenantContext.TenantId;
 
-            // Re-check: still "needs adult waiver" by the same rule as the list and the gate.
-            var people = new List<Services.Repositories.Data.WaiverData.WaiverPersonRow>();
-            for (var page = 1; ; page++)
-            {
-                var (rows, total) = await _repo.ListPeople(tenantId, null, "needs_adult",
-                    agingOut: false, minorsOnly: false, page, 200, TenantLocalToday(), _tenantContext.Tenant.Timezone);
-                people.AddRange(rows.Where(r => keys.Contains(r.PersonKey)));
-                if (rows.Count < 200 || page * 200 >= total) break;
-            }
+            // Re-check: still "needs adult waiver" by the same rule as the list and the gate, for exactly
+            // the requested people, filtered in SQL (one query).
+            var (people, _) = await _repo.ListPeople(tenantId, null, "needs_adult",
+                agingOut: false, minorsOnly: false, 1, keys.Count, TenantLocalToday(),
+                TenantClock.IanaId(_tenantContext.Tenant.Timezone), keys);
             var resp = new AdultWaiverBulkResponse { NoLongerNeeded = keys.Count - people.Count };
 
             var withEmail = new List<(Services.Repositories.Data.WaiverData.WaiverPersonRow Person, Guid UserId, string Email)>();
@@ -827,7 +833,6 @@ namespace webapi.Controllers
                 attendeeFirstName: attendeeFirst, attendeeLastName: attendeeLast,
                 attendeeBirthdate: birthdate,
                 signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
-            await _signRequests.MarkSigned(row.Id, _tenantContext.TenantId, sigId);
 
             if (riderIdentity is not null && !isMinor)
             {
@@ -856,7 +861,29 @@ namespace webapi.Controllers
                     targetId: target.TicketId ?? target.PassPurchaseId,
                     tenantId: _tenantContext.TenantId,
                     metadata: new { requestId = row.Id, signatureId = sigId, linked, nameMismatch, typedName = $"{first} {last}" });
+
+                // Did it take? If the gate still fails for THIS document with a fix the link was for,
+                // the signature could not be put where the gate reads it (e.g. the credential changed):
+                // say so and keep the link usable rather than marking it signed with nothing fixed. The
+                // signature itself is kept as the record.
+                var after = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
+                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
+                if (linked == 0 && after?.Decision is { BlockReason: not null, FixTarget: not null } still
+                    && still.RequiredWaiverId == waiver.Id)
+                {
+                    await _audit.Log("waiver.gate_sign_request.link_failed",
+                        $"Gate waiver link for {target.DisplayName} was signed but could not be applied",
+                        targetKind: target.TicketId is not null ? "event_ticket_purchase" : "season_pass_purchase",
+                        targetId: target.TicketId ?? target.PassPurchaseId,
+                        tenantId: _tenantContext.TenantId,
+                        metadata: new { requestId = row.Id, signatureId = sigId, blockReason = still.BlockReason });
+                    return new ApiResponses().BadRequestResult(
+                        $"Your signature was saved, but it couldn't be applied to {target.DisplayName}'s "
+                        + $"{(target.TicketId is not null ? "ticket" : "pass")}: {still.BlockReason} "
+                        + "Please show this to the staff at the gate; this link stays open so it can be signed again.");
+                }
             }
+            await _signRequests.MarkSigned(row.Id, _tenantContext.TenantId, sigId);
             return new ApiResponses().OkResult();
         }
 

@@ -6,5 +6,6 @@ namespace Services.Repositories.Data.RiderData
         public long Id { get; set; }
         public Guid TenantId { get; set; }
         public string StorageKey { get; set; } = "";
+        public int Attempts { get; set; }
     }
 }

@@ -172,11 +172,20 @@ namespace Services.Repositories.Interfaces
         /// reservation yet) — for walk-up gate redemption. ReservationId/EventId are unset.</summary>
         Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId);
 
-        /// <summary>Gate signing link signed: make the new signature this pass's own (its own document),
-        /// only when the pass has none or its current one is not a valid guardian signature, and only
-        /// when the current one (if any) is the same document. Returns rows updated.</summary>
+        /// <summary>Gate signing link signed: make the new signature this pass's own, for the document the
+        /// gate requires. Its current one is replaced only when it is for the same document, an older
+        /// version of it, or a document not in <paramref name="requiredWaiverIds"/>, and is not still a
+        /// valid guardian signature for this document. Returns rows updated.</summary>
         Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId,
-            bool replaceMinorEra = false);
+            bool replaceMinorEra, IReadOnlyCollection<Guid> requiredWaiverIds);
+
+        /// <summary>The signature linked for THIS pass's holder on one (event) document (Script0308).</summary>
+        Task<RiderWaiverSignature?> GetHolderDocSignature(Guid passPurchaseId, Guid tenantId, Guid waiverId);
+
+        /// <summary>Links the holder's signature for one (event) document to this pass (one per pass and
+        /// document); an existing valid guardian signature is replaced only with replaceMinorEra.</summary>
+        Task<int> LinkHolderDocSignature(Guid passPurchaseId, Guid tenantId, Guid waiverId, Guid signatureId,
+            bool replaceMinorEra);
 
         /// <summary>Gate lookup by name/email/phone for a pass holder with no QR: this tenant's passes
         /// usable on <paramref name="todayLocal"/> (paid, in season, credits left, staff pass still

@@ -322,7 +322,7 @@ namespace Services.Repositories
             // history and is never rewritten), this tenant's signature, and never over a ticket whose
             // current signature is still a valid guardian signature. replaceMinorEra: the rider has
             // turned 18, so their guardian's signature no longer counts and may be replaced.
-            const string sql = @"
+            var sql = $@"
                 UPDATE event_ticket_purchase p
                    SET waiver_signature_id = @signatureId,
                        waiver_id = @waiverId,
@@ -334,8 +334,7 @@ namespace Services.Repositories
                                WHERE s.id = @signatureId AND s.tenant_id = @tenantId)
                    AND (@replaceMinorEra OR NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
                                    WHERE cur.id = p.waiver_signature_id
-                                     AND cur.signed_by_parent
-                                     AND COALESCE(trim(cur.parent_name), '') <> ''))";
+                                     AND {Services.Waivers.GuardianSql.IsGuardianSigned("cur")}))";
             return await _db.Execute(sql, new { ids = ticketIds.ToArray(), tenantId, signatureId, waiverId, replaceMinorEra });
         }
 

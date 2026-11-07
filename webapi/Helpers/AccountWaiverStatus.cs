@@ -14,10 +14,23 @@ namespace webapi.Helpers
     /// </summary>
     public static class AccountWaiverStatus
     {
+        /// <summary>The account's birthdate as the gate uses it: the ID-verified one, else the self-reported one.</summary>
+        public static DateOnly? Birthdate(User? account) =>
+            GuardianWaiverRule.ToDateOnly(account?.IdVerifiedDob ?? account?.Birthdate);
+
+        /// <summary>
+        /// Minor on the tenant's local today, from the same birthdate source the gate uses. The account
+        /// sign paths (app and counter) decide "a parent must sign" with this, so they can never disagree
+        /// with the gate (e.g. an ID check showing the rider is 17, or the day of the 18th birthday at a
+        /// track whose date is not yet UTC's). No birthdate: not a minor (as before).
+        /// </summary>
+        public static bool IsMinorToday(User? account, string? timezone, DateTime utcNow) =>
+            Birthdate(account) is { } b && GuardianWaiverRule.IsMinorOn(b, TenantClock.LocalDate(timezone, utcNow));
+
         public static bool IsMinorEraForAdult(User? account, RiderWaiverSignature? sig, string? timezone, DateTime utcNow)
         {
             if (account is null || sig is null) return false;
-            var birthdate = GuardianWaiverRule.ToDateOnly(account.IdVerifiedDob ?? account.Birthdate);
+            var birthdate = Birthdate(account);
             var facts = new WaiverSignatureFacts(true, sig.SignedByParent, sig.ParentName, sig.SignerName, null,
                 IdVerificationWindow.VerifiedLocalDate(sig.SignedAt, TenantClock.Resolve(timezone)));
             return GuardianWaiverRule.IsMinorEraForAdult(birthdate, TenantClock.LocalDate(timezone, utcNow), facts);

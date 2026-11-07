@@ -15,7 +15,9 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Images queued for deletion when their row was deleted (directly, or by the account /
         /// tenant cascade) or re-pointed. A system queue across tenants, oldest first.</summary>
-        Task<List<PrivateImageTrashItem>> ListTrash(int take);
+        Task<List<PrivateImageTrashItem>> ListTrash(int take, int maxAttempts);
+        /// <summary>A delete failed: count it, keep the error, back off before the next try.</summary>
+        Task RecordTrashFailure(long id, Guid tenantId, string error);
         Task RemoveFromTrash(long id, Guid tenantId);
         /// <summary>A live rider_photo row still points at this image (never delete it then).</summary>
         Task<bool> IsReferenced(Guid tenantId, string storageKey);

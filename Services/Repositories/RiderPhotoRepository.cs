@@ -58,12 +58,27 @@ namespace Services.Repositories
             });
         }
 
-        // System queue (Script0307 trigger), not one tenant's data: every tenant's dropped images, oldest first.
-        public async Task<List<PrivateImageTrashItem>> ListTrash(int take)
+        // System queue (Script0307 trigger), not one tenant's data: every tenant's dropped images that are
+        // due (not backing off) and haven't failed too often, oldest first.
+        public async Task<List<PrivateImageTrashItem>> ListTrash(int take, int maxAttempts)
         {
-            const string sql = @"SELECT id, tenant_id AS TenantId, storage_key AS StorageKey
-                                 FROM private_image_trash ORDER BY id LIMIT @take";
-            return (await _db.Query<PrivateImageTrashItem>(sql, new { take })).ToList();
+            const string sql = @"SELECT id, tenant_id AS TenantId, storage_key AS StorageKey, attempts
+                                 FROM private_image_trash
+                                 WHERE next_attempt_at <= now() AND attempts < @maxAttempts
+                                 ORDER BY id LIMIT @take";
+            return (await _db.Query<PrivateImageTrashItem>(sql, new { take, maxAttempts })).ToList();
+        }
+
+        public async Task RecordTrashFailure(long id, Guid tenantId, string error)
+        {
+            // Exponential backoff: 2, 4, 8 ... minutes, capped at a day.
+            const string sql = @"
+                UPDATE private_image_trash
+                   SET attempts = attempts + 1,
+                       last_error = left(@error, 1000),
+                       next_attempt_at = now() + LEAST(interval '1 day', interval '1 minute' * power(2, attempts + 1))
+                 WHERE id = @id AND tenant_id = @tenantId";
+            await _db.Execute(sql, new { id, tenantId, error });
         }
 
         public async Task RemoveFromTrash(long id, Guid tenantId) =>
