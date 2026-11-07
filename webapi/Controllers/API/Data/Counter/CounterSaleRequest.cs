@@ -39,5 +39,9 @@ namespace webapi.Controllers.API.Data.Counter
         // 'stripe' (default) or 'cash'. Cash means the tenant collected the rider's payment
         // directly; the platform records the service charge as ridepass_cut owed by the tenant.
         public string PaymentMethod { get; set; } = "stripe";
+
+        // Kiosk sign-ups (Script0310) this sale serves: the customer picked from the kiosk list, and any
+        // child added from one. The sale marks them handled.
+        public List<Guid>? KioskSignupIds { get; set; }
     }
 }

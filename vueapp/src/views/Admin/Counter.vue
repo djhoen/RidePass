@@ -92,7 +92,13 @@
                                 <v-btn variant="text" size="small" @click="resetCustomer">Pick a different customer</v-btn>
                                 <v-btn color="primary" class="ml-2" @click="step = 2">Continue to cart</v-btn>
                             </div>
+                            <v-alert v-if="kioskChild" type="info" variant="tonal" density="compact" class="mt-3">
+                                From the kiosk: <strong>{{ kioskChild.name }}</strong> (under 18), with
+                                {{ customer.firstName }} as parent or guardian. Add their day pass with
+                                "For {{ kioskChild.firstName }}" under Day passes.
+                            </v-alert>
                         </div>
+                        <KioskSignupsPanel v-if="!customer" selectable class="mt-4" @select="selectKioskSignup" />
                     </v-card-text>
                 </v-card>
             </v-stepper-window-item>
@@ -259,6 +265,8 @@
                                                 </div>
                                                 <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus"
                                                     @click="addDayPass(t)">For {{ customer?.firstName || 'customer' }}</v-btn>
+                                                <v-btn v-if="kioskChild" size="small" color="primary" variant="tonal" prepend-icon="mdi-tablet-cellphone"
+                                                    :loading="kioskChildBusy" @click="addKioskChild(t)">For {{ kioskChild.firstName }}</v-btn>
                                                 <v-btn size="small" variant="outlined" prepend-icon="mdi-account-plus"
                                                     @click="openOtherRider(t)">Another rider</v-btn>
                                             </div>
@@ -803,6 +811,8 @@ import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue
 import CreditLookupField from '@/components/CreditLookupField.vue'
 import { type CreditLookupResult } from '@/services/CreditService'
 import PhoneField from '@/components/PhoneField.vue'
+import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
+import type { KioskSignupItem } from '@/services/KioskService'
 
 type Customer = CounterRider
 type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
@@ -1365,6 +1375,60 @@ async function saveOtherRider() {
     }
 }
 
+// ── Kiosk sign-ups (Script0310): pick one as the customer ────────────────────────────────────
+// An adult becomes the customer. A minor's guardian becomes the customer and the child is offered as
+// an other-rider day pass ("For <child>"), carrying the waiver the guardian signed at the kiosk.
+const kioskSignupIds = ref<string[]>([])
+const kioskChild = ref<{ signupId: string; dependentId: string; name: string; firstName: string } | null>(null)
+const kioskChildBusy = ref(false)
+
+async function selectKioskSignup(s: KioskSignupItem) {
+    const email = s.isMinor ? s.guardianEmail : s.riderEmail
+    if (!email) { flash('That sign-up has no profile to open. Search for them instead.', 'error'); return }
+    findingCustomer.value = true
+    try {
+        await resolveByEmail(email)
+        kioskSignupIds.value = [s.id]
+        kioskChild.value = s.isMinor && s.dependentId
+            ? { signupId: s.id, dependentId: s.dependentId, name: `${s.firstName} ${s.lastName}`, firstName: s.firstName }
+            : null
+        catalogPanel.value = 'daypass'
+        flash(s.isMinor ? `${customer.value?.firstName} is the customer; add ${s.firstName}'s day pass.`
+            : `${s.firstName} ${s.lastName} is the customer.`, 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t open that sign-up. Search for them instead.', 'error')
+    } finally {
+        findingCustomer.value = false
+    }
+}
+
+async function addKioskChild(t: TicketTier) {
+    if (!customer.value || !kioskChild.value) return
+    const child = kioskChild.value
+    if (cart.value.some(c => c.itemId === t.id && c.other?.key === child.dependentId)) {
+        flash(`${child.name} already has this ticket in the cart.`, 'error')
+        return
+    }
+    kioskChildBusy.value = true
+    try {
+        const input: OtherRiderInput = { existingDependentId: child.dependentId, kioskSignupId: child.signupId }
+        const p = (await counter.resolveOtherRider({ payerUserId: customer.value.id, ...input })).data.data
+        cart.value.push(dayPassLine(t, {
+            input, userId: p.riderUserId, dependentId: p.riderDependentId, key: child.dependentId,
+            name: `${p.firstName} ${p.lastName}`, isMinor: p.isMinor, guardianName: p.guardianName,
+        }))
+    } catch (err: any) {
+        flash(err.response?.data?.error || `Couldn't add ${child.name}.`, 'error')
+    } finally {
+        kioskChildBusy.value = false
+    }
+}
+
+function clearKiosk() {
+    kioskSignupIds.value = []
+    kioskChild.value = null
+}
+
 // ── Receipt: other riders' waivers, live ─────────────────────────────────────────────────────
 const riderStatus = ref<Record<string, RiderWaiverStatusItem>>({})
 const riderLinks = ref<Record<string, RiderWaiverLink>>({})
@@ -1682,6 +1746,7 @@ async function createCustomer() {
 }
 
 function resetCustomer() {
+    clearKiosk()
     customer.value = null
     customerEmail.value = ''
     lookupError.value = null
@@ -1799,6 +1864,7 @@ async function createSale(method: 'stripe' | 'cash') {
             paymentMethod: method,
             creditAccountId: creditAccount.value?.id ?? null,
             creditCents: creditAccount.value?.balanceCents ?? 0,
+            kioskSignupIds: kioskSignupIds.value.length > 0 ? kioskSignupIds.value : null,
         })
         const data = (r.data as any).data
         clientSecret.value = data.clientSecret
@@ -1907,6 +1973,7 @@ function reset() {
     catalogPanel.value = 'extras'
     creditAccount.value = null
     resetRiderWaivers()
+    clearKiosk()
 }
 
 function redeemUrl(token: string): string {

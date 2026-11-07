@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router/router'
+import { registerKioskRoutes } from './router/kioskRoutes'
 import axios from 'axios'
 import mitt from 'mitt'
 import dayjs from 'dayjs'
@@ -243,6 +244,7 @@ const app = createApp(App)
 app.config.globalProperties.emitter = emitter
 
 app.use(vuetify)
+registerKioskRoutes(router)
 app.use(router)
 
 app.mount('#app')

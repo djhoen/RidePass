@@ -65,8 +65,9 @@ namespace webapi.Helpers
 
     public interface ICounterRiderProfiles
     {
-        /// <summary>Checks an "another rider" entry and matches existing profiles. Reads only.</summary>
-        Task<(OtherRiderPlan? Plan, string? Error)> Plan(CounterOtherRiderInput input, User payer);
+        /// <summary>Checks an "another rider" entry (or a kiosk sign-up: no payer) and matches existing
+        /// profiles. Reads only.</summary>
+        Task<(OtherRiderPlan? Plan, string? Error)> Plan(CounterOtherRiderInput input, User? payer);
 
         /// <summary>Writes the planned profiles of one sale in one transaction (new accounts, empty fields of
         /// existing rider accounts, dependent rows). Same order as <paramref name="plans"/>.</summary>
@@ -86,7 +87,7 @@ namespace webapi.Helpers
     /// </summary>
     public class CounterRiderProfiles : ICounterRiderProfiles
     {
-        private const string StaffEmailMessage = "That email belongs to a staff account. Use a different email.";
+        public const string StaffEmailMessage = "That email belongs to a staff account. Use a different email.";
 
         private readonly IUserRepository _users;
         private readonly IRiderDependentRepository _dependents;
@@ -104,7 +105,7 @@ namespace webapi.Helpers
             _tenantContext = tenantContext;
         }
 
-        public async Task<(OtherRiderPlan? Plan, string? Error)> Plan(CounterOtherRiderInput input, User payer)
+        public async Task<(OtherRiderPlan? Plan, string? Error)> Plan(CounterOtherRiderInput input, User? payer)
         {
             var tenantId = _tenantContext.TenantId;
             var today = TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.UtcNow);
@@ -161,7 +162,7 @@ namespace webapi.Helpers
             }
             else
             {
-                var invalid = CounterRiderRules.Validate(shape, today, existingProfile: false, payer.Email);
+                var invalid = CounterRiderRules.Validate(shape, today, existingProfile: false, payer?.Email);
                 if (invalid is not null) return (null, invalid);
                 if (!string.IsNullOrWhiteSpace(input.Email))
                 {
@@ -170,14 +171,14 @@ namespace webapi.Helpers
                     account = found;
                 }
             }
-            if (account is not null && account.Id == payer.Id)
+            if (account is not null && payer is not null && account.Id == payer.Id)
                 return (null, "That is the paying customer. Add the ticket for them instead of another rider.");
 
             // An existing account is the rider: its name and (ID-verified, else self-reported) birthdate win.
             var first = account?.FirstName ?? input.FirstName!.Trim();
             var last = account?.LastName ?? input.LastName!.Trim();
             var riderDob = AccountWaiverStatus.Birthdate(account) ?? typedDob;
-            var recheck = CounterRiderRules.Validate(shape with { Birthdate = riderDob }, today, existingProfile: true, payer.Email);
+            var recheck = CounterRiderRules.Validate(shape with { Birthdate = riderDob }, today, existingProfile: true, payer?.Email);
             if (recheck is not null) return (null, recheck);
             var isMinor = CounterRiderRules.IsMinor(riderDob!.Value, today);
             var age = GuardianWaiverRule.AgeOn(riderDob.Value, today);
@@ -203,7 +204,7 @@ namespace webapi.Helpers
             // ── A minor: their guardian ─────────────────────────────────────────────────────────────
             User? guardian = null;
             bool guardianMatched;
-            if (input.GuardianIsPayer)
+            if (input.GuardianIsPayer && payer is not null)
             {
                 guardian = payer;
                 guardianMatched = true;
@@ -212,7 +213,7 @@ namespace webapi.Helpers
             {
                 guardian = BuyerAccounts.ForTenant(await _users.GetById(gid), tenantId);
                 if (guardian is null) return (null, "That guardian profile isn't available here.");
-                if (guardian.Role != "rider" && guardian.Id != payer.Id) return (null, StaffEmailMessage);
+                if (guardian.Role != "rider" && guardian.Id != payer?.Id) return (null, StaffEmailMessage);
                 guardianMatched = true;
             }
             else

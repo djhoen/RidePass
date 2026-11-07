@@ -111,6 +111,8 @@ builder.Services.AddScoped<IRiderPhotoRepository, RiderPhotoRepository>();
 builder.Services.AddScoped<IRiderDependentRepository, RiderDependentRepository>();
 builder.Services.AddScoped<Services.Riders.ITicketRiderIdentity, Services.Riders.TicketRiderIdentity>();
 builder.Services.AddScoped<webapi.Helpers.ICounterRiderProfiles, webapi.Helpers.CounterRiderProfiles>();
+builder.Services.AddScoped<IKioskRepository, KioskRepository>();
+builder.Services.AddScoped<webapi.Security.IKioskAuthenticator, webapi.Security.KioskAuthenticator>();
 builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
@@ -266,6 +268,34 @@ builder.Services.AddRateLimiter(opts =>
             {
                 PermitLimit = 10,
                 Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    // Front-desk kiosks (Script0310): per device (its secret's hash), else per address. A sign-up takes a
+    // person a minute or more, so 30 calls a minute is generous for a real kiosk and stops a scripted one.
+    opts.AddPolicy("kiosk", ctx =>
+    {
+        var secret = ctx.Request.Headers[webapi.Security.KioskCredentials.HeaderName].ToString();
+        var key = string.IsNullOrEmpty(secret)
+            ? "kiosk-ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous")
+            : "kiosk:" + webapi.Security.KioskCredentials.Hash(secret);
+        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        });
+    });
+    // Pairing codes are guessable only by brute force: a handful of tries per address and venue.
+    opts.AddPolicy("kiosk-pair", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            "kiosk-pair:" + PartitionKey(ctx) + ":" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous"),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(5),
                 QueueLimit = 0,
                 AutoReplenishment = true,
             }));

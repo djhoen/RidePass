@@ -159,6 +159,9 @@ namespace Services.Riders
         /// <summary>Saves a photo for the rider a ticket / pass admits (replacing any earlier one).</summary>
         Task<RiderPhoto> RecordForTicket(EventTicketPurchase ticket, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
         Task<RiderPhoto> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
+        /// <summary>Saves a photo under an explicit key (a kiosk sign-up: the rider's own account, or a
+        /// dependent under their guardian, by TicketRiderKeys), so later tickets for that rider find it.</summary>
+        Task<RiderPhoto> RecordForKey(Guid tenantId, RiderPhotoKey key, byte[] image, string extension, Guid? staffUserId);
 
         /// <summary>A gate photo of this pass's holder is on file (pass registration's photo requirement).</summary>
         Task<bool> HolderHasPhoto(Guid passPurchaseId, Guid tenantId);
@@ -224,6 +227,9 @@ namespace Services.Riders
         public async Task<RiderPhoto> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image,
             string extension, Guid? staffUserId) =>
             await Record(tenantId, await KeyForPass(pass, tenantId), image, extension, staffUserId);
+
+        public Task<RiderPhoto> RecordForKey(Guid tenantId, RiderPhotoKey key, byte[] image, string extension,
+            Guid? staffUserId) => Record(tenantId, key, image, extension, staffUserId);
 
         private async Task<RiderPhoto> Record(Guid tenantId, RiderPhotoKey key, byte[] image, string extension,
             Guid? staffUserId)

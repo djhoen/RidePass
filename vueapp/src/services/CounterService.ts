@@ -54,6 +54,8 @@ export interface OtherRiderInput {
     /** Tenants that require one. A minor defaults to their guardian. */
     emergencyContactName?: string | null
     emergencyContactPhone?: string | null
+    /** The kiosk sign-up this rider came from: its waiver signature goes on the ticket. */
+    kioskSignupId?: string | null
 }
 
 export interface OtherRiderRequest extends OtherRiderInput {
@@ -176,7 +178,7 @@ export class CounterService {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders`, body)
     }
 
-    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number }) {
+    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number; kioskSignupIds?: string[] | null }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
     }
 

@@ -6,6 +6,9 @@
             </div>
         </div>
 
+        <!-- Today's kiosk sign-ups (Script0310): who just checked in at the front desk, with photo and waiver. -->
+        <KioskSignupsPanel compact :limit="5" class="mb-4" />
+
         <v-card class="mb-4 pa-4">
             <v-card-title>Scan QR</v-card-title>
             <v-card-text>
@@ -886,6 +889,7 @@ import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService
 import { CounterService, type CounterRider } from '@/services/CounterService'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
+import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
 import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
     type GateScanSource } from '@/composables/useGateScanner'

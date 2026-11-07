@@ -56,6 +56,14 @@ namespace Services.Riders
             return FromNames(purchaser, riderFirst, riderLast);
         }
 
+        /// <summary>A rider who is their own account (an adult kiosk sign-up, a Gate Sale friend).</summary>
+        public static RiderKeying ForRiderAccount(User account) =>
+            new(RiderKeyingKind.RiderAccount, account, IdCheckRules.RiderKey(null, null, account.FirstName, account.LastName), true);
+
+        /// <summary>A minor linked to their guardian (rider_dependent): keyed under the guardian by the row id.</summary>
+        public static RiderKeying ForDependent(User guardian, Guid dependentId) =>
+            new(RiderKeyingKind.Dependent, guardian, $"{RiderKeying.DependentKeyPrefix}{dependentId:D}", false);
+
         /// <summary>The name-based keying (passes, and tickets without a profile identity).</summary>
         public static RiderKeying FromNames(User? account, string? riderFirst, string? riderLast) =>
             account is null

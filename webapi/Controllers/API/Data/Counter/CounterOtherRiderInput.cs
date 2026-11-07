@@ -31,5 +31,8 @@ namespace webapi.Controllers.API.Data.Counter
         /// <summary>The rider's emergency contact (tenants that require one). A minor defaults to their guardian.</summary>
         public string? EmergencyContactName { get; set; }
         public string? EmergencyContactPhone { get; set; }
+
+        /// <summary>The kiosk sign-up this rider came from (Script0310): its waiver signature goes on the ticket.</summary>
+        public Guid? KioskSignupId { get; set; }
     }
 }

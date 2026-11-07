@@ -55,6 +55,7 @@ namespace webapi.Controllers
         private readonly Services.Email.IPurchaseConfirmationEmailer _purchaseEmails;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ICounterRiderProfiles _riderProfiles;
+        private readonly IKioskRepository _kiosks;
 
         public CounterController(
             IUserRepository users,
@@ -85,10 +86,12 @@ namespace webapi.Controllers
             ISeasonPassRepository passes,
             Services.Email.IPurchaseConfirmationEmailer purchaseEmails,
             Services.Waivers.IWaiverCheckInGate waiverGate,
-            ICounterRiderProfiles riderProfiles)
+            ICounterRiderProfiles riderProfiles,
+            IKioskRepository kiosks)
         {
             _waiverGate = waiverGate;
             _riderProfiles = riderProfiles;
+            _kiosks = kiosks;
             _discounts = discounts;
             _managerPin = managerPin;
             _audit = audit;
@@ -834,30 +837,15 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult("A handwritten signature is required to sign the waiver.");
                     }
-                    // Minor by the gate's own birthdate source and the tenant's date (shared helper).
-                    var isMinor = AccountWaiverStatus.IsMinorToday(rider, _tenantContext.Tenant.Timezone, DateTime.UtcNow);
-                    string? parentName = null;
-                    string? parentPhone = null;
-                    if (isMinor)
-                    {
-                        parentName = string.IsNullOrWhiteSpace(request.ParentName) ? null : request.ParentName!.Trim();
-                        parentPhone = string.IsNullOrWhiteSpace(request.ParentPhone) ? null : request.ParentPhone!.Trim();
-                        if (parentName is null || parentPhone is null || parentPhone.Length < 7)
-                        {
-                            return new ApiResponses().BadRequestResult("Riders under 18 need a parent or guardian's name and phone number on the waiver.");
-                        }
-                    }
-                    var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-                    // An adult signing for themselves records who it is for (their name and birthdate),
-                    // so the gate recognises it on their tickets and passes.
-                    waiverSignatureId = await _waivers.Sign(_tenantContext.TenantId, rider.Id, activeWaiver.Id, ip, request.SignatureDataUrl,
-                        signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede,
-                        attendeeFirstName: isMinor ? null : rider.FirstName, attendeeLastName: isMinor ? null : rider.LastName,
-                        attendeeBirthdate: isMinor ? null : AccountWaiverStatus.Birthdate(rider)?.ToDateTime(TimeOnly.MinValue));
-                    // Re-signed as an adult over a minor-era signature: their own credentials still
-                    // pointing at the old one are relinked (gate linking rules).
-                    if (supersede && waiverSignatureId is Guid newSig)
-                        await _waiverGate.RelinkAfterAdultResign(_tenantContext.TenantId, rider.Id, newSig, activeWaiver.Id);
+                    // The shared venue signing rules (also the kiosk's): a minor's waiver is their parent or
+                    // guardian's, by the gate's birthdate source on the tenant's date; an adult over a
+                    // minor-era signature signs again and their credentials are relinked.
+                    var (signedId, signError) = await AccountWaiverSigning.SignForAccount(_waivers, _waiverGate,
+                        _tenantContext.TenantId, _tenantContext.Tenant.Timezone, rider, activeWaiver.Id,
+                        HttpContext.Connection.RemoteIpAddress?.ToString(), request.SignatureDataUrl!,
+                        request.ParentName, request.ParentPhone);
+                    if (signError is not null) return new ApiResponses().BadRequestResult(signError);
+                    waiverSignatureId = signedId;
                 }
                 else
                 {
@@ -878,6 +866,16 @@ namespace webapi.Controllers
             // multi-event cart. Same key space as the online checkout, so they contend too.
             // Released right after the inserts, before the Stripe call.
             var ticketEventIds = ticketItems.Select(t => t.Tier.EventId).Distinct().OrderBy(id => id).ToList();
+            // Kiosk sign-ups this sale serves (Script0310): this tenant's only.
+            var kioskSignups = new List<Services.Repositories.Data.KioskData.KioskSignup>();
+            foreach (var kid in (request.KioskSignupIds ?? new List<Guid>())
+                         .Concat(request.Items.Select(i => i.OtherRider?.KioskSignupId).OfType<Guid>()).Distinct())
+            {
+                if (await _kiosks.GetSignup(kid, _tenantContext.TenantId) is { } ks) kioskSignups.Add(ks);
+            }
+            // The customer signed up at the kiosk: name them on their own day passes, so the gate finds
+            // the photo the kiosk filed under their account (and the rider key is theirs by name).
+            var payerFromKiosk = kioskSignups.Any(k => k.UserId == rider.Id);
             var capacityLocks = new List<IAsyncDisposable>();
             try
             {
@@ -945,9 +943,16 @@ namespace webapi.Controllers
                 for (var pi = 0; pi < planned.Count; pi++)
                 {
                     var (plan, pev, ptier) = planned[pi].Value;
+                    // A rider from a kiosk sign-up brings the waiver they (or their guardian) signed there,
+                    // when it is this same profile; their own account's signature, if any, comes first.
+                    var fromKiosk = planned[pi].Key.OtherRider?.KioskSignupId is Guid ksId
+                        ? kioskSignups.FirstOrDefault(k => k.Id == ksId
+                            && ((k.DependentId is not null && k.DependentId == saved[pi].DependentId)
+                                || (k.DependentId is null && k.UserId is not null && k.UserId == saved[pi].RiderUserId)))
+                        : null;
                     otherRiders[planned[pi].Key] = new OtherRiderLine(plan,
                         new TicketRiderAtSale(plan.FirstName, plan.LastName, plan.Birthdate, saved[pi].RiderUserId, saved[pi].DependentId),
-                        await OwnSignatureFor(saved[pi].RiderUserId, pev, ptier));
+                        await OwnSignatureFor(saved[pi].RiderUserId, pev, ptier) ?? fromKiosk?.SignatureId);
                 }
             }
 
@@ -987,7 +992,10 @@ namespace webapi.Controllers
                     };
                     // The purchaser stays the payer; another rider's ticket names them and their profile in
                     // its INSERT (the gate decides who the rider is from that identity).
-                    var created = await _ticketPurchases.Create(t, orp?.Rider);
+                    var created = await _ticketPurchases.Create(t, orp?.Rider
+                        ?? (payerFromKiosk && item.Quantity == 1 && tier.Kind == "gate_fee"
+                            ? new TicketRiderAtSale(rider.FirstName, rider.LastName, AccountWaiverStatus.Birthdate(rider), null, null)
+                            : null));
                     lineItems.Add(new CounterSaleLineItem
                     {
                         Kind = "event_ticket",
@@ -1237,6 +1245,11 @@ namespace webapi.Controllers
                     ledgerLines.Add(("season_pass", spId, adj.Amount, adj.ServiceCharge));
                 }
             }
+
+            // The kiosk sign-ups this sale used are done (the gate list shows them as handled).
+            if (kioskSignups.Count > 0 && lineItems.Count > 0)
+                await _kiosks.MarkHandled(_tenantContext.TenantId, kioskSignups.Select(k => k.Id).ToList(), cashierId,
+                    $"counter:{lineItems[0].PurchaseId:D}");
 
             // Record the giveaway now the rows exist, and deliberately before payment: an override
             // that a manager authorised is worth logging whether or not the card went through, and a
