@@ -1,9 +1,6 @@
-using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Services.Helpers;
-using Services.Repositories.Data.RiderData;
 using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
 using Services.Riders;
@@ -18,10 +15,10 @@ namespace webapi.Controllers
     /// <summary>
     /// Gate Sale "another rider" lines (Script0309): a payer buys a day pass for a friend, or a son's
     /// friend, in the same payment. Each rider gets their own profile (an account, reused by email, and
-    /// for a minor a link to their parent / guardian's account), the ticket names that rider so the gate
-    /// keys its per-rider checks on them, and the waiver is collected per rider: signed on this device or
-    /// by a link sent to the guardian (minor) or the rider (adult), by email and text when SMS is set up.
-    /// The sale itself stays on CounterController; the gate blocks admission until each rider is signed.
+    /// for a minor a link to their parent / guardian's account), created when the SALE is made
+    /// (CounterController, via ICounterRiderProfiles); here the counter only checks an entry, and later
+    /// collects each rider's waiver: signed on this device or by a link sent to the guardian (minor) or
+    /// the rider (adult), by email and text when SMS is set up. The gate blocks admission until signed.
     /// </summary>
     [ApiController]
     [Route("api/Counter/OtherRiders")]
@@ -30,7 +27,7 @@ namespace webapi.Controllers
     {
         private readonly IUserRepository _users;
         private readonly IRiderDependentRepository _dependents;
-        private readonly IPasswordHasher<User> _passwordHasher;
+        private readonly ICounterRiderProfiles _profiles;
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly IWaiverCheckInGate _waiverGate;
         private readonly IWaiverSignRequestRepository _signRequests;
@@ -43,7 +40,7 @@ namespace webapi.Controllers
         public CounterOtherRiderController(
             IUserRepository users,
             IRiderDependentRepository dependents,
-            IPasswordHasher<User> passwordHasher,
+            ICounterRiderProfiles profiles,
             IEventTicketPurchaseRepository tickets,
             IWaiverCheckInGate waiverGate,
             IWaiverSignRequestRepository signRequests,
@@ -55,7 +52,7 @@ namespace webapi.Controllers
         {
             _users = users;
             _dependents = dependents;
-            _passwordHasher = passwordHasher;
+            _profiles = profiles;
             _tickets = tickets;
             _waiverGate = waiverGate;
             _signRequests = signRequests;
@@ -66,138 +63,20 @@ namespace webapi.Controllers
             _tenantContext = tenantContext;
         }
 
-        private DateOnly TenantToday => TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.UtcNow);
-
         /// <summary>
-        /// Find or create the profile for a rider who isn't the paying customer. Never creates a second
-        /// account for an email that already has one (the rider's or the guardian's): it is reused, and the
-        /// signing link later attaches the signature to it without anyone logging in.
+        /// Checks an "another rider" entry before it goes in the cart: validated, existing profiles matched
+        /// (an email that already has a rider account is that account; a staff email is refused). Writes
+        /// nothing: the sale creates or fills the profiles when it is made, after checking again.
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> Resolve([FromBody] CounterOtherRiderRequest req)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var tenantId = _tenantContext.TenantId;
-            var today = TenantToday;
-
-            var payer = BuyerAccounts.ForTenant(await _users.GetById(req.PayerUserId), tenantId);
+            var payer = BuyerAccounts.ForTenant(await _users.GetById(req.PayerUserId), _tenantContext.TenantId);
             if (payer is null) return new ApiResponses().BadRequestResult("Pick the paying customer first.");
-
-            var resp = new CounterOtherRiderResponse();
-            User? riderAccount = null;
-            string first, last;
-            DateOnly? dob = req.Birthdate is { } b ? DateOnly.FromDateTime(b) : null;
-
-            if (req.ExistingDependentId is Guid depId)
-            {
-                // A child already linked to a guardian here: same row, same rider key.
-                var dep = await _dependents.GetById(depId, tenantId);
-                if (dep is null) return new ApiResponses().NotFoundResult("That rider isn't on file here.");
-                var guardianOfDep = BuyerAccounts.ForTenant(await _users.GetById(dep.GuardianUserId), tenantId);
-                if (guardianOfDep is null) return new ApiResponses().NotFoundResult("That rider's guardian account is no longer available.");
-                var depDob = GuardianWaiverRule.ToDateOnly(dep.Birthdate) ?? dob;
-                if (depDob is null)
-                    return new ApiResponses().BadRequestResult("Enter the rider's birthdate: it decides whether a parent or guardian has to sign.");
-                if (!CounterRiderRules.IsMinor(depDob.Value, today))
-                    return new ApiResponses().BadRequestResult(
-                        $"{dep.FirstName} is 18 or over now and signs their own waiver: add them as an adult rider with their own email.");
-                if (dep.Birthdate is null)
-                    dep = await _dependents.FindOrCreate(tenantId, dep.GuardianUserId, dep.FirstName, dep.LastName,
-                        depDob.Value.ToDateTime(TimeOnly.MinValue), dep.RiderUserId, TryGetStaffUserId());
-                if (dep.RiderUserId is Guid ownId) riderAccount = await _users.GetById(ownId);
-                Fill(resp, dep.FirstName, dep.LastName, depDob, today, riderAccount);
-                FillGuardian(resp, guardianOfDep);
-                resp.RiderDependentId = dep.Id;
-                resp.RiderUserId = dep.RiderUserId;
-                return new ApiResponses().OkResult(resp);
-            }
-
-            var input = new OtherRiderInput(req.FirstName, req.LastName, dob, req.Email, req.Phone,
-                req.GuardianIsPayer, req.GuardianUserId is not null,
-                req.GuardianFirstName, req.GuardianLastName, req.GuardianEmail, req.GuardianPhone);
-
-            if (req.ExistingUserId is Guid existingId)
-            {
-                riderAccount = BuyerAccounts.ForTenant(await _users.GetById(existingId), tenantId);
-                if (riderAccount is null) return new ApiResponses().NotFoundResult("That profile isn't available here.");
-                if (riderAccount.Id == payer.Id)
-                    return new ApiResponses().BadRequestResult("That is the paying customer. Add the ticket for them instead of another rider.");
-                // The account's own birthdate is the gate's; the typed one only fills an account that has none.
-                dob = AccountWaiverStatus.Birthdate(riderAccount) ?? dob;
-                input = input with { Birthdate = dob };
-                var invalid = CounterRiderRules.Validate(input, today, existingProfile: true, payer.Email);
-                if (invalid is not null) return new ApiResponses().BadRequestResult(invalid);
-                if (riderAccount.Birthdate is null && dob is { } fillDob)
-                    await _users.UpdateBirthdate(riderAccount.Id, fillDob.ToDateTime(TimeOnly.MinValue));
-                first = riderAccount.FirstName;
-                last = riderAccount.LastName;
-                resp.MatchedExistingRider = true;
-            }
-            else
-            {
-                var invalid = CounterRiderRules.Validate(input, today, existingProfile: false, payer.Email);
-                if (invalid is not null) return new ApiResponses().BadRequestResult(invalid);
-                first = req.FirstName!.Trim();
-                last = req.LastName!.Trim();
-                var email = req.Email?.Trim();
-                if (!string.IsNullOrEmpty(email))
-                {
-                    var (account, created) = await FindOrCreateAccount(email, first, last, dob, req.Phone);
-                    riderAccount = account;
-                    resp.MatchedExistingRider = !created;
-                    resp.CreatedRider = created;
-                    if (riderAccount.Id == payer.Id)
-                        return new ApiResponses().BadRequestResult("That is the paying customer. Add the ticket for them instead of another rider.");
-                    if (!created)
-                    {
-                        // An existing account is the rider: its name is what the gate and the waiver use.
-                        first = riderAccount.FirstName;
-                        last = riderAccount.LastName;
-                        dob = AccountWaiverStatus.Birthdate(riderAccount) ?? dob;
-                        // The account's birthdate may make them a minor after all: then a guardian is needed.
-                        var recheck = CounterRiderRules.Validate(input with { Birthdate = dob }, today,
-                            existingProfile: true, payer.Email);
-                        if (recheck is not null) return new ApiResponses().BadRequestResult(recheck);
-                    }
-                }
-            }
-
-            var isMinor = dob is { } d && CounterRiderRules.IsMinor(d, today);
-            Fill(resp, first, last, dob, today, riderAccount);
-            resp.RiderUserId = riderAccount?.Id;
-            if (!isMinor)
-            {
-                await AuditProfile(resp, null);
-                return new ApiResponses().OkResult(resp);
-            }
-
-            // A minor: their guardian's account (created from the name / email / phone typed, or reused).
-            User? guardian;
-            if (req.GuardianIsPayer) guardian = payer;
-            else if (req.GuardianUserId is Guid gid)
-            {
-                guardian = BuyerAccounts.ForTenant(await _users.GetById(gid), tenantId);
-                if (guardian is null) return new ApiResponses().NotFoundResult("That guardian profile isn't available here.");
-                resp.MatchedExistingGuardian = true;
-            }
-            else
-            {
-                // Validate (above) has already required the guardian's name and a valid email.
-                var (account, created) = await FindOrCreateAccount(req.GuardianEmail!.Trim(),
-                    req.GuardianFirstName!.Trim(), req.GuardianLastName!.Trim(), null, req.GuardianPhone);
-                guardian = account;
-                resp.MatchedExistingGuardian = !created;
-                resp.CreatedGuardian = created;
-            }
-            if (riderAccount is not null && guardian.Id == riderAccount.Id)
-                return new ApiResponses().BadRequestResult("The guardian can't be the rider. Enter the parent or guardian's own details.");
-
-            var dependent = await _dependents.FindOrCreate(tenantId, guardian.Id, first, last,
-                dob?.ToDateTime(TimeOnly.MinValue), riderAccount?.Id, TryGetStaffUserId());
-            resp.RiderDependentId = dependent.Id;
-            FillGuardian(resp, guardian);
-            await AuditProfile(resp, guardian);
-            return new ApiResponses().OkResult(resp);
+            var (plan, error) = await _profiles.Plan(req, payer);
+            if (error is not null) return new ApiResponses().BadRequestResult(error);
+            return new ApiResponses().OkResult(plan!.ToDraft());
         }
 
         /// <summary>The minors already linked to this guardian here (a parent buying for their own kids).</summary>
@@ -205,7 +84,7 @@ namespace webapi.Controllers
         public async Task<IActionResult> Dependents([FromQuery] Guid guardianUserId)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
-            var today = TenantToday;
+            var today = TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.UtcNow);
             var rows = await _dependents.ListForGuardian(_tenantContext.TenantId, guardianUserId);
             return new ApiResponses().OkResult(rows.Select(r =>
             {
@@ -222,8 +101,8 @@ namespace webapi.Controllers
         /// <summary>
         /// A signing link for one "another rider" ticket: guardian mode for a minor (sent to the guardian),
         /// adult mode for an adult (sent to the rider). Reuses the open link for the ticket rather than
-        /// stacking new ones. Deliver = email it, and text it when the venue has SMS; otherwise the counter
-        /// shows the link and a QR (or opens it to sign on this device).
+        /// stacking new ones. Deliver = email it, and text it when the venue has SMS (needs an email on
+        /// file). Deliver = false is "sign on this device": no email needed, the counter opens the link.
         /// </summary>
         [HttpPost("WaiverLink")]
         public async Task<IActionResult> WaiverLink([FromBody] CounterRiderWaiverLinkRequest req)
@@ -255,33 +134,30 @@ namespace webapi.Controllers
 
             // Who signs, and where the link goes: the gate's own age verdict decides.
             var isMinor = decision.IsMinor == true;
-            User? recipient;
+            User? recipient = null;
             if (isMinor)
             {
                 var dep = ticket.RiderDependentId is Guid did ? await _dependents.GetById(did, tenantId) : null;
-                if (dep is null)
-                    return new ApiResponses().BadRequestResult(
-                        $"{target.DisplayName} is under 18 and has no parent or guardian on file. Sign on this device with their parent or guardian.");
-                recipient = BuyerAccounts.ForTenant(await _users.GetById(dep.GuardianUserId), tenantId);
+                if (dep is not null) recipient = BuyerAccounts.ForTenant(await _users.GetById(dep.GuardianUserId), tenantId);
             }
-            else
+            else if (ticket.RiderUserId is Guid ruid)
             {
-                recipient = ticket.RiderUserId is Guid ruid
-                    ? BuyerAccounts.ForTenant(await _users.GetById(ruid), tenantId) : null;
+                recipient = BuyerAccounts.ForTenant(await _users.GetById(ruid), tenantId);
             }
             var to = CounterRiderRules.LinkRecipient(isMinor, recipient?.Email, recipient?.Phone,
                 recipient?.Email, recipient?.Phone);
-            if (recipient is null || to is null)
+            if (req.Deliver && to is null)
                 return new ApiResponses().BadRequestResult(isMinor
                     ? $"There's no email for {target.DisplayName}'s parent or guardian. Sign on this device instead."
                     : $"There's no email for {target.DisplayName}. Sign on this device instead.");
-            var recipientName = $"{recipient.FirstName} {recipient.LastName}".Trim();
+            var recipientName = recipient is null ? target.DisplayName : $"{recipient.FirstName} {recipient.LastName}".Trim();
+            var recipientEmail = to?.Email ?? string.Empty;   // device signing needs none
 
             var latest = (await _signRequests.LatestForTickets(tenantId, new[] { ticket.Id })).FirstOrDefault();
             Services.Repositories.Data.WaiverData.WaiverSignRequestRow row;
             if (latest is { Status: "pending" or "sent" or "opened" } open
                 && open.WaiverId == decision.RequiredWaiverId
-                && string.Equals(open.RecipientEmail, to.Email, StringComparison.OrdinalIgnoreCase))
+                && (!req.Deliver || string.Equals(open.RecipientEmail, recipientEmail, StringComparison.OrdinalIgnoreCase)))
             {
                 row = open;
                 resp.Reused = true;
@@ -289,18 +165,18 @@ namespace webapi.Controllers
             else
             {
                 row = await _signRequests.Create(tenantId, decision.RequiredWaiverId, WaiverSignRequestMail.NewToken(),
-                    to.Email, recipientName, target.EventId, TryGetStaffUserId(), ticket.Id, null, null, recipient.Id);
+                    recipientEmail, recipientName, target.EventId, TryGetStaffUserId(), ticket.Id, null, null, recipient?.Id);
             }
 
             resp.RequestId = row.Id;
             resp.Link = WaiverSignRequestMail.BuildSigningLink(_config, tenant, row.Token);
             resp.SignAs = isMinor ? "guardian" : "adult";
             resp.RecipientName = recipientName;
-            resp.RecipientEmail = to.Email;
-            resp.RecipientPhone = to.Phone;
+            resp.RecipientEmail = string.IsNullOrEmpty(row.RecipientEmail) ? null : row.RecipientEmail;
+            resp.RecipientPhone = to?.Phone;
             resp.Status = CounterRiderRules.StatusLinkSent;
 
-            if (req.Deliver)
+            if (req.Deliver && to is not null)
             {
                 resp.EmailSent = await WaiverSignRequestMail.TrySend(_emailer, _config, tenant, _signRequests, row);
                 if (resp.SmsAvailable && to.Phone is not null)
@@ -318,7 +194,8 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(resp);
         }
 
-        /// <summary>Each ticket's waiver as the gate will judge it (the counter polls this).</summary>
+        /// <summary>Each ticket's waiver as the gate will judge it (the counter polls this). One ticket query,
+        /// one batched gate evaluation, one link query.</summary>
         [HttpPost("WaiverStatus")]
         public async Task<IActionResult> WaiverStatus([FromBody] CounterRiderWaiverStatusRequest req)
         {
@@ -326,9 +203,7 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             var ids = (req.PurchaseIds ?? new List<Guid>()).Distinct().Take(50).ToList();
 
-            var tickets = new List<Services.Repositories.Data.PaymentData.EventTicketPurchase>();
-            foreach (var id in ids)
-                if (await _tickets.GetById(id, tenantId) is { } t) tickets.Add(t);
+            var tickets = await _tickets.ListByIds(ids, tenantId);
             var decisions = await _waiverGate.EvaluateTickets(tenantId, tickets);
             var requests = (await _signRequests.LatestForTickets(tenantId, tickets.Select(t => t.Id).ToList()))
                 .Where(r => r.EventTicketPurchaseId is not null)
@@ -353,90 +228,12 @@ namespace webapi.Controllers
                     BlockReason = d.BlockReason,
                     RequestStatus = r?.Status,
                     RequestSentAtUtc = r?.SentAt is { } s ? DateTime.SpecifyKind(s, DateTimeKind.Utc) : null,
-                    RecipientEmail = r?.RecipientEmail,
+                    RecipientEmail = string.IsNullOrEmpty(r?.RecipientEmail) ? null : r!.RecipientEmail,
                     Link = open ? WaiverSignRequestMail.BuildSigningLink(_config, _tenantContext.Tenant, r!.Token) : null,
                 });
             }
             return new ApiResponses().OkResult(items);
         }
-
-        // ── helpers ────────────────────────────────────────────────────────────────────────────
-
-        /// <summary>The platform account for this email (a global rider, or one of this tenant's own), or a
-        /// new global rider account with an unguessable password they claim later by reset.</summary>
-        private async Task<(User Account, bool Created)> FindOrCreateAccount(string email, string first, string last,
-            DateOnly? birthdate, string? phone)
-        {
-            var tenantId = _tenantContext.TenantId;
-            var existing = await _users.GetGlobalByEmail(email) ?? await _users.GetByEmail(tenantId, email);
-            if (existing is not null)
-            {
-                // Fill only what the account is missing; never overwrite what the person entered themselves.
-                if (string.IsNullOrWhiteSpace(existing.Phone) && CounterRiderRules.PhoneDigits(phone) >= 7)
-                    await _users.UpdatePhone(existing.Id, phone!.Trim());
-                if (existing.Birthdate is null && birthdate is { } bd)
-                    await _users.UpdateBirthdate(existing.Id, bd.ToDateTime(TimeOnly.MinValue));
-                return ((await _users.GetById(existing.Id))!, false);
-            }
-
-            Span<byte> bytes = stackalloc byte[32];
-            RandomNumberGenerator.Fill(bytes);
-            var user = new User
-            {
-                TenantId = null,          // riders are global: one account works at every tenant
-                Email = email,
-                FirstName = first,
-                LastName = last,
-                Role = "rider",
-                Status = "active",
-                Phone = CounterRiderRules.PhoneDigits(phone) >= 7 ? phone!.Trim() : null,
-                Birthdate = birthdate?.ToDateTime(TimeOnly.MinValue),
-            };
-            user.PasswordHash = _passwordHasher.HashPassword(user, Convert.ToHexString(bytes));
-            try
-            {
-                user.Id = await _users.Create(user);
-            }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
-            {
-                // Created by a concurrent request a moment ago: use that one.
-                var raced = await _users.GetGlobalByEmail(email);
-                if (raced is null) throw;
-                return (raced, false);
-            }
-            return (user, true);
-        }
-
-        private static void Fill(CounterOtherRiderResponse resp, string first, string last, DateOnly? dob,
-            DateOnly today, User? account)
-        {
-            resp.FirstName = first;
-            resp.LastName = last;
-            resp.Birthdate = dob;
-            resp.Age = dob is { } d ? GuardianWaiverRule.AgeOn(d, today) : null;
-            resp.IsMinor = dob is { } m && CounterRiderRules.IsMinor(m, today);
-            resp.Email = account?.Email;
-            resp.Phone = account?.Phone;
-        }
-
-        private static void FillGuardian(CounterOtherRiderResponse resp, User guardian)
-        {
-            resp.GuardianUserId = guardian.Id;
-            resp.GuardianName = $"{guardian.FirstName} {guardian.LastName}".Trim();
-            resp.GuardianEmail = guardian.Email;
-            resp.GuardianPhone = guardian.Phone;
-        }
-
-        private Task AuditProfile(CounterOtherRiderResponse resp, User? guardian) =>
-            _audit.Log("counter.other_rider_profile",
-                $"Gate Sale rider {resp.FirstName} {resp.LastName}"
-                    + (guardian is not null ? $" (guardian {guardian.FirstName} {guardian.LastName})" : ""),
-                targetKind: "user", targetId: resp.RiderUserId ?? guardian?.Id, tenantId: _tenantContext.TenantId,
-                metadata: new
-                {
-                    resp.RiderUserId, resp.RiderDependentId, resp.GuardianUserId,
-                    resp.CreatedRider, resp.MatchedExistingRider, resp.CreatedGuardian, resp.MatchedExistingGuardian,
-                });
 
         private Guid? TryGetStaffUserId() =>
             Guid.TryParse(User.FindFirst("UserId")?.Value, out var id) ? id : null;

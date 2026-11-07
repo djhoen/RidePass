@@ -150,10 +150,12 @@ namespace Services.Riders
         private readonly IUserRepository _users;
         private readonly ISeasonPassRepository _passes;
         private readonly IEventTicketPurchaseRepository _tickets;
+        private readonly ITicketRiderIdentity _riderIdentity;
 
         public RiderIdVerification(IUserRepository users, ISeasonPassRepository passes,
-            IEventTicketPurchaseRepository tickets)
+            IEventTicketPurchaseRepository tickets, ITicketRiderIdentity riderIdentity)
         {
+            _riderIdentity = riderIdentity;
             _users = users;
             _passes = passes;
             _tickets = tickets;
@@ -168,30 +170,37 @@ namespace Services.Riders
         public async Task<RiderIdVerificationStatus> StatusForPass(SeasonPassPurchase pass, Guid tenantId)
         {
             var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
-            return await Resolve(tenantId, account, pass.HolderFirstName, pass.HolderLastName,
+            return await Resolve(tenantId, TicketRiderKeys.FromNames(account, pass.HolderFirstName, pass.HolderLastName),
                 pass.IdVerifiedAt, pass.IdVerifiedByUserId, pass.IdVerifiedDob);
         }
 
         public async Task<RiderIdVerificationStatus> StatusForTicket(EventTicketPurchase ticket, Guid tenantId)
         {
-            var account = ticket.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
-            return await Resolve(tenantId, account, ticket.RiderFirstName, ticket.RiderLastName,
+            return await Resolve(tenantId, await KeyingForTicket(ticket, tenantId),
                 ticket.IdVerifiedAt, ticket.IdVerifiedByUserId, ticket.IdVerifiedDob);
         }
 
-        private async Task<RiderIdVerificationStatus> Resolve(Guid tenantId, User? account,
-            string? riderFirst, string? riderLast,
+        /// <summary>The ticket's rider identity (TicketRiderKeys): a Gate Sale rider's profile (Script0309)
+        /// decides, else the name under the tenant-filtered buying account.</summary>
+        private async Task<RiderKeying> KeyingForTicket(EventTicketPurchase ticket, Guid tenantId)
+        {
+            if (ticket.RiderUserId is not null || ticket.RiderDependentId is not null)
+                return await _riderIdentity.ForTicket(ticket, tenantId);
+            var account = ticket.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
+            return TicketRiderKeys.FromNames(account, ticket.RiderFirstName, ticket.RiderLastName);
+        }
+
+        private async Task<RiderIdVerificationStatus> Resolve(Guid tenantId, RiderKeying keying,
             DateTime? credentialAt, Guid? credentialBy, DateTime? credentialDob)
         {
             IdCheck? row = null, legacy = null;
-            if (account is not null)
+            if (keying.Account is { } account)
             {
-                var key = IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
+                var key = keying.RiderKey;
                 if (await _users.GetRiderIdVerification(account.Id, tenantId, key) is { } r)
                     row = new IdCheck(DateTime.SpecifyKind(r.VerifiedAt, DateTimeKind.Utc), r.VerifiedByUserId,
                         r.VerifiedDob, IdVerificationScope.Rider);
-                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la
-                    && IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la && keying.AccountIsRider)
                     legacy = new IdCheck(DateTime.SpecifyKind(la, DateTimeKind.Utc), account.IdVerifiedByUserId,
                         account.IdVerifiedDob, IdVerificationScope.Rider);
             }
@@ -228,8 +237,8 @@ namespace Services.Riders
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
             var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
-            return await StampAccountAndReport(account, tenantId, pass.HolderFirstName, pass.HolderLastName,
-                staffUserId, verifiedDob);
+            return await StampAccountAndReport(TicketRiderKeys.FromNames(account, pass.HolderFirstName, pass.HolderLastName),
+                tenantId, staffUserId, verifiedDob);
         }
 
         public Task<RiderIdVerificationStatus> RecordForTicket(EventTicketPurchase ticket, Guid tenantId,
@@ -243,20 +252,17 @@ namespace Services.Riders
             var stamped = await _tickets.SetIdVerifiedMany(ids, tenantId, staffUserId, verifiedDob);
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
-            var account = anchor.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
-            return await StampAccountAndReport(account, tenantId, anchor.RiderFirstName, anchor.RiderLastName,
-                staffUserId, verifiedDob);
+            return await StampAccountAndReport(await KeyingForTicket(anchor, tenantId), tenantId, staffUserId, verifiedDob);
         }
 
-        private async Task<RiderIdVerificationStatus> StampAccountAndReport(User? account, Guid tenantId,
-            string? riderFirst, string? riderLast, Guid? staffUserId, DateTime? verifiedDob)
+        private async Task<RiderIdVerificationStatus> StampAccountAndReport(RiderKeying keying, Guid tenantId,
+            Guid? staffUserId, DateTime? verifiedDob)
         {
+            var account = keying.Account;
             if (account is not null)
             {
-                var key = IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
-                await _users.SetRiderIdVerification(account.Id, tenantId, key, staffUserId, verifiedDob);
-                if (account.TenantId == tenantId
-                    && IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                await _users.SetRiderIdVerification(account.Id, tenantId, keying.RiderKey, staffUserId, verifiedDob);
+                if (account.TenantId == tenantId && keying.AccountIsRider)
                     await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
             }
             return new RiderIdVerificationStatus

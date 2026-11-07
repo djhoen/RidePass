@@ -830,7 +830,7 @@ namespace webapi.Controllers
 
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
             var sigId = await _repo.SignRegistrant(_tenantContext.TenantId, waiver.Id, ip,
-                request.SignatureDataUrl, signerEmail: row.RecipientEmail,
+                request.SignatureDataUrl, signerEmail: string.IsNullOrWhiteSpace(row.RecipientEmail) ? null : row.RecipientEmail,
                 signerName: isMinor ? parentName : $"{attendeeFirst} {attendeeLast}",
                 attendeeFirstName: attendeeFirst, attendeeLastName: attendeeLast,
                 attendeeBirthdate: birthdate,

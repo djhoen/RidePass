@@ -109,6 +109,8 @@ builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers
 builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
 builder.Services.AddScoped<IRiderPhotoRepository, RiderPhotoRepository>();
 builder.Services.AddScoped<IRiderDependentRepository, RiderDependentRepository>();
+builder.Services.AddScoped<Services.Riders.ITicketRiderIdentity, Services.Riders.TicketRiderIdentity>();
+builder.Services.AddScoped<webapi.Helpers.ICounterRiderProfiles, webapi.Helpers.CounterRiderProfiles>();
 builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();

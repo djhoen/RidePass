@@ -73,7 +73,7 @@
         // Whose profile this ticket is for when the payer bought it for someone else at the Gate Sale
         // (Script0309): the rider's own account, and / or the minor's link to their guardian. Null on
         // every other ticket (the purchaser, or the named rider under the purchaser, is the rider).
-        // Written by SetRiderProfile, never by Create.
+        // Written in the INSERT only when the sale names the rider (Create(..., TicketRiderAtSale)).
         public Guid? RiderUserId { get; set; }
         public Guid? RiderDependentId { get; set; }
 

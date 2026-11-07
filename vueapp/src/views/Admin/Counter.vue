@@ -679,6 +679,9 @@
                 <v-card-title>Another rider</v-card-title>
                 <v-card-subtitle v-if="otherTier">{{ otherTier.name }} — ${{ (otherTier.priceCents / 100).toFixed(2) }}</v-card-subtitle>
                 <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        Nothing is saved until the sale: new profiles (and a guardian's) are created when you take payment.
+                    </p>
                     <div v-if="payerDependents.length > 0" class="mb-3">
                         <div class="text-caption text-medium-emphasis mb-1">{{ customer?.firstName }}’s kids on file</div>
                         <div class="d-flex flex-wrap ga-2">
@@ -748,6 +751,21 @@
                                 <v-col cols="12" sm="6"><PhoneField v-model="otherForm.guardianPhone" label="Guardian phone" density="compact" /></v-col>
                             </v-row>
                         </template>
+                        <v-text-field v-if="otherForm.guardianMode === 'other' || otherGuardianDobAsked"
+                            v-model="otherForm.guardianBirthdate" type="date" :max="todayIso" density="compact"
+                            :label="otherForm.guardianMode === 'other' ? 'Guardian birthdate (must be 18 or over)' : 'Guardian birthdate (not on their profile)'"></v-text-field>
+                    </template>
+                    <template v-if="branding.requireEmergencyContact">
+                        <v-divider class="my-2"></v-divider>
+                        <div class="text-subtitle-2 mb-1">Emergency contact</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            This track requires one.
+                            {{ otherNeedsGuardian || otherForm.existingDependentId ? 'Leave blank to use the parent or guardian.' : 'Leave blank if it is on their profile already.' }}
+                        </p>
+                        <v-row dense>
+                            <v-col cols="12" sm="6"><v-text-field v-model="otherForm.emergencyContactName" label="Contact name" density="compact"></v-text-field></v-col>
+                            <v-col cols="12" sm="6"><PhoneField v-model="otherForm.emergencyContactPhone" label="Contact phone" density="compact" /></v-col>
+                        </v-row>
                     </template>
                     <v-alert v-if="otherError" type="error" variant="tonal" density="compact" class="mt-2">{{ otherError }}</v-alert>
                 </v-card-text>
@@ -767,7 +785,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
-import { CounterService, type CounterRider, type CounterDependent, type RiderWaiverLink, type RiderWaiverStatusItem } from '@/services/CounterService'
+import { CounterService, type CounterRider, type CounterDependent, type RiderWaiverLink, type RiderWaiverStatusItem, type OtherRiderInput } from '@/services/CounterService'
 import { PassService, type WaiverDto } from '@/services/PassService'
 import type { EligibleExtra, EligibleExtraVariant, EventDto, EligibleRental } from '@/services/EventService'
 import { EventService } from '@/services/EventService'
@@ -1110,8 +1128,13 @@ function toggleLessonBike(bike: EligibleRental) {
 
 // ── Day passes: gate-fee tiers of upcoming riding days, for the customer or another rider ──────
 interface OtherLine {
+    // What the cashier entered: sent with the sale, which checks it again and creates / links the
+    // profiles. Nothing exists for a new rider or guardian until then.
+    input: OtherRiderInput
+    // The matched profiles (for spotting the same rider twice) and what the cart shows.
     userId: string | null
     dependentId: string | null
+    key: string
     name: string
     isMinor: boolean
     guardianName: string | null
@@ -1206,12 +1229,15 @@ const otherPickedLabel = ref<string | null>(null)
 const payerDependents = ref<CounterDependent[]>([])
 // The server said this picked profile is a minor: ask for their guardian.
 const otherForcedGuardian = ref(false)
+// The server needs the guardian's birthdate (not on their account).
+const otherGuardianDobAsked = ref(false)
 const blankOtherForm = () => ({
     existingUserId: null as string | null,
     existingDependentId: null as string | null,
     firstName: '', lastName: '', birthdate: '', email: '', phone: '',
     guardianMode: 'other' as 'payer' | 'other',
-    guardianFirstName: '', guardianLastName: '', guardianEmail: '', guardianPhone: '',
+    guardianFirstName: '', guardianLastName: '', guardianEmail: '', guardianPhone: '', guardianBirthdate: '',
+    emergencyContactName: '', emergencyContactPhone: '',
 })
 const otherForm = ref(blankOtherForm())
 
@@ -1233,6 +1259,7 @@ async function openOtherRider(t: TicketTier) {
     otherPickedLabel.value = null
     otherError.value = null
     otherForcedGuardian.value = false
+    otherGuardianDobAsked.value = false
     otherDialog.value = true
     try {
         const r = await counter.listDependents(customer.value.id)
@@ -1289,8 +1316,7 @@ async function saveOtherRider() {
     try {
         const guardianIsPayer = otherNeedsGuardian.value && f.guardianMode === 'payer'
         const sendGuardian = otherNeedsGuardian.value && f.guardianMode === 'other'
-        const r = await counter.resolveOtherRider({
-            payerUserId: customer.value.id,
+        const input: OtherRiderInput = {
             existingUserId: f.existingUserId,
             existingDependentId: f.existingDependentId,
             firstName: f.firstName.trim() || null,
@@ -1303,28 +1329,37 @@ async function saveOtherRider() {
             guardianLastName: sendGuardian ? f.guardianLastName.trim() : null,
             guardianEmail: sendGuardian ? f.guardianEmail.trim() : null,
             guardianPhone: sendGuardian ? f.guardianPhone.trim() || null : null,
-        })
+            guardianBirthdate: otherNeedsGuardian.value ? f.guardianBirthdate || null : null,
+            emergencyContactName: f.emergencyContactName.trim() || null,
+            emergencyContactPhone: f.emergencyContactPhone.trim() || null,
+        }
+        // A check only: the draft says who this is and which profiles exist; the sale creates the rest.
+        const r = await counter.resolveOtherRider({ payerUserId: customer.value.id, ...input })
         const p = r.data.data
         const other: OtherLine = {
+            input,
             userId: p.riderUserId,
             dependentId: p.riderDependentId,
+            key: p.riderDependentId ?? p.riderUserId
+                ?? `${p.firstName} ${p.lastName}|${p.guardianEmail ?? p.email ?? ''}`.toLowerCase(),
             name: `${p.firstName} ${p.lastName}`,
             isMinor: p.isMinor,
             guardianName: p.guardianName,
         }
-        const dup = cart.value.some(c => c.itemId === otherTier.value!.id && c.other
-            && c.other.userId === other.userId && c.other.dependentId === other.dependentId)
+        const dup = cart.value.some(c => c.itemId === otherTier.value!.id && c.other?.key === other.key)
         if (dup) { otherError.value = `${other.name} already has this ticket in the cart.`; return }
         cart.value.push(dayPassLine(otherTier.value, other))
         otherDialog.value = false
         flash(p.matchedExistingRider || p.matchedExistingGuardian
-            ? `Added ${other.name}: matched their existing profile${p.matchedExistingGuardian ? ' (guardian too)' : ''}.`
-            : `Added ${other.name}.`, 'success')
+            ? `Added ${other.name}: their existing profile${p.matchedExistingGuardian ? ' (guardian too)' : ''} will be used.`
+            : `Added ${other.name}: their profile is created with the sale.`, 'success')
     } catch (err: any) {
         const msg: string = err.response?.data?.error || 'Couldn’t add that rider.'
         otherError.value = msg
         // A picked profile turned out to be a minor: ask for their guardian, then try again.
         if (/parent or guardian/i.test(msg)) otherForcedGuardian.value = true
+        // The guardian's age isn't on file: show the birthdate box.
+        if (/birthdate/i.test(msg) && otherNeedsGuardian.value) otherGuardianDobAsked.value = true
     } finally {
         otherSaving.value = false
     }
@@ -1368,7 +1403,7 @@ watch([step, receiptRiderLines, ridersAllDone], ([s, lines, done]) => {
     if (s === 5 && lines.length > 0 && !done) {
         if (!waiverPoll) {
             void refreshRiderWaivers()
-            waiverPoll = setInterval(() => { void refreshRiderWaivers() }, 5000)
+            waiverPoll = setInterval(() => { void refreshRiderWaivers() }, 10000)
         }
     } else {
         stopWaiverPoll()
@@ -1753,8 +1788,7 @@ async function createSale(method: 'stripe' | 'cash') {
                 quantity: c.quantity,
                 eventId: c.eventId ?? null,
                 variantId: c.variantId ?? null,
-                riderUserId: c.other?.userId ?? null,
-                riderDependentId: c.other?.dependentId ?? null,
+                otherRider: c.other?.input ?? null,
             })),
             signWaiver: willSignWaiver.value && customerAcknowledged.value,
             signatureDataUrl: willSignWaiver.value ? customerSignatureDataUrl.value : null,

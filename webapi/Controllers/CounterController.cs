@@ -54,7 +54,7 @@ namespace webapi.Controllers
         private readonly ISeasonPassRepository _passes;
         private readonly Services.Email.IPurchaseConfirmationEmailer _purchaseEmails;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
-        private readonly IRiderDependentRepository _dependents;
+        private readonly ICounterRiderProfiles _riderProfiles;
 
         public CounterController(
             IUserRepository users,
@@ -85,10 +85,10 @@ namespace webapi.Controllers
             ISeasonPassRepository passes,
             Services.Email.IPurchaseConfirmationEmailer purchaseEmails,
             Services.Waivers.IWaiverCheckInGate waiverGate,
-            IRiderDependentRepository dependents)
+            ICounterRiderProfiles riderProfiles)
         {
             _waiverGate = waiverGate;
-            _dependents = dependents;
+            _riderProfiles = riderProfiles;
             _discounts = discounts;
             _managerPin = managerPin;
             _audit = audit;
@@ -234,31 +234,15 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult("Please enter a valid birthdate.");
             }
-            var contactName = request.EmergencyContactName.Trim();
-            var contactPhone = request.EmergencyContactPhone.Trim();
-            if (contactName.Length == 0 || UserController.DigitsOnly(contactPhone).Length < 7)
+            // The shared rider-account rules (also used for Gate Sale "another rider" profiles).
+            var contactError = RiderAccounts.EmergencyContactError(request.EmergencyContactName, request.EmergencyContactPhone);
+            if (contactError is not null)
             {
-                return new ApiResponses().BadRequestResult("Please enter a valid emergency contact name and phone number.");
+                return new ApiResponses().BadRequestResult(contactError);
             }
 
-            // Random unguessable password the rider never sees. They claim the account later via reset.
-            Span<byte> bytes = stackalloc byte[32];
-            RandomNumberGenerator.Fill(bytes);
-            var unknownPassword = Convert.ToHexString(bytes);
-
-            var rider = new User
-            {
-                TenantId = null,         // Riders are global — one account works at every tenant.
-                Email = email,
-                FirstName = request.FirstName.Trim(),
-                LastName = request.LastName.Trim(),
-                Role = "rider",
-                Status = "active",
-                Birthdate = request.Birthdate.Date,
-                EmergencyContactName = contactName,
-                EmergencyContactPhone = contactPhone,
-            };
-            rider.PasswordHash = _passwordHasher.HashPassword(rider, unknownPassword);
+            var rider = RiderAccounts.NewRider(_passwordHasher, email, request.FirstName, request.LastName,
+                request.Birthdate.Date, null, request.EmergencyContactName, request.EmergencyContactPhone);
             rider.Id = await _users.Create(rider);
 
             return new ApiResponses().OkResult(new CreateCounterRiderResponse
@@ -328,13 +312,15 @@ namespace webapi.Controllers
             int totalCents = 0;
             int ticketTaxCents = 0;   // admission tax contained in totalCents (for the response)
             bool waiverRequiredByCart = false;
-            // "Another rider" lines (Script0309): the profile each one is for, by cart line.
-            var otherRiders = new Dictionary<CounterCartItem, OtherRiderProfile>(ReferenceEqualityComparer.Instance);
+            // "Another rider" lines (Script0309): the checked profile plan each one is for, by cart line.
+            // Nothing is written for them until the sale's rows are (under the capacity locks below).
+            var otherRiderPlans = new Dictionary<CounterCartItem, (OtherRiderPlan Plan, Services.Repositories.Data.EventData.Event Ev, EventTicketTier Tier)>(
+                ReferenceEqualityComparer.Instance);
             var tenant = _tenantContext.Tenant;
             var admissionTax = await LoadAdmissionTaxConfig(_tenantContext.TenantId);
             foreach (var item in request.Items)
             {
-                if (item.Kind != "event_ticket" && (item.RiderUserId is not null || item.RiderDependentId is not null))
+                if (item.Kind != "event_ticket" && item.OtherRider is not null)
                 {
                     return new ApiResponses().BadRequestResult("Only day passes and gate tickets can be bought for another rider.");
                 }
@@ -350,7 +336,7 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' is for an event that has already ended.");
                     }
-                    if (item.RiderUserId is not null || item.RiderDependentId is not null)
+                    if (item.OtherRider is not null)
                     {
                         // One ticket per rider, on a gate fee (day pass / lift ticket): a race entry has its
                         // own per-rider registration and duplicate rules, which stay online.
@@ -358,9 +344,10 @@ namespace webapi.Controllers
                             return new ApiResponses().BadRequestResult("A ticket for another rider is one ticket per rider.");
                         if (tier.Kind != "gate_fee")
                             return new ApiResponses().BadRequestResult($"'{tier.Name}' can't be bought for another rider at the counter. Day passes and gate tickets can.");
-                        var (profile, profileError) = await ResolveOtherRider(item, rider, ev, tier);
-                        if (profileError is not null) return new ApiResponses().BadRequestResult(profileError);
-                        if (profile is not null) otherRiders[item] = profile;
+                        // Checked again here (the cart is never trusted): the same rules as the add-to-cart check.
+                        var (plan, planError) = await _riderProfiles.Plan(item.OtherRider, rider);
+                        if (planError is not null) return new ApiResponses().BadRequestResult(planError);
+                        otherRiderPlans[item] = (plan!, ev, tier);
                     }
                     // Price ladder: a step carries no per-step inventory. The live price is the
                     // active (highest-priced fired) step and the whole class sells against
@@ -457,7 +444,7 @@ namespace webapi.Controllers
                     ticketTaxCents += tktTax.TaxCents * item.Quantity;
                     // Counter sales of race-entry tiers are rider-audience. Another rider's ticket needs
                     // THEIR waiver (collected per rider after the sale), never the payer's signature.
-                    if (ev.RequiresRiderWaiver && !otherRiders.ContainsKey(item)) waiverRequiredByCart = true;
+                    if (ev.RequiresRiderWaiver && !otherRiderPlans.ContainsKey(item)) waiverRequiredByCart = true;
                 }
                 else if (item.Kind == "extras")
                 {
@@ -940,6 +927,30 @@ namespace webapi.Controllers
                     }
                 }
 
+            // The other riders' profiles: created / filled now, in one transaction, after every check has
+            // passed and before any ticket row; a failure stops the sale here with nothing sold.
+            var otherRiders = new Dictionary<CounterCartItem, OtherRiderLine>(ReferenceEqualityComparer.Instance);
+            if (otherRiderPlans.Count > 0)
+            {
+                var planned = otherRiderPlans.ToList();
+                List<OtherRiderSaved> saved;
+                try
+                {
+                    saved = await _riderProfiles.Save(planned.Select(p => p.Value.Plan).ToList(), cashierId);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return new ApiResponses().BadRequestResult(ex.Message);
+                }
+                for (var pi = 0; pi < planned.Count; pi++)
+                {
+                    var (plan, pev, ptier) = planned[pi].Value;
+                    otherRiders[planned[pi].Key] = new OtherRiderLine(plan,
+                        new TicketRiderAtSale(plan.FirstName, plan.LastName, plan.Birthdate, saved[pi].RiderUserId, saved[pi].DependentId),
+                        await OwnSignatureFor(saved[pi].RiderUserId, pev, ptier));
+                }
+            }
+
             for (var tkiIdx = 0; tkiIdx < ticketItems.Count; tkiIdx++)
             {
                 var (item, tier, unitAmount, unitServiceCharge, unitTax) = ticketItems[tkiIdx];
@@ -974,27 +985,21 @@ namespace webapi.Controllers
                         // Another rider's ticket only ever carries THEIR OWN signature (or none yet).
                         WaiverSignatureId = otherRiders.TryGetValue(item, out var orp) ? orp.OwnSignatureId : waiverSignatureId,
                     };
-                    var created = await _ticketPurchases.Create(t);
-                    if (orp is not null)
-                    {
-                        // The purchaser stays the payer; the ticket names the rider (the gate keys ID checks,
-                        // photos and the adult-at-18 rule on that name and birthdate) and their profile.
-                        await _ticketPurchases.SetRiderProfile(created.Id, _tenantContext.TenantId,
-                            orp.FirstName, orp.LastName, orp.Birthdate?.ToDateTime(TimeOnly.MinValue),
-                            orp.RiderUserId, orp.DependentId);
-                    }
+                    // The purchaser stays the payer; another rider's ticket names them and their profile in
+                    // its INSERT (the gate decides who the rider is from that identity).
+                    var created = await _ticketPurchases.Create(t, orp?.Rider);
                     lineItems.Add(new CounterSaleLineItem
                     {
                         Kind = "event_ticket",
                         PurchaseId = created.Id,
                         RedemptionToken = created.RedemptionToken,
-                        DisplayName = orp is not null ? $"{tier.Name} ({orp.FirstName} {orp.LastName})" : tier.Name,
+                        DisplayName = orp is not null ? $"{tier.Name} ({orp.Plan.FirstName} {orp.Plan.LastName})" : tier.Name,
                         Quantity = 1,
                         UnitPriceCents = tier.PriceCents,
                         LineAmountCents = adj.Amount,
                         OtherRider = orp is not null,
-                        RiderName = orp is not null ? $"{orp.FirstName} {orp.LastName}" : null,
-                        RiderIsMinor = orp?.IsMinor ?? false,
+                        RiderName = orp is not null ? $"{orp.Plan.FirstName} {orp.Plan.LastName}" : null,
+                        RiderIsMinor = orp?.Plan.IsMinor ?? false,
                     });
                     ledgerLines.Add(("event_ticket", created.Id, adj.Amount, adj.ServiceCharge));
                 }
@@ -1519,68 +1524,31 @@ namespace webapi.Controllers
             });
         }
 
-        /// <summary>The rider an "another rider" cart line is for (Script0309), as the ticket will name them.</summary>
-        private sealed record OtherRiderProfile(string FirstName, string LastName, DateOnly? Birthdate, bool IsMinor,
-            Guid? RiderUserId, Guid? DependentId, Guid? OwnSignatureId);
+        /// <summary>An "another rider" line once its profiles are saved: the plan, the ticket's rider columns,
+        /// and the rider's own still-valid signature for the ticket's document, if they have one.</summary>
+        private sealed record OtherRiderLine(OtherRiderPlan Plan, TicketRiderAtSale Rider, Guid? OwnSignatureId);
 
         /// <summary>
-        /// Resolves an "another rider" line's profile (from POST Counter/OtherRiders) for this tenant. A
-        /// minor must come with their guardian link, so someone can sign for them; an adult with an account
-        /// brings their own valid signature for the ticket's document when they have one. Returns no
-        /// profile (and no error) when the line names the payer: it is then simply the payer's own ticket.
+        /// The rider's own account signature for the document the gate will require on this ticket (the
+        /// event's pinned version for the audience, else the active waiver), when it is theirs and still
+        /// valid for them (not a minor-era one now they are 18). The gate judges the rest. Never the payer's.
         /// </summary>
-        private async Task<(OtherRiderProfile? Profile, string? Error)> ResolveOtherRider(CounterCartItem item,
-            User payer, Services.Repositories.Data.EventData.Event ev, EventTicketTier tier)
+        private async Task<Guid?> OwnSignatureFor(Guid? riderUserId,
+            Services.Repositories.Data.EventData.Event ev, EventTicketTier tier)
         {
+            if (riderUserId is not Guid uid) return null;
             var tenantId = _tenantContext.TenantId;
-            var tz = _tenantContext.Tenant.Timezone;
-            var today = TenantClock.LocalDate(tz, DateTime.UtcNow);
-            User? account = null;
-            string first, last;
-            DateOnly? dob;
-            if (item.RiderDependentId is Guid depId)
-            {
-                var dep = await _dependents.GetById(depId, tenantId);
-                if (dep is null) return (null, "That rider's profile isn't on file here. Add them again.");
-                if (item.RiderUserId is Guid uid && dep.RiderUserId != uid)
-                    return (null, "That rider's profile doesn't match. Add them again.");
-                if (dep.RiderUserId is Guid own)
-                    account = Services.Riders.BuyerAccounts.ForTenant(await _users.GetById(own), tenantId);
-                first = dep.FirstName;
-                last = dep.LastName;
-                dob = Services.Waivers.GuardianWaiverRule.ToDateOnly(dep.Birthdate);
-                if (dob is null) return (null, $"{first}'s birthdate is missing. Add them again.");
-            }
-            else
-            {
-                account = Services.Riders.BuyerAccounts.ForTenant(await _users.GetById(item.RiderUserId!.Value), tenantId);
-                if (account is null) return (null, "That rider's profile isn't available here.");
-                if (account.Id == payer.Id) return (null, null);
-                first = account.FirstName;
-                last = account.LastName;
-                dob = AccountWaiverStatus.Birthdate(account);
-                if (dob is null) return (null, $"{first} has no birthdate on file. Add them again as another rider with their birthdate.");
-                if (Services.Riders.CounterRiderRules.IsMinor(dob.Value, today))
-                    return (null, $"{first} is under 18: add them as another rider with their parent or guardian, who signs for them.");
-            }
-
-            Guid? ownSignature = null;
-            if (account is not null)
-            {
-                // The document the gate will require for this ticket (the event's pinned version for the
-                // audience, else the active waiver). The account's signature counts only when it is theirs
-                // and still valid for them (not a minor-era one now they are 18); the gate judges the rest.
-                var spectator = tier.Audience == "spectator";
-                var required = spectator ? ev.RequiresSpectatorWaiver : ev.RequiresRiderWaiver;
-                var doc = required ? (spectator ? ev.SpectatorWaiverId : ev.RacerWaiverId) : null;
-                if (required && doc is null) doc = (await _waivers.GetActive(tenantId))?.Id;
-                if (doc is Guid docId && await _waivers.GetSignature(account.Id, docId) is { } sig
-                    && sig.TenantId == tenantId
-                    && !AccountWaiverStatus.IsMinorEraForAdult(account, sig, _tenantContext.Tenant.Timezone, DateTime.UtcNow))
-                    ownSignature = sig.Id;
-            }
-            var isMinor = Services.Riders.CounterRiderRules.IsMinor(dob!.Value, today);
-            return (new OtherRiderProfile(first, last, dob, isMinor, account?.Id, item.RiderDependentId, ownSignature), null);
+            var account = Services.Riders.BuyerAccounts.ForTenant(await _users.GetById(uid), tenantId);
+            if (account is null) return null;
+            var spectator = tier.Audience == "spectator";
+            var required = spectator ? ev.RequiresSpectatorWaiver : ev.RequiresRiderWaiver;
+            if (!required) return null;
+            var doc = (spectator ? ev.SpectatorWaiverId : ev.RacerWaiverId) ?? (await _waivers.GetActive(tenantId))?.Id;
+            if (doc is not Guid docId) return null;
+            var sig = await _waivers.GetSignature(account.Id, docId);
+            return sig is not null && sig.TenantId == tenantId
+                && !AccountWaiverStatus.IsMinorEraForAdult(account, sig, _tenantContext.Tenant.Timezone, DateTime.UtcNow)
+                ? sig.Id : null;
         }
 
         private static bool IsValidPngDataUrl(string? dataUrl)

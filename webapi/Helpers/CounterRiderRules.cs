@@ -1,6 +1,7 @@
 using Services.Waivers;
+using webapi.Controllers;
 
-namespace Services.Riders
+namespace webapi.Helpers
 {
     /// <summary>What the cashier typed for "another rider" on a Gate Sale (a friend, a son's friend).</summary>
     public sealed record OtherRiderInput(
@@ -21,8 +22,8 @@ namespace Services.Riders
 
     /// <summary>
     /// Pure rules for Gate Sale rider lines (Script0309): what a new rider profile needs, who signs, where
-    /// the signing link goes and how a line's waiver reads on the counter. Shared by the counter endpoints
-    /// so the dialog, the link and the status chip can never disagree.
+    /// the signing link goes and how a line's waiver reads on the counter. Email, phone and birthdate use the
+    /// codebase's own validators (RiderAccounts / UserController), not copies.
     /// </summary>
     public static class CounterRiderRules
     {
@@ -30,19 +31,6 @@ namespace Services.Riders
         public const string StatusSigned = "signed";
         public const string StatusLinkSent = "link_sent";
         public const string StatusNeedsSignature = "needs_signature";
-
-        /// <summary>The oldest birthdate the counter accepts (typos like 1902 instead of 2002).</summary>
-        public const int MaxAgeYears = 110;
-
-        public static bool IsValidEmail(string? email)
-        {
-            var e = email?.Trim();
-            if (string.IsNullOrEmpty(e) || e.Length > 200 || e.Contains(' ')) return false;
-            var at = e.IndexOf('@');
-            return at > 0 && at == e.LastIndexOf('@') && e.IndexOf('.', at) > at + 1 && !e.EndsWith('.');
-        }
-
-        public static int PhoneDigits(string? phone) => (phone ?? string.Empty).Count(char.IsDigit);
 
         public static bool IsMinor(DateOnly birthdate, DateOnly today) => GuardianWaiverRule.IsMinorOn(birthdate, today);
 
@@ -59,13 +47,13 @@ namespace Services.Riders
             }
             if (input.Birthdate is not { } dob)
                 return "Enter the rider's birthdate: it decides whether a parent or guardian has to sign.";
-            if (dob > today || dob < today.AddYears(-MaxAgeYears))
+            if (dob > today || !UserController.IsValidBirthdate(dob.ToDateTime(TimeOnly.MinValue)))
                 return "Enter a valid birthdate.";
 
             var email = input.Email?.Trim();
-            if (!string.IsNullOrEmpty(email) && !IsValidEmail(email))
+            if (!string.IsNullOrEmpty(email) && !RiderAccounts.IsValidEmail(email))
                 return "That rider email doesn't look right.";
-            if (!string.IsNullOrEmpty(input.Phone) && PhoneDigits(input.Phone) < 7)
+            if (!string.IsNullOrWhiteSpace(input.Phone) && !RiderAccounts.IsValidPhone(input.Phone))
                 return "That rider phone number is too short.";
             if (!existingProfile && !string.IsNullOrEmpty(email) && SameEmail(email, payerEmail))
                 return "That is the customer's own email. Add the ticket for the customer instead of another rider.";
@@ -82,24 +70,38 @@ namespace Services.Riders
             if (input.GuardianIsPayer || input.HasGuardianAccount) return null;
             if (string.IsNullOrWhiteSpace(input.GuardianFirstName) || string.IsNullOrWhiteSpace(input.GuardianLastName))
                 return "Riders under 18 need a parent or guardian: enter their first and last name.";
-            if (!IsValidEmail(input.GuardianEmail))
+            if (!RiderAccounts.IsValidEmail(input.GuardianEmail))
                 return "Enter the parent or guardian's email: the signing link and their profile use it.";
-            if (!string.IsNullOrEmpty(input.GuardianPhone) && PhoneDigits(input.GuardianPhone) < 7)
+            if (!string.IsNullOrWhiteSpace(input.GuardianPhone) && !RiderAccounts.IsValidPhone(input.GuardianPhone))
                 return "That parent or guardian phone number is too short.";
             if (!string.IsNullOrEmpty(email) && SameEmail(email, input.GuardianEmail))
                 return "The guardian's email is the rider's own email. Enter the parent or guardian's address.";
             return null;
         }
 
+        /// <summary>Why this person can't sign as a parent or guardian (they must be 18 or over by the gate's
+        /// own birthdate source), or null. <paramref name="birthdate"/> is the account's (ID-verified, else
+        /// self-reported) or the one staff typed; unknown = staff must enter it.</summary>
+        public static string? GuardianAgeError(string guardianName, DateOnly? birthdate, DateOnly today)
+        {
+            if (birthdate is not { } b)
+                return $"Enter {guardianName}'s birthdate: a parent or guardian must be 18 or over.";
+            if (b > today || !UserController.IsValidBirthdate(b.ToDateTime(TimeOnly.MinValue)))
+                return "Enter a valid birthdate for the parent or guardian.";
+            return IsMinor(b, today)
+                ? $"{guardianName} is under 18 and can't sign as a parent or guardian. Choose an adult."
+                : null;
+        }
+
         /// <summary>A minor's link goes to their guardian, an adult's to themselves. Null when that person
-        /// has no email on file (the counter then signs on the device instead).</summary>
+        /// has no usable email on file (the counter then signs on the device instead).</summary>
         public static WaiverLinkRecipient? LinkRecipient(bool isMinor, string? riderEmail, string? riderPhone,
             string? guardianEmail, string? guardianPhone)
         {
             var email = (isMinor ? guardianEmail : riderEmail)?.Trim();
-            if (!IsValidEmail(email)) return null;
+            if (!RiderAccounts.IsValidEmail(email)) return null;
             var phone = (isMinor ? guardianPhone : riderPhone)?.Trim();
-            return new WaiverLinkRecipient(isMinor, email!, PhoneDigits(phone) >= 7 ? phone : null);
+            return new WaiverLinkRecipient(isMinor, email!, RiderAccounts.IsValidPhone(phone) ? phone : null);
         }
 
         /// <summary>How a rider line's waiver reads on the counter.</summary>

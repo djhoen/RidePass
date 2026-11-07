@@ -156,6 +156,7 @@ namespace Services.Waivers
         private readonly IEventTicketPurchaseRepository _tickets;
         private readonly Services.Riders.IRiderPhotos _photos;
         private readonly IWaiverSignRequestRepository _signRequests;
+        private readonly Services.Riders.ITicketRiderIdentity _riderIdentity;
 
         // Per-request memo (the gate is scoped).
         private readonly Dictionary<Guid, EventTicketTier?> _tierCache = new();
@@ -176,9 +177,11 @@ namespace Services.Waivers
             ITenantRepository tenants,
             IEventTicketPurchaseRepository tickets,
             Services.Riders.IRiderPhotos photos,
-            IWaiverSignRequestRepository signRequests)
+            IWaiverSignRequestRepository signRequests,
+            Services.Riders.ITicketRiderIdentity riderIdentity)
         {
             _signRequests = signRequests;
+            _riderIdentity = riderIdentity;
             _photos = photos;
             _events = events;
             _tiers = tiers;
@@ -201,20 +204,21 @@ namespace Services.Waivers
         /// rider (from the cached account), and the credential's own stamp. The rules (rider key,
         /// latest wins) are IdCheckRules, shared with RiderIdVerification.
         /// </summary>
-        private async Task<Services.Riders.IdCheck?> LatestIdCheck(Guid tenantId, User? account,
-            string? riderFirst, string? riderLast, DateTime? credentialAt, DateTime? credentialDob)
+        private async Task<Services.Riders.IdCheck?> LatestIdCheck(Guid tenantId, Services.Riders.RiderKeying keying,
+            DateTime? credentialAt, DateTime? credentialDob)
         {
             Services.Riders.IdCheck? row = null, legacy = null;
-            if (Services.Riders.BuyerAccounts.ForTenant(account, tenantId) is not null)
+            // Keyed by the rider's identity (TicketRiderKeys): a dependent under their guardian by id, a
+            // rider with their own account under it, else the name under the buying account.
+            if (Services.Riders.BuyerAccounts.ForTenant(keying.Account, tenantId) is { } account)
             {
-                var key = Services.Riders.IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
+                var key = keying.RiderKey;
                 if (!_riderCheckCache.TryGetValue((account.Id, key), out var r))
                     _riderCheckCache[(account.Id, key)] = r = await _users.GetRiderIdVerification(account.Id, tenantId, key);
                 if (r is not null)
                     row = new Services.Riders.IdCheck(DateTime.SpecifyKind(r.VerifiedAt, DateTimeKind.Utc), null,
                         r.VerifiedDob, Services.Riders.IdVerificationScope.Rider);
-                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la
-                    && Services.Riders.IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la && keying.AccountIsRider)
                     legacy = new Services.Riders.IdCheck(DateTime.SpecifyKind(la, DateTimeKind.Utc), null,
                         account.IdVerifiedDob, Services.Riders.IdVerificationScope.Rider);
             }
@@ -233,18 +237,18 @@ namespace Services.Waivers
         /// the credential itself (RiderPhotoRules.Key, shared with the endpoint that records it). A row whose
         /// image is missing counts as no photo (IRiderPhotos.Find, memoized per request).
         /// </summary>
-        private async Task<PhotoFacts> PhotoFor(Guid tenantId, TenantFacts tenant, User? account, string? buyerEmail,
-            string? riderFirst, string? riderLast, string? passPhotoDataUrl, bool accountIsRider,
+        private async Task<PhotoFacts> PhotoFor(Guid tenantId, TenantFacts tenant, Services.Riders.RiderKeying keying,
+            string? buyerEmail, string? riderFirst, string? riderLast, string? passPhotoDataUrl,
             string credentialKind, Guid credentialId)
         {
             if (tenant.PhotoMode == Services.Riders.IdVerificationWindow.ModeOff) return new PhotoFacts(tenant.PhotoMode, null);
             // Only the tenant-filtered account: its key, and its profile photo, count.
-            var owner = Services.Riders.BuyerAccounts.ForTenant(account, tenantId);
-            var key = Services.Riders.RiderPhotoRules.Key(owner, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
+            var filtered = keying with { Account = Services.Riders.BuyerAccounts.ForTenant(keying.Account, tenantId) };
+            var key = Services.Riders.RiderPhotoRules.KeyFor(filtered, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
             var photo = await _photos.Find(tenantId, key);
             return new PhotoFacts(tenant.PhotoMode,
-                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, owner,
-                    Services.Riders.RiderPhotoRules.AccountIsNamedRider(owner, riderFirst, riderLast)));
+                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, filtered.Account,
+                    Services.Riders.RiderPhotoRules.AccountPhotoIsRiders(filtered, riderFirst, riderLast)));
         }
 
         public async Task<string?> BlockReasonForTicket(Guid tenantId, EventTicketPurchase ticket) =>
@@ -278,13 +282,20 @@ namespace Services.Waivers
             // rider's own (registration writes one per registrant), so its attendee DOB may be used;
             // the buyer account's only when the account IS the rider.
             var sig = ticket.WaiverSignatureId is Guid sigId ? await Signature(sigId, tenantId) : null;
-            var account = ticket.PurchaserUserId is Guid uid ? await User(uid) : null;
-            var accountIsRider = AccountIsRider(account, ticket.RiderFirstName, ticket.RiderLastName);
+            // Who the rider is (TicketRiderKeys): a ticket's profile identity (Script0309) decides, never a
+            // name match to the payer; otherwise the name under the buying account, as before. For a
+            // dependent the account is their guardian's and is NOT the rider (no birthdate, email or
+            // signature of theirs stands in); for a rider with their own account it is theirs.
+            var keying = ticket.RiderUserId is null && ticket.RiderDependentId is null
+                ? Services.Riders.TicketRiderKeys.FromNames(
+                    ticket.PurchaserUserId is Guid uid ? await User(uid) : null, ticket.RiderFirstName, ticket.RiderLastName)
+                : await _riderIdentity.ForTicket(ticket, tenantId);
+            var account = keying.Account;
+            var accountIsRider = keying.AccountIsRider;
             // The rider's recorded ID check (account first, then this ticket). Its DOB is the
             // verified one, which wins for age.
             var idCheck = riderAudience
-                ? await LatestIdCheck(tenantId, account, ticket.RiderFirstName, ticket.RiderLastName,
-                    ticket.IdVerifiedAt, ticket.IdVerifiedDob)
+                ? await LatestIdCheck(tenantId, keying, ticket.IdVerifiedAt, ticket.IdVerifiedDob)
                 : null;
             var birthdate = GuardianWaiverRule.ResolveBirthdate(new RiderBirthdateFacts(
                 GuardianWaiverRule.ToDateOnly(idCheck?.VerifiedDob ?? ticket.IdVerifiedDob),
@@ -295,8 +306,8 @@ namespace Services.Waivers
                 accountIsRider));
             var tenant = await Tenant(tenantId);
             var photo = riderAudience
-                ? await PhotoFor(tenantId, tenant, account, ticket.PurchaserEmail, ticket.RiderFirstName,
-                    ticket.RiderLastName, null, accountIsRider, "ticket", ticket.Id)
+                ? await PhotoFor(tenantId, tenant, keying, ticket.PurchaserEmail, ticket.RiderFirstName,
+                    ticket.RiderLastName, null, "ticket", ticket.Id)
                 : default;
             var ages = new AgeFacts(birthdate, tenant.Today, riderAudience, tenant.Verify(idCheck),
                 JoinName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName,
@@ -332,6 +343,16 @@ namespace Services.Waivers
             var signed = ticket.WaiverSignatureId is not null
                 || ticket.WaiverSignedAt is not null
                 || !string.IsNullOrWhiteSpace(ticket.WaiverSignatureDataUrl);
+            // A rider with their own account (Script0309) brings their account's signature for this
+            // document, e.g. signed in the app after the payer bought their ticket. Judged like any other.
+            if (!signed && keying.Kind == Services.Riders.RiderKeyingKind.RiderAccount
+                && Services.Riders.BuyerAccounts.ForTenant(account, tenantId) is { } riderAccount
+                && await _waivers.GetSignature(riderAccount.Id, doc.Value) is { } accountSig
+                && accountSig.TenantId == tenantId)
+            {
+                sig = accountSig;
+                signed = true;
+            }
             if (!signed)
             {
                 var who = riderAudience ? "rider" : "spectator";
@@ -462,7 +483,8 @@ namespace Services.Waivers
                 sigBirth = GuardianWaiverRule.ToDateOnly(accountSig.SpectatorBirthdate);
             // The holder's most recent recorded ID check (the account's row for this holder, or this
             // pass); its DOB wins for age.
-            var idCheck = await LatestIdCheck(tenantId, account, pass.HolderFirstName, pass.HolderLastName,
+            var passKeying = Services.Riders.TicketRiderKeys.FromNames(account, pass.HolderFirstName, pass.HolderLastName);
+            var idCheck = await LatestIdCheck(tenantId, passKeying,
                 pass.IdVerifiedAt, pass.IdVerifiedDob);
             var birthdate = GuardianWaiverRule.ResolveBirthdate(new RiderBirthdateFacts(
                 GuardianWaiverRule.ToDateOnly(idCheck?.VerifiedDob ?? pass.IdVerifiedDob),
@@ -473,8 +495,8 @@ namespace Services.Waivers
                 accountIsHolder));
             var tenant = await Tenant(tenantId);
             var today = tenant.Today;
-            var photo = await PhotoFor(tenantId, tenant, account, pass.PurchaserEmail, pass.HolderFirstName,
-                pass.HolderLastName, pass.PhotoDataUrl, accountIsHolder, "pass", pass.Id);
+            var photo = await PhotoFor(tenantId, tenant, passKeying, pass.PurchaserEmail, pass.HolderFirstName,
+                pass.HolderLastName, pass.PhotoDataUrl, "pass", pass.Id);
             var ages = new AgeFacts(birthdate, today, RiderAudience: true, tenant.Verify(idCheck), holderName,
                 accountIsHolder ? account!.Email : null, photo);
             var required = productDoc is not null || eventDoc is not null;

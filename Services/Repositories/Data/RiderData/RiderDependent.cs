@@ -15,6 +15,9 @@ namespace Services.Repositories.Data.RiderData
         public string LastName { get; set; } = string.Empty;
         public DateTime? Birthdate { get; set; }
         public string RiderKey { get; set; } = string.Empty;
+        /// <summary>The rider's emergency contact: the guardian unless staff entered another.</summary>
+        public string? EmergencyContactName { get; set; }
+        public string? EmergencyContactPhone { get; set; }
         public Guid? CreatedByUserId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

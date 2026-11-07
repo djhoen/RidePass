@@ -28,11 +28,9 @@ namespace webapi.Controllers.API.Data.Counter
         // product has any active variants (server enforces).
         public Guid? VariantId { get; set; }
 
-        // "Another rider" on the payer's order (event_ticket gate fee / day pass, quantity 1): the rider's
-        // profile from POST Counter/OtherRiders. An adult (or a minor with their own account) has
-        // RiderUserId; a minor always has RiderDependentId (their link to a guardian). Both null = the
-        // payer's own line, as before.
-        public Guid? RiderUserId { get; set; }
-        public Guid? RiderDependentId { get; set; }
+        // "Another rider" on the payer's order (an event_ticket gate fee / day pass, quantity 1): who it is
+        // for, as entered at the counter. The sale re-checks it and creates or links their profile (and a
+        // minor's guardian) when it is made. Null = the payer's own line, as before.
+        public CounterOtherRiderInput? OtherRider { get; set; }
     }
 }

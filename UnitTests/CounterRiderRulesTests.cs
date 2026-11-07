@@ -1,5 +1,8 @@
 using NUnit.Framework;
+using Services.Repositories.Data.RiderData;
+using Services.Repositories.Data.UserData;
 using Services.Riders;
+using webapi.Helpers;
 
 namespace UnitTests
 {
@@ -44,7 +47,7 @@ namespace UnitTests
 
         [TestCase(null)]
         [TestCase("2026-11-08")]   // tomorrow
-        [TestCase("1900-01-01")]   // a typo for 2000
+        [TestCase("1899-12-31")]   // UserController.IsValidBirthdate: 1900 or later
         public void BadBirthdate_IsRefused(string? dob) =>
             Assert.That(CounterRiderRules.Validate(
                 AdultInput() with { Birthdate = dob is null ? null : DateOnly.Parse(dob) }, Today, false, null),
@@ -119,14 +122,94 @@ namespace UnitTests
         public void LineStatus(bool required, bool satisfied, string? request, string expected) =>
             Assert.That(CounterRiderRules.LineStatus(required, satisfied, request), Is.EqualTo(expected));
 
+        // The codebase's own rule ([EmailAddress], as CreateCounterRiderRequest validates), not a copy.
         [TestCase("a@b.co", true)]
-        [TestCase("a.b@c.d.example", true)]
-        [TestCase("a@b", false)]
+        [TestCase(" a.b@c.d.example ", true)]
         [TestCase("@b.co", false)]
+        [TestCase("a@", false)]
         [TestCase("a@@b.co", false)]
-        [TestCase("a b@c.co", false)]
-        [TestCase("a@b.co.", false)]
-        public void Email(string email, bool ok) => Assert.That(CounterRiderRules.IsValidEmail(email), Is.EqualTo(ok));
+        [TestCase("", false)]
+        public void Email(string email, bool ok) => Assert.That(RiderAccounts.IsValidEmail(email), Is.EqualTo(ok));
+
+        [TestCase("Pat Payer", null, "birthdate")]
+        [TestCase("Pat Payer", "2010-01-01", "under 18")]
+        [TestCase("Pat Payer", "2008-11-07", null)]   // 18 today
+        [TestCase("Pat Payer", "1980-02-02", null)]
+        public void GuardianMustBeAnAdult(string name, string? dob, string? expected)
+        {
+            var error = CounterRiderRules.GuardianAgeError(name, dob is null ? null : DateOnly.Parse(dob), Today);
+            if (expected is null) Assert.That(error, Is.Null);
+            else Assert.That(error, Does.Contain(expected));
+        }
+
+        [Test]
+        public void EmergencyContact_UsesCreateRidersRule()
+        {
+            Assert.That(RiderAccounts.EmergencyContactError("Sam", "555 0101"), Is.Null);
+            Assert.That(RiderAccounts.EmergencyContactError(" ", "5550101"), Is.Not.Null);
+            Assert.That(RiderAccounts.EmergencyContactError("Sam", "12-34"), Is.Not.Null);
+        }
+
+        // ── Who the rider is (TicketRiderKeys, Script0309) ──────────────────────────────────────
+
+        private static User Account(string first, string last) => new() { Id = Guid.NewGuid(), FirstName = first, LastName = last, Email = $"{first}@x.test" };
+
+        [Test]
+        public void Dependent_NamedLikeThePayer_IsNeverThePayer()
+        {
+            var payer = Account("John", "Smith");
+            var dep = new RiderDependent { Id = Guid.NewGuid(), GuardianUserId = payer.Id, FirstName = "John", LastName = "Smith" };
+            var k = TicketRiderKeys.Resolve(payer, "John", "Smith", null, dep.Id, null, dep, payer);
+            Assert.That(k.Kind, Is.EqualTo(RiderKeyingKind.Dependent));
+            Assert.That(k.AccountIsRider, Is.False);
+            Assert.That(k.Account, Is.SameAs(payer));                          // keyed under the guardian
+            Assert.That(k.RiderKey, Is.EqualTo($"dependent:{dep.Id:D}"));       // by id, not by name
+            // The same name without the identity is the payer, as before.
+            Assert.That(TicketRiderKeys.FromNames(payer, "John", "Smith").AccountIsRider, Is.True);
+        }
+
+        [Test]
+        public void FriendWithOwnAccount_IsKeyedUnderTheirAccount()
+        {
+            var payer = Account("Pat", "Payer");
+            var friend = Account("Ada", "Adult");
+            var k = TicketRiderKeys.Resolve(payer, "Ada", "Adult", friend.Id, null, friend, null, null);
+            Assert.That(k.Kind, Is.EqualTo(RiderKeyingKind.RiderAccount));
+            Assert.That(k.Account, Is.SameAs(friend));
+            Assert.That(k.AccountIsRider, Is.True);
+            Assert.That(k.RiderKey, Is.EqualTo("ada adult"));
+        }
+
+        [Test]
+        public void RiderAccountThatIsThePayer_IsTheNameRule()
+        {
+            var payer = Account("Pat", "Payer");
+            var k = TicketRiderKeys.Resolve(payer, null, null, payer.Id, null, payer, null, null);
+            Assert.That(k.Kind, Is.EqualTo(RiderKeyingKind.Names));
+            Assert.That(k.AccountIsRider, Is.True);
+        }
+
+        [Test]
+        public void UnusableFriendAccount_IsNeverThePayer()
+        {
+            var payer = Account("Ada", "Adult");
+            var k = TicketRiderKeys.Resolve(payer, "Ada", "Adult", Guid.NewGuid(), null, null, null, null);
+            Assert.That(k.Account, Is.Null);
+            Assert.That(k.AccountIsRider, Is.False);
+        }
+
+        [Test]
+        public void PhotoKey_FollowsTheIdentity()
+        {
+            var guardian = Account("Gwen", "Guard");
+            var depId = Guid.NewGuid();
+            var dep = new RiderDependent { Id = depId, GuardianUserId = guardian.Id };
+            var k = TicketRiderKeys.Resolve(Account("Pat", "Payer"), "Milo", "Kid", null, depId, null, dep, guardian);
+            var key = RiderPhotoRules.KeyFor(k, "payer@x.test", "Milo", "Kid", "ticket", Guid.NewGuid());
+            Assert.That(key.OwnerKey, Is.EqualTo($"user:{guardian.Id:D}"));
+            Assert.That(key.RiderKey, Is.EqualTo($"dependent:{depId:D}"));
+            Assert.That(RiderPhotoRules.AccountPhotoIsRiders(k, "Milo", "Kid"), Is.False);   // the guardian's photo never counts
+        }
 
         [Test]
         public void SmsBody_NamesTheRiderForAGuardian()

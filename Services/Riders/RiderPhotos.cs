@@ -80,6 +80,33 @@ namespace Services.Riders
         }
 
         /// <summary>
+        /// Where a credential's rider photo is filed by its rider identity (TicketRiderKeys). Name-keyed
+        /// credentials use <see cref="Key"/> exactly as before; a dependent or a rider with their own account
+        /// is filed under that keying's account and rider key (else under the credential itself).
+        /// <paramref name="keying"/>'s account must already be tenant-filtered.
+        /// </summary>
+        public static RiderPhotoKey KeyFor(RiderKeying keying, string? buyerEmail, string? riderFirst, string? riderLast,
+            string credentialKind, Guid credentialId)
+        {
+            if (keying.Kind == RiderKeyingKind.Names)
+                return Key(keying.Account, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
+            if (keying.Account is null || string.IsNullOrEmpty(keying.RiderKey))
+                return new RiderPhotoKey($"{credentialKind}:{credentialId:D}", CredentialRiderKey, null, null);
+            return new RiderPhotoKey(OwnerKey(keying.Account.Id, null)!, keying.RiderKey, keying.Account.Id, null);
+        }
+
+        /// <summary>The keyed account's profile photo may stand for this rider: by name for a name-keyed
+        /// credential (<see cref="AccountIsNamedRider"/>), always for the rider's own account, never for a
+        /// guardian's account (a dependent).</summary>
+        public static bool AccountPhotoIsRiders(RiderKeying keying, string? riderFirst, string? riderLast) =>
+            keying.Kind switch
+            {
+                RiderKeyingKind.Names => AccountIsNamedRider(keying.Account, riderFirst, riderLast),
+                RiderKeyingKind.RiderAccount => keying.AccountIsRider && keying.Account is not null,
+                _ => false,
+            };
+
+        /// <summary>
         /// Priority: the venue's own photo of this rider, else the pass's registration photo (for a
         /// pass holder), else the account's profile photo ONLY when the (tenant-filtered) account is the
         /// rider.
@@ -146,15 +173,17 @@ namespace Services.Riders
         private readonly IUserRepository _users;
         private readonly ISeasonPassRepository _passes;
         private readonly IImageStorage _storage;
+        private readonly ITicketRiderIdentity _riderIdentity;
         private readonly Dictionary<(Guid, string, string), RiderPhoto?> _findCache = new();
 
         public RiderPhotos(IRiderPhotoRepository photos, IUserRepository users, ISeasonPassRepository passes,
-            IImageStorage storage)
+            IImageStorage storage, ITicketRiderIdentity riderIdentity)
         {
             _photos = photos;
             _users = users;
             _passes = passes;
             _storage = storage;
+            _riderIdentity = riderIdentity;
         }
 
         public async Task<RiderPhoto?> Find(Guid tenantId, RiderPhotoKey key)
@@ -169,6 +198,13 @@ namespace Services.Riders
 
         public async Task<RiderPhotoKey> KeyForTicket(EventTicketPurchase ticket, Guid tenantId)
         {
+            if (ticket.RiderUserId is not null || ticket.RiderDependentId is not null)
+            {
+                // A Gate Sale rider (Script0309): filed by their identity, as the gate reads it.
+                var keying = await _riderIdentity.ForTicket(ticket, tenantId);
+                return RiderPhotoRules.KeyFor(keying, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
+                    "ticket", ticket.Id);
+            }
             var account = ticket.PurchaserUserId is Guid id ? BuyerAccounts.ForTenant(await _users.GetById(id), tenantId) : null;
             return RiderPhotoRules.Key(account, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
                 "ticket", ticket.Id);

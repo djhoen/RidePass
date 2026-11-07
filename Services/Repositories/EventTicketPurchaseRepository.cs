@@ -41,8 +41,10 @@ namespace Services.Repositories
 
         public EventTicketPurchaseRepository(IDbHelper db) => _db = db;
 
-        public async Task<(Guid Id, Guid RedemptionToken)> Create(EventTicketPurchase p)
+        public async Task<(Guid Id, Guid RedemptionToken)> Create(EventTicketPurchase p, TicketRiderAtSale? rider = null)
         {
+            // The rider columns are written only for a rider named at sale time (a Gate Sale "another
+            // rider" line, Script0309); every other caller inserts them NULL, exactly as before.
             const string sql = @"
                 INSERT INTO event_ticket_purchase
                     (tenant_id, tier_id, purchaser_user_id, amount_cents, service_charge_cents,
@@ -50,34 +52,32 @@ namespace Services.Repositories
                      applied_season_pass_purchase_id, payment_method,
                      status, purchaser_email, purchaser_name, sold_by_user_id, registration_complete,
                      waiver_signature_id,
-                     discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id)
+                     discount_cents, discount_preset_id, discount_label, discount_authorized_by_user_id,
+                     rider_first_name, rider_last_name, rider_birthdate, rider_user_id, rider_dependent_id)
                 VALUES
                     (@TenantId, @TierId, @PurchaserUserId, @AmountCents, @ServiceChargeCents,
                      @TaxCents, @TaxRateBps, @TaxInclusive,
                      @AppliedSeasonPassPurchaseId, @PaymentMethod,
                      @Status, @PurchaserEmail, @PurchaserName, @SoldByUserId, @RegistrationComplete,
                      @WaiverSignatureId,
-                     @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId)
+                     @DiscountCents, @DiscountPresetId, @DiscountLabel, @DiscountAuthorizedByUserId,
+                     @SaleRiderFirstName, @SaleRiderLastName, @SaleRiderBirthdate::date, @SaleRiderUserId, @SaleRiderDependentId)
                 RETURNING id, redemption_token AS RedemptionToken";
-            var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
+            var args = new Dapper.DynamicParameters(p);
+            args.Add("SaleRiderFirstName", rider?.FirstName);
+            args.Add("SaleRiderLastName", rider?.LastName);
+            args.Add("SaleRiderBirthdate", rider?.Birthdate?.ToDateTime(TimeOnly.MinValue), System.Data.DbType.Date);
+            args.Add("SaleRiderUserId", rider?.RiderUserId);
+            args.Add("SaleRiderDependentId", rider?.RiderDependentId);
+            var row = (await _db.Query<EventTicketPurchase>(sql, args)).First();
             return (row.Id, row.RedemptionToken);
         }
 
-        public async Task<bool> SetRiderProfile(Guid id, Guid tenantId, string firstName, string lastName,
-            DateTime? birthdate, Guid? riderUserId, Guid? riderDependentId)
+        public async Task<List<EventTicketPurchase>> ListByIds(IReadOnlyCollection<Guid> ids, Guid tenantId)
         {
-            // Only a ticket nobody has registered or admitted yet: this names the rider at sale time.
-            const string sql = @"
-                UPDATE event_ticket_purchase
-                   SET rider_first_name = @firstName, rider_last_name = @lastName,
-                       rider_birthdate = @birthdate::date,
-                       rider_user_id = @riderUserId, rider_dependent_id = @riderDependentId,
-                       updated_at = now()
-                 WHERE id = @id AND tenant_id = @tenantId AND redeemed_at_utc IS NULL";
-            return await _db.Execute(sql, new
-            {
-                id, tenantId, firstName, lastName, birthdate = birthdate?.Date, riderUserId, riderDependentId,
-            }) == 1;
+            if (ids.Count == 0) return new List<EventTicketPurchase>();
+            var sql = $"SELECT {Columns} FROM event_ticket_purchase WHERE tenant_id = @tenantId AND id = ANY(@ids)";
+            return (await _db.Query<EventTicketPurchase>(sql, new { tenantId, ids = ids.ToArray() })).ToList();
         }
 
         public async Task<int> ClearAppliedSeasonPass(Guid id, Guid tenantId)
@@ -124,6 +124,7 @@ namespace Services.Repositories
                        p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
                        p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
+                       p.rider_user_id AS RiderUserId, p.rider_dependent_id AS RiderDependentId,
                        COALESCE(sig.signed_by_parent, false) AS SignedByParent,
                        COALESCE(sig.parent_name, p.parent_guardian_name) AS GuardianName,
                        t.name AS TierName,
@@ -157,6 +158,7 @@ namespace Services.Repositories
                        p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
                        p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
+                       p.rider_user_id AS RiderUserId, p.rider_dependent_id AS RiderDependentId,
                        -- The waiver gate's inputs, so the order screen can judge each ticket with
                        -- IWaiverCheckInGate exactly as redeem will. The inline signature image is
                        -- only needed as a presence marker here, so it is not shipped.

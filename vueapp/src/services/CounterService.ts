@@ -29,15 +29,13 @@ export interface CounterCartItem {
     eventId?: string | null
     // Required when kind === 'extras' AND the product has any active variants.
     variantId?: string | null
-    // "Another rider" on the payer's order (a day pass / gate ticket, quantity 1): the rider's profile
-    // from resolveOtherRider. Both null = the payer's own line.
-    riderUserId?: string | null
-    riderDependentId?: string | null
+    // "Another rider" on the payer's order (a day pass / gate ticket, quantity 1): who it is for, as
+    // entered. The sale checks it again and creates / links their profile. Null = the payer's own line.
+    otherRider?: OtherRiderInput | null
 }
 
-/** Input for "another rider": pick an existing profile, or type a new rider (and a minor's guardian). */
-export interface OtherRiderRequest {
-    payerUserId: string
+/** "Another rider": pick an existing profile, or type a new rider (and a minor's guardian). */
+export interface OtherRiderInput {
     existingUserId?: string | null
     existingDependentId?: string | null
     firstName?: string | null
@@ -51,8 +49,18 @@ export interface OtherRiderRequest {
     guardianLastName?: string | null
     guardianEmail?: string | null
     guardianPhone?: string | null
+    /** Needed when the guardian's age isn't on file: a guardian must be 18 or over. */
+    guardianBirthdate?: string | null
+    /** Tenants that require one. A minor defaults to their guardian. */
+    emergencyContactName?: string | null
+    emergencyContactPhone?: string | null
 }
 
+export interface OtherRiderRequest extends OtherRiderInput {
+    payerUserId: string
+}
+
+/** The draft profile a line will be sold against: nothing is created until the sale. */
 export interface OtherRiderProfile {
     riderUserId: string | null
     riderDependentId: string | null
@@ -62,15 +70,17 @@ export interface OtherRiderProfile {
     age: number | null
     isMinor: boolean
     email: string | null
-    phone: string | null
     guardianUserId: string | null
     guardianName: string | null
     guardianEmail: string | null
     guardianPhone: string | null
+    emergencyContactName: string | null
+    emergencyContactPhone: string | null
     matchedExistingRider: boolean
     matchedExistingGuardian: boolean
-    createdRider: boolean
-    createdGuardian: boolean
+    willCreateRider: boolean
+    willCreateGuardian: boolean
+    willCreateDependent: boolean
 }
 
 export interface CounterDependent {
