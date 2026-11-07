@@ -36,12 +36,14 @@ namespace webapi.Controllers
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantRepository _tenants;
         private readonly IRiderPhotos _photos;
+        private readonly IKioskSignupWriter _writer;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ITenantContext _tenantContext;
 
         public KioskController(IKioskAuthenticator auth, IKioskRepository kiosks, ICounterRiderProfiles profiles,
             IUserRepository users, IWaiverRepository waivers, Services.Waivers.IWaiverCheckInGate waiverGate,
-            ITenantRepository tenants, IRiderPhotos photos, Services.Audit.IAuditLogger audit, ITenantContext tenantContext)
+            ITenantRepository tenants, IRiderPhotos photos, Services.Audit.IAuditLogger audit, ITenantContext tenantContext,
+            IKioskSignupWriter writer)
         {
             _auth = auth;
             _kiosks = kiosks;
@@ -51,6 +53,7 @@ namespace webapi.Controllers
             _waiverGate = waiverGate;
             _tenants = tenants;
             _photos = photos;
+            _writer = writer;
             _audit = audit;
             _tenantContext = tenantContext;
         }
@@ -103,9 +106,9 @@ namespace webapi.Controllers
         }
 
         /// <summary>
-        /// A walk-up's sign-up: their profile (an existing account with that email is used, silently, and only
-        /// its empty fields are filled), the signed waiver (their own, or a parent or guardian's for a minor) and
-        /// their photo. The answer is only "done": nothing about any account is returned.
+        /// A walk-up's sign-up. A brand-new email: the profile is created now, with the signed waiver (their own,
+        /// or a parent or guardian's for a minor) and the photo. An email that matches an existing account: held
+        /// for a cashier to confirm after checking ID (nothing written to that account). The answer is the same.
         /// </summary>
         [HttpPost("Signup")]
         [EnableRateLimiting("kiosk")]
@@ -142,12 +145,15 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(ecError);
             }
 
+            // The waiver the kiosk showed must still be the one in force: a changed waiver means start again.
             var waiver = await ActiveWaiver(tenantId);
+            if (waiver?.Id != req.WaiverId)
+                return new ApiResponses().BadRequestResult("The waiver changed, please start again.");
             if (waiver is not null)
             {
                 if (!req.AgreedToWaiver)
                     return new ApiResponses().BadRequestResult("Read the waiver and tick that you agree before signing.");
-                if (!IsValidPngDataUrl(req.SignatureDataUrl))
+                if (!SignatureImages.IsValidPngDataUrl(req.SignatureDataUrl))
                     return new ApiResponses().BadRequestResult("Sign the waiver with your finger in the box.");
             }
             var mode = PhotoMode(tenant.RiderPhotoMode);
@@ -181,7 +187,52 @@ namespace webapi.Controllers
             if (planError is not null)
                 return new ApiResponses().BadRequestResult(planError == CounterRiderProfiles.StaffEmailMessage ? StaffEmailRefused : GenericFailure);
             if (plan!.IsMinor != typedMinor) return new ApiResponses().BadRequestResult(GenericFailure);
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
 
+            // ── An email that matches an existing account: held for staff, nothing written to that account ──
+            // An unattended kiosk can't tell who is typing someone's email, so the sign-up waits at the gate
+            // ("Matches an existing account: check ID"); the cashier attaches it after checking ID. What was
+            // typed, the signature image and the photo (under "kiosk:{id}", no account's key) are kept on the
+            // sign-up until then. The answer is the same as for a new account.
+            if (plan.MatchedExistingRider || plan.MatchedExistingGuardian)
+            {
+                var pendingId = await _kiosks.CreateSignup(new KioskSignup
+                {
+                    TenantId = tenantId,
+                    KioskDeviceId = device.Id,
+                    FirstName = req.FirstName!.Trim(),
+                    LastName = req.LastName!.Trim(),
+                    Birthdate = req.Birthdate,
+                    IsMinor = plan.IsMinor,
+                    MatchPending = true,
+                    MatchedUserId = plan.Rider?.ExistingId,
+                    MatchedGuardianUserId = plan.IsMinor ? plan.Guardian?.ExistingId : null,
+                    Email = input.Email?.Trim(),
+                    Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim(),
+                    GuardianFirstName = input.GuardianFirstName?.Trim(),
+                    GuardianLastName = input.GuardianLastName?.Trim(),
+                    GuardianEmail = input.GuardianEmail?.Trim(),
+                    GuardianPhone = input.GuardianPhone?.Trim(),
+                    GuardianBirthdate = input.GuardianBirthdate,
+                    EmergencyContactName = string.IsNullOrWhiteSpace(req.EmergencyContactName) ? null : req.EmergencyContactName.Trim(),
+                    EmergencyContactPhone = string.IsNullOrWhiteSpace(req.EmergencyContactPhone) ? null : req.EmergencyContactPhone.Trim(),
+                    HeldSignatureDataUrl = waiver is not null ? req.SignatureDataUrl : null,
+                    HeldWaiverId = waiver?.Id,
+                    HeldSignedAt = waiver is not null ? DateTime.UtcNow : null,
+                });
+                if (photo is { } held)
+                {
+                    var heldKey = new RiderPhotoKey($"kiosk:{pendingId:D}", RiderPhotoRules.CredentialRiderKey, null, null);
+                    var heldPhoto = await _photos.RecordForKey(tenantId, heldKey, held.Bytes, held.Extension, null);
+                    await _kiosks.SetPhoto(pendingId, tenantId, heldPhoto.Id);
+                }
+                await _audit.Log("kiosk.signup", $"Kiosk sign-up on \"{device.Name}\" (matches an existing account: held for ID check)",
+                    targetKind: "kiosk_signup", targetId: pendingId, tenantId: tenantId,
+                    metadata: new { kioskDeviceId = device.Id, minor = plan.IsMinor, pending = true });
+                return new ApiResponses().OkResult(new { CheckedIn = true });
+            }
+
+            // ── A brand-new profile: created now, with the signature and photo attached ──
             OtherRiderSaved saved;
             try
             {
@@ -191,42 +242,9 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult(StaffEmailRefused);
             }
-            var riderAccount = saved.RiderUserId is Guid ruid ? BuyerAccounts.ForTenant(await _users.GetById(ruid), tenantId) : null;
-            var guardian = saved.GuardianUserId is Guid gid ? BuyerAccounts.ForTenant(await _users.GetById(gid), tenantId) : null;
-
-            // ── The waiver: the venue signing rules, enforced here (a minor's is their guardian's) ──
-            Guid? signatureId = null;
-            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-            if (waiver is not null)
-            {
-                (Guid? Id, string? Error) signed;
-                if (!plan.IsMinor && riderAccount is not null)
-                    signed = await AccountWaiverSigning.SignForAccount(_waivers, _waiverGate, tenantId, tenant.Timezone,
-                        riderAccount, waiver.Id, ip, req.SignatureDataUrl!, null, null);
-                else if (plan.IsMinor && riderAccount is not null)
-                    signed = await AccountWaiverSigning.SignForAccount(_waivers, _waiverGate, tenantId, tenant.Timezone,
-                        riderAccount, waiver.Id, ip, req.SignatureDataUrl!, guardianName, req.GuardianPhone);
-                else
-                    signed = await AccountWaiverSigning.SignForDependent(_waivers, tenantId, waiver.Id, ip,
-                        req.SignatureDataUrl!, plan.FirstName, plan.LastName, plan.Birthdate, guardianName, req.GuardianPhone,
-                        req.GuardianEmail?.Trim());
-                if (signed.Error is not null) return new ApiResponses().BadRequestResult(signed.Error);
-                signatureId = signed.Id;
-            }
-
-            // ── The photo: filed where the gate looks for this rider (their account, or the guardian + dependent) ──
-            Guid? photoId = null;
-            if (photo is { } p)
-            {
-                var keying = plan.IsMinor
-                    ? (guardian is not null && saved.DependentId is Guid depId ? TicketRiderKeys.ForDependent(guardian, depId) : null)
-                    : (riderAccount is not null ? TicketRiderKeys.ForRiderAccount(riderAccount) : null);
-                if (keying is not null)
-                {
-                    var key = RiderPhotoRules.KeyFor(keying, null, plan.FirstName, plan.LastName, "kiosk", Guid.NewGuid());
-                    photoId = (await _photos.RecordForKey(tenantId, key, p.Bytes, p.Extension, null)).Id;
-                }
-            }
+            var attached = await _writer.Attach(tenantId, tenant.Timezone, plan, saved, waiver?.Id, req.SignatureDataUrl, ip,
+                guardianName, req.GuardianPhone, req.GuardianEmail?.Trim(), photo, replacePhotoOnFile: true, staffUserId: null);
+            if (attached.Error is not null) return new ApiResponses().BadRequestResult(attached.Error);
 
             var signupId = await _kiosks.CreateSignup(new KioskSignup
             {
@@ -239,12 +257,12 @@ namespace webapi.Controllers
                 LastName = plan.LastName,
                 Birthdate = plan.Birthdate.ToDateTime(TimeOnly.MinValue),
                 IsMinor = plan.IsMinor,
-                SignatureId = signatureId,
-                PhotoId = photoId,
+                SignatureId = attached.SignatureId,
+                PhotoId = attached.PhotoId,
             });
             await _audit.Log("kiosk.signup", $"Kiosk sign-up on \"{device.Name}\"", targetKind: "kiosk_signup",
                 targetId: signupId, tenantId: tenantId,
-                metadata: new { kioskDeviceId = device.Id, minor = plan.IsMinor, signed = signatureId is not null, photo = photoId is not null });
+                metadata: new { kioskDeviceId = device.Id, minor = plan.IsMinor, signed = attached.SignatureId is not null, photo = attached.PhotoId is not null });
             return new ApiResponses().OkResult(new { CheckedIn = true });
         }
 
@@ -256,10 +274,5 @@ namespace webapi.Controllers
 
         private static string PhotoMode(string? mode) =>
             IdVerificationWindow.IsValidMode(mode) ? mode! : IdVerificationWindow.ModeOff;
-
-        private static bool IsValidPngDataUrl(string? dataUrl) =>
-            !string.IsNullOrWhiteSpace(dataUrl)
-            && dataUrl.StartsWith("data:image/png;base64,", StringComparison.Ordinal)
-            && dataUrl.Length is > 800 and < 1_400_000;
     }
 }

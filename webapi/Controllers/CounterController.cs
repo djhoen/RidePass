@@ -292,6 +292,20 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("This tenant requires an emergency contact on file. Please update the rider's profile before completing the sale.");
             }
 
+            // Kiosk sign-ups this sale serves (Script0310): this tenant's only.
+            var kioskSignups = new List<Services.Repositories.Data.KioskData.KioskSignup>();
+            foreach (var kid in (request.KioskSignupIds ?? new List<Guid>())
+                         .Concat(request.Items.Select(i => i.OtherRider?.KioskSignupId).OfType<Guid>()).Distinct())
+            {
+                // A sign-up still waiting for an ID check (it matched an existing account) can't be sold against.
+                if (await _kiosks.GetSignup(kid, _tenantContext.TenantId) is { } ks)
+                {
+                    if (ks.MatchPending)
+                        return new ApiResponses().BadRequestResult(
+                            $"{ks.FirstName} {ks.LastName}'s kiosk sign-up matches an existing account: check their ID and confirm it first.");
+                    kioskSignups.Add(ks);
+                }
+            }
             // Validate every cart item up front and compute total before writing anything.
             // We also collect whether any item requires the waiver — purely tenant-active-waiver
             // alone is no longer enough; per-item flags govern.
@@ -833,7 +847,7 @@ namespace webapi.Controllers
                     {
                         return new ApiResponses().BadRequestResult("Rider has not signed the active waiver.");
                     }
-                    if (!IsValidPngDataUrl(request.SignatureDataUrl))
+                    if (!SignatureImages.IsValidPngDataUrl(request.SignatureDataUrl))
                     {
                         return new ApiResponses().BadRequestResult("A handwritten signature is required to sign the waiver.");
                     }
@@ -866,16 +880,6 @@ namespace webapi.Controllers
             // multi-event cart. Same key space as the online checkout, so they contend too.
             // Released right after the inserts, before the Stripe call.
             var ticketEventIds = ticketItems.Select(t => t.Tier.EventId).Distinct().OrderBy(id => id).ToList();
-            // Kiosk sign-ups this sale serves (Script0310): this tenant's only.
-            var kioskSignups = new List<Services.Repositories.Data.KioskData.KioskSignup>();
-            foreach (var kid in (request.KioskSignupIds ?? new List<Guid>())
-                         .Concat(request.Items.Select(i => i.OtherRider?.KioskSignupId).OfType<Guid>()).Distinct())
-            {
-                if (await _kiosks.GetSignup(kid, _tenantContext.TenantId) is { } ks) kioskSignups.Add(ks);
-            }
-            // The customer signed up at the kiosk: name them on their own day passes, so the gate finds
-            // the photo the kiosk filed under their account (and the rider key is theirs by name).
-            var payerFromKiosk = kioskSignups.Any(k => k.UserId == rider.Id);
             var capacityLocks = new List<IAsyncDisposable>();
             try
             {
@@ -952,7 +956,7 @@ namespace webapi.Controllers
                         : null;
                     otherRiders[planned[pi].Key] = new OtherRiderLine(plan,
                         new TicketRiderAtSale(plan.FirstName, plan.LastName, plan.Birthdate, saved[pi].RiderUserId, saved[pi].DependentId),
-                        await OwnSignatureFor(saved[pi].RiderUserId, pev, ptier) ?? fromKiosk?.SignatureId);
+                        await OwnSignatureFor(saved[pi].RiderUserId, pev, ptier) ?? await KioskSignatureFor(fromKiosk, pev, ptier));
                 }
             }
 
@@ -992,10 +996,7 @@ namespace webapi.Controllers
                     };
                     // The purchaser stays the payer; another rider's ticket names them and their profile in
                     // its INSERT (the gate decides who the rider is from that identity).
-                    var created = await _ticketPurchases.Create(t, orp?.Rider
-                        ?? (payerFromKiosk && item.Quantity == 1 && tier.Kind == "gate_fee"
-                            ? new TicketRiderAtSale(rider.FirstName, rider.LastName, AccountWaiverStatus.Birthdate(rider), null, null)
-                            : null));
+                    var created = await _ticketPurchases.Create(t, orp?.Rider);
                     lineItems.Add(new CounterSaleLineItem
                     {
                         Kind = "event_ticket",
@@ -1246,10 +1247,14 @@ namespace webapi.Controllers
                 }
             }
 
-            // The kiosk sign-ups this sale used are done (the gate list shows them as handled).
-            if (kioskSignups.Count > 0 && lineItems.Count > 0)
-                await _kiosks.MarkHandled(_tenantContext.TenantId, kioskSignups.Select(k => k.Id).ToList(), cashierId,
-                    $"counter:{lineItems[0].PurchaseId:D}");
+            // The kiosk sign-ups this sale serves count as handled only once it is paid: a cash or free sale
+            // right below; a card sale when its ticket is paid (the payment webhook flips it, and the gate list
+            // stamps the sign-up on its next read). A declined or abandoned card leaves them waiting.
+            var kioskIds = kioskSignups.Select(k => k.Id).ToList();
+            var kioskSaleRef = lineItems.Count > 0 ? $"counter:{lineItems[0].PurchaseId:D}" : "counter";
+            var kioskTicket = lineItems.FirstOrDefault(l => l.Kind == "event_ticket");
+            if (kioskIds.Count > 0 && kioskTicket is not null)
+                await _kiosks.SetPendingSale(_tenantContext.TenantId, kioskIds, kioskTicket.PurchaseId, cashierId, kioskSaleRef);
 
             // Record the giveaway now the rows exist, and deliberately before payment: an override
             // that a manager authorised is worth logging whether or not the card went through, and a
@@ -1353,6 +1358,7 @@ namespace webapi.Controllers
                     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
                 }
                 await BookTenderNow();
+                if (kioskIds.Count > 0) await _kiosks.MarkHandled(_tenantContext.TenantId, kioskIds, cashierId, kioskSaleRef);
 
                 // A cash sale at the counter never touches Stripe, so nothing else would email the
                 // rider. They still want the entry in their inbox and on their account.
@@ -1407,6 +1413,8 @@ namespace webapi.Controllers
                     }
                     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* idempotent */ }
                 }
+
+                if (kioskIds.Count > 0) await _kiosks.MarkHandled(_tenantContext.TenantId, kioskIds, cashierId, kioskSaleRef);
 
                 // Free at the counter is still an admission: same email, same QR.
                 await SendCounterConfirmations(lineItems, rider.Email, purchaserName);
@@ -1564,11 +1572,24 @@ namespace webapi.Controllers
                 ? sig.Id : null;
         }
 
-        private static bool IsValidPngDataUrl(string? dataUrl)
+        /// <summary>
+        /// The waiver a kiosk sign-up carried, for this ticket only when it is exactly what the gate will
+        /// require: a rider ticket, at an event that requires the rider waiver, whose required document (the
+        /// event's pinned version, else the active waiver, still in force) is the one signed at the kiosk.
+        /// Otherwise null: the ticket stays unsigned so the counter or the gate asks for the right waiver.
+        /// </summary>
+        private async Task<Guid?> KioskSignatureFor(Services.Repositories.Data.KioskData.KioskSignup? signup,
+            Services.Repositories.Data.EventData.Event ev, EventTicketTier tier)
         {
-            if (string.IsNullOrWhiteSpace(dataUrl)) return false;
-            if (!dataUrl.StartsWith("data:image/png;base64,", StringComparison.Ordinal)) return false;
-            return dataUrl.Length is > 800 and < 1_400_000;
+            if (signup?.SignatureId is not Guid sigId) return null;
+            if (tier.Audience != "rider" || !ev.RequiresRiderWaiver) return null;
+            var tenantId = _tenantContext.TenantId;
+            var docId = ev.RacerWaiverId ?? (await _waivers.GetActive(tenantId))?.Id;
+            if (docId is not Guid required) return null;
+            var doc = await _waivers.GetById(required, tenantId);
+            if (doc is null || (doc.ExpiresAt is { } exp && exp <= DateTime.UtcNow)) return null;
+            var sig = await _waivers.GetSignatureById(sigId, tenantId);
+            return sig is not null && sig.TenantId == tenantId && sig.WaiverId == required ? sig.Id : null;
         }
 
         private static (int amountCents, int serviceChargeCents) ComputeWithServiceCharge(

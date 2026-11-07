@@ -21,7 +21,27 @@ namespace Services.Repositories.Data.KioskData
         public DateTime? HandledAt { get; set; }
         public Guid? HandledByUserId { get; set; }
         public string? SaleRef { get; set; }
+        public Guid? SaleTicketId { get; set; }
         public DateTime? DismissedAt { get; set; }
         public Guid? DismissedByUserId { get; set; }
+
+        // ── Held for staff (the email matched an existing account): nothing written to it yet ──
+        public bool MatchPending { get; set; }
+        public Guid? MatchedUserId { get; set; }
+        public Guid? MatchedGuardianUserId { get; set; }
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string? GuardianFirstName { get; set; }
+        public string? GuardianLastName { get; set; }
+        public string? GuardianEmail { get; set; }
+        public string? GuardianPhone { get; set; }
+        public DateTime? GuardianBirthdate { get; set; }
+        public string? EmergencyContactName { get; set; }
+        public string? EmergencyContactPhone { get; set; }
+        public string? HeldSignatureDataUrl { get; set; }
+        public Guid? HeldWaiverId { get; set; }
+        public DateTime? HeldSignedAt { get; set; }
+        public DateTime? ConfirmedAt { get; set; }
+        public Guid? ConfirmedByUserId { get; set; }
     }
 }

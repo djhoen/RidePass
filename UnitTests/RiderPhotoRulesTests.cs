@@ -65,6 +65,26 @@ namespace UnitTests
         }
 
         [Test]
+        public void A_ticket_naming_nobody_is_the_buyers_own_photo()
+        {
+            var ticketId = Guid.NewGuid();
+            // The buyer's account: keyed by the account's own name (as the ID check keys it), so a photo on
+            // file for them (a kiosk photo, an earlier named ticket) is found.
+            var mine = RiderPhotoRules.Key(Parent, "p@y.test", null, null, "ticket", ticketId, "Pat Rojas");
+            Assert.That((mine.OwnerKey, mine.RiderKey), Is.EqualTo(($"user:{Parent.Id:D}", "pat rojas")));
+            // A walk-up with only an email: their purchaser name.
+            var walkUp = RiderPhotoRules.Key(null, "walk.up@y.test", null, null, "ticket", ticketId, " Zed  Walker ");
+            Assert.That((walkUp.OwnerKey, walkUp.RiderKey), Is.EqualTo(("email:walk.up@y.test", "zed walker")));
+            // Nobody to key by: the ticket itself.
+            var none = RiderPhotoRules.Key(null, null, null, null, "ticket", ticketId, "Zed");
+            Assert.That(none.OwnerKey, Is.EqualTo($"ticket:{ticketId:D}"));
+            // An unregistered pass stays under the pass (its holder may not be the buyer).
+            var passId = Guid.NewGuid();
+            Assert.That(RiderPhotoRules.Key(Parent, "p@y.test", null, null, "pass", passId, "Pat Rojas").OwnerKey,
+                Is.EqualTo($"pass:{passId:D}"));
+        }
+
+        [Test]
         public void Only_a_platform_or_this_tenants_account_counts_as_the_buyer()
         {
             var tenant = Guid.NewGuid();

@@ -23,12 +23,15 @@ namespace webapi.Controllers
     {
         private readonly IKioskRepository _kiosks;
         private readonly Services.Audit.IAuditLogger _audit;
+        private readonly KioskCredentialCache _known;
         private readonly ITenantContext _tenantContext;
 
-        public KioskDevicesController(IKioskRepository kiosks, Services.Audit.IAuditLogger audit, ITenantContext tenantContext)
+        public KioskDevicesController(IKioskRepository kiosks, Services.Audit.IAuditLogger audit, ITenantContext tenantContext,
+            KioskCredentialCache known)
         {
             _kiosks = kiosks;
             _audit = audit;
+            _known = known;
             _tenantContext = tenantContext;
         }
 
@@ -92,6 +95,8 @@ namespace webapi.Controllers
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var device = await _kiosks.GetDevice(id, _tenantContext.TenantId);
             if (device is null) return new ApiResponses().NotFoundResult("Kiosk not found.");
+            // Its key loses its own rate-limit partition at once (and fails authentication from now on).
+            _known.Forget(device.CredentialHash);
             if (await _kiosks.RevokeDevice(id, _tenantContext.TenantId, StaffId()))
                 await _audit.Log("kiosk.revoked", $"Kiosk \"{device.Name}\" removed", targetKind: "kiosk_device",
                     targetId: id, tenantId: _tenantContext.TenantId);

@@ -56,11 +56,13 @@ namespace webapi.Security
     {
         private readonly IKioskRepository _kiosks;
         private readonly ITenantContext _tenantContext;
+        private readonly KioskCredentialCache _known;
 
-        public KioskAuthenticator(IKioskRepository kiosks, ITenantContext tenantContext)
+        public KioskAuthenticator(IKioskRepository kiosks, ITenantContext tenantContext, KioskCredentialCache known)
         {
             _kiosks = kiosks;
             _tenantContext = tenantContext;
+            _known = known;
         }
 
         public async Task<KioskDevice?> Authenticate(HttpRequest request)
@@ -68,9 +70,54 @@ namespace webapi.Security
             if (!_tenantContext.IsResolved) return null;
             var secret = request.Headers[KioskCredentials.HeaderName].ToString().Trim();
             if (secret.Length < 20 || !secret.StartsWith("kio_", StringComparison.Ordinal)) return null;
-            var device = await _kiosks.GetByCredential(_tenantContext.TenantId, KioskCredentials.Hash(secret));
-            if (device is not null) await _kiosks.TouchLastSeen(device.Id, device.TenantId);
+            var hash = KioskCredentials.Hash(secret);
+            var device = await _kiosks.GetByCredential(_tenantContext.TenantId, hash);
+            if (device is null)
+            {
+                _known.Forget(hash);
+                return null;
+            }
+            _known.MarkValid(hash);
+            await _kiosks.TouchLastSeen(device.Id, device.TenantId);
             return device;
+        }
+    }
+
+    /// <summary>
+    /// Credential hashes recently proven valid (a few minutes), so the rate limiter can give a real kiosk its
+    /// own partition without a database call; anything unknown or invalid is limited by client address
+    /// instead, so made-up tokens can't each buy a fresh allowance. Revoking a kiosk forgets its hash.
+    /// </summary>
+    public class KioskCredentialCache
+    {
+        private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _valid = new();
+
+        public void MarkValid(string hash) => _valid[hash] = DateTime.UtcNow.Add(Lifetime);
+
+        public void Forget(string? hash)
+        {
+            if (hash is not null) _valid.TryRemove(hash, out _);
+        }
+
+        public bool IsKnown(string hash)
+        {
+            if (!_valid.TryGetValue(hash, out var until)) return false;
+            if (until > DateTime.UtcNow) return true;
+            _valid.TryRemove(hash, out _);
+            return false;
+        }
+
+        /// <summary>The rate-limit partition for a request: the device when its key is known-valid, else the address.</summary>
+        public string PartitionFor(HttpContext ctx)
+        {
+            var secret = ctx.Request.Headers[KioskCredentials.HeaderName].ToString().Trim();
+            if (secret.Length > 0)
+            {
+                var hash = KioskCredentials.Hash(secret);
+                if (IsKnown(hash)) return "kiosk:" + hash;
+            }
+            return "kiosk-ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous");
         }
     }
 }

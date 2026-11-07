@@ -24,7 +24,7 @@
             <section v-else-if="step === 'start'" class="kiosk-card kiosk-center">
                 <h1>Welcome</h1>
                 <p class="kiosk-sub">Create your rider profile, sign the waiver and take your photo. It takes about two minutes.</p>
-                <v-btn size="x-large" color="primary" class="kiosk-big" @click="begin">Start</v-btn>
+                <v-btn size="x-large" color="primary" class="kiosk-big" :loading="busy" @click="begin">Start</v-btn>
                 <v-alert v-if="error" type="error" variant="tonal" class="mt-6">{{ error }}</v-alert>
             </section>
 
@@ -192,11 +192,37 @@ function reset() {
     busy.value = false
     step.value = getKioskToken() ? 'start' : 'pair'
     window.scrollTo(0, 0)
+    // The venue's settings and waiver may have changed since: read them again for the next person.
+    if (getKioskToken()) void refreshConfig()
 }
 
-function begin() {
-    form.value = blankForm()
+/** Re-reads the kiosk settings (waiver text, photo rule, the venue's date) without leaving the screen. */
+async function refreshConfig(): Promise<boolean> {
+    try {
+        config.value = (await api.config()).data.data
+        return true
+    } catch (err: any) {
+        if (err.response?.status === 401) {
+            forgetKioskPairing()
+            config.value = null
+            step.value = 'pair'
+            error.value = err.response?.data?.error ?? null
+        }
+        return false
+    }
+}
+
+async function begin() {
+    busy.value = true
     error.value = null
+    // Every sign-up starts from the venue's current waiver and settings.
+    const ok = await refreshConfig()
+    busy.value = false
+    if (!ok) {
+        if (step.value !== 'pair') error.value = 'The kiosk can’t reach the venue right now. Please see the front desk.'
+        return
+    }
+    form.value = blankForm()
     step.value = 'who'
     touch()
 }
@@ -269,6 +295,7 @@ async function submit() {
             guardianBirthdate: isMinor.value ? f.guardianBirthdate : null,
             emergencyContactName: !isMinor.value ? f.emergencyContactName.trim() || null : null,
             emergencyContactPhone: !isMinor.value ? f.emergencyContactPhone.trim() || null : null,
+            waiverId: config.value.waiverId,
             agreedToWaiver: f.agreed,
             signatureDataUrl: config.value.waiverId ? f.signature : null,
             photoDataUrl: f.photo,

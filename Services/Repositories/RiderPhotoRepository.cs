@@ -28,6 +28,9 @@ namespace Services.Repositories
             return (await _db.Query<RiderPhoto>(sql, new { id, tenantId })).FirstOrDefault();
         }
 
+        public Task<int> Delete(Guid id, Guid tenantId) =>
+            _db.Execute("DELETE FROM rider_photo WHERE id = @id AND tenant_id = @tenantId", new { id, tenantId });
+
         public Task<(RiderPhoto Photo, string? ReplacedStorageKey)> Upsert(Guid tenantId, string ownerKey,
             Guid? userId, string? ownerEmail, string riderKey, string storageKey, Guid? takenByUserId)
         {

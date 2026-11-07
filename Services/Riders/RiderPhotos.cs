@@ -62,17 +62,23 @@ namespace Services.Riders
 
         /// <summary>
         /// Where one credential's rider photo is filed. <paramref name="buyerAccount"/> must already be
-        /// tenant-filtered (BuyerAccounts.ForTenant). The rider key is the credential's OWN rider / holder
-        /// name, never the buyer's: a credential that names nobody (an unregistered pass, a ticket with
-        /// no rider name) is filed under the credential itself ("ticket:{id}" / "pass:{id}"), so a photo
-        /// staff take for it satisfies the gate for that credential and a parent's photo can never stand
-        /// in for it. Same with no owner to key by.
+        /// tenant-filtered (BuyerAccounts.ForTenant). The rider key is the credential's own rider / holder
+        /// name. A TICKET that names nobody is the buyer's own (the buyer is the rider, as the ID check
+        /// already keys it): it is filed under the buyer by the account's name, else the buyer's name with
+        /// their email, so the photo on file for them (a kiosk photo, an earlier ticket) is found. Only with
+        /// no buyer to key by (no account, no email, no name) is it filed under the ticket itself. A PASS
+        /// that names nobody is unregistered and stays under the pass ("pass:{id}"): its holder is not
+        /// necessarily the buyer, so a parent's photo can never stand in for it.
         /// </summary>
         public static RiderPhotoKey Key(User? buyerAccount, string? buyerEmail, string? riderFirst, string? riderLast,
-            string credentialKind, Guid credentialId)
+            string credentialKind, Guid credentialId, string? buyerName = null)
         {
             var owner = OwnerKey(buyerAccount?.Id, buyerAccount is null ? buyerEmail : null);
             var rider = IdCheckRules.Normalize($"{riderFirst} {riderLast}");
+            if (rider.Length == 0 && credentialKind == "ticket")
+                rider = buyerAccount is not null
+                    ? IdCheckRules.Normalize($"{buyerAccount.FirstName} {buyerAccount.LastName}")
+                    : IdCheckRules.Normalize(buyerName);
             if (owner is null || rider.Length == 0)
                 return new RiderPhotoKey($"{credentialKind}:{credentialId:D}", CredentialRiderKey, null, null);
             return new RiderPhotoKey(owner, rider, buyerAccount?.Id,
@@ -86,10 +92,10 @@ namespace Services.Riders
         /// <paramref name="keying"/>'s account must already be tenant-filtered.
         /// </summary>
         public static RiderPhotoKey KeyFor(RiderKeying keying, string? buyerEmail, string? riderFirst, string? riderLast,
-            string credentialKind, Guid credentialId)
+            string credentialKind, Guid credentialId, string? buyerName = null)
         {
             if (keying.Kind == RiderKeyingKind.Names)
-                return Key(keying.Account, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
+                return Key(keying.Account, buyerEmail, riderFirst, riderLast, credentialKind, credentialId, buyerName);
             if (keying.Account is null || string.IsNullOrEmpty(keying.RiderKey))
                 return new RiderPhotoKey($"{credentialKind}:{credentialId:D}", CredentialRiderKey, null, null);
             return new RiderPhotoKey(OwnerKey(keying.Account.Id, null)!, keying.RiderKey, keying.Account.Id, null);
@@ -162,6 +168,9 @@ namespace Services.Riders
         /// <summary>Saves a photo under an explicit key (a kiosk sign-up: the rider's own account, or a
         /// dependent under their guardian, by TicketRiderKeys), so later tickets for that rider find it.</summary>
         Task<RiderPhoto> RecordForKey(Guid tenantId, RiderPhotoKey key, byte[] image, string extension, Guid? staffUserId);
+        /// <summary>Deletes one of this tenant's photos (a kiosk photo held for staff, then dismissed or moved).
+        /// The image itself is removed by the trash worker.</summary>
+        Task<bool> DeletePhoto(Guid photoId, Guid tenantId);
 
         /// <summary>A gate photo of this pass's holder is on file (pass registration's photo requirement).</summary>
         Task<bool> HolderHasPhoto(Guid passPurchaseId, Guid tenantId);
@@ -206,11 +215,11 @@ namespace Services.Riders
                 // A Gate Sale rider (Script0309): filed by their identity, as the gate reads it.
                 var keying = await _riderIdentity.ForTicket(ticket, tenantId);
                 return RiderPhotoRules.KeyFor(keying, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
-                    "ticket", ticket.Id);
+                    "ticket", ticket.Id, ticket.PurchaserName);
             }
             var account = ticket.PurchaserUserId is Guid id ? BuyerAccounts.ForTenant(await _users.GetById(id), tenantId) : null;
             return RiderPhotoRules.Key(account, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
-                "ticket", ticket.Id);
+                "ticket", ticket.Id, ticket.PurchaserName);
         }
 
         public async Task<RiderPhotoKey> KeyForPass(SeasonPassPurchase pass, Guid tenantId)
@@ -227,6 +236,14 @@ namespace Services.Riders
         public async Task<RiderPhoto> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image,
             string extension, Guid? staffUserId) =>
             await Record(tenantId, await KeyForPass(pass, tenantId), image, extension, staffUserId);
+
+        public async Task<bool> DeletePhoto(Guid photoId, Guid tenantId)
+        {
+            var photo = await _photos.GetById(photoId, tenantId);
+            if (photo is null) return false;
+            _findCache.Remove((tenantId, photo.OwnerKey, photo.RiderKey));
+            return await _photos.Delete(photoId, tenantId) == 1;
+        }
 
         public Task<RiderPhoto> RecordForKey(Guid tenantId, RiderPhotoKey key, byte[] image, string extension,
             Guid? staffUserId) => Record(tenantId, key, image, extension, staffUserId);

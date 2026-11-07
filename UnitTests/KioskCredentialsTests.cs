@@ -44,5 +44,30 @@ namespace UnitTests
             Assert.That(a, Is.Not.EqualTo(b));
             Assert.That(KioskCredentials.Hash(a), Has.Length.EqualTo(64).And.Not.Contain(a));
         }
+
+        private static Microsoft.AspNetCore.Http.DefaultHttpContext Request(string? token, string ip)
+        {
+            var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(ip);
+            if (token is not null) ctx.Request.Headers[KioskCredentials.HeaderName] = token;
+            return ctx;
+        }
+
+        [Test]
+        public void RateLimit_UnknownTokensShareTheAddress_ValidOnesGetTheirOwn()
+        {
+            var cache = new KioskCredentialCache();
+            var real = KioskCredentials.NewSecret();
+            // Made-up tokens can't buy a fresh allowance each: they all land on the address.
+            Assert.That(cache.PartitionFor(Request("kio_made-up-1", "10.0.0.5")), Is.EqualTo("kiosk-ip:10.0.0.5"));
+            Assert.That(cache.PartitionFor(Request("kio_made-up-2", "10.0.0.5")), Is.EqualTo("kiosk-ip:10.0.0.5"));
+            Assert.That(cache.PartitionFor(Request(real, "10.0.0.5")), Is.EqualTo("kiosk-ip:10.0.0.5"));
+            // Once proven valid, the device has its own.
+            cache.MarkValid(KioskCredentials.Hash(real));
+            Assert.That(cache.PartitionFor(Request(real, "10.0.0.5")), Is.EqualTo("kiosk:" + KioskCredentials.Hash(real)));
+            // Revoked: back to the address.
+            cache.Forget(KioskCredentials.Hash(real));
+            Assert.That(cache.PartitionFor(Request(real, "10.0.0.5")), Is.EqualTo("kiosk-ip:10.0.0.5"));
+        }
     }
 }

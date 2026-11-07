@@ -32,15 +32,50 @@
                 <div class="text-caption text-medium-emphasis">
                     <span v-if="s.guardianName">Guardian {{ s.guardianName }} · </span>{{ s.kioskName || 'Kiosk' }} · {{ time(s.createdAtUtc) }}
                 </div>
+                <div v-if="s.matchPending" class="text-caption text-warning">
+                    <v-icon size="14">mdi-card-account-details-outline</v-icon>
+                    Matches an existing account: check ID
+                    <span v-if="s.matchedAccountName">({{ s.matchedAccountName }})</span>
+                    <span v-if="s.matchedGuardianName">(guardian {{ s.matchedGuardianName }})</span>
+                </div>
             </div>
             <template v-if="selectable && !s.handledAtUtc">
-                <v-btn size="small" color="primary" variant="tonal" @click="emit('select', s)">Select</v-btn>
+                <v-btn size="small" color="primary" variant="tonal" @click="pick(s)">{{ s.matchPending ? 'Check ID' : 'Select' }}</v-btn>
                 <v-btn size="small" variant="text" icon="mdi-close" aria-label="Dismiss" @click="dismiss(s)"></v-btn>
             </template>
         </div>
         <div v-if="hiddenHandled > 0" class="text-caption mt-1">
             <a href="#" @click.prevent="showHandled = !showHandled">{{ showHandled ? 'Hide' : 'Show' }} {{ hiddenHandled }} already served</a>
         </div>
+
+        <!-- A sign-up that matched an existing account: attached only after staff check ID. -->
+        <v-dialog v-model="confirmOpen" max-width="480">
+            <v-card v-if="confirming">
+                <v-card-title>Check ID</v-card-title>
+                <v-card-text>
+                    <p class="mb-2">
+                        <strong>{{ confirming.firstName }} {{ confirming.lastName }}</strong> signed up at the kiosk with
+                        <span v-if="confirming.isMinor">a parent or guardian email</span><span v-else>an email</span>
+                        that already has an account:
+                        <strong>{{ confirming.matchedAccountName || confirming.matchedGuardianName }}</strong>
+                        <span v-if="confirming.typedEmail"> ({{ confirming.typedEmail }})</span>.
+                    </p>
+                    <p class="text-caption text-medium-emphasis mb-2">
+                        Check a photo ID{{ confirming.isMinor ? ' for the parent or guardian' : '' }} against that account.
+                        Only then are the kiosk waiver{{ confirming.photoId ? ' and photo' : '' }} attached to it.
+                    </p>
+                    <v-checkbox v-model="idChecked" hide-details label="I checked their photo ID and it matches the account"></v-checkbox>
+                    <v-checkbox v-if="confirming.matchedHasPhoto && confirming.photoId" v-model="replacePhoto" hide-details
+                        label="Replace photo on file with the kiosk photo"></v-checkbox>
+                    <v-alert v-if="confirmError" type="error" variant="tonal" density="compact" class="mt-2">{{ confirmError }}</v-alert>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="confirmOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :disabled="!idChecked" :loading="confirmBusy" @click="confirm">Confirm</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
     </v-card>
 </template>
 
@@ -87,6 +122,42 @@ async function load() {
 async function dismiss(s: KioskSignupItem) {
     try { await service.dismissSignup(s.id); await load() }
     catch (err: any) { error.value = err.response?.data?.error || 'Couldn’t dismiss that sign-up.' }
+}
+
+// ── Held sign-ups: confirm after an ID check, then select as usual ──────────────────────────
+const confirmOpen = ref(false)
+const confirming = ref<KioskSignupItem | null>(null)
+const idChecked = ref(false)
+const replacePhoto = ref(false)
+const confirmBusy = ref(false)
+const confirmError = ref<string | null>(null)
+
+function pick(s: KioskSignupItem) {
+    if (!s.matchPending) { emit('select', s); return }
+    confirming.value = s
+    idChecked.value = false
+    replacePhoto.value = false
+    confirmError.value = null
+    confirmOpen.value = true
+}
+
+async function confirm() {
+    const s = confirming.value
+    if (!s || !idChecked.value) return
+    confirmBusy.value = true
+    confirmError.value = null
+    try {
+        const r = (await service.confirmSignup(s.id, replacePhoto.value)).data.data
+        await load()
+        confirmOpen.value = false
+        if (r.waiverChanged) error.value = `The waiver changed since ${s.firstName} signed at the kiosk: they need to sign the current one.`
+        const fresh = items.value.find(x => x.id === s.id)
+        if (fresh) emit('select', fresh)
+    } catch (err: any) {
+        confirmError.value = err.response?.data?.error || 'Couldn’t attach that sign-up.'
+    } finally {
+        confirmBusy.value = false
+    }
 }
 
 defineExpose({ load })

@@ -7,6 +7,8 @@ namespace Services.Repositories.Interfaces
     {
         Task<RiderPhoto?> Get(Guid tenantId, string ownerKey, string riderKey);
         Task<RiderPhoto?> GetById(Guid id, Guid tenantId);
+        /// <summary>Deletes one photo row (its image is queued for deletion by the row's trash trigger).</summary>
+        Task<int> Delete(Guid id, Guid tenantId);
 
         /// <summary>Saves (or replaces) the rider's photo in one locked transaction. Returns the row and the storage key of the
         /// photo it replaced, if any, so the caller can delete the old image.</summary>

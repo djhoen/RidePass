@@ -56,6 +56,8 @@ export interface KioskSignupBody {
     guardianBirthdate?: string | null
     emergencyContactName?: string | null
     emergencyContactPhone?: string | null
+    /** The waiver shown: the server refuses if it is no longer the active one. */
+    waiverId: string | null
     agreedToWaiver: boolean
     signatureDataUrl: string | null
     photoDataUrl: string | null
@@ -123,6 +125,12 @@ export interface KioskSignupItem {
     createdAtUtc: string
     handledAtUtc: string | null
     dismissedAtUtc: string | null
+    /** The email matched an existing account: held until a cashier checks ID and confirms. */
+    matchPending: boolean
+    matchedAccountName: string | null
+    matchedGuardianName: string | null
+    matchedHasPhoto: boolean
+    typedEmail: string | null
 }
 
 export class KioskAdminService {
@@ -136,4 +144,8 @@ export class KioskAdminService {
 
     todaysSignups() { return axios.get<{ data: KioskSignupItem[] }>(`${this.apiUrl}/KioskSignups`) }
     dismissSignup(id: string) { return axios.post(`${this.apiUrl}/KioskSignups/${id}/Dismiss`) }
+    confirmSignup(id: string, replacePhoto: boolean) {
+        return axios.post<{ data: { waiverAttached: boolean; waiverChanged: boolean; photoAttached: boolean; keptExistingPhoto: boolean } }>(
+            `${this.apiUrl}/KioskSignups/${id}/Confirm`, { idChecked: true, replacePhoto })
+    }
 }

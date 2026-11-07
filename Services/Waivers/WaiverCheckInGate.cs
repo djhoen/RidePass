@@ -239,12 +239,12 @@ namespace Services.Waivers
         /// </summary>
         private async Task<PhotoFacts> PhotoFor(Guid tenantId, TenantFacts tenant, Services.Riders.RiderKeying keying,
             string? buyerEmail, string? riderFirst, string? riderLast, string? passPhotoDataUrl,
-            string credentialKind, Guid credentialId)
+            string credentialKind, Guid credentialId, string? buyerName = null)
         {
             if (tenant.PhotoMode == Services.Riders.IdVerificationWindow.ModeOff) return new PhotoFacts(tenant.PhotoMode, null);
             // Only the tenant-filtered account: its key, and its profile photo, count.
             var filtered = keying with { Account = Services.Riders.BuyerAccounts.ForTenant(keying.Account, tenantId) };
-            var key = Services.Riders.RiderPhotoRules.KeyFor(filtered, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
+            var key = Services.Riders.RiderPhotoRules.KeyFor(filtered, buyerEmail, riderFirst, riderLast, credentialKind, credentialId, buyerName);
             var photo = await _photos.Find(tenantId, key);
             return new PhotoFacts(tenant.PhotoMode,
                 Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, filtered.Account,
@@ -307,7 +307,7 @@ namespace Services.Waivers
             var tenant = await Tenant(tenantId);
             var photo = riderAudience
                 ? await PhotoFor(tenantId, tenant, keying, ticket.PurchaserEmail, ticket.RiderFirstName,
-                    ticket.RiderLastName, null, "ticket", ticket.Id)
+                    ticket.RiderLastName, null, "ticket", ticket.Id, ticket.PurchaserName)
                 : default;
             var ages = new AgeFacts(birthdate, tenant.Today, riderAudience, tenant.Verify(idCheck),
                 JoinName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName,

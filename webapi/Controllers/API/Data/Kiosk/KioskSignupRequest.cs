@@ -20,6 +20,9 @@ namespace webapi.Controllers.API.Data.Kiosk
         public string? EmergencyContactPhone { get; set; }
 
         /// <summary>The signer ticked "I have read and agree" (the guardian for a minor).</summary>
+        /// <summary>The waiver the kiosk showed: refused if it is no longer the active one.</summary>
+        public Guid? WaiverId { get; set; }
+
         public bool AgreedToWaiver { get; set; }
         public string? SignatureDataUrl { get; set; }
         public string? PhotoDataUrl { get; set; }

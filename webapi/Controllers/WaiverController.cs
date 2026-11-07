@@ -289,7 +289,7 @@ namespace webapi.Controllers
         private async Task<IActionResult> SignWaiverInternal(Guid userId, TenantWaiver waiver, SignWaiverRequest? request)
         {
             var dataUrl = request?.SignatureDataUrl;
-            if (!IsValidPngDataUrl(dataUrl))
+            if (!SignatureImages.IsValidPngDataUrl(dataUrl))
             {
                 return new ApiResponses().BadRequestResult("A handwritten signature is required.");
             }
@@ -777,7 +777,7 @@ namespace webapi.Controllers
             var last = request.LastName?.Trim();
             if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(last))
                 return new ApiResponses().BadRequestResult("First and last name are required.");
-            if (!IsValidPngDataUrl(request.SignatureDataUrl))
+            if (!SignatureImages.IsValidPngDataUrl(request.SignatureDataUrl))
                 return new ApiResponses().BadRequestResult("A handwritten signature is required.");
 
             var waiver = row.WaiverId.HasValue
@@ -945,14 +945,6 @@ namespace webapi.Controllers
         /// can copy the link manually or retry.</summary>
         private Task<bool> TrySendRequestEmail(Services.Repositories.Data.WaiverData.WaiverSignRequestRow row) =>
             WaiverSignRequestMail.TrySend(_emailer, _config, _tenantContext.Tenant, _signRequests, row);
-
-        private static bool IsValidPngDataUrl(string? dataUrl)
-        {
-            if (string.IsNullOrWhiteSpace(dataUrl)) return false;
-            if (!dataUrl.StartsWith("data:image/png;base64,", StringComparison.Ordinal)) return false;
-            // 800 chars ≈ a non-empty signature; cap at 1 MB to avoid abuse.
-            return dataUrl.Length is > 800 and < 1_400_000;
-        }
 
         private bool TryGetUserId(out Guid userId)
         {

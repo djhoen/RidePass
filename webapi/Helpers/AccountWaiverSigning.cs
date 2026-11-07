@@ -23,9 +23,13 @@ namespace webapi.Helpers
         {
             var existing = await waivers.GetSignature(account.Id, waiverId);
             // A guardian / pre-18 signature stops counting once the rider is 18: they sign again as an
-            // adult (Sign keeps the old row as the record).
-            var supersede = existing is not null
+            // adult, and their credentials are relinked (below).
+            var minorEra = existing is not null
                 && AccountWaiverStatus.IsMinorEraForAdult(account, existing, timezone, DateTime.UtcNow);
+            // Every signing made here is a new legal act: it is stored as a NEW signature (who signed, the
+            // image, the guardian) and the previous one is kept as history, never a same-kind refresh that
+            // would keep the old image and guardian and drop the new ones (WaiverRepository.Sign, supersede).
+            var supersede = existing is not null;
             var isMinor = AccountWaiverStatus.IsMinorToday(account, timezone, DateTime.UtcNow);
             string? pName = null, pPhone = null;
             if (isMinor)
@@ -42,7 +46,7 @@ namespace webapi.Helpers
                 attendeeBirthdate: isMinor ? null : AccountWaiverStatus.Birthdate(account)?.ToDateTime(TimeOnly.MinValue));
             // Re-signed as an adult over a minor-era signature: their own credentials still pointing at the
             // old one are relinked (gate linking rules).
-            if (supersede) await gate.RelinkAfterAdultResign(tenantId, account.Id, sigId, waiverId);
+            if (minorEra && !isMinor) await gate.RelinkAfterAdultResign(tenantId, account.Id, sigId, waiverId);
             return (sigId, null);
         }
 

@@ -113,6 +113,8 @@ builder.Services.AddScoped<Services.Riders.ITicketRiderIdentity, Services.Riders
 builder.Services.AddScoped<webapi.Helpers.ICounterRiderProfiles, webapi.Helpers.CounterRiderProfiles>();
 builder.Services.AddScoped<IKioskRepository, KioskRepository>();
 builder.Services.AddScoped<webapi.Security.IKioskAuthenticator, webapi.Security.KioskAuthenticator>();
+builder.Services.AddSingleton<webapi.Security.KioskCredentialCache>();
+builder.Services.AddScoped<webapi.Helpers.IKioskSignupWriter, webapi.Helpers.KioskSignupWriter>();
 builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
@@ -276,10 +278,9 @@ builder.Services.AddRateLimiter(opts =>
     // person a minute or more, so 30 calls a minute is generous for a real kiosk and stops a scripted one.
     opts.AddPolicy("kiosk", ctx =>
     {
-        var secret = ctx.Request.Headers[webapi.Security.KioskCredentials.HeaderName].ToString();
-        var key = string.IsNullOrEmpty(secret)
-            ? "kiosk-ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous")
-            : "kiosk:" + webapi.Security.KioskCredentials.Hash(secret);
+        // Only a key recently proven valid gets its own partition; unknown or made-up keys share the
+        // client address's allowance.
+        var key = ctx.RequestServices.GetRequiredService<webapi.Security.KioskCredentialCache>().PartitionFor(ctx);
         return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 30,

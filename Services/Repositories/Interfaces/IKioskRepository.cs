@@ -23,10 +23,19 @@ namespace Services.Repositories.Interfaces
 
         Task<Guid> CreateSignup(KioskSignup signup);
         Task<KioskSignup?> GetSignup(Guid id, Guid tenantId);
-        /// <summary>Sign-ups since <paramref name="sinceUtc"/>, newest first.</summary>
+        Task SetPhoto(Guid id, Guid tenantId, Guid? photoId);
+        /// <summary>Sign-ups since <paramref name="sinceUtc"/>, newest first. Sign-ups whose sale's ticket has
+        /// been paid since are stamped handled first.</summary>
         Task<List<KioskSignupRow>> ListSignups(Guid tenantId, DateTime sinceUtc, int take);
-        /// <summary>A sale used these sign-ups (only ones not handled yet are stamped).</summary>
+        /// <summary>A card sale was started for these sign-ups: they become handled once its ticket is paid.</summary>
+        Task<int> SetPendingSale(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid saleTicketId, Guid? byUserId, string saleRef);
+        /// <summary>A paid (cash / free) sale used these sign-ups (only ones not handled yet are stamped).</summary>
         Task<int> MarkHandled(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid? byUserId, string saleRef);
+        /// <summary>Staff checked ID on a sign-up that matched an existing account: it now points at the
+        /// profiles, signature and photo attached to it, and the held signature image is cleared.</summary>
+        Task<bool> Confirm(Guid id, Guid tenantId, Guid? userId, Guid? dependentId, Guid? guardianUserId,
+            Guid? signatureId, Guid? photoId, Guid? byUserId);
+        /// <summary>Dismissed: also drops a held signature image.</summary>
         Task<bool> Dismiss(Guid id, Guid tenantId, Guid? byUserId);
     }
 }
