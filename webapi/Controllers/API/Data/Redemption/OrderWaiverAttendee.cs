@@ -60,5 +60,12 @@ namespace webapi.Controllers.API.Data.Redemption
         public bool BirthdateBlocked { get; set; }
         /// <summary>The rider ticket to record an ID check against (Order/{token}/VerifyId).</summary>
         public Guid? VerifyPurchaseId { get; set; }
+
+        // ── Turned 18 since their waiver ──
+        /// <summary>An adult whose covering waiver dates from when they were a minor: blocked until they sign as an adult.</summary>
+        public bool AdultWaiverNeeded { get; set; }
+        public DateOnly? TurnedEighteenOn { get; set; }
+        /// <summary>The rider's own email when known (their account), for a signing link addressed to them.</summary>
+        public string? RiderEmail { get; set; }
     }
 }

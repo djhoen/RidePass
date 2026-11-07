@@ -175,7 +175,8 @@ namespace Services.Repositories.Interfaces
         /// <summary>Gate signing link signed: make the new signature this pass's own (its own document),
         /// only when the pass has none or its current one is not a valid guardian signature, and only
         /// when the current one (if any) is the same document. Returns rows updated.</summary>
-        Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId);
+        Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId,
+            bool replaceMinorEra = false);
 
         /// <summary>Gate lookup by name/email/phone for a pass holder with no QR: this tenant's passes
         /// usable on <paramref name="todayLocal"/> (paid, in season, credits left, staff pass still

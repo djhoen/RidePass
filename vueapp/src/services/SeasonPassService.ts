@@ -235,6 +235,10 @@ export interface PassLookup {
     birthdateBlocked: boolean
     /** The tenant-local day of the last ID check (yyyy-MM-dd). */
     idVerifiedLocalDate: string | null
+    /** Turned 18 since their waiver: they must sign it themselves as an adult. */
+    adultWaiverNeeded: boolean
+    turnedEighteenOn: string | null
+    riderEmail: string | null
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

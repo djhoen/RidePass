@@ -1247,7 +1247,7 @@ namespace webapi.Controllers
                                     ? (await _seasonPasses.GetPurchase(ctx.PassPurchaseId)) is { } sp && sp.TenantId == tenantId
                                         ? sp.RedemptionToken : (Guid?)null
                                     : null;
-                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "season_pass", passToken, ctx.PassPurchaseId);
+                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "season_pass", passToken, ctx.PassPurchaseId, ctx.EventId);
                             }
                         }
                     }

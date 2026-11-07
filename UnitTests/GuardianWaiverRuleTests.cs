@@ -84,6 +84,60 @@ namespace UnitTests
             Assert.That(GuardianWaiverRule.Evaluate(new DateOnly(2012, 5, 1), Day, legacyNone, "Kid").BlockReason, Is.Not.Null);
         }
 
+        // ── Turned 18 since the waiver (gate item 4) ──
+
+        private static WaiverSignatureFacts SelfSignedOn(DateOnly day) => new(true, false, null, "Rider", null, day);
+        private static WaiverSignatureFacts GuardianSignedOn(DateOnly day) => new(true, true, "Gwen Guard", "Rider", null, day);
+
+        [Test]
+        public void Seventeen_with_a_guardian_waiver_is_fine()
+        {
+            var dob = Day.AddYears(-17).AddDays(-10);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, Day, GuardianSignedOn(Day.AddMonths(-3)), "Kid").BlockReason, Is.Null);
+        }
+
+        [Test]
+        public void Turned_eighteen_last_month_with_a_guardian_waiver_must_sign_as_an_adult()
+        {
+            var dob = Day.AddYears(-18).AddMonths(-1);
+            var r = GuardianWaiverRule.Evaluate(dob, Day, GuardianSignedOn(Day.AddYears(-1)), "Rowan Rider");
+            Assert.That(r.AdultWaiverNeeded, Is.True);
+            Assert.That(r.TurnedEighteenOn, Is.EqualTo(Day.AddMonths(-1)));
+            Assert.That(r.BlockReason, Is.EqualTo(
+                $"Rowan Rider turned 18 on {Day.AddMonths(-1):MMM d, yyyy}. They need to sign the waiver themselves as an adult."));
+        }
+
+        [Test]
+        public void Self_signed_the_day_before_the_18th_birthday_needs_a_re_sign_but_on_the_birthday_is_fine()
+        {
+            var dob = Day.AddYears(-18).AddDays(-10);
+            var birthday = Day.AddDays(-10);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, Day, SelfSignedOn(birthday.AddDays(-1)), "R").AdultWaiverNeeded, Is.True);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, Day, SelfSignedOn(birthday), "R").BlockReason, Is.Null);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, Day, SelfSignedOn(birthday.AddDays(3)), "R").BlockReason, Is.Null);
+        }
+
+        [Test]
+        public void Leap_day_rider_turns_eighteen_on_march_first_in_a_common_year()
+        {
+            var dob = new DateOnly(2008, 2, 29);
+            Assert.That(GuardianWaiverRule.EighteenthBirthday(dob), Is.EqualTo(new DateOnly(2026, 3, 1)));
+            Assert.That(GuardianWaiverRule.EighteenthBirthday(new DateOnly(2010, 2, 28)), Is.EqualTo(new DateOnly(2028, 2, 28)));
+            Assert.That(GuardianWaiverRule.EighteenthBirthday(new DateOnly(2012, 2, 29)), Is.EqualTo(new DateOnly(2030, 3, 1)));
+            Assert.That(GuardianWaiverRule.EighteenthBirthday(new DateOnly(2014, 2, 28)), Is.EqualTo(new DateOnly(2032, 2, 28)));
+            var checkIn = new DateOnly(2026, 3, 5);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, checkIn, SelfSignedOn(new DateOnly(2026, 2, 28)), "L").AdultWaiverNeeded, Is.True);
+            Assert.That(GuardianWaiverRule.Evaluate(dob, checkIn, SelfSignedOn(new DateOnly(2026, 3, 1)), "L").BlockReason, Is.Null);
+        }
+
+        [Test]
+        public void Unknown_birthdate_or_unknown_signing_day_never_triggers_the_adult_rule()
+        {
+            Assert.That(GuardianWaiverRule.Evaluate(null, Day, GuardianSignedOn(Day.AddYears(-3)), "R").BlockReason, Is.Null);
+            // A self-signature with no known date can't be shown to predate the birthday.
+            Assert.That(GuardianWaiverRule.Evaluate(new DateOnly(1990, 1, 1), Day, SelfSigned, "R").BlockReason, Is.Null);
+        }
+
         [Test]
         public void Adult_own_signature_is_allowed()
         {

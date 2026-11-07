@@ -814,6 +814,9 @@ namespace webapi.Controllers
                     BirthdateCheckNeeded = ds.Any(d => d.BirthdateCheckNeeded),
                     BirthdateBlocked = ds.Any(d => d.BirthdateBlocked),
                     VerifyPurchaseId = riderTicket?.PurchaseId,
+                    AdultWaiverNeeded = ds.Any(d => d.AdultWaiverNeeded && d.BlockReason is not null),
+                    TurnedEighteenOn = ds.FirstOrDefault(d => d.TurnedEighteenOn is not null)?.TurnedEighteenOn,
+                    RiderEmail = riderFacts?.RiderEmail,
                 });
             }
 

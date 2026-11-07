@@ -20,9 +20,17 @@
                 clearable label="Waiver status" style="max-width: 180px" @update:model-value="resetPplPage" />
             <v-select v-model="pplQuick" :items="quickOptions" density="compact" hide-details
                 clearable label="Show" style="max-width: 200px" @update:model-value="resetPplPage" />
+            <!-- Ahead of the gate: everyone who turned 18 since their waiver gets a link to sign as
+                 an adult. Staff-triggered only; nothing goes out on its own. -->
+            <v-btn v-if="pplStatus === 'needs_adult' && pplTotal > 0" color="primary" variant="tonal"
+                prepend-icon="mdi-email-fast-outline" :loading="adultSending" @click="sendAdultLinks">
+                Send signing links ({{ pplTotal }})
+            </v-btn>
         </div>
 
         <v-alert v-if="pplError" type="error" variant="tonal" class="mb-4">{{ pplError }}</v-alert>
+        <v-alert v-if="adultMessage" :type="adultMessageType" variant="tonal" class="mb-4" closable
+            @click:close="adultMessage = ''">{{ adultMessage }}</v-alert>
 
         <v-card variant="outlined">
             <v-table density="compact" hover>
@@ -49,6 +57,13 @@
                             <td>
                                 {{ p.personName }}
                                 <v-chip v-if="p.isMinor" size="x-small" color="indigo" class="ml-1">Minor</v-chip>
+                                <v-tooltip v-if="p.needsAdultWaiver" location="top">
+                                    <template #activator="{ props }">
+                                        <v-chip v-bind="props" size="x-small" color="error" class="ml-1">Needs adult waiver</v-chip>
+                                    </template>
+                                    Already 18, but their latest waiver dates from when they were a minor. The gate
+                                    will ask them to sign it themselves as an adult.
+                                </v-tooltip>
                                 <v-tooltip v-if="p.agingOutSoon" location="top">
                                     <template #activator="{ props }">
                                         <v-chip v-bind="props" size="x-small" color="warning" class="ml-1">Turns 18 soon</v-chip>
@@ -199,7 +214,29 @@ const pplPages = computed(() => Math.max(1, Math.ceil(pplTotal.value / pageSize)
 const statusOptions = [
     { title: 'Current waiver on file', value: 'current' },
     { title: 'Outdated only', value: 'outdated' },
+    { title: 'Needs adult waiver', value: 'needs_adult' },
 ]
+
+// ── Send adult-waiver links (status "Needs adult waiver") ──
+const adultSending = ref(false)
+const adultMessage = ref('')
+const adultMessageType = ref<'success' | 'warning' | 'error'>('success')
+async function sendAdultLinks() {
+    adultSending.value = true
+    adultMessage.value = ''
+    try {
+        const r = (await service.createAdultWaiverSignRequests()).data.data
+        adultMessageType.value = r.emailFailures > 0 ? 'warning' : 'success'
+        adultMessage.value = `Sent ${r.created - r.emailFailures} signing link${r.created - r.emailFailures === 1 ? '' : 's'}.`
+            + (r.alreadyCovered ? ` ${r.alreadyCovered} skipped (no email on file, or a link is already open).` : '')
+            + (r.emailFailures ? ` ${r.emailFailures} could not be emailed; copy their links from Waiver requests.` : '')
+    } catch (err: any) {
+        adultMessageType.value = 'error'
+        adultMessage.value = err.response?.data?.error ?? 'Could not send the signing links.'
+    } finally {
+        adultSending.value = false
+    }
+}
 const quickOptions = [
     { title: 'Minors', value: 'minors' },
     { title: 'Turning 18 soon', value: 'agingOut' },

@@ -389,6 +389,11 @@ export interface OrderWaiverAttendee {
     birthdateBlocked: boolean
     /** The rider ticket to record an ID check against. */
     verifyPurchaseId: string | null
+    /** Turned 18 since their waiver: they must sign it themselves as an adult. */
+    adultWaiverNeeded: boolean
+    turnedEighteenOn: string | null
+    /** The rider's own email when known, for a signing link addressed to them. */
+    riderEmail: string | null
 }
 
 export interface GateWaiverSignRequestResult {

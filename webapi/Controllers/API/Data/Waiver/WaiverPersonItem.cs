@@ -17,5 +17,8 @@ namespace webapi.Controllers.API.Data.Waiver
         public DateTime LastSignedAtUtc { get; set; }
         public int SignatureCount { get; set; }
         public bool HasCurrentWaiver { get; set; }
+        /// <summary>Already 18 and their latest waiver dates from when they were a minor: they must sign
+        /// as an adult before their next check-in.</summary>
+        public bool NeedsAdultWaiver { get; set; }
     }
 }

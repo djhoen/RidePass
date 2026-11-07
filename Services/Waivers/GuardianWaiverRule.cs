@@ -24,12 +24,15 @@ namespace Services.Waivers
     /// legacy ticket that only carries an inline signature; then the ticket's own guardian name
     /// (<paramref name="LegacyGuardianName"/>) is the only record of who signed.
     /// </summary>
+    /// <param name="SignedLocalDate">The tenant-local day the signature was made, when known; decides
+    /// whether an adult's waiver was signed while they were still a minor.</param>
     public sealed record WaiverSignatureFacts(
         bool HasSignatureRow,
         bool SignedByParent,
         string? ParentName,
         string? SignerName,
-        string? LegacyGuardianName);
+        string? LegacyGuardianName,
+        DateOnly? SignedLocalDate = null);
 
     /// <summary>Outcome of the guardian rule for one rider on one day.</summary>
     /// <param name="BlockReason">Why the signature does not count, or null.</param>
@@ -38,13 +41,18 @@ namespace Services.Waivers
     /// <param name="BirthdateUnknown">No birthdate anywhere. NOT a block: staff should check ID.</param>
     /// <param name="SignedByGuardian">The signature is a parent / guardian's (with a name).</param>
     /// <param name="GuardianName">That guardian's name.</param>
+    /// <param name="AdultWaiverNeeded">An adult whose covering waiver dates from when they were a
+    /// minor (a guardian's, or signed before their 18th birthday): they must sign as an adult.</param>
+    /// <param name="TurnedEighteenOn">Their 18th birthday, when that is the reason.</param>
     public sealed record GuardianCheck(
         string? BlockReason,
         int? Age,
         bool? IsMinor,
         bool BirthdateUnknown,
         bool SignedByGuardian,
-        string? GuardianName);
+        string? GuardianName,
+        bool AdultWaiverNeeded = false,
+        DateOnly? TurnedEighteenOn = null);
 
     /// <summary>
     /// The gate's minor / guardian rule, as pure functions so every check-in path and every
@@ -130,10 +138,32 @@ namespace Services.Waivers
             if (minor && !byGuardian)
                 return new GuardianCheck(MinorBlockMessage(riderName), age, true, false, false, null);
 
-            // TODO(gate item 4): an ADULT whose only waiver was signed by a guardian while they were
-            // a minor. Allowed for now; item 4 decides whether that signature still counts.
+            // An ADULT whose covering waiver dates from when they were a minor: a guardian signed it,
+            // or they signed it themselves before their 18th birthday (by the tenant-local day). A
+            // waiver signed on or after the birthday by the rider is theirs as an adult.
+            if (!minor)
+            {
+                var eighteenth = EighteenthBirthday(birthdate.Value);
+                var minorEra = byGuardian || (signature.SignedLocalDate is { } signedOn && signedOn < eighteenth);
+                if (minorEra)
+                    return new GuardianCheck(AdultWaiverMessage(riderName, eighteenth), age, false, false,
+                        byGuardian, guardian, AdultWaiverNeeded: true, TurnedEighteenOn: eighteenth);
+            }
             return new GuardianCheck(null, age, minor, false, byGuardian, guardian);
         }
+
+        /// <summary>The day a rider turns 18. A 29 February birthday turns over on 1 March in a common
+        /// year, the same reading AgeOn uses, so the two can never disagree.</summary>
+        public static DateOnly EighteenthBirthday(DateOnly birthdate)
+        {
+            var d = birthdate.AddYears(AdultAge);
+            return birthdate is { Month: 2, Day: 29 } && d.Day == 28 ? d.AddDays(1) : d;
+        }
+
+        public static string AdultWaiverMessage(string? riderName, DateOnly turnedEighteenOn) =>
+            $"{(string.IsNullOrWhiteSpace(riderName) ? "This rider" : riderName.Trim())} turned {AdultAge} on "
+            + $"{turnedEighteenOn.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)}. "
+            + "They need to sign the waiver themselves as an adult.";
 
         /// <summary>
         /// The email a guardian signing link should default to: the buyer's, when the buyer is

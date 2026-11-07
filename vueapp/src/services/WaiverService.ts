@@ -83,6 +83,8 @@ export interface AdminWaiverPersonItem {
     lastSignedAtUtc: string
     signatureCount: number
     hasCurrentWaiver: boolean
+    /** 18+ and their latest waiver dates from when they were a minor: must sign as an adult. */
+    needsAdultWaiver: boolean
 }
 
 export interface AdminWaiverPeoplePage {
@@ -259,6 +261,11 @@ export class WaiverService {
     }
     createBulkSignRequests(eventId: string) {
         return axios.post<{ data: BulkSignRequestResult }>(`${this.apiUrl}/Waiver/SignRequests/Bulk`, { eventId })
+    }
+    /** Email signing links to people who turned 18 since their waiver (all, or just these person keys). */
+    createAdultWaiverSignRequests(personKeys?: string[]) {
+        return axios.post<{ data: BulkSignRequestResult }>(`${this.apiUrl}/Waiver/SignRequests/NeedsAdult`,
+            { personKeys: personKeys ?? null })
     }
     resendSignRequest(id: string) {
         return axios.post<{ data: WaiverSignRequestItem }>(`${this.apiUrl}/Waiver/SignRequests/${id}/Resend`)

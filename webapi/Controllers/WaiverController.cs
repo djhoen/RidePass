@@ -375,7 +375,8 @@ namespace webapi.Controllers
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 200);
             var (rows, total) = await _repo.ListPeople(_tenantContext.TenantId,
-                search, status, agingOut, minorsOnly, page, pageSize);
+                search, status, agingOut, minorsOnly, page, pageSize,
+                TenantLocalToday(), _tenantContext.Tenant.Timezone);
             var now = DateTime.UtcNow;
             return new ApiResponses().OkResult(new WaiverPeoplePageResponse
             {
@@ -397,11 +398,66 @@ namespace webapi.Controllers
                         LastSignedAtUtc = DateTime.SpecifyKind(r.LastSignedAt, DateTimeKind.Utc),
                         SignatureCount = r.SignatureCount,
                         HasCurrentWaiver = r.HasCurrentWaiver,
+                        NeedsAdultWaiver = r.NeedsAdultWaiver,
                     };
                 }).ToList(),
                 Total = total,
                 Page = page,
                 PageSize = pageSize,
+            });
+        }
+
+        private DateTime TenantLocalToday() =>
+            TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.UtcNow).ToDateTime(TimeOnly.MinValue);
+
+        /// <summary>
+        /// Ahead of the gate: email a waiver signing link to people who have turned 18 since their
+        /// waiver ("Needs adult waiver" in Signed Waivers), so they can sign as adults before their
+        /// next visit; the gate then finds that adult signature (by name and birthdate). Same
+        /// waiver_sign_request bulk path as the event roster send: the tenant's active waiver, one
+        /// request per person with an email on file, skipping anyone who already has an open request.
+        /// Staff-triggered only; nothing is sent automatically.
+        /// </summary>
+        [Authorize(Policy = TenantPermissions.Policy.CustomersView)]
+        [HttpPost("SignRequests/NeedsAdult")]
+        public async Task<IActionResult> CreateAdultWaiverSignRequests([FromBody] BulkAdultWaiverSignRequestRequest? request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            if (await _repo.GetActive(_tenantContext.TenantId) is null)
+                return new ApiResponses().BadRequestResult("This tenant has no active waiver to request signatures for.");
+            if (!_emailer.IsConfigured)
+                return new ApiResponses().BadRequestResult("Email isn't set up on this server, so these links can't go out.");
+
+            var only = request?.PersonKeys is { Count: > 0 } keys ? keys.ToHashSet() : null;
+            var people = new List<Services.Repositories.Data.WaiverData.WaiverPersonRow>();
+            for (var page = 1; ; page++)
+            {
+                var (rows, total) = await _repo.ListPeople(_tenantContext.TenantId, null, "needs_adult",
+                    agingOut: false, minorsOnly: false, page, 200, TenantLocalToday(), _tenantContext.Tenant.Timezone);
+                people.AddRange(rows.Where(r => only is null || only.Contains(r.PersonKey)));
+                if (rows.Count < 200 || page * 200 >= total) break;
+            }
+
+            TryGetUserId(out var adminId);
+            int created = 0, skipped = 0, emailFailures = 0;
+            foreach (var p in people)
+            {
+                var email = p.PersonEmail?.Trim();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) { skipped++; continue; }
+                var (open, _) = await _signRequests.List(_tenantContext.TenantId, email, null, 1, 50);
+                if (open.Any(o => string.Equals(o.RecipientEmail, email, StringComparison.OrdinalIgnoreCase)
+                                  && o.Status is "pending" or "sent" or "opened"))
+                { skipped++; continue; }
+                var row = await _signRequests.Create(_tenantContext.TenantId, waiverId: null, NewToken(), email,
+                    p.PersonName, eventId: null, requestedByUserId: adminId == Guid.Empty ? null : adminId);
+                created++;
+                if (!await TrySendRequestEmail(row)) emailFailures++;
+            }
+            return new ApiResponses().OkResult(new BulkWaiverSignRequestResponse
+            {
+                Created = created,
+                AlreadyCovered = skipped,
+                EmailFailures = emailFailures,
             });
         }
 
@@ -665,6 +721,13 @@ namespace webapi.Controllers
             var isMinor = target is { Decision: { RiderAudience: true, IsMinor: bool targetMinor } }
                 ? targetMinor
                 : WaiverPolicy.IsMinor(birthdate);
+
+            // A link sent because the rider turned 18 since their waiver: only THEIR adult signature
+            // fixes that, so the parent / guardian path is refused rather than silently ignored.
+            if (target is { Decision.AdultWaiverNeeded: true }
+                && (!string.IsNullOrWhiteSpace(request.ParentName) || !string.IsNullOrWhiteSpace(request.ParentPhone)))
+                return new ApiResponses().BadRequestResult(
+                    $"{target.DisplayName} is 18 or over, so they must sign this waiver themselves, not a parent or guardian.");
 
             string? parentName = null, parentPhone = null;
             if (isMinor)

@@ -268,8 +268,8 @@
                             </div>
                             <v-btn v-if="a.canRequestSignature && a.purchaseIds.length" size="small" variant="tonal"
                                 color="primary" class="mt-2" prepend-icon="mdi-email-fast-outline"
-                                @click="openSignRequest('ticket', a.purchaseIds[0], a.name, a.guardianEmail, a.isMinor)">
-                                Send signing link{{ a.isMinor ? ' to a guardian' : '' }}
+                                @click="openSignRequest('ticket', a.purchaseIds[0], a.name, a.adultWaiverNeeded ? a.riderEmail : a.guardianEmail, a.isMinor, a.adultWaiverNeeded)">
+                                Send signing link{{ a.adultWaiverNeeded ? ' to the rider' : a.isMinor ? ' to a guardian' : '' }}
                             </v-btn>
                             <!-- Yearly birthdate check: due (prompt) or blocking (required). -->
                             <v-alert v-if="a.birthdateCheckNeeded" density="compact" variant="tonal"
@@ -432,8 +432,8 @@
                     {{ pass.waiverBlockReason }}
                     <div class="mt-2">
                         <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-email-fast-outline"
-                            @click="openSignRequest('season_pass', pass.id, pass.holderName || pass.purchaserName, pass.guardianEmail, !!pass.holderIsMinor)">
-                            Send signing link{{ pass.holderIsMinor ? ' to a guardian' : '' }}
+                            @click="openSignRequest('season_pass', pass.id, pass.holderName || pass.purchaserName, pass.adultWaiverNeeded ? pass.riderEmail : pass.guardianEmail, !!pass.holderIsMinor, pass.adultWaiverNeeded)">
+                            Send signing link{{ pass.adultWaiverNeeded ? ' to the rider' : pass.holderIsMinor ? ' to a guardian' : '' }}
                         </v-btn>
                     </div>
                 </v-alert>
@@ -757,7 +757,11 @@
                 <v-card-title>Send a waiver signing link</v-card-title>
                 <v-card-text>
                     <p class="text-body-2 text-medium-emphasis mb-3">
-                        <template v-if="signRequestForMinor">
+                        <template v-if="signRequestAdult">
+                            {{ signRequestName || 'This rider' }} has turned 18 since their waiver was signed, so they
+                            have to sign it themselves as an adult. Send the link to them, not a parent.
+                        </template>
+                        <template v-else-if="signRequestForMinor">
                             {{ signRequestName || 'This rider' }} is under 18, so a parent or guardian has to
                             sign. The link opens the waiver for {{ signRequestName || 'the rider' }}; the guardian
                             signs on their behalf.
@@ -767,8 +771,9 @@
                         </template>
                     </p>
                     <v-text-field v-model="signRequestEmail" type="email" density="compact" autofocus
-                        :label="signRequestForMinor ? 'Parent / guardian email' : 'Email'"
-                        :hint="signRequestSuggested ? 'The buyer on file. Change it if the guardian is someone else.' : ''"
+                        :label="signRequestAdult ? 'Rider\'s email' : signRequestForMinor ? 'Parent / guardian email' : 'Email'"
+                        :hint="!signRequestSuggested ? '' : signRequestAdult ? 'The rider\'s own email on file.'
+                            : 'The buyer on file. Change it if the guardian is someone else.'"
                         persistent-hint @keyup.enter="sendSignRequest"></v-text-field>
                     <div v-if="signRequestError" class="text-error text-body-2 mt-2">{{ signRequestError }}</div>
                     <div v-if="signRequestResult" class="mt-3">
@@ -1436,14 +1441,17 @@ const signRequestEmail = ref('')
 const signRequestSuggested = ref(false)
 const signRequestName = ref<string | null>(null)
 const signRequestForMinor = ref(false)
+// Turned 18 since their waiver: the link goes to the RIDER, who signs as an adult.
+const signRequestAdult = ref(false)
 const signRequestTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string } | null>(null)
 const signRequestResult = ref<GateWaiverSignRequestResult | null>(null)
 
 function openSignRequest(kind: 'ticket' | 'season_pass', purchaseId: string, name: string | null,
-    guardianEmail: string | null, forMinor: boolean) {
+    guardianEmail: string | null, forMinor: boolean, adult = false) {
     signRequestTarget.value = { kind, purchaseId }
     signRequestName.value = name
-    signRequestForMinor.value = forMinor
+    signRequestForMinor.value = forMinor && !adult
+    signRequestAdult.value = adult
     signRequestEmail.value = guardianEmail ?? ''
     signRequestSuggested.value = !!guardianEmail
     signRequestError.value = ''

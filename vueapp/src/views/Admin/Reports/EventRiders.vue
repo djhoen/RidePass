@@ -165,6 +165,31 @@
             </v-card>
         </v-dialog>
 
+        <!-- Check-in refused because the rider turned 18 since their waiver: send them the waiver
+             signing link (the gate's own sign-request flow) so they sign it as an adult. -->
+        <v-dialog v-model="adultOpen" max-width="460">
+            <v-card v-if="adultBlock">
+                <v-card-title>Send an adult waiver link</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-3">{{ adultBlock.message }}</p>
+                    <v-text-field v-model="adultEmail" type="email" density="compact" label="Rider's email"
+                        :hint="adultBlock.riderEmail ? 'The rider\'s own email on file.' : ''" persistent-hint
+                        :error-messages="adultError ? [adultError] : []"></v-text-field>
+                    <div v-if="adultResult" class="mt-3 text-body-2">
+                        {{ adultResult.sent ? `Sent to ${adultResult.recipientEmail}.`
+                            : 'Email isn’t available here, so open this link on the rider’s phone:' }}
+                        <div class="text-caption mt-1" style="word-break: break-all">{{ adultResult.link }}</div>
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="adultSending" @click="adultOpen = false">{{ adultResult ? 'Done' : 'Cancel' }}</v-btn>
+                    <v-btn v-if="!adultResult" color="primary" :loading="adultSending" :disabled="!adultEmail.includes('@')"
+                        @click="sendAdultLink">Send link</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <!-- Check-in refused because the tenant requires a current birthdate check: verify the
              rider's ID here (the gate's own verify endpoints), then the check-in is retried. -->
         <v-dialog v-model="verifyOpen" max-width="440">
@@ -196,7 +221,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ReportsService, type EventRiderReport, type EventRiderRow, type ScheduledRiderMessage } from '@/services/ReportsService'
 import { EventService, type EventDto } from '@/services/EventService'
-import { TicketService } from '@/services/TicketService'
+import { TicketService, type GateWaiverSignRequestResult } from '@/services/TicketService'
 import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 
@@ -357,6 +382,18 @@ async function toggleCheckIn(row: EventRiderRow) {
         // The tenant requires a current birthdate check and this rider has none: offer to verify
         // the ID right here instead of a dead end.
         const data = err.response?.data?.data
+        // Turned 18 since their waiver: offer to send them the link to sign as an adult.
+        if (data?.code === 'adult_waiver_needed' && data.purchaseId) {
+            adultBlock.value = {
+                message: err.response.data.error, riderEmail: data.riderEmail ?? null,
+                kind: data.signKind, purchaseId: data.purchaseId, eventId: data.eventId ?? null,
+            }
+            adultEmail.value = data.riderEmail ?? ''
+            adultError.value = ''
+            adultResult.value = null
+            adultOpen.value = true
+            return
+        }
         if (data?.code === 'birthdate_unverified' && data.verifyToken) {
             verifyBlock.value = {
                 row, message: err.response.data.error, riderName: data.riderName ?? null,
@@ -368,6 +405,31 @@ async function toggleCheckIn(row: EventRiderRow) {
             return
         }
         flash(err.response?.data?.error || 'Check-in failed.', 'error')
+    }
+}
+
+// ── Adult waiver link from a "turned 18" refusal (reuses the gate's sign-request flow) ──
+const adultOpen = ref(false)
+const adultSending = ref(false)
+const adultEmail = ref('')
+const adultError = ref('')
+const adultResult = ref<GateWaiverSignRequestResult | null>(null)
+const adultBlock = ref<{ message: string; riderEmail: string | null; kind: 'ticket' | 'season_pass';
+    purchaseId: string; eventId: string | null } | null>(null)
+
+async function sendAdultLink() {
+    const b = adultBlock.value
+    if (!b || !adultEmail.value.includes('@')) return
+    adultSending.value = true
+    adultError.value = ''
+    try {
+        const r = await ticketService.gateWaiverSignRequest({ kind: b.kind, purchaseId: b.purchaseId,
+            email: adultEmail.value.trim(), eventId: b.eventId })
+        adultResult.value = r.data.data
+    } catch (err: any) {
+        adultError.value = err.response?.data?.error || 'Couldn\'t send the link.'
+    } finally {
+        adultSending.value = false
     }
 }
 

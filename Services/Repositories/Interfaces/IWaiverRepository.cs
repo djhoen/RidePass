@@ -41,7 +41,14 @@ namespace Services.Repositories.Interfaces
         /// as a record but detached from the account (user_id cleared, email kept); a valid guardian
         /// signature is never replaced. One transaction. Returns 1 when attached, else 0.
         /// </summary>
-        Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId);
+        Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId,
+            bool replaceMinorEra = false);
+
+        /// <summary>The latest adult (not guardian) signature naming this person (attendee first + last
+        /// name and birthdate) for this document, signed at or after <paramref name="signedOnOrAfterUtc"/>.
+        /// How the gate recognises a rider who has re-signed as an adult since turning 18.</summary>
+        Task<RiderWaiverSignature?> FindAdultSelfSignature(Guid tenantId, Guid waiverId, string firstName,
+            string lastName, DateTime birthdate, DateTime signedOnOrAfterUtc);
 
         /// <summary>Signature captured during event-ticket registration (rider or spectator), written
         /// to the shared rider_waiver_signature store. Returns the new signature row id.</summary>
@@ -59,9 +66,11 @@ namespace Services.Repositories.Interfaces
 
         /// <summary>Admin People view: signatures collapsed to person identities
         /// (rider account when present, else name + birthdate). Status filter:
-        /// "current" / "outdated". agingOut = minors turning 18 within 90 days.</summary>
+        /// "current" / "outdated" / "needs_adult" (18+ and their latest signature dates from when they were
+        /// a minor). agingOut = minors turning 18 within 90 days. todayLocal / timezone are the tenant's.</summary>
         Task<(List<WaiverPersonRow> Rows, int Total)> ListPeople(Guid tenantId,
-            string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize);
+            string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize,
+            DateTime? todayLocal = null, string? timezone = null);
 
         /// <summary>Full detail for one signature (image, waiver, signing context) for the
         /// admin drill-in / print view.</summary>

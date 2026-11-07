@@ -171,20 +171,22 @@ namespace Services.Repositories
             return result.First();
         }
 
-        public async Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId)
+        public async Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId,
+            bool replaceMinorEra = false)
         {
             // One transaction: (1) an existing account row for this document that is NOT a valid
             // guardian signature is detached (user_id cleared, the account email kept on it so the
             // signed record stays attributable; its id is unchanged, so anything linked to it still
             // reads the same signature); (2) the new signature takes the account slot, but only if
-            // the slot is now free, so a valid guardian signature is never replaced.
+            // the slot is now free, so a valid guardian signature is never replaced. replaceMinorEra:
+            // the holder has turned 18, so a guardian's signature is detached too (kept as a record).
             const string detach = @"
                 UPDATE rider_waiver_signature s
                    SET user_id = NULL,
                        signer_email = COALESCE(s.signer_email, (SELECT u.email FROM users u WHERE u.id = @userId))
                  WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
                    AND s.id <> @signatureId
-                   AND NOT (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> '')";
+                   AND (@replaceMinorEra OR NOT (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> ''))";
             const string attach = @"
                 UPDATE rider_waiver_signature s
                    SET user_id = @userId
@@ -192,12 +194,31 @@ namespace Services.Repositories
                    AND s.user_id IS NULL
                    AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature x
                                    WHERE x.user_id = @userId AND x.waiver_id = @waiverId)";
-            var args = new { tenantId, userId, waiverId, signatureId };
+            var args = new { tenantId, userId, waiverId, signatureId, replaceMinorEra };
             await _db.ExecuteBatch(new (string, object?)[] { (detach, args), (attach, args) });
             var attached = await _db.Query<int>(
                 "SELECT COUNT(*)::int FROM rider_waiver_signature WHERE id = @signatureId AND tenant_id = @tenantId AND user_id = @userId",
                 args);
             return attached.First();
+        }
+
+        public async Task<RiderWaiverSignature?> FindAdultSelfSignature(Guid tenantId, Guid waiverId, string firstName,
+            string lastName, DateTime birthdate, DateTime signedOnOrAfterUtc)
+        {
+            var sql = $@"
+                SELECT {SignatureColumns}
+                FROM rider_waiver_signature
+                WHERE tenant_id = @tenantId
+                  AND waiver_id = @waiverId
+                  AND signed_by_parent = false
+                  AND lower(trim(spectator_first_name)) = lower(trim(@firstName))
+                  AND lower(trim(spectator_last_name)) = lower(trim(@lastName))
+                  AND spectator_birthdate = @birthdate::date
+                  AND signed_at >= @signedOnOrAfterUtc
+                ORDER BY signed_at DESC
+                LIMIT 1";
+            return (await _db.Query<RiderWaiverSignature>(sql,
+                new { tenantId, waiverId, firstName, lastName, birthdate, signedOnOrAfterUtc })).FirstOrDefault();
         }
 
         // Signature captured during event-ticket registration (a rider or spectator on a purchased
@@ -349,8 +370,17 @@ namespace Services.Repositories
         }
 
         public async Task<(List<WaiverPersonRow> Rows, int Total)> ListPeople(Guid tenantId,
-            string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize)
+            string? search, string? status, bool agingOut, bool minorsOnly, int page, int pageSize,
+            DateTime? todayLocal = null, string? timezone = null)
         {
+            // "Needs adult waiver" (gate item 4): already 18 on the tenant's today, and their latest
+            // signature dates from when they were a minor (a guardian's, or signed before their 18th
+            // birthday by the tenant-local day). The 18th birthday reads 29 Feb as 1 Mar in a common
+            // year, the same as GuardianWaiverRule.EighteenthBirthday.
+            const string eighteenth = @"(CASE WHEN to_char(Birthdate, 'MM-DD') = '02-29'
+                                               AND to_char((Birthdate + INTERVAL '18 years')::date, 'MM-DD') = '02-28'
+                                              THEN (Birthdate + INTERVAL '18 years')::date + 1
+                                              ELSE (Birthdate + INTERVAL '18 years')::date END)";
             // Person identity: rider account id when the signature has one, else
             // lower(name)|birthdate so a walk-up's repeat visits collapse to one row.
             var baseCte = $@"
@@ -385,9 +415,17 @@ namespace Services.Repositories
                            (array_agg(parent_phone ORDER BY signed_at DESC) FILTER (WHERE parent_phone IS NOT NULL))[1] AS GuardianPhone,
                            MAX(signed_at) AS LastSignedAt,
                            COUNT(*)::int AS SignatureCount,
-                           bool_or(on_current_waiver) AS HasCurrentWaiver
+                           bool_or(on_current_waiver) AS HasCurrentWaiver,
+                           (array_agg(signed_by_parent ORDER BY signed_at DESC))[1] AS LatestByGuardian
                     FROM sigs
                     GROUP BY person_key
+                ),
+                ppl AS (
+                    SELECT people.*,
+                           (Birthdate IS NOT NULL
+                            AND {eighteenth} <= @todayLocal::date
+                            AND (LatestByGuardian OR (LastSignedAt AT TIME ZONE @timezone)::date < {eighteenth})) AS NeedsAdultWaiver
+                    FROM people
                 )";
 
             var where = new List<string>();
@@ -397,6 +435,7 @@ namespace Services.Repositories
                     OR lower(COALESCE(GuardianName, '')) LIKE @search)");
             if (status == "current") where.Add("HasCurrentWaiver");
             if (status == "outdated") where.Add("NOT HasCurrentWaiver");
+            if (status == "needs_adult") where.Add("NeedsAdultWaiver");
             // Turns 18 within the next 90 days: their guardian-signed waiver is about to stop being valid.
             if (agingOut) where.Add(@"(Birthdate IS NOT NULL
                 AND Birthdate + INTERVAL '18 years' > now()
@@ -411,12 +450,14 @@ namespace Services.Repositories
                 search = $"%{search?.Trim().ToLowerInvariant()}%",
                 pageSize,
                 offset = (page - 1) * pageSize,
+                todayLocal = (todayLocal ?? DateTime.UtcNow).Date,
+                timezone = string.IsNullOrWhiteSpace(timezone) ? "UTC" : timezone,
             };
 
             var total = (await _db.Query<int>(
-                $"{baseCte} SELECT COUNT(*) FROM people {whereSql}", args)).First();
+                $"{baseCte} SELECT COUNT(*) FROM ppl {whereSql}", args)).First();
             var rows = await _db.Query<WaiverPersonRow>($@"{baseCte}
-                SELECT * FROM people
+                SELECT * FROM ppl
                 {whereSql}
                 ORDER BY LastSignedAt DESC
                 LIMIT @pageSize OFFSET @offset", args);

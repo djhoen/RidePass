@@ -1806,6 +1806,10 @@ namespace webapi.Controllers
                 BirthdateBlocked = waiverDecision.BirthdateBlocked,
                 // The tenant-local day of the last ID check (the date the block message shows).
                 IdVerifiedLocalDate = waiverDecision.IdVerifiedLocalDate,
+                // Turned 18 since their waiver: they sign as an adult; the link goes to THEM.
+                AdultWaiverNeeded = waiverDecision.AdultWaiverNeeded && waiverDecision.BlockReason is not null,
+                TurnedEighteenOn = waiverDecision.TurnedEighteenOn,
+                RiderEmail = waiverDecision.RiderEmail,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
                 // parent who bought the pass), else nobody on file and staff type one in.
                 GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(
@@ -2038,7 +2042,7 @@ namespace webapi.Controllers
                     var blockedPass = waiverDecision.BirthdateBlocked ? await _passes.GetPurchase(ctx.PassPurchaseId) : null;
                     return GateBlockResult.Result(waiverDecision, "season_pass",
                         blockedPass?.TenantId == _tenantContext.TenantId ? blockedPass.RedemptionToken : null,
-                        ctx.PassPurchaseId);
+                        ctx.PassPurchaseId, ctx.EventId);
                 }
             }
 
@@ -2145,7 +2149,7 @@ namespace webapi.Controllers
                 // play, the event's rider waiver; a minor needs a guardian's signature either way.
                 var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId);
                 if (waiverDecision.BlockReason is not null)
-                    return GateBlockResult.Result(waiverDecision, "season_pass", pass.RedemptionToken, pass.Id);
+                    return GateBlockResult.Result(waiverDecision, "season_pass", pass.RedemptionToken, pass.Id, eventId);
             }
 
             // Serialize double-scans of the same pass; the pre-checks below and the atomic

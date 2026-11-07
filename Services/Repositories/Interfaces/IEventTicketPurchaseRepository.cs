@@ -28,7 +28,9 @@ namespace Services.Repositories.Interfaces
         // Gate signing link signed: link the new signature to these tickets. Only PAID (never
         // redeemed) tickets of this tenant whose current signature is missing or is not a valid
         // guardian signature; the gate has already decided which ones fail. Returns rows linked.
-        Task<int> LinkWaiverSignature(IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid signatureId, Guid waiverId);
+        // replaceMinorEra: the riders now over 18, whose guardian signature no longer counts (it may be replaced).
+        Task<int> LinkWaiverSignature(IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid signatureId, Guid waiverId,
+            bool replaceMinorEra = false);
         // Operator-app check-in roster: every paid/redeemed attendee for one event with the
         // attributes the app filters on (tier/class, rider vs spectator, checked-in state).
         Task<List<EventRosterRow>> ListEventRoster(Guid eventId, Guid tenantId, DateOnly? onDate = null);

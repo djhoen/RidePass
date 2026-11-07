@@ -1030,12 +1030,14 @@ namespace Services.Repositories
             return await _db.Execute(sql, new { purchaseId, tenantId, credits });
         }
 
-        public async Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId)
+        public async Task<int> LinkWaiverSignatureForHolder(Guid passPurchaseId, Guid tenantId, Guid signatureId, Guid waiverId,
+            bool replaceMinorEra = false)
         {
             // Defense in depth behind the gate's decision: this tenant's pass and signature, the new
             // signature is for the stated document, the pass's current signature (if any) is the SAME
             // document (a product-waiver signature is never re-pointed at another one), and it is not
-            // already a valid guardian signature. Check-in history (reservations) is not touched.
+            // still a valid guardian signature (replaceMinorEra: the holder has turned 18, so their
+            // guardian's no longer counts). Check-in history (reservations) is not touched.
             const string sql = @"
                 UPDATE season_pass_purchase sp
                    SET waiver_signature_id = @signatureId, updated_at = now()
@@ -1046,8 +1048,9 @@ namespace Services.Repositories
                    AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
                                    WHERE cur.id = sp.waiver_signature_id
                                      AND (cur.waiver_id <> @waiverId
-                                          OR (cur.signed_by_parent AND COALESCE(trim(cur.parent_name), '') <> '')))";
-            return await _db.Execute(sql, new { passPurchaseId, tenantId, signatureId, waiverId });
+                                          OR (NOT @replaceMinorEra AND cur.signed_by_parent
+                                              AND COALESCE(trim(cur.parent_name), '') <> '')))";
+            return await _db.Execute(sql, new { passPurchaseId, tenantId, signatureId, waiverId, replaceMinorEra });
         }
 
         public async Task<SeasonPassCheckInContext?> GetPassForGateCheckIn(Guid passPurchaseId, Guid tenantId)

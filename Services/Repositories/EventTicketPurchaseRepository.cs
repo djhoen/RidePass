@@ -315,11 +315,13 @@ namespace Services.Repositories
             return (await _db.Query<EventTicketPurchase>(sql, new { ticketId, tenantId })).ToList();
         }
 
-        public async Task<int> LinkWaiverSignature(IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid signatureId, Guid waiverId)
+        public async Task<int> LinkWaiverSignature(IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid signatureId, Guid waiverId,
+            bool replaceMinorEra = false)
         {
             // Defense in depth behind the gate's decision: paid only (a redeemed ticket's record is
             // history and is never rewritten), this tenant's signature, and never over a ticket whose
-            // current signature is already a valid guardian signature.
+            // current signature is still a valid guardian signature. replaceMinorEra: the rider has
+            // turned 18, so their guardian's signature no longer counts and may be replaced.
             const string sql = @"
                 UPDATE event_ticket_purchase p
                    SET waiver_signature_id = @signatureId,
@@ -330,11 +332,11 @@ namespace Services.Repositories
                    AND p.status = 'paid'
                    AND EXISTS (SELECT 1 FROM rider_waiver_signature s
                                WHERE s.id = @signatureId AND s.tenant_id = @tenantId)
-                   AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
+                   AND (@replaceMinorEra OR NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
                                    WHERE cur.id = p.waiver_signature_id
                                      AND cur.signed_by_parent
-                                     AND COALESCE(trim(cur.parent_name), '') <> '')";
-            return await _db.Execute(sql, new { ids = ticketIds.ToArray(), tenantId, signatureId, waiverId });
+                                     AND COALESCE(trim(cur.parent_name), '') <> ''))";
+            return await _db.Execute(sql, new { ids = ticketIds.ToArray(), tenantId, signatureId, waiverId, replaceMinorEra });
         }
 
         // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /

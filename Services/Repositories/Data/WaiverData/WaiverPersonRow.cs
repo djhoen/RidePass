@@ -17,5 +17,9 @@ namespace Services.Repositories.Data.WaiverData
         public DateTime LastSignedAt { get; set; }
         public int SignatureCount { get; set; }
         public bool HasCurrentWaiver { get; set; }
+        /// <summary>Their latest signature is a guardian's.</summary>
+        public bool LatestByGuardian { get; set; }
+        /// <summary>18+ on the tenant's today and their latest signature dates from when they were a minor.</summary>
+        public bool NeedsAdultWaiver { get; set; }
     }
 }
