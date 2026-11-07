@@ -145,7 +145,7 @@ namespace Services.Waivers
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly IEventTicketPurchaseRepository _tickets;
-        private readonly IRiderPhotoRepository _photos;
+        private readonly Services.Riders.IRiderPhotos _photos;
 
         // Per-request memo (the gate is scoped).
         private readonly Dictionary<Guid, EventTicketTier?> _tierCache = new();
@@ -155,7 +155,7 @@ namespace Services.Waivers
         private readonly Dictionary<Guid, User?> _userCache = new();
         private readonly Dictionary<Guid, RiderWaiverSignature?> _sigCache = new();
         private readonly Dictionary<(Guid AccountId, string RiderKey), RiderAccountIdVerification?> _riderCheckCache = new();
-        private readonly Dictionary<(string Owner, string RiderKey), Services.Repositories.Data.RiderData.RiderPhoto?> _photoCache = new();
+
 
         public WaiverCheckInGate(
             IEventRepository events,
@@ -165,7 +165,7 @@ namespace Services.Waivers
             IUserRepository users,
             ITenantRepository tenants,
             IEventTicketPurchaseRepository tickets,
-            IRiderPhotoRepository photos)
+            Services.Riders.IRiderPhotos photos)
         {
             _photos = photos;
             _events = events;
@@ -193,7 +193,7 @@ namespace Services.Waivers
             string? riderFirst, string? riderLast, DateTime? credentialAt, DateTime? credentialDob)
         {
             Services.Riders.IdCheck? row = null, legacy = null;
-            if (account is not null && (account.TenantId is null || account.TenantId == tenantId))
+            if (Services.Riders.BuyerAccounts.ForTenant(account, tenantId) is not null)
             {
                 var key = Services.Riders.IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
                 if (!_riderCheckCache.TryGetValue((account.Id, key), out var r))
@@ -217,24 +217,21 @@ namespace Services.Waivers
 
         /// <summary>
         /// The rider's photo on file, only when the tenant's mode is on (off = no lookups, no change).
-        /// Filed under the buying account (a platform account or one of this tenant's), else the buyer
-        /// email, plus the rider key (RiderPhotoRules, shared with the photo endpoint that records it).
+        /// Filed under the tenant-filtered buying account, else the buyer email, plus the rider key, else
+        /// the credential itself (RiderPhotoRules.Key, shared with the endpoint that records it). A row whose
+        /// image is missing counts as no photo (IRiderPhotos.Find, memoized per request).
         /// </summary>
         private async Task<PhotoFacts> PhotoFor(Guid tenantId, TenantFacts tenant, User? account, string? buyerEmail,
-            string? riderFirst, string? riderLast, string? passPhotoDataUrl, bool accountIsRider)
+            string? riderFirst, string? riderLast, string? passPhotoDataUrl, bool accountIsRider,
+            string credentialKind, Guid credentialId)
         {
             if (tenant.PhotoMode == Services.Riders.IdVerificationWindow.ModeOff) return new PhotoFacts(tenant.PhotoMode, null);
-            var owner = account is not null && (account.TenantId is null || account.TenantId == tenantId) ? account : null;
-            var ownerKey = Services.Riders.RiderPhotoRules.OwnerKey(owner?.Id, owner is null ? buyerEmail : null);
-            Services.Repositories.Data.RiderData.RiderPhoto? photo = null;
-            if (ownerKey is not null)
-            {
-                var riderKey = Services.Riders.RiderPhotoRules.RiderKey(riderFirst, riderLast, owner);
-                if (!_photoCache.TryGetValue((ownerKey, riderKey), out photo))
-                    _photoCache[(ownerKey, riderKey)] = photo = await _photos.Get(tenantId, ownerKey, riderKey);
-            }
+            // Only the tenant-filtered account: its key, and its profile photo, count.
+            var owner = Services.Riders.BuyerAccounts.ForTenant(account, tenantId);
+            var key = Services.Riders.RiderPhotoRules.Key(owner, buyerEmail, riderFirst, riderLast, credentialKind, credentialId);
+            var photo = await _photos.Find(tenantId, key);
             return new PhotoFacts(tenant.PhotoMode,
-                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, account, accountIsRider));
+                Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, owner, accountIsRider && owner is not null));
         }
 
         public async Task<string?> BlockReasonForTicket(Guid tenantId, EventTicketPurchase ticket) =>
@@ -286,7 +283,7 @@ namespace Services.Waivers
             var tenant = await Tenant(tenantId);
             var photo = riderAudience
                 ? await PhotoFor(tenantId, tenant, account, ticket.PurchaserEmail, ticket.RiderFirstName,
-                    ticket.RiderLastName, null, accountIsRider)
+                    ticket.RiderLastName, null, accountIsRider, "ticket", ticket.Id)
                 : default;
             var ages = new AgeFacts(birthdate, tenant.Today, riderAudience, tenant.Verify(idCheck),
                 JoinName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName,
@@ -452,7 +449,7 @@ namespace Services.Waivers
             var tenant = await Tenant(tenantId);
             var today = tenant.Today;
             var photo = await PhotoFor(tenantId, tenant, account, pass.PurchaserEmail, pass.HolderFirstName,
-                pass.HolderLastName, pass.PhotoDataUrl, accountIsHolder);
+                pass.HolderLastName, pass.PhotoDataUrl, accountIsHolder, "pass", pass.Id);
             var ages = new AgeFacts(birthdate, today, RiderAudience: true, tenant.Verify(idCheck), holderName,
                 accountIsHolder ? account!.Email : null, photo);
             var required = productDoc is not null || eventDoc is not null;

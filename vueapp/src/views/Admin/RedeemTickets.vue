@@ -286,7 +286,8 @@
                             <div v-if="a.riderPhotoMode !== 'off' && a.audience === 'rider'"
                                  class="d-flex align-center flex-wrap ga-3 mt-2">
                                 <GateRiderPhoto v-if="a.hasPhoto" :source="a.photoSource" :rider-photo-id="a.riderPhotoId"
-                                    :photo-url="a.photoUrl" :size="72" :alt="`Photo of ${a.name || 'the rider'}`" />
+                                    :photo-url="a.photoUrl" :version="a.photoTakenAtUtc" :size="72"
+                                    :alt="`Photo of ${a.name || 'the rider'}`" />
                                 <v-alert v-else density="compact" variant="tonal" class="flex-grow-1"
                                     :type="a.photoBlocked ? 'error' : 'warning'" icon="mdi-account-box-outline">
                                     No photo on file{{ a.photoBlocked ? ': take one to check them in.' : '.' }}
@@ -347,11 +348,12 @@
             <v-card-text>
                 <div class="d-flex ga-4">
                     <!-- The photo is the whole point of pass registration: staff verify the face. -->
-                    <v-avatar v-if="pass.photoDataUrl" size="96" rounded="lg">
+                    <GateRiderPhoto v-if="pass.hasPhoto && pass.photoSource !== 'pass'" :source="pass.photoSource"
+                        :rider-photo-id="pass.riderPhotoId" :photo-url="pass.photoUrl" :version="pass.photoTakenAtUtc"
+                        :size="96" />
+                    <v-avatar v-else-if="pass.photoDataUrl" size="96" rounded="lg">
                         <v-img :src="pass.photoDataUrl" cover></v-img>
                     </v-avatar>
-                    <GateRiderPhoto v-else-if="pass.hasPhoto && pass.photoSource !== 'pass'" :source="pass.photoSource"
-                        :rider-photo-id="pass.riderPhotoId" :photo-url="pass.photoUrl" :size="96" />
                     <v-avatar v-else size="96" rounded="lg" style="background: var(--rp-raise)">
                         <v-icon size="48" class="text-muted2">mdi-account</v-icon>
                     </v-avatar>
@@ -1621,12 +1623,37 @@ async function submitTakePhoto() {
         await service.takeRiderPhoto(t.kind, t.purchaseId, takePhotoData.value)
         takePhotoOpen.value = false
         flash('Photo saved.', 'success')
-        if (t.kind === 'season_pass' && passToken.value) await tryLoadPass(passToken.value)
-        else if (orderToken.value) await loadOrder(orderToken.value)
+        await refreshAfterPhoto(t.kind)
     } catch (err: any) {
         takePhotoError.value = err.response?.data?.error || 'Couldn\'t save the photo.'
     } finally {
         takingPhoto.value = false
+    }
+}
+
+// Re-read what the gate now says after a photo, WITHOUT a fresh scan's resets: the ID attestation,
+// the selected items, the open tab and the chosen pass event all stay as staff left them.
+async function refreshAfterPhoto(kind: 'ticket' | 'season_pass') {
+    try {
+        if (kind === 'season_pass' && passToken.value) {
+            const token = passToken.value
+            const r = await seasonPasses.lookupByToken(token)
+            if (passToken.value !== token) return
+            const keepEvent = passEventId.value
+            pass.value = (r.data as any).data
+            if (keepEvent && !pass.value?.todaysEvents.some(e => e.id === keepEvent))
+                passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
+        } else if (orderToken.value) {
+            const token = orderToken.value
+            const r = await service.orderLookup(token)
+            if (orderToken.value !== token) return
+            const fresh = (r.data as any).data as OrderLookup
+            const stillThere = new Set(fresh.items.map(i => i.purchaseId))
+            order.value = fresh
+            selectedIds.value = selectedIds.value.filter(id => stillThere.has(id))
+        }
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Photo saved, but the screen couldn\'t refresh. Rescan to see it.', 'warning')
     }
 }
 

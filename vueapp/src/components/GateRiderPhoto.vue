@@ -19,9 +19,11 @@ const props = withDefaults(defineProps<{
     photoUrl?: string | null
     /** The pass's own photo (data URL), for source "pass". */
     passPhotoDataUrl?: string | null
+    /** The photo's version (its taken-at time): a replaced photo keeps its id, so this triggers the reload. */
+    version?: string | null
     size?: number
     alt?: string
-}>(), { riderPhotoId: null, photoUrl: null, passPhotoDataUrl: null, size: 72, alt: 'Rider photo' })
+}>(), { riderPhotoId: null, photoUrl: null, passPhotoDataUrl: null, version: null, size: 72, alt: 'Rider photo' })
 
 const service = new TicketService()
 const src = ref<string | null>(null)
@@ -41,9 +43,10 @@ async function load() {
     if (props.source !== 'rider' || !props.riderPhotoId) return
     loading.value = true
     const id = props.riderPhotoId
+    const version = props.version
     try {
-        const r = await service.riderPhotoBlob(id)
-        if (id !== props.riderPhotoId) return   // a newer photo was asked for meanwhile
+        const r = await service.riderPhotoBlob(id, version)
+        if (id !== props.riderPhotoId || version !== props.version) return   // a newer photo was asked for meanwhile
         objectUrl = URL.createObjectURL(r.data)
         src.value = objectUrl
     } catch {
@@ -53,6 +56,6 @@ async function load() {
     }
 }
 
-watch(() => [props.source, props.riderPhotoId, props.photoUrl, props.passPhotoDataUrl], load, { immediate: true })
+watch(() => [props.source, props.riderPhotoId, props.version, props.photoUrl, props.passPhotoDataUrl], load, { immediate: true })
 onBeforeUnmount(release)
 </script>

@@ -108,6 +108,7 @@ builder.Services.AddScoped<IProfitCenterRepository, ProfitCenterRepository>();
 builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
 builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
 builder.Services.AddScoped<IRiderPhotoRepository, RiderPhotoRepository>();
+builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();
 builder.Services.AddScoped<IScheduledTaskRepository, ScheduledTaskRepository>();
@@ -306,6 +307,10 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["Storage:Spaces:Bucket"]))
 else
 {
     builder.Services.AddScoped<IImageStorage, LocalFilesystemImageStorage>();
+    // Rider gate photos live in a private folder outside the deploy path and the web root
+    // (PrivateImageRoot); create it now so the first photo of the day doesn't race for it.
+    var privateImageRoot = webapi.Storage.PrivateImageRoot.EnsureCreated(builder.Configuration, builder.Environment);
+    Console.WriteLine($"Private images: {privateImageRoot}");
 }
 
 // Password hashing

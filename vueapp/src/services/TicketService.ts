@@ -309,8 +309,10 @@ export class TicketService {
     }
 
     // A rider photo's image (staff only; never a public URL): fetched with the session's auth.
-    riderPhotoBlob(riderPhotoId: string) {
-        return axios.get<Blob>(`${this.apiUrl}/Redemption/RiderPhoto/${riderPhotoId}`, { responseType: 'blob' })
+    // The version (taken-at) is part of the URL so a replaced photo is never served from a cache.
+    riderPhotoBlob(riderPhotoId: string, version?: string | null) {
+        return axios.get<Blob>(`${this.apiUrl}/Redemption/RiderPhoto/${riderPhotoId}`,
+            { responseType: 'blob', params: version ? { v: version } : undefined })
     }
 
     verifyOrderRiderId(token: string, purchaseId: string, verifiedDob: string | null) {

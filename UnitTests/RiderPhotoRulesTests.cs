@@ -44,6 +44,32 @@ namespace UnitTests
         }
 
         [Test]
+        public void With_nothing_to_key_by_the_photo_is_filed_under_the_credential_itself()
+        {
+            var ticketId = Guid.NewGuid();
+            var k = RiderPhotoRules.Key(null, "walk.up@y.test", null, null, "ticket", ticketId);
+            Assert.That(k.OwnerKey, Is.EqualTo($"ticket:{ticketId:D}"));
+            Assert.That(k.RiderKey, Is.EqualTo(RiderPhotoRules.CredentialRiderKey));
+            Assert.That(k.UserId, Is.Null);
+            var named = RiderPhotoRules.Key(null, " Walk.Up@Y.test", "Ana", "Rojas", "ticket", ticketId);
+            Assert.That((named.OwnerKey, named.RiderKey, named.OwnerEmail), Is.EqualTo(("email:walk.up@y.test", "ana rojas", "walk.up@y.test")));
+            var account = RiderPhotoRules.Key(Parent, "x@y.test", "Ana", "Rojas", "pass", Guid.NewGuid());
+            Assert.That((account.OwnerKey, account.UserId), Is.EqualTo(($"user:{Parent.Id:D}", (Guid?)Parent.Id)));
+        }
+
+        [Test]
+        public void Only_a_platform_or_this_tenants_account_counts_as_the_buyer()
+        {
+            var tenant = Guid.NewGuid();
+            Assert.That(BuyerAccounts.ForTenant(Parent, tenant), Is.SameAs(Parent));   // platform account
+            var own = new User { Id = Guid.NewGuid(), TenantId = tenant };
+            Assert.That(BuyerAccounts.ForTenant(own, tenant), Is.SameAs(own));
+            var other = new User { Id = Guid.NewGuid(), TenantId = Guid.NewGuid(), ImageUrl = "/x.jpg" };
+            Assert.That(BuyerAccounts.ForTenant(other, tenant), Is.Null);
+            Assert.That(BuyerAccounts.ForTenant(null, tenant), Is.Null);
+        }
+
+        [Test]
         public void Only_real_jpeg_or_png_data_within_bounds_is_accepted()
         {
             var jpeg = new byte[2000]; jpeg[0] = 0xFF; jpeg[1] = 0xD8; jpeg[2] = 0xFF;

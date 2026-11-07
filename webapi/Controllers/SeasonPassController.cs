@@ -35,6 +35,7 @@ namespace webapi.Controllers
         private readonly IWaiverRepository _waivers;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly Services.Riders.IRiderIdVerification _idVerification;
+        private readonly Services.Riders.IRiderPhotos _riderPhotos;
         private readonly ITenantLedgerRepository _ledger;
         private readonly Services.Payments.IFeeCalculator _feeCalculator;
         private readonly ITenantContext _tenantContext;
@@ -64,8 +65,10 @@ namespace webapi.Controllers
             ITenantContext tenantContext,
             Services.Helpers.Interfaces.IDbHelper db,
             Services.Audit.IAuditLogger audit,
-            Services.Storage.IImageStorage imageStorage)
+            Services.Storage.IImageStorage imageStorage,
+            Services.Riders.IRiderPhotos riderPhotos)
         {
+            _riderPhotos = riderPhotos;
             _passes = passes;
             _events = events;
             _eventTypes = eventTypes;
@@ -1746,7 +1749,11 @@ namespace webapi.Controllers
 
             // Registration state up front so staff see "not registered yet" on the scan rather than
             // only when the check-in button fails.
-            var registrationComplete = pass.IsRegistered(product?.RequiresWaiver ?? false);
+            // A photo of the holder taken at the gate (rider_photo) meets the photo requirement too.
+            var registrationComplete = pass.IsRegistered(product?.RequiresWaiver ?? false)
+                || (string.IsNullOrWhiteSpace(pass.PhotoDataUrl)
+                    && (!(product?.RequiresWaiver ?? false) || pass.WaiverSignatureId.HasValue)
+                    && await _riderPhotos.HolderHasPhoto(pass.Id, _tenantContext.TenantId));
 
             // ── The two things the gate worker has to see before banding someone ──────────
             // Waiver. Computed the same way RedeemPassAtGate ENFORCES it, so the tick on screen
@@ -1817,6 +1824,7 @@ namespace webapi.Controllers
                 PhotoSource = waiverDecision.PhotoSource,
                 RiderPhotoId = waiverDecision.RiderPhotoId,
                 PhotoUrl = waiverDecision.PhotoUrl,
+                PhotoTakenAtUtc = waiverDecision.PhotoTakenAtUtc is { } pt ? DateTime.SpecifyKind(pt, DateTimeKind.Utc) : (DateTime?)null,
                 PhotoNeeded = waiverDecision.PhotoNeeded,
                 PhotoBlocked = waiverDecision.PhotoBlocked && !admittedToday,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
@@ -1989,8 +1997,9 @@ namespace webapi.Controllers
                 : ctx.HolderFirstName!;
 
             // No photo means the pass was never registered (checkout writes the holder, photo, and
-            // waiver together), so this covers "not registered at all" too.
-            if (!ctx.HasPhoto)
+            // waiver together), so this covers "not registered at all" too. A photo of the holder that
+            // staff took at the gate (rider_photo, still in storage) meets the requirement as well.
+            if (!ctx.HasPhoto && !await _riderPhotos.HolderHasPhoto(ctx.PassPurchaseId, _tenantContext.TenantId))
             {
                 return "This pass hasn't been registered yet, so there's no photo to verify the holder "
                      + "against. The buyer needs to finish registration (holder details, photo"

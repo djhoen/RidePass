@@ -290,10 +290,9 @@ namespace Services.Riders
         /// account (no tenant) or this tenant's own account, never another tenant's.</summary>
         private async Task<User?> BuyerAccount(Guid userId, Guid tenantId)
         {
+            // The shared rule (BuyerAccounts.ForTenant), as the gate and the photo recorder use it.
             if (userId == Guid.Empty) return null;
-            var buyer = await _users.GetById(userId);
-            if (buyer is null || (buyer.TenantId is not null && buyer.TenantId != tenantId)) return null;
-            return buyer;
+            return BuyerAccounts.ForTenant(await _users.GetById(userId), tenantId);
         }
 
         private async Task<string?> NameOf(Guid? userId, Guid tenantId)

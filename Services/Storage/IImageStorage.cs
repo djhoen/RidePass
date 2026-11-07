@@ -24,5 +24,8 @@ namespace Services.Storage
         Task<(byte[] Bytes, string ContentType)?> OpenPrivateAsync(string key, CancellationToken ct = default);
 
         Task DeletePrivateAsync(string key, CancellationToken ct = default);
+
+        /// <summary>Whether a private image still exists (a cheap existence check, no download).</summary>
+        Task<bool> PrivateExistsAsync(string key, CancellationToken ct = default);
     }
 }

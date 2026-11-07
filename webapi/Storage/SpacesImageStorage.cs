@@ -37,31 +37,52 @@ namespace webapi.Storage
             });
         }
 
-        public Task<string> SaveAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
-            => PutAsync($"uploads/{tenantId}/{kind}-{Guid.NewGuid():N}{fileExtension}", content, fileExtension, ct);
-
-        public Task<string> SavePlatformAsync(Stream content, string kind, string fileExtension, CancellationToken ct = default)
-            => PutAsync($"uploads/platform/{kind}-{Guid.NewGuid():N}{fileExtension}", content, fileExtension, ct);
-
-        private async Task<string> PutAsync(string key, Stream content, string fileExtension, CancellationToken ct)
+        public async Task<string> SaveAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
         {
-            // Buffer to a seekable stream with a known length so the SDK sends a normal
-            // signed PUT. DO Spaces rejects the streaming/chunked signature the SDK uses
-            // for non-seekable streams. Uploads are capped small (<=5MB) so this is cheap.
-            using var ms = new MemoryStream();
-            await content.CopyToAsync(ms, ct);
-            ms.Position = 0;
-
-            await _s3.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = _bucket,
-                Key = key,
-                InputStream = ms,
-                ContentType = ContentTypeFor(fileExtension),
-                CannedACL = S3CannedACL.PublicRead,
-            }, ct);
-
+            var key = $"uploads/{tenantId}/{kind}-{Guid.NewGuid():N}{fileExtension}";
+            await PutAsync(key, content, ContentTypeFor(fileExtension), S3CannedACL.PublicRead, ct);
             return $"{_publicBaseUrl}/{key}";
+        }
+
+        public async Task<string> SavePlatformAsync(Stream content, string kind, string fileExtension, CancellationToken ct = default)
+        {
+            var key = $"uploads/platform/{kind}-{Guid.NewGuid():N}{fileExtension}";
+            await PutAsync(key, content, ContentTypeFor(fileExtension), S3CannedACL.PublicRead, ct);
+            return $"{_publicBaseUrl}/{key}";
+        }
+
+        /// <summary>The one PUT every save goes through; the ACL decides public vs private.</summary>
+        private async Task PutAsync(string key, Stream content, string contentType, S3CannedACL acl, CancellationToken ct)
+        {
+            // The SDK needs a seekable stream with a known length for a normal signed PUT (DO Spaces
+            // rejects the streaming/chunked signature it uses otherwise). A seekable stream (e.g. the
+            // MemoryStream a rider photo arrives in) is sent as is; only a non-seekable one (an
+            // IFormFile stream) is buffered, once. Uploads are capped small (<=5MB).
+            MemoryStream? buffer = null;
+            var body = content;
+            if (!content.CanSeek)
+            {
+                buffer = new MemoryStream();
+                await content.CopyToAsync(buffer, ct);
+                buffer.Position = 0;
+                body = buffer;
+            }
+            try
+            {
+                await _s3.PutObjectAsync(new PutObjectRequest
+                {
+                    BucketName = _bucket,
+                    Key = key,
+                    InputStream = body,
+                    AutoCloseStream = false,
+                    ContentType = contentType,
+                    CannedACL = acl,
+                }, ct);
+            }
+            finally
+            {
+                buffer?.Dispose();
+            }
         }
 
         public async Task DeleteAsync(string publicUrl, CancellationToken ct = default)
@@ -80,18 +101,22 @@ namespace webapi.Storage
         public async Task<string> SavePrivateAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
         {
             var key = PrivateImageKey.New(tenantId, kind, fileExtension);
-            using var ms = new MemoryStream();
-            await content.CopyToAsync(ms, ct);
-            ms.Position = 0;
-            await _s3.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = _bucket,
-                Key = key,
-                InputStream = ms,
-                ContentType = PrivateImageKey.ContentType(key),
-                CannedACL = S3CannedACL.Private,
-            }, ct);
+            await PutAsync(key, content, PrivateImageKey.ContentType(key), S3CannedACL.Private, ct);
             return key;
+        }
+
+        public async Task<bool> PrivateExistsAsync(string key, CancellationToken ct = default)
+        {
+            if (!PrivateImageKey.IsValid(key)) return false;
+            try
+            {
+                await _s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = _bucket, Key = key }, ct);
+                return true;
+            }
+            catch (AmazonS3Exception e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return false;
+            }
         }
 
         public async Task<(byte[] Bytes, string ContentType)?> OpenPrivateAsync(string key, CancellationToken ct = default)

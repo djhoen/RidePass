@@ -250,6 +250,8 @@ export interface PassLookup {
     photoNeeded: boolean
     /** 'required' mode: blocked until a photo is taken. */
     photoBlocked: boolean
+    /** When the rider photo was taken: changes on every replace (the image's version). */
+    photoTakenAtUtc: string | null
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

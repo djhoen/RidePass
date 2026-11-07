@@ -246,9 +246,9 @@ function saveSettings(overrides: Partial<Parameters<typeof tenantService.updateS
         requireIdAtCheckin: branding.requireIdAtCheckin,
         requireIdForWristband: branding.requireIdForWristband,
         seasonPassAdmissionTypeId: branding.seasonPassAdmissionTypeId,
-        birthdateVerifyMode: branding.birthdateVerifyMode,
-        birthdateVerifyValidDays: branding.birthdateVerifyValidDays,
-        riderPhotoMode: branding.riderPhotoMode,
+        // The birthdate-check and rider-photo fields go only from their own controls (via overrides):
+        // left out, the server keeps what is stored, so a toggle elsewhere on this page can never
+        // write back a stale copy of them.
         ...overrides,
     })
 }

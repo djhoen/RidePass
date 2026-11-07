@@ -20,12 +20,30 @@ namespace Services.Riders
     /// <summary>The rider's photo on file, when there is one.</summary>
     public sealed record RiderPhotoOnFile(string Source, Guid? RiderPhotoId, string? Url, DateTime? TakenAtUtc);
 
+    /// <summary>Where a rider's photo is filed: owner + rider key, and the owner's account / email.</summary>
+    public sealed record RiderPhotoKey(string OwnerKey, string RiderKey, Guid? UserId, string? OwnerEmail);
+
+    /// <summary>
+    /// The ONE rule for "which buying account counts for this tenant": a platform rider account
+    /// (tenant_id NULL) or one of this tenant's own; another tenant's staff account never does. Used by
+    /// the waiver gate, RiderIdVerification and the rider photo recorder alike.
+    /// </summary>
+    public static class BuyerAccounts
+    {
+        public static User? ForTenant(User? account, Guid tenantId) =>
+            account is not null && account.Id != Guid.Empty && (account.TenantId is null || account.TenantId == tenantId)
+                ? account : null;
+    }
+
     /// <summary>
     /// Pure rules for "does this rider have a photo on file?" (tenant.rider_photo_mode, Script0307),
-    /// shared by the gate and the photo endpoints so they never disagree about whose photo it is.
+    /// shared by the gate, the photo endpoints and pass registration so they never disagree about whose
+    /// photo it is.
     /// </summary>
     public static class RiderPhotoRules
     {
+        public const string CredentialRiderKey = "credential";
+
         /// <summary>The owner a photo is filed under: the buying account, else (no account) the buyer
         /// email. Null when there is neither.</summary>
         public static string? OwnerKey(Guid? accountId, string? buyerEmail)
@@ -41,19 +59,37 @@ namespace Services.Riders
             IdCheckRules.RiderKey(riderFirst, riderLast, account?.FirstName, account?.LastName);
 
         /// <summary>
+        /// Where one credential's rider photo is filed. <paramref name="buyerAccount"/> must already be
+        /// tenant-filtered (BuyerAccounts.ForTenant). With no owner or no rider name to key by, the photo
+        /// is filed under the credential itself ("ticket:{id}" / "pass:{id}"), so a photo staff take for it
+        /// still satisfies the gate for that credential.
+        /// </summary>
+        public static RiderPhotoKey Key(User? buyerAccount, string? buyerEmail, string? riderFirst, string? riderLast,
+            string credentialKind, Guid credentialId)
+        {
+            var owner = OwnerKey(buyerAccount?.Id, buyerAccount is null ? buyerEmail : null);
+            var rider = RiderKey(riderFirst, riderLast, buyerAccount);
+            if (owner is null || rider.Length == 0)
+                return new RiderPhotoKey($"{credentialKind}:{credentialId:D}", CredentialRiderKey, null, null);
+            return new RiderPhotoKey(owner, rider, buyerAccount?.Id,
+                buyerAccount is null ? buyerEmail!.Trim().ToLowerInvariant() : null);
+        }
+
+        /// <summary>
         /// Priority: the venue's own photo of this rider, else the pass's registration photo (for a
-        /// pass holder), else the account's profile photo ONLY when the account is the rider.
+        /// pass holder), else the account's profile photo ONLY when the (tenant-filtered) account is the
+        /// rider.
         /// </summary>
         public static RiderPhotoOnFile? Resolve(RiderPhoto? riderPhoto, string? passPhotoDataUrl,
-            User? account, bool accountIsRider)
+            User? buyerAccount, bool accountIsRider)
         {
             if (riderPhoto is not null)
                 return new RiderPhotoOnFile(RiderPhotoSource.Rider, riderPhoto.Id, null,
                     DateTime.SpecifyKind(riderPhoto.TakenAt, DateTimeKind.Utc));
             if (!string.IsNullOrWhiteSpace(passPhotoDataUrl))
                 return new RiderPhotoOnFile(RiderPhotoSource.Pass, null, null, null);
-            if (accountIsRider && !string.IsNullOrWhiteSpace(account?.ImageUrl))
-                return new RiderPhotoOnFile(RiderPhotoSource.Account, null, account!.ImageUrl, null);
+            if (accountIsRider && !string.IsNullOrWhiteSpace(buyerAccount?.ImageUrl))
+                return new RiderPhotoOnFile(RiderPhotoSource.Account, null, buyerAccount!.ImageUrl, null);
             return null;
         }
 
@@ -81,10 +117,21 @@ namespace Services.Riders
     /// <summary>Records and reads the venue's gate photos of riders.</summary>
     public interface IRiderPhotos
     {
-        /// <summary>Saves a photo for the rider a ticket admits (replacing any earlier one). Null when the
-        /// ticket has neither an account nor a buyer email to file it under.</summary>
-        Task<RiderPhoto?> RecordForTicket(EventTicketPurchase ticket, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
-        Task<RiderPhoto?> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
+        /// <summary>The rider photo filed under this key, when its image still exists (a row whose image
+        /// is missing counts as no photo, so staff can retake). Memoized per request.</summary>
+        Task<RiderPhoto?> Find(Guid tenantId, RiderPhotoKey key);
+
+        /// <summary>Where a ticket's / pass's rider photo is filed (the buyer account tenant-filtered).</summary>
+        Task<RiderPhotoKey> KeyForTicket(EventTicketPurchase ticket, Guid tenantId);
+        Task<RiderPhotoKey> KeyForPass(SeasonPassPurchase pass, Guid tenantId);
+
+        /// <summary>Saves a photo for the rider a ticket / pass admits (replacing any earlier one).</summary>
+        Task<RiderPhoto> RecordForTicket(EventTicketPurchase ticket, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
+        Task<RiderPhoto> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image, string extension, Guid? staffUserId);
+
+        /// <summary>A gate photo of this pass's holder is on file (pass registration's photo requirement).</summary>
+        Task<bool> HolderHasPhoto(Guid passPurchaseId, Guid tenantId);
+
         /// <summary>The image bytes of one of this tenant's rider photos, or null.</summary>
         Task<(byte[] Bytes, string ContentType)?> Open(Guid photoId, Guid tenantId);
     }
@@ -93,49 +140,84 @@ namespace Services.Riders
     {
         private readonly IRiderPhotoRepository _photos;
         private readonly IUserRepository _users;
+        private readonly ISeasonPassRepository _passes;
         private readonly IImageStorage _storage;
+        private readonly Dictionary<(Guid, string, string), RiderPhoto?> _findCache = new();
 
-        public RiderPhotos(IRiderPhotoRepository photos, IUserRepository users, IImageStorage storage)
+        public RiderPhotos(IRiderPhotoRepository photos, IUserRepository users, ISeasonPassRepository passes,
+            IImageStorage storage)
         {
             _photos = photos;
             _users = users;
+            _passes = passes;
             _storage = storage;
         }
 
-        public async Task<RiderPhoto?> RecordForTicket(EventTicketPurchase ticket, Guid tenantId, byte[] image,
-            string extension, Guid? staffUserId)
+        public async Task<RiderPhoto?> Find(Guid tenantId, RiderPhotoKey key)
         {
-            var account = ticket.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
-            return await Record(tenantId, account, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
-                image, extension, staffUserId);
-        }
-
-        public async Task<RiderPhoto?> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image,
-            string extension, Guid? staffUserId)
-        {
-            var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
-            return await Record(tenantId, account, pass.PurchaserEmail, pass.HolderFirstName, pass.HolderLastName,
-                image, extension, staffUserId);
-        }
-
-        private async Task<RiderPhoto?> Record(Guid tenantId, User? account, string? buyerEmail,
-            string? riderFirst, string? riderLast, byte[] image, string extension, Guid? staffUserId)
-        {
-            var owner = RiderPhotoRules.OwnerKey(account?.Id, account is null ? buyerEmail : null);
-            if (owner is null) return null;
-            var riderKey = RiderPhotoRules.RiderKey(riderFirst, riderLast, account);
-            if (riderKey.Length == 0) return null;
-
-            using var ms = new MemoryStream(image);
-            var key = await _storage.SavePrivateAsync(ms, tenantId, "rider-photo", extension);
-            var (photo, replaced) = await _photos.Upsert(tenantId, owner, account?.Id,
-                account is null ? buyerEmail?.Trim().ToLowerInvariant() : null, riderKey, key, staffUserId);
-            if (!string.IsNullOrEmpty(replaced) && replaced != key)
-            {
-                try { await _storage.DeletePrivateAsync(replaced); }
-                catch (Exception) { /* the row already points at the new image; an orphaned file is harmless */ }
-            }
+            var k = (tenantId, key.OwnerKey, key.RiderKey);
+            if (_findCache.TryGetValue(k, out var hit)) return hit;
+            var photo = await _photos.Get(tenantId, key.OwnerKey, key.RiderKey);
+            if (photo is not null && !await _storage.PrivateExistsAsync(photo.StorageKey)) photo = null;
+            _findCache[k] = photo;
             return photo;
+        }
+
+        public async Task<RiderPhotoKey> KeyForTicket(EventTicketPurchase ticket, Guid tenantId)
+        {
+            var account = ticket.PurchaserUserId is Guid id ? BuyerAccounts.ForTenant(await _users.GetById(id), tenantId) : null;
+            return RiderPhotoRules.Key(account, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
+                "ticket", ticket.Id);
+        }
+
+        public async Task<RiderPhotoKey> KeyForPass(SeasonPassPurchase pass, Guid tenantId)
+        {
+            var account = BuyerAccounts.ForTenant(await _users.GetById(pass.PurchaserUserId), tenantId);
+            return RiderPhotoRules.Key(account, pass.PurchaserEmail, pass.HolderFirstName, pass.HolderLastName,
+                "pass", pass.Id);
+        }
+
+        public async Task<RiderPhoto> RecordForTicket(EventTicketPurchase ticket, Guid tenantId, byte[] image,
+            string extension, Guid? staffUserId) =>
+            await Record(tenantId, await KeyForTicket(ticket, tenantId), image, extension, staffUserId);
+
+        public async Task<RiderPhoto> RecordForPass(SeasonPassPurchase pass, Guid tenantId, byte[] image,
+            string extension, Guid? staffUserId) =>
+            await Record(tenantId, await KeyForPass(pass, tenantId), image, extension, staffUserId);
+
+        private async Task<RiderPhoto> Record(Guid tenantId, RiderPhotoKey key, byte[] image, string extension,
+            Guid? staffUserId)
+        {
+            using var ms = new MemoryStream(image, writable: false);
+            var storageKey = await _storage.SavePrivateAsync(ms, tenantId, "rider-photo", extension);
+            RiderPhoto photo;
+            string? replaced;
+            try
+            {
+                (photo, replaced) = await _photos.Upsert(tenantId, key.OwnerKey, key.UserId, key.OwnerEmail,
+                    key.RiderKey, storageKey, staffUserId);
+            }
+            catch
+            {
+                // The row never pointed at the new image: don't leave it behind.
+                try { await _storage.DeletePrivateAsync(storageKey); } catch (Exception) { /* best effort */ }
+                throw;
+            }
+            // Committed: the old image is no longer referenced. (The trigger also queued it, so a failure
+            // here is retried by PrivateImageTrashWorker.)
+            if (!string.IsNullOrEmpty(replaced) && replaced != storageKey)
+            {
+                try { await _storage.DeletePrivateAsync(replaced); } catch (Exception) { /* queued for the worker */ }
+            }
+            _findCache.Remove((tenantId, key.OwnerKey, key.RiderKey));
+            return photo;
+        }
+
+        public async Task<bool> HolderHasPhoto(Guid passPurchaseId, Guid tenantId)
+        {
+            var pass = await _passes.GetPurchase(passPurchaseId);
+            if (pass is null || pass.TenantId != tenantId) return false;
+            return await Find(tenantId, await KeyForPass(pass, tenantId)) is not null;
         }
 
         public async Task<(byte[] Bytes, string ContentType)?> Open(Guid photoId, Guid tenantId)
@@ -144,14 +226,6 @@ namespace Services.Riders
             // The key must also name this tenant: a row can never serve another tenant's image.
             if (photo is null || PrivateImageKey.TenantOf(photo.StorageKey) != tenantId) return null;
             return await _storage.OpenPrivateAsync(photo.StorageKey);
-        }
-
-        // Same rule as RiderIdVerification's buyer account: a platform rider account, or one of this tenant's.
-        private async Task<User?> BuyerAccount(Guid id, Guid tenantId)
-        {
-            if (id == Guid.Empty) return null;
-            var u = await _users.GetById(id);
-            return u is not null && (u.TenantId is null || u.TenantId == tenantId) ? u : null;
         }
     }
 }

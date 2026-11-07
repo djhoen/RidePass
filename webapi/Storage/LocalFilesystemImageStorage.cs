@@ -6,9 +6,13 @@ namespace webapi.Storage
     {
         private readonly IWebHostEnvironment _env;
 
-        public LocalFilesystemImageStorage(IWebHostEnvironment env)
+        private readonly string _privateRoot;
+
+        public LocalFilesystemImageStorage(IWebHostEnvironment env, IConfiguration config)
         {
             _env = env;
+            // Outside the deploy path and the web root (PrivateImageRoot); created at startup.
+            _privateRoot = PrivateImageRoot.Resolve(config, env);
         }
 
         public async Task<string> SaveAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
@@ -60,9 +64,8 @@ namespace webapi.Storage
             return Task.CompletedTask;
         }
 
-        // Private images live OUTSIDE wwwroot (UseStaticFiles never serves them), under
-        // {ContentRoot}/App_Data/private-images/{key}; the key's shape is checked first, so it can't
-        // escape that folder.
+        // Private images live OUTSIDE wwwroot (UseStaticFiles never serves them) and outside the deploy
+        // path, under PrivateImageRoot/{key}; the key's shape is checked first, so it can't escape it.
         public async Task<string> SavePrivateAsync(Stream content, Guid tenantId, string kind, string fileExtension, CancellationToken ct = default)
         {
             var key = PrivateImageKey.New(tenantId, kind, fileExtension);
@@ -89,9 +92,11 @@ namespace webapi.Storage
             return Task.CompletedTask;
         }
 
+        public Task<bool> PrivateExistsAsync(string key, CancellationToken ct = default) =>
+            Task.FromResult(PrivateImageKey.IsValid(key) && File.Exists(PrivatePath(key)));
+
         private string PrivatePath(string key) =>
-            Path.Combine(_env.ContentRootPath, "App_Data", "private-images",
-                key.Replace('/', Path.DirectorySeparatorChar));
+            Path.Combine(_privateRoot, key.Replace('/', Path.DirectorySeparatorChar));
 
         private string GetWebRoot()
         {

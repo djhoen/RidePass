@@ -876,7 +876,7 @@ namespace webapi.Controllers
             if (Services.Riders.RiderPhotoRules.DecodePhoto(req.PhotoDataUrl) is not { } image)
                 return new ApiResponses().BadRequestResult("The photo must be a JPEG or PNG image under 1.5 MB.");
 
-            Services.Repositories.Data.RiderData.RiderPhoto? photo;
+            Services.Repositories.Data.RiderData.RiderPhoto photo;
             string riderName;
             string targetKind;
             if (req.Kind == "ticket")
@@ -900,11 +900,15 @@ namespace webapi.Controllers
             }
             else return new ApiResponses().BadRequestResult("Unknown kind.");
 
-            if (photo is null)
-                return new ApiResponses().BadRequestResult("There is no account or email on this purchase to keep the photo under.");
+            // Filed under the rider (account or buyer email + rider name), else, with nothing to key by,
+            // under this credential itself (RiderPhotoRules.Key): either way it satisfies the gate here.
             await _audit.Log("rider.photo_taken", $"Rider photo taken for {riderName}",
                 targetKind: targetKind, targetId: req.PurchaseId, tenantId: tenantId,
-                metadata: new { riderPhotoId = photo.Id, riderKey = photo.RiderKey, owner = photo.UserId is not null ? "account" : "email" });
+                metadata: new
+                {
+                    riderPhotoId = photo.Id, riderKey = photo.RiderKey,
+                    owner = photo.UserId is not null ? "account" : photo.OwnerEmail is not null ? "email" : "credential",
+                });
             return new ApiResponses().OkResult(new
             {
                 RiderPhotoId = photo.Id,
