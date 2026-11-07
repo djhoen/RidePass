@@ -29,6 +29,91 @@ export interface CounterCartItem {
     eventId?: string | null
     // Required when kind === 'extras' AND the product has any active variants.
     variantId?: string | null
+    // "Another rider" on the payer's order (a day pass / gate ticket, quantity 1): the rider's profile
+    // from resolveOtherRider. Both null = the payer's own line.
+    riderUserId?: string | null
+    riderDependentId?: string | null
+}
+
+/** Input for "another rider": pick an existing profile, or type a new rider (and a minor's guardian). */
+export interface OtherRiderRequest {
+    payerUserId: string
+    existingUserId?: string | null
+    existingDependentId?: string | null
+    firstName?: string | null
+    lastName?: string | null
+    birthdate?: string | null
+    email?: string | null
+    phone?: string | null
+    guardianIsPayer?: boolean
+    guardianUserId?: string | null
+    guardianFirstName?: string | null
+    guardianLastName?: string | null
+    guardianEmail?: string | null
+    guardianPhone?: string | null
+}
+
+export interface OtherRiderProfile {
+    riderUserId: string | null
+    riderDependentId: string | null
+    firstName: string
+    lastName: string
+    birthdate: string | null
+    age: number | null
+    isMinor: boolean
+    email: string | null
+    phone: string | null
+    guardianUserId: string | null
+    guardianName: string | null
+    guardianEmail: string | null
+    guardianPhone: string | null
+    matchedExistingRider: boolean
+    matchedExistingGuardian: boolean
+    createdRider: boolean
+    createdGuardian: boolean
+}
+
+export interface CounterDependent {
+    id: string
+    guardianUserId: string
+    riderUserId: string | null
+    firstName: string
+    lastName: string
+    birthdate: string | null
+    isMinor: boolean
+}
+
+/** signed | not_required | link_sent (a link is out, not signed yet) | needs_signature */
+export type RiderWaiverStatus = 'signed' | 'not_required' | 'link_sent' | 'needs_signature'
+
+export interface RiderWaiverLink {
+    purchaseId: string
+    requestId: string | null
+    status: RiderWaiverStatus
+    link: string | null
+    signAs: 'guardian' | 'adult' | null
+    recipientName: string | null
+    recipientEmail: string | null
+    recipientPhone: string | null
+    emailSent: boolean
+    smsSent: boolean
+    smsAvailable: boolean
+    reused: boolean
+}
+
+export interface RiderWaiverStatusItem {
+    purchaseId: string
+    riderName: string | null
+    isMinor: boolean
+    status: RiderWaiverStatus
+    signedByGuardian: boolean
+    guardianName: string | null
+    signerName: string | null
+    blockReason: string | null
+    requestStatus: string | null
+    requestSentAtUtc: string | null
+    recipientEmail: string | null
+    link: string | null
 }
 
 export interface CounterSaleLineItem {
@@ -39,6 +124,10 @@ export interface CounterSaleLineItem {
     quantity: number
     unitPriceCents: number
     lineAmountCents: number
+    // A ticket bought for another rider: who it is for (their waiver is collected on the receipt).
+    otherRider?: boolean
+    riderName?: string | null
+    riderIsMinor?: boolean
 }
 
 export interface CounterSaleResponse {
@@ -79,5 +168,26 @@ export class CounterService {
 
     createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
+    }
+
+    /** Find or create another rider's profile (and a minor's guardian's), for an "another rider" line. */
+    resolveOtherRider(body: OtherRiderRequest) {
+        return axios.post<{ data: OtherRiderProfile }>(`${this.apiUrl}/Counter/OtherRiders`, body)
+    }
+
+    /** Minors already linked to this guardian (e.g. the paying parent's own kids). */
+    listDependents(guardianUserId: string) {
+        return axios.get<{ data: CounterDependent[] }>(`${this.apiUrl}/Counter/OtherRiders/Dependents`,
+            { params: { guardianUserId } })
+    }
+
+    /** A signing link for one other-rider ticket; deliver = email (and text when SMS is set up). */
+    riderWaiverLink(purchaseId: string, deliver: boolean) {
+        return axios.post<{ data: RiderWaiverLink }>(`${this.apiUrl}/Counter/OtherRiders/WaiverLink`, { purchaseId, deliver })
+    }
+
+    /** Each ticket's waiver as the gate will judge it. */
+    riderWaiverStatus(purchaseIds: string[]) {
+        return axios.post<{ data: RiderWaiverStatusItem[] }>(`${this.apiUrl}/Counter/OtherRiders/WaiverStatus`, { purchaseIds })
     }
 }

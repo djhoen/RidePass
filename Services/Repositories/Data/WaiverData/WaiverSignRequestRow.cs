@@ -28,5 +28,7 @@ namespace Services.Repositories.Data.WaiverData
         public string? RiderFirstName { get; set; }
         public string? RiderLastName { get; set; }
         public DateTime? RiderBirthdate { get; set; }
+        /// <summary>The account the link was sent to (Script0309): a Gate Sale rider's guardian, or the adult rider.</summary>
+        public Guid? RecipientUserId { get; set; }
     }
 }

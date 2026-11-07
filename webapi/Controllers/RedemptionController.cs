@@ -778,7 +778,10 @@ namespace webapi.Controllers
                 var signedDocName = signedRow?.SignedWaiverName ?? signedRow?.SignedWaiverTitle;
 
                 var first = tickets[0];
-                var name = BuildAttendeeName(first.RiderFirstName, first.RiderLastName) ?? signedRow?.SignerName;
+                // A ticket that names nobody is the buying account's own (e.g. the payer's line at the Gate
+                // Sale): the gate's own rider name for it is the purchaser.
+                var name = BuildAttendeeName(first.RiderFirstName, first.RiderLastName) ?? signedRow?.SignerName
+                    ?? ds.Select(d => d.RiderName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
                 var registrationComplete = tickets.All(r => r.RegistrationComplete);
 
                 attendees.Add(new webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee

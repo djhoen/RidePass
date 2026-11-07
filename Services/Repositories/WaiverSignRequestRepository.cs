@@ -18,7 +18,8 @@ namespace Services.Repositories
             q.event_ticket_purchase_id AS EventTicketPurchaseId,
             q.season_pass_purchase_id AS SeasonPassPurchaseId,
             q.rider_user_id AS RiderUserId, q.rider_first_name AS RiderFirstName,
-            q.rider_last_name AS RiderLastName, q.rider_birthdate AS RiderBirthdate";
+            q.rider_last_name AS RiderLastName, q.rider_birthdate AS RiderBirthdate,
+            q.recipient_user_id AS RecipientUserId";
         private const string RequestJoins = @"
             FROM waiver_sign_request q
             LEFT JOIN tenant_waiver w ON w.id = q.waiver_id
@@ -30,7 +31,8 @@ namespace Services.Repositories
 
         public async Task<WaiverSignRequestRow> Create(Guid tenantId, Guid? waiverId, string token,
             string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
-            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null, SignRequestRider? rider = null)
+            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null, SignRequestRider? rider = null,
+            Guid? recipientUserId = null)
         {
             // The ticket / pass targets (Script0304) are tenant-checked in the insert itself: a
             // target from another tenant is stored as NULL rather than linked. The rider identity
@@ -40,12 +42,13 @@ namespace Services.Repositories
                     INSERT INTO waiver_sign_request
                         (tenant_id, waiver_id, token, recipient_email, recipient_name,
                          event_id, requested_by_user_id, event_ticket_purchase_id, season_pass_purchase_id,
-                         rider_user_id, rider_first_name, rider_last_name, rider_birthdate)
+                         rider_user_id, rider_first_name, rider_last_name, rider_birthdate, recipient_user_id)
                     VALUES (@tenantId, @waiverId, @token, @recipientEmail, @recipientName,
                             @eventId, @requestedByUserId,
                             (SELECT id FROM event_ticket_purchase WHERE id = @eventTicketPurchaseId AND tenant_id = @tenantId),
                             (SELECT id FROM season_pass_purchase WHERE id = @seasonPassPurchaseId AND tenant_id = @tenantId),
-                            @riderUserId, @riderFirstName, @riderLastName, @riderBirthdate::date)
+                            @riderUserId, @riderFirstName, @riderLastName, @riderBirthdate::date,
+                            (SELECT id FROM users WHERE id = @recipientUserId AND (tenant_id IS NULL OR tenant_id = @tenantId)))
                     RETURNING *
                 )
                 SELECT ins.id, ins.tenant_id AS TenantId, ins.waiver_id AS WaiverId, ins.token,
@@ -58,7 +61,8 @@ namespace Services.Repositories
                        ins.event_ticket_purchase_id AS EventTicketPurchaseId,
                        ins.season_pass_purchase_id AS SeasonPassPurchaseId,
                        ins.rider_user_id AS RiderUserId, ins.rider_first_name AS RiderFirstName,
-                       ins.rider_last_name AS RiderLastName, ins.rider_birthdate AS RiderBirthdate
+                       ins.rider_last_name AS RiderLastName, ins.rider_birthdate AS RiderBirthdate,
+                       ins.recipient_user_id AS RecipientUserId
                 FROM ins
                 LEFT JOIN tenant_waiver w ON w.id = ins.waiver_id
                 LEFT JOIN event e ON e.id = ins.event_id";
@@ -73,8 +77,22 @@ namespace Services.Repositories
                 riderFirstName = rider?.FirstName,
                 riderLastName = rider?.LastName,
                 riderBirthdate = rider?.Birthdate,
+                recipientUserId,
             });
             return result.First();
+        }
+
+        public async Task<List<WaiverSignRequestRow>> LatestForTickets(Guid tenantId, IReadOnlyCollection<Guid> ticketIds)
+        {
+            if (ticketIds.Count == 0) return new List<WaiverSignRequestRow>();
+            var sql = $@"
+                SELECT DISTINCT ON (q.event_ticket_purchase_id) {RequestColumns}
+                {RequestJoins}
+                WHERE q.tenant_id = @tenantId
+                  AND q.event_ticket_purchase_id = ANY(@ids)
+                  AND q.status <> 'cancelled'
+                ORDER BY q.event_ticket_purchase_id, q.created_at DESC";
+            return (await _db.Query<WaiverSignRequestRow>(sql, new { tenantId, ids = ticketIds.ToArray() })).ToList();
         }
 
         public async Task<HashSet<Guid>> RidersWithOpenRequests(Guid tenantId, IReadOnlyCollection<Guid> riderUserIds)

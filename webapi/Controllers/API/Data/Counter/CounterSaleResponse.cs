@@ -24,5 +24,9 @@
         public int Quantity { get; set; }
         public int UnitPriceCents { get; set; }
         public int LineAmountCents { get; set; }
+        // Set on a ticket bought for another rider: who it is for, so the receipt can collect their waiver.
+        public bool OtherRider { get; set; }
+        public string? RiderName { get; set; }
+        public bool RiderIsMinor { get; set; }
     }
 }

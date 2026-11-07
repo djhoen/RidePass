@@ -216,6 +216,9 @@ export interface PublicSignRequestInfo {
     riderName: string | null
     riderFirstName: string | null
     riderLastName: string | null
+    /** A Gate Sale guardian link sent to a known account: their name and phone, to prefill the form. */
+    guardianName?: string | null
+    guardianPhone?: string | null
 }
 
 export class WaiverService {

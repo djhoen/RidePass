@@ -5,6 +5,10 @@ namespace Services.Repositories.Interfaces
     public interface IEventTicketPurchaseRepository
     {
         Task<(Guid Id, Guid RedemptionToken)> Create(EventTicketPurchase purchase);
+        /// <summary>Names the rider a Gate Sale ticket is for (another rider on the payer's order, Script0309):
+        /// their name and birthdate, which the gate keys per-rider checks on, and their profile ids.</summary>
+        Task<bool> SetRiderProfile(Guid id, Guid tenantId, string firstName, string lastName,
+            DateTime? birthdate, Guid? riderUserId, Guid? riderDependentId);
         Task<EventTicketPurchase?> GetById(Guid id, Guid tenantId);
         Task<EventTicketPurchase?> GetByStripePaymentIntentId(string paymentIntentId);
         Task<List<EventTicketPurchase>> ListByStripePaymentIntentId(string paymentIntentId);

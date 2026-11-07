@@ -70,6 +70,13 @@
         // it false and fills registration in afterward.
         public bool RegistrationComplete { get; set; } = true;
 
+        // Whose profile this ticket is for when the payer bought it for someone else at the Gate Sale
+        // (Script0309): the rider's own account, and / or the minor's link to their guardian. Null on
+        // every other ticket (the purchaser, or the named rider under the purchaser, is the rider).
+        // Written by SetRiderProfile, never by Create.
+        public Guid? RiderUserId { get; set; }
+        public Guid? RiderDependentId { get; set; }
+
         // Staff-applied discount snapshot (Script0257). A counter cart is mixed, so how much came off
         // is a per-row fact; the preset id, its name at the time, and the manager who authorised it
         // are what let a discounted sale explain itself later.

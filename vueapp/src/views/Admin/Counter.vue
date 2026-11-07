@@ -220,15 +220,67 @@
                                 </v-expansion-panel-text>
                             </v-expansion-panel>
 
+                            <!-- Day passes / lift tickets (gate-fee tiers), for the customer or another rider -->
+                            <v-expansion-panel value="daypass">
+                                <v-expansion-panel-title>
+                                    <div class="d-flex align-center ga-2">
+                                        <v-icon>mdi-ticket-confirmation</v-icon>
+                                        <span>Day passes</span>
+                                        <v-chip v-if="dayPassCount > 0" size="x-small" color="primary" class="ml-1">
+                                            {{ dayPassCount }}
+                                        </v-chip>
+                                    </div>
+                                </v-expansion-panel-title>
+                                <v-expansion-panel-text>
+                                    <div v-if="loadingDayEvents" class="text-center py-4">
+                                        <v-progress-circular indeterminate></v-progress-circular>
+                                    </div>
+                                    <div v-else-if="dayEvents.length === 0" class="text-medium-emphasis">
+                                        No riding days in the next two weeks. Schedule one on
+                                        <router-link to="/Admin/Events">Manage Events</router-link>.
+                                    </div>
+                                    <template v-else>
+                                        <v-select :model-value="selectedDayEventId"
+                                            @update:model-value="onDayEventSelected"
+                                            :items="dayEventOptions" item-title="title" item-value="value"
+                                            label="Riding day" density="compact" hide-details></v-select>
+                                        <div v-if="loadingDayTiers" class="text-center py-4">
+                                            <v-progress-circular indeterminate size="24"></v-progress-circular>
+                                        </div>
+                                        <template v-else-if="selectedDayEventId">
+                                            <div v-if="dayTiers.length === 0" class="text-caption text-medium-emphasis mt-3">
+                                                This day has no gate tickets set up.
+                                            </div>
+                                            <div v-for="t in dayTiers" :key="t.id" class="d-flex align-center flex-wrap ga-2 py-1 mt-1">
+                                                <div class="flex-grow-1" style="min-width: 160px">
+                                                    {{ t.name }}
+                                                    <span class="text-medium-emphasis">— ${{ (t.priceCents / 100).toFixed(2) }}</span>
+                                                    <v-chip v-if="t.audience === 'spectator'" size="x-small" variant="tonal" class="ml-1">Spectator</v-chip>
+                                                </div>
+                                                <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus"
+                                                    @click="addDayPass(t)">For {{ customer?.firstName || 'customer' }}</v-btn>
+                                                <v-btn size="small" variant="outlined" prepend-icon="mdi-account-plus"
+                                                    @click="openOtherRider(t)">Another rider</v-btn>
+                                            </div>
+                                            <p class="text-caption text-medium-emphasis mt-2">
+                                                “Another rider” is a friend or family member on this customer’s payment. Each
+                                                rider gets their own profile and signs their own waiver (a parent or guardian
+                                                for anyone under 18).
+                                            </p>
+                                        </template>
+                                    </template>
+                                </v-expansion-panel-text>
+                            </v-expansion-panel>
+
                             <!-- Lesson + optional bike -->
                             <v-expansion-panel value="lesson">
                                 <v-expansion-panel-title>
                                     <div class="d-flex align-center ga-2">
                                         <v-icon>mdi-whistle</v-icon>
                                         <span>Lesson</span>
-                                        <v-chip v-if="cartCount('event_ticket') + cartCount('rental') > 0"
+                                        <v-chip v-if="lessonCount > 0"
                                             size="x-small" color="primary" class="ml-1">
-                                            {{ cartCount('event_ticket') + cartCount('rental') }}
+                                            {{ lessonCount }}
                                         </v-chip>
                                     </div>
                                 </v-expansion-panel-title>
@@ -332,6 +384,10 @@
                                         <strong>{{ c.displayName }}</strong>
                                         <span class="text-medium-emphasis"> × {{ c.quantity }}</span>
                                     </div>
+                                    <div v-if="c.other" class="text-caption text-medium-emphasis">
+                                        <v-icon size="14">mdi-account-arrow-right</v-icon>
+                                        For {{ c.other.name }}{{ c.other.isMinor ? ` (under 18, ${c.other.guardianName ?? 'guardian'} signs)` : '' }}
+                                    </div>
                                 </div>
                                 <div class="text-right" style="flex: 0 0 auto">
                                     ${{ ((c.unitPriceCents * c.quantity) / 100).toFixed(2) }}
@@ -376,11 +432,18 @@
                 <v-card class="mb-4 pa-4">
                     <v-card-title>Waiver</v-card-title>
                     <v-card-text>
+                        <v-alert v-if="otherRiderLines.length > 0" type="info" variant="tonal" density="compact" class="mb-3">
+                            <strong>{{ otherRiderLines.length }} other rider{{ otherRiderLines.length === 1 ? '' : 's' }}</strong>
+                            ({{ otherRiderLines.map(l => l.other!.name).join(', ') }}) sign their own waiver after payment:
+                            send them (or their parent or guardian) a link, or sign on this device on the receipt
+                            screen. The gate won’t admit them until it’s signed.
+                            <span v-if="!payerHasOwnLines">Nothing in this cart is for {{ customer?.firstName }}, so they don’t sign here.</span>
+                        </v-alert>
                         <div v-if="!activeWaiver" class="text-medium-emphasis">
                             No active waiver configured for this tenant — proceed to payment.
                         </div>
                         <div v-else-if="!cartRequiresWaiver" class="text-medium-emphasis">
-                            None of the items in this cart require a waiver — proceed to payment.
+                            {{ otherRiderLines.length > 0 ? 'Nothing else in this cart needs a signature now' : 'None of the items in this cart require a waiver' }} — proceed to payment.
                         </div>
                         <template v-else-if="customer?.hasSignedCurrentWaiver">
                             <v-alert type="success" variant="tonal" class="mb-3">
@@ -517,6 +580,73 @@
                             (and sign, if the pass requires a waiver) under My Passes before the gate will
                             admit them. The QR below won’t scan until they do.
                         </v-alert>
+
+                        <!-- Other riders on this payment: each signs their own waiver (a guardian for a minor). -->
+                        <v-card v-if="receiptRiderLines.length > 0" variant="outlined" class="pa-3 mb-4">
+                            <div class="d-flex align-center mb-2">
+                                <div class="text-subtitle-2">Other riders’ waivers</div>
+                                <v-spacer></v-spacer>
+                                <v-btn size="small" variant="text" prepend-icon="mdi-refresh" :loading="refreshingWaivers"
+                                    @click="refreshRiderWaivers">Refresh</v-btn>
+                            </div>
+                            <p class="text-caption text-medium-emphasis mb-2">
+                                The sale is complete; the gate won’t admit a rider until their waiver is signed. This
+                                updates by itself while the screen is open.
+                            </p>
+                            <div v-for="li in receiptRiderLines" :key="li.purchaseId" class="rider-waiver-line py-2">
+                                <div class="d-flex align-center flex-wrap ga-2">
+                                    <div class="flex-grow-1" style="min-width: 160px">
+                                        <strong>{{ li.riderName }}</strong>
+                                        <span class="text-caption text-medium-emphasis">
+                                            · {{ li.riderIsMinor ? 'under 18: parent or guardian signs' : 'signs for themselves' }}
+                                        </span>
+                                    </div>
+                                    <v-chip size="small" :color="waiverChip(li.purchaseId).color" variant="tonal">
+                                        {{ waiverChip(li.purchaseId).label }}
+                                    </v-chip>
+                                </div>
+                                <div v-if="riderStatus[li.purchaseId]?.status === 'signed'" class="text-caption text-success mt-1">
+                                    Signed{{ riderStatus[li.purchaseId]?.signedByGuardian && riderStatus[li.purchaseId]?.guardianName
+                                        ? ` by ${riderStatus[li.purchaseId]?.guardianName} (guardian)`
+                                        : riderStatus[li.purchaseId]?.signerName ? ` by ${riderStatus[li.purchaseId]?.signerName}` : '' }}.
+                                </div>
+                                <template v-else-if="riderStatus[li.purchaseId]?.status !== 'not_required'">
+                                    <div class="d-flex flex-wrap ga-2 mt-2">
+                                        <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-send"
+                                            :loading="linkBusy[li.purchaseId] === 'send'" @click="sendRiderLink(li, true)">
+                                            {{ riderLinks[li.purchaseId] ? 'Send again' : 'Send link' }}
+                                        </v-btn>
+                                        <v-btn size="small" variant="outlined" prepend-icon="mdi-draw"
+                                            :loading="linkBusy[li.purchaseId] === 'device'" @click="signOnDevice(li)">
+                                            Sign on this device
+                                        </v-btn>
+                                    </div>
+                                    <div v-if="riderLinks[li.purchaseId]" class="d-flex align-start ga-3 mt-2">
+                                        <QrCode v-if="riderLinks[li.purchaseId]!.link" :value="riderLinks[li.purchaseId]!.link!" :size="96" />
+                                        <div class="text-caption" style="min-width: 0">
+                                            <div>
+                                                {{ riderLinks[li.purchaseId]!.signAs === 'guardian' ? 'Guardian link for' : 'Link for' }}
+                                                <strong>{{ riderLinks[li.purchaseId]!.recipientName }}</strong>
+                                                &lt;{{ riderLinks[li.purchaseId]!.recipientEmail }}&gt;
+                                            </div>
+                                            <div v-if="riderLinks[li.purchaseId]!.emailSent">Emailed.</div>
+                                            <div v-else-if="linkDelivered[li.purchaseId]" class="text-warning">
+                                                Email isn’t set up or didn’t send: have them scan the QR.
+                                            </div>
+                                            <div v-if="riderLinks[li.purchaseId]!.smsSent">Texted to {{ riderLinks[li.purchaseId]!.recipientPhone }}.</div>
+                                            <div v-else-if="!riderLinks[li.purchaseId]!.smsAvailable" class="text-medium-emphasis">
+                                                Texting isn’t set up for this venue yet: they can scan the QR on their phone.
+                                            </div>
+                                            <div v-else-if="linkDelivered[li.purchaseId] && !riderLinks[li.purchaseId]!.recipientPhone" class="text-medium-emphasis">
+                                                No phone on file to text.
+                                            </div>
+                                            <div class="text-medium-emphasis" style="word-break: break-all">{{ riderLinks[li.purchaseId]!.link }}</div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </v-card>
+
                         <div v-for="li in lineItems" :key="li.purchaseId" class="mb-4 d-flex align-center ga-3">
                             <QrCode v-if="hasQr(li)" :value="redeemUrl(li.redemptionToken)" :size="120" />
                             <div v-else class="d-flex align-center justify-center"
@@ -543,15 +673,101 @@
         </v-stepper-window>
         </v-stepper>
 
+        <!-- Another rider: a friend or family member on this customer's payment. -->
+        <v-dialog v-model="otherDialog" max-width="560" scrollable>
+            <v-card>
+                <v-card-title>Another rider</v-card-title>
+                <v-card-subtitle v-if="otherTier">{{ otherTier.name }} — ${{ (otherTier.priceCents / 100).toFixed(2) }}</v-card-subtitle>
+                <v-card-text>
+                    <div v-if="payerDependents.length > 0" class="mb-3">
+                        <div class="text-caption text-medium-emphasis mb-1">{{ customer?.firstName }}’s kids on file</div>
+                        <div class="d-flex flex-wrap ga-2">
+                            <v-chip v-for="d in payerDependents" :key="d.id" size="small"
+                                :color="otherForm.existingDependentId === d.id ? 'primary' : undefined"
+                                @click="pickDependent(d)">{{ d.firstName }} {{ d.lastName }}</v-chip>
+                        </div>
+                    </div>
+
+                    <div class="d-flex ga-2 align-end mb-1">
+                        <v-text-field v-model="otherSearch" label="Find an existing profile (name, email, phone)"
+                            density="compact" hide-details @keyup.enter="searchOtherRider"></v-text-field>
+                        <v-btn :loading="otherSearching" @click="searchOtherRider">Find</v-btn>
+                    </div>
+                    <v-list v-if="otherCandidates.length > 0" density="compact" class="mb-2"
+                        style="border: 1px solid var(--rp-line2); border-radius: 10px">
+                        <v-list-item v-for="c in otherCandidates" :key="c.id" @click="pickOtherCandidate(c)"
+                            :active="otherForm.existingUserId === c.id">
+                            <v-list-item-title>{{ c.firstName }} {{ c.lastName }}</v-list-item-title>
+                            <v-list-item-subtitle>{{ c.email }}<span v-if="c.phone"> · {{ c.phone }}</span></v-list-item-subtitle>
+                        </v-list-item>
+                    </v-list>
+
+                    <v-alert v-if="otherPickedLabel" type="success" variant="tonal" density="compact" class="mb-3">
+                        {{ otherPickedLabel }}
+                        <v-btn size="x-small" variant="text" class="ml-1" @click="clearOtherPick">Change</v-btn>
+                    </v-alert>
+
+                    <template v-if="!otherForm.existingUserId && !otherForm.existingDependentId">
+                        <div class="text-caption text-medium-emphasis mt-2 mb-1">Or a new rider</div>
+                        <v-row dense>
+                            <v-col cols="12" sm="6"><v-text-field v-model="otherForm.firstName" label="First name" density="compact"></v-text-field></v-col>
+                            <v-col cols="12" sm="6"><v-text-field v-model="otherForm.lastName" label="Last name" density="compact"></v-text-field></v-col>
+                        </v-row>
+                    </template>
+                    <v-text-field v-if="!otherForm.existingDependentId" v-model="otherForm.birthdate" type="date" :max="todayIso"
+                        :label="otherForm.existingUserId ? 'Birthdate (if not on their profile)' : 'Birthdate'"
+                        density="compact"></v-text-field>
+                    <template v-if="!otherForm.existingUserId && !otherForm.existingDependentId">
+                        <v-row dense>
+                            <v-col cols="12" sm="6">
+                                <v-text-field v-model="otherForm.email" type="email" density="compact"
+                                    :label="otherIsMinor ? 'Rider email (optional)' : 'Rider email'"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" sm="6">
+                                <PhoneField v-model="otherForm.phone" label="Rider phone (optional)" density="compact" />
+                            </v-col>
+                        </v-row>
+                    </template>
+
+                    <template v-if="otherNeedsGuardian">
+                        <v-divider class="my-2"></v-divider>
+                        <div class="text-subtitle-2 mb-1">Parent or guardian</div>
+                        <p class="text-caption text-medium-emphasis mb-2">
+                            Under 18: a parent or guardian signs. Their profile is created from these details,
+                            or their existing account is used (matched by email, no login needed).
+                        </p>
+                        <v-radio-group v-model="otherForm.guardianMode" inline hide-details density="compact" class="mb-2">
+                            <v-radio :label="`${customer?.firstName ?? 'The customer'} is the parent / guardian`" value="payer"></v-radio>
+                            <v-radio label="Someone else" value="other"></v-radio>
+                        </v-radio-group>
+                        <template v-if="otherForm.guardianMode === 'other'">
+                            <v-row dense>
+                                <v-col cols="12" sm="6"><v-text-field v-model="otherForm.guardianFirstName" label="Guardian first name" density="compact"></v-text-field></v-col>
+                                <v-col cols="12" sm="6"><v-text-field v-model="otherForm.guardianLastName" label="Guardian last name" density="compact"></v-text-field></v-col>
+                                <v-col cols="12" sm="6"><v-text-field v-model="otherForm.guardianEmail" type="email" label="Guardian email" density="compact"></v-text-field></v-col>
+                                <v-col cols="12" sm="6"><PhoneField v-model="otherForm.guardianPhone" label="Guardian phone" density="compact" /></v-col>
+                            </v-row>
+                        </template>
+                    </template>
+                    <v-alert v-if="otherError" type="error" variant="tonal" density="compact" class="mt-2">{{ otherError }}</v-alert>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="otherDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="otherSaving" @click="saveOtherRider">Add to cart</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">{{ snackbarText }}</v-snackbar>
     </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import dayjs from 'dayjs'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
-import { CounterService, type CounterRider } from '@/services/CounterService'
+import { CounterService, type CounterRider, type CounterDependent, type RiderWaiverLink, type RiderWaiverStatusItem } from '@/services/CounterService'
 import { PassService, type WaiverDto } from '@/services/PassService'
 import type { EligibleExtra, EligibleExtraVariant, EventDto, EligibleRental } from '@/services/EventService'
 import { EventService } from '@/services/EventService'
@@ -587,6 +803,10 @@ interface CartLine {
     // Refundable bike deposit (rental lines only). Added to the charged total but held, not
     // earned — returned to the customer at bike return.
     depositCents?: number
+    // "lesson" (Lesson panel) or "daypass" (Day passes panel) for event tickets, so each panel counts its own.
+    group?: 'lesson' | 'daypass'
+    // Set when the line is a ticket for another rider on this payment (their own profile and waiver).
+    other?: OtherLine
 }
 
 const MEMBERSHIP_ITEM_ID = '00000000-0000-0000-0000-000000000001'
@@ -861,6 +1081,7 @@ function addLessonTicket(tier: TicketTier) {
         requiresWaiver: !!lessonDetail.value?.requiresRiderWaiver,
         riderPaidServiceChargeBps: tier.riderPaidServiceChargeBps ?? 10000,
         eventId: selectedLessonId.value,
+        group: 'lesson',
     })
 }
 
@@ -885,6 +1106,341 @@ function toggleLessonBike(bike: EligibleRental) {
         eventId: selectedLessonId.value,
         depositCents: bike.depositCents,
     })
+}
+
+// ── Day passes: gate-fee tiers of upcoming riding days, for the customer or another rider ──────
+interface OtherLine {
+    userId: string | null
+    dependentId: string | null
+    name: string
+    isMinor: boolean
+    guardianName: string | null
+}
+
+const dayEvents = ref<EventDto[]>([])
+const loadingDayEvents = ref(false)
+const selectedDayEventId = ref<string | null>(null)
+const dayTiers = ref<TicketTier[]>([])
+const loadingDayTiers = ref(false)
+const dayEventOptions = computed(() => dayEvents.value.map(e => ({
+    value: e.id,
+    title: `${e.title} — ${formatTenantDateTime(e.startsAtUtc, 'ddd MMM D')}`,
+})))
+const selectedDayEvent = computed(() => dayEvents.value.find(e => e.id === selectedDayEventId.value) ?? null)
+const dayPassCount = computed(() => cart.value.filter(c => c.group === 'daypass').reduce((s, c) => s + c.quantity, 0))
+const lessonCount = computed(() => cart.value
+    .filter(c => (c.kind === 'event_ticket' && c.group !== 'daypass') || c.kind === 'rental')
+    .reduce((s, c) => s + c.quantity, 0))
+const otherRiderLines = computed(() => cart.value.filter(c => !!c.other))
+const payerHasOwnLines = computed(() => cart.value.some(c => !c.other))
+
+async function loadDayEvents() {
+    loadingDayEvents.value = true
+    try {
+        // Riding days still open now, and the next two weeks (a lesson has its own panel).
+        const from = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+        const to = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString()
+        const r = await eventService.list(from, to)
+        dayEvents.value = ((r.data as any).data as EventDto[])
+            .filter(e => e.eventTypeCode !== 'lesson' && e.status === 'scheduled'
+                && new Date(e.endsAtUtc).getTime() > Date.now())
+            .sort((a, b) => new Date(a.startsAtUtc).getTime() - new Date(b.startsAtUtc).getTime())
+        if (!selectedDayEventId.value && dayEvents.value.length > 0) await onDayEventSelected(dayEvents.value[0].id)
+    } catch (err: any) {
+        // Not silent: an empty panel would read as "nothing to sell today".
+        dayEvents.value = []
+        flash(err.response?.data?.error || 'Couldn’t load riding days. Reopen the Day passes section.', 'error')
+    } finally {
+        loadingDayEvents.value = false
+    }
+}
+
+async function onDayEventSelected(id: string | null) {
+    selectedDayEventId.value = id
+    dayTiers.value = []
+    if (!id) return
+    loadingDayTiers.value = true
+    try {
+        const r = await ticketService.listActiveTiers(id)
+        dayTiers.value = ((r.data as any).data as TicketTier[]).filter(t => t.isActive && t.kind === 'gate_fee')
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t load this day’s tickets.', 'error')
+    } finally {
+        loadingDayTiers.value = false
+    }
+}
+
+function dayPassLine(t: TicketTier, other?: OtherLine): CartLine {
+    const ev = selectedDayEvent.value
+    return {
+        kind: 'event_ticket',
+        itemId: t.id,
+        displayName: `${ev?.title ?? 'Day pass'} — ${t.name}`,
+        unitPriceCents: t.priceCents,
+        quantity: 1,
+        // The customer's waiver step covers only their own lines (as the server does); another rider
+        // signs their own after payment.
+        requiresWaiver: !other && !!ev?.requiresRiderWaiver,
+        riderPaidServiceChargeBps: t.riderPaidServiceChargeBps ?? 10000,
+        eventId: ev?.id ?? null,
+        group: 'daypass',
+        other,
+    }
+}
+
+function addDayPass(t: TicketTier) {
+    const existing = cart.value.find(c => c.kind === 'event_ticket' && c.itemId === t.id && !c.other)
+    if (existing) { existing.quantity += 1; return }
+    cart.value.push(dayPassLine(t))
+}
+
+// ── Another rider dialog ─────────────────────────────────────────────────────────────────────
+const otherDialog = ref(false)
+const otherTier = ref<TicketTier | null>(null)
+const otherSearch = ref('')
+const otherSearching = ref(false)
+const otherSaving = ref(false)
+const otherError = ref<string | null>(null)
+const otherCandidates = ref<{ id: string; email: string; firstName: string; lastName: string; phone: string | null }[]>([])
+const otherPickedLabel = ref<string | null>(null)
+const payerDependents = ref<CounterDependent[]>([])
+// The server said this picked profile is a minor: ask for their guardian.
+const otherForcedGuardian = ref(false)
+const blankOtherForm = () => ({
+    existingUserId: null as string | null,
+    existingDependentId: null as string | null,
+    firstName: '', lastName: '', birthdate: '', email: '', phone: '',
+    guardianMode: 'other' as 'payer' | 'other',
+    guardianFirstName: '', guardianLastName: '', guardianEmail: '', guardianPhone: '',
+})
+const otherForm = ref(blankOtherForm())
+
+/** Under 18 on today's date by the typed birthdate (the server decides on the venue's date). */
+const otherIsMinor = computed(() => {
+    const b = otherForm.value.birthdate
+    if (!b) return false
+    return dayjs().diff(dayjs(b), 'year') < 18
+})
+const otherNeedsGuardian = computed(() =>
+    !otherForm.value.existingDependentId && (otherIsMinor.value || otherForcedGuardian.value))
+
+async function openOtherRider(t: TicketTier) {
+    if (!customer.value) return
+    otherTier.value = t
+    otherForm.value = blankOtherForm()
+    otherSearch.value = ''
+    otherCandidates.value = []
+    otherPickedLabel.value = null
+    otherError.value = null
+    otherForcedGuardian.value = false
+    otherDialog.value = true
+    try {
+        const r = await counter.listDependents(customer.value.id)
+        payerDependents.value = (r.data as any).data.filter((d: CounterDependent) => d.isMinor)
+    } catch {
+        payerDependents.value = []   // a convenience only: the form still works
+    }
+}
+
+async function searchOtherRider() {
+    const q = otherSearch.value.trim()
+    if (q.length < 2) return
+    otherSearching.value = true
+    try {
+        const r = await counter.searchRiders(q)
+        otherCandidates.value = ((r.data as any).data as typeof otherCandidates.value)
+            .filter(c => c.id !== customer.value?.id)
+        if (otherCandidates.value.length === 0) otherError.value = `No profile found for "${q}". Enter them as a new rider.`
+        else otherError.value = null
+    } catch (err: any) {
+        otherError.value = err.response?.data?.error || 'Search failed. Try again before entering a new rider.'
+    } finally {
+        otherSearching.value = false
+    }
+}
+
+function pickOtherCandidate(c: { id: string; email: string; firstName: string; lastName: string }) {
+    otherForm.value.existingUserId = c.id
+    otherForm.value.existingDependentId = null
+    otherPickedLabel.value = `${c.firstName} ${c.lastName} <${c.email}>: their existing profile`
+    otherCandidates.value = []
+    otherForcedGuardian.value = false
+}
+
+function pickDependent(d: CounterDependent) {
+    otherForm.value.existingDependentId = d.id
+    otherForm.value.existingUserId = null
+    otherPickedLabel.value = `${d.firstName} ${d.lastName}, with ${customer.value?.firstName ?? 'the customer'} as guardian`
+    otherCandidates.value = []
+}
+
+function clearOtherPick() {
+    otherForm.value.existingUserId = null
+    otherForm.value.existingDependentId = null
+    otherPickedLabel.value = null
+    otherForcedGuardian.value = false
+}
+
+async function saveOtherRider() {
+    if (!customer.value || !otherTier.value) return
+    const f = otherForm.value
+    otherSaving.value = true
+    otherError.value = null
+    try {
+        const guardianIsPayer = otherNeedsGuardian.value && f.guardianMode === 'payer'
+        const sendGuardian = otherNeedsGuardian.value && f.guardianMode === 'other'
+        const r = await counter.resolveOtherRider({
+            payerUserId: customer.value.id,
+            existingUserId: f.existingUserId,
+            existingDependentId: f.existingDependentId,
+            firstName: f.firstName.trim() || null,
+            lastName: f.lastName.trim() || null,
+            birthdate: f.birthdate || null,
+            email: f.email.trim() || null,
+            phone: f.phone.trim() || null,
+            guardianIsPayer,
+            guardianFirstName: sendGuardian ? f.guardianFirstName.trim() : null,
+            guardianLastName: sendGuardian ? f.guardianLastName.trim() : null,
+            guardianEmail: sendGuardian ? f.guardianEmail.trim() : null,
+            guardianPhone: sendGuardian ? f.guardianPhone.trim() || null : null,
+        })
+        const p = r.data.data
+        const other: OtherLine = {
+            userId: p.riderUserId,
+            dependentId: p.riderDependentId,
+            name: `${p.firstName} ${p.lastName}`,
+            isMinor: p.isMinor,
+            guardianName: p.guardianName,
+        }
+        const dup = cart.value.some(c => c.itemId === otherTier.value!.id && c.other
+            && c.other.userId === other.userId && c.other.dependentId === other.dependentId)
+        if (dup) { otherError.value = `${other.name} already has this ticket in the cart.`; return }
+        cart.value.push(dayPassLine(otherTier.value, other))
+        otherDialog.value = false
+        flash(p.matchedExistingRider || p.matchedExistingGuardian
+            ? `Added ${other.name}: matched their existing profile${p.matchedExistingGuardian ? ' (guardian too)' : ''}.`
+            : `Added ${other.name}.`, 'success')
+    } catch (err: any) {
+        const msg: string = err.response?.data?.error || 'Couldn’t add that rider.'
+        otherError.value = msg
+        // A picked profile turned out to be a minor: ask for their guardian, then try again.
+        if (/parent or guardian/i.test(msg)) otherForcedGuardian.value = true
+    } finally {
+        otherSaving.value = false
+    }
+}
+
+// ── Receipt: other riders' waivers, live ─────────────────────────────────────────────────────
+const riderStatus = ref<Record<string, RiderWaiverStatusItem>>({})
+const riderLinks = ref<Record<string, RiderWaiverLink>>({})
+const linkBusy = ref<Record<string, 'send' | 'device' | undefined>>({})
+const linkDelivered = ref<Record<string, boolean>>({})
+const refreshingWaivers = ref(false)
+let waiverPoll: ReturnType<typeof setInterval> | null = null
+
+const receiptRiderLines = computed(() => (lineItems.value as any[]).filter(l => l.otherRider) as
+    { purchaseId: string; riderName: string; riderIsMinor: boolean }[])
+const ridersAllDone = computed(() => receiptRiderLines.value.length > 0 && receiptRiderLines.value.every(l =>
+    ['signed', 'not_required'].includes(riderStatus.value[l.purchaseId]?.status ?? '')))
+
+async function refreshRiderWaivers() {
+    const ids = receiptRiderLines.value.map(l => l.purchaseId)
+    if (ids.length === 0) return
+    refreshingWaivers.value = true
+    try {
+        const r = await counter.riderWaiverStatus(ids)
+        const next: Record<string, RiderWaiverStatusItem> = {}
+        for (const s of r.data.data) next[s.purchaseId] = s
+        riderStatus.value = next
+    } catch {
+        /* the next poll tries again; the chips keep their last known state */
+    } finally {
+        refreshingWaivers.value = false
+    }
+}
+
+function stopWaiverPoll() {
+    if (waiverPoll) { clearInterval(waiverPoll); waiverPoll = null }
+}
+
+// Poll while the receipt shows riders who still have to sign.
+watch([step, receiptRiderLines, ridersAllDone], ([s, lines, done]) => {
+    if (s === 5 && lines.length > 0 && !done) {
+        if (!waiverPoll) {
+            void refreshRiderWaivers()
+            waiverPoll = setInterval(() => { void refreshRiderWaivers() }, 5000)
+        }
+    } else {
+        stopWaiverPoll()
+    }
+})
+onBeforeUnmount(stopWaiverPoll)
+
+function resetRiderWaivers() {
+    stopWaiverPoll()
+    riderStatus.value = {}
+    riderLinks.value = {}
+    linkBusy.value = {}
+    linkDelivered.value = {}
+}
+
+function waiverChip(purchaseId: string): { label: string; color: string | undefined } {
+    switch (riderStatus.value[purchaseId]?.status) {
+        case 'signed': return { label: 'Signed', color: 'success' }
+        case 'link_sent': return { label: 'Pending link', color: 'warning' }
+        case 'needs_signature': return { label: 'Not signed', color: 'error' }
+        case 'not_required': return { label: 'No waiver needed', color: undefined }
+        default: return { label: 'Checking…', color: undefined }
+    }
+}
+
+async function sendRiderLink(li: { purchaseId: string; riderName: string }, deliver: boolean) {
+    linkBusy.value[li.purchaseId] = 'send'
+    try {
+        const r = await counter.riderWaiverLink(li.purchaseId, deliver)
+        const link = r.data.data
+        if (link.status === 'signed' || link.status === 'not_required') {
+            flash(`${li.riderName} is already covered.`, 'success')
+        } else {
+            riderLinks.value[li.purchaseId] = link
+            linkDelivered.value[li.purchaseId] = deliver
+            const via = [link.emailSent ? 'emailed' : null, link.smsSent ? 'texted' : null].filter(Boolean).join(' and ')
+            flash(via ? `Link ${via} to ${link.recipientName}.` : `Link ready for ${link.recipientName}: have them scan the QR.`,
+                via ? 'success' : 'error')
+        }
+        await refreshRiderWaivers()
+    } catch (err: any) {
+        flash(err.response?.data?.error || 'Couldn’t create the signing link.', 'error')
+    } finally {
+        linkBusy.value[li.purchaseId] = undefined
+    }
+}
+
+/** Opens the rider's own signing page (guardian or adult mode) on this device, in a new tab. */
+async function signOnDevice(li: { purchaseId: string; riderName: string }) {
+    linkBusy.value[li.purchaseId] = 'device'
+    // Opened before the await so the browser doesn't treat it as an unrequested pop-up.
+    const tab = window.open('', '_blank')
+    try {
+        const r = await counter.riderWaiverLink(li.purchaseId, false)
+        const link = r.data.data
+        if (!link.link) {
+            tab?.close()
+            flash(`${li.riderName} is already covered.`, 'success')
+            return
+        }
+        riderLinks.value[li.purchaseId] = link
+        const token = link.link.split('/').pop() ?? ''
+        const url = `${window.location.origin}/SignWaiver/${token}`
+        if (tab) tab.location.href = url
+        // Pop-ups blocked: leaving this page would lose the receipt, so show the link and QR instead.
+        else flash('The browser blocked the new tab: use the link or QR below.', 'error')
+    } catch (err: any) {
+        tab?.close()
+        flash(err.response?.data?.error || 'Couldn’t open the signing page.', 'error')
+    } finally {
+        linkBusy.value[li.purchaseId] = undefined
+    }
 }
 
 // Waiver step
@@ -1003,6 +1559,7 @@ onMounted(async () => {
     } finally {
         loadingExtras.value = false
     }
+    void loadDayEvents()
     // Lessons load in the background so the Lesson panel is ready when the cashier opens it.
     await loadLessons()
 })
@@ -1196,6 +1753,8 @@ async function createSale(method: 'stripe' | 'cash') {
                 quantity: c.quantity,
                 eventId: c.eventId ?? null,
                 variantId: c.variantId ?? null,
+                riderUserId: c.other?.userId ?? null,
+                riderDependentId: c.other?.dependentId ?? null,
             })),
             signWaiver: willSignWaiver.value && customerAcknowledged.value,
             signatureDataUrl: willSignWaiver.value ? customerSignatureDataUrl.value : null,
@@ -1313,6 +1872,7 @@ function reset() {
     discountManagerPin.value = ''
     catalogPanel.value = 'extras'
     creditAccount.value = null
+    resetRiderWaivers()
 }
 
 function redeemUrl(token: string): string {
@@ -1369,6 +1929,9 @@ function flash(text: string, color: 'success' | 'error') {
     padding: 8px 12px;
 }
 .cart-line + .cart-line {
+    border-top: 1px solid var(--rp-line);
+}
+.rider-waiver-line + .rider-waiver-line {
     border-top: 1px solid var(--rp-line);
 }
 </style>

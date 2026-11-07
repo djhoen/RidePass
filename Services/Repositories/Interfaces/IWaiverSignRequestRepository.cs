@@ -8,7 +8,11 @@ namespace Services.Repositories.Interfaces
         /// (Script0304): signing it links the new signature there (see WaiverController.SignByToken).</summary>
         Task<WaiverSignRequestRow> Create(Guid tenantId, Guid? waiverId, string token,
             string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
-            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null, SignRequestRider? rider = null);
+            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null, SignRequestRider? rider = null,
+            Guid? recipientUserId = null);
+
+        /// <summary>The most recent request that is not cancelled for each of these tickets (one query).</summary>
+        Task<List<WaiverSignRequestRow>> LatestForTickets(Guid tenantId, IReadOnlyCollection<Guid> ticketIds);
 
         /// <summary>Of these rider accounts, the ones that already have an open (pending / sent /
         /// opened) link: one query, keyed by the rider, not the email.</summary>

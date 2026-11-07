@@ -22,5 +22,10 @@ namespace webapi.Controllers.API.Data.Waiver
         public string? RiderName { get; set; }
         public string? RiderFirstName { get; set; }
         public string? RiderLastName { get; set; }
+
+        /// <summary>A guardian-mode link sent to a known account (a Gate Sale rider's guardian, Script0309):
+        /// that guardian's name and phone, so the form is prefilled. Null otherwise.</summary>
+        public string? GuardianName { get; set; }
+        public string? GuardianPhone { get; set; }
     }
 }

@@ -123,6 +123,11 @@ async function load() {
             // Targeted: the rider's own name (never the recipient's: for a guardian link that's the parent).
             firstName.value = info.value.riderFirstName?.trim() ?? ''
             lastName.value = info.value.riderLastName?.trim() ?? ''
+            // A Gate Sale guardian link sent to a known account: their name and phone are already on file.
+            if (info.value.signAs === 'guardian') {
+                if (!parentName.value) parentName.value = info.value.guardianName?.trim() ?? ''
+                if (!parentPhone.value) parentPhone.value = info.value.guardianPhone?.trim() ?? ''
+            }
         } else if (info.value.recipientName && !firstName.value) {
             const parts = info.value.recipientName.trim().split(/\s+/)
             firstName.value = parts[0] ?? ''

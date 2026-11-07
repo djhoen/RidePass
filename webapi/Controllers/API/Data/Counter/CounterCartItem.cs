@@ -27,5 +27,12 @@ namespace webapi.Controllers.API.Data.Counter
         // Optional for "extras" when the product has variants. Required if the
         // product has any active variants (server enforces).
         public Guid? VariantId { get; set; }
+
+        // "Another rider" on the payer's order (event_ticket gate fee / day pass, quantity 1): the rider's
+        // profile from POST Counter/OtherRiders. An adult (or a minor with their own account) has
+        // RiderUserId; a minor always has RiderDependentId (their link to a guardian). Both null = the
+        // payer's own line, as before.
+        public Guid? RiderUserId { get; set; }
+        public Guid? RiderDependentId { get; set; }
     }
 }

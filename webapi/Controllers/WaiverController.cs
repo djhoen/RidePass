@@ -734,8 +734,17 @@ namespace webapi.Controllers
             var mode = row.Status is "pending" or "sent" or "opened"
                 ? await ResolveSignMode(row) : SignRequestMode.Untargeted;
 
+            // A guardian link sent to a known account (a Gate Sale rider's guardian, Script0309): prefill the
+            // guardian's own name and phone. Only to the holder of the link, which was sent to that account.
+            var guardian = mode.SignAs == "guardian" && row.RecipientUserId is Guid recipientId
+                ? await _users.GetById(recipientId) : null;
+            if (guardian is not null && guardian.TenantId is not null && guardian.TenantId != _tenantContext.TenantId)
+                guardian = null;
+
             return new ApiResponses().OkResult(new PublicWaiverSignRequestResponse
             {
+                GuardianName = guardian is null ? null : $"{guardian.FirstName} {guardian.LastName}".Trim(),
+                GuardianPhone = guardian?.Phone,
                 SignAs = mode.SignAs,
                 RiderName = mode.RiderName,
                 RiderFirstName = mode.RiderFirstName,
@@ -853,7 +862,7 @@ namespace webapi.Controllers
                     targetKind: target.TicketId is not null ? "event_ticket_purchase" : "season_pass_purchase",
                     targetId: target.TicketId ?? target.PassPurchaseId,
                     tenantId: _tenantContext.TenantId,
-                    metadata: new { requestId = row.Id, signatureId = sigId, linked, nameMismatch, typedName = $"{first} {last}" });
+                    metadata: new { requestId = row.Id, signatureId = sigId, linked, nameMismatch, typedName = $"{first} {last}", recipientUserId = row.RecipientUserId });
 
                 // Did it take? If the gate still fails for THIS document with a fix the link was for,
                 // the signature could not be put where the gate reads it (e.g. the credential changed):

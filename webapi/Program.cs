@@ -108,6 +108,7 @@ builder.Services.AddScoped<IProfitCenterRepository, ProfitCenterRepository>();
 builder.Services.AddScoped<Services.Waivers.IWaiverCheckInGate, Services.Waivers.WaiverCheckInGate>();
 builder.Services.AddScoped<Services.Riders.IRiderIdVerification, Services.Riders.RiderIdVerification>();
 builder.Services.AddScoped<IRiderPhotoRepository, RiderPhotoRepository>();
+builder.Services.AddScoped<IRiderDependentRepository, RiderDependentRepository>();
 builder.Services.AddHostedService<webapi.Workers.PrivateImageTrashWorker>();
 builder.Services.AddScoped<Services.Riders.IRiderPhotos, Services.Riders.RiderPhotos>();
 builder.Services.AddScoped<IRecentSalesRepository, RecentSalesRepository>();

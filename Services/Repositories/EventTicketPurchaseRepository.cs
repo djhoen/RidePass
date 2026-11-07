@@ -30,6 +30,7 @@ namespace Services.Repositories
             waiver_signature_id AS WaiverSignatureId,
             parent_guardian_name AS ParentGuardianName,
             registration_complete AS RegistrationComplete,
+            rider_user_id AS RiderUserId, rider_dependent_id AS RiderDependentId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private const string WithContextColumns = Columns + @",
@@ -60,6 +61,23 @@ namespace Services.Repositories
                 RETURNING id, redemption_token AS RedemptionToken";
             var row = (await _db.Query<EventTicketPurchase>(sql, p)).First();
             return (row.Id, row.RedemptionToken);
+        }
+
+        public async Task<bool> SetRiderProfile(Guid id, Guid tenantId, string firstName, string lastName,
+            DateTime? birthdate, Guid? riderUserId, Guid? riderDependentId)
+        {
+            // Only a ticket nobody has registered or admitted yet: this names the rider at sale time.
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                   SET rider_first_name = @firstName, rider_last_name = @lastName,
+                       rider_birthdate = @birthdate::date,
+                       rider_user_id = @riderUserId, rider_dependent_id = @riderDependentId,
+                       updated_at = now()
+                 WHERE id = @id AND tenant_id = @tenantId AND redeemed_at_utc IS NULL";
+            return await _db.Execute(sql, new
+            {
+                id, tenantId, firstName, lastName, birthdate = birthdate?.Date, riderUserId, riderDependentId,
+            }) == 1;
         }
 
         public async Task<int> ClearAppliedSeasonPass(Guid id, Guid tenantId)
