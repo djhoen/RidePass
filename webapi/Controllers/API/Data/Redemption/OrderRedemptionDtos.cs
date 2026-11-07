@@ -87,5 +87,7 @@ namespace webapi.Controllers.API.Data.Redemption
         public List<string> Errors { get; set; } = new();
         /// <summary>People banded (or already banded) by this request.</summary>
         public int BandedCount { get; set; }
+        /// <summary>Per person: banded, or why not.</summary>
+        public List<BulkRedeemBandResult> BandResults { get; set; } = new();
     }
 }

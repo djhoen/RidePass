@@ -272,7 +272,7 @@ namespace Services.Repositories
                     COALESCE(
                         (SELECT b.code FROM rider_day_band_admission a
                            JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                          WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId
+                          WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId AND a.unlinked_at IS NULL
                           ORDER BY b.business_date DESC LIMIT 1),
                         (SELECT w.code FROM event_wristband w
                           WHERE w.ticket_id = t.id AND w.tenant_id = @tenantId LIMIT 1)) AS WristbandCode
@@ -313,7 +313,7 @@ namespace Services.Repositories
                     COALESCE(
                         (SELECT b.code FROM rider_day_band_admission a
                            JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                          WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId LIMIT 1),
+                          WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId AND a.unlinked_at IS NULL LIMIT 1),
                         (SELECT w.code FROM event_wristband w
                           WHERE w.season_pass_reservation_id = spr.id AND w.tenant_id = @tenantId LIMIT 1)) AS WristbandCode
                 FROM season_pass_reservation spr
@@ -375,7 +375,7 @@ namespace Services.Repositories
                        COALESCE(
                            (SELECT b.code FROM rider_day_band_admission a
                               JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                             WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId
+                             WHERE a.event_ticket_purchase_id = t.id AND a.tenant_id = @tenantId AND a.unlinked_at IS NULL
                              ORDER BY b.business_date DESC LIMIT 1),
                            wb.code) AS WristbandCode,
                        (t.waiver_signature_id IS NOT NULL OR t.waiver_signed_at IS NOT NULL
@@ -431,7 +431,7 @@ namespace Services.Repositories
                        COALESCE(
                            (SELECT b.code FROM rider_day_band_admission a
                               JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                             WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId LIMIT 1),
+                             WHERE a.season_pass_reservation_id = spr.id AND a.tenant_id = @tenantId AND a.unlinked_at IS NULL LIMIT 1),
                            (SELECT w.code FROM event_wristband w
                              WHERE w.season_pass_reservation_id = spr.id AND w.tenant_id = @tenantId LIMIT 1)),
                        false,

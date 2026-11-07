@@ -8,6 +8,9 @@ namespace webapi.Helpers
     /// </summary>
     public sealed record RiderDayBandCheckIn(RiderDayBand? Worn, bool Required)
     {
+        /// <summary>Who it is about (for a per-person message).</summary>
+        public string? Name { get; init; }
+
         public const string RequiredCode = "band_required";
         public const string RequiredMessage =
             "A wristband is required to check in. Scan the band with the admission (Admit and band on the gate screen).";

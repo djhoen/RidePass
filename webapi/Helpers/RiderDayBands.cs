@@ -94,6 +94,8 @@ namespace webapi.Helpers
         Task<DateOnly> TicketDate(EventTicketPurchase ticket);
         /// <summary>The rider's active band on that date, if any.</summary>
         Task<RiderDayBand?> BandFor(RiderDayBandSubject subject, DateOnly date);
+        /// <summary>The bands these riders wear on that date (same rule as BandFor), in one read.</summary>
+        Task<Dictionary<(string, string), RiderDayBand>> BandsFor(IEnumerable<RiderPhotoKey> keys, DateOnly date);
         Task<RiderPhotoKey> RiderForPass(SeasonPassPurchase pass);
         /// <summary>The pass holder's active band today, if any.</summary>
         Task<RiderDayBand?> TodayForPass(SeasonPassPurchase pass);
@@ -109,7 +111,8 @@ namespace webapi.Helpers
         /// in a band dialog; a different band on a rider whose band covers it is a replacement "corrected at the gate".
         /// </summary>
         Task<RiderDayBandResult> Check(RiderDayBandSubject subject, string? code, string? replaceReason, DateOnly date,
-            WaiverGateDecision? decided = null, Guid? correctingReservation = null, Guid? correctingTicket = null);
+            WaiverGateDecision? decided = null, Guid? correctingReservation = null, Guid? correctingTicket = null,
+            RiderDayBandTickets? read = null);
         /// <summary>Writes what a passed check decided and ties the admissions to the band (a pass admission, and /
         /// or a rider's tickets). No checks of its own; a race lost since the check comes back as an error.</summary>
         Task<RiderDayBandResult> Write(RiderDayBandResult check, RiderDayBandSubject subject, Guid? reservationId,
@@ -137,6 +140,15 @@ namespace webapi.Helpers
         Task<RiderDayBandCheckIn> ForCheckIn(SeasonPassPurchase? pass, RiderDayBandResult? scanned = null);
         /// <summary>After the check-in: the band the rider already wears covers this admission too.</summary>
         Task CompleteCheckIn(RiderDayBandCheckIn checkIn, Guid reservationId, Guid? staffUserId);
+        /// <summary>
+        /// The day band at a ticket check-in, for every path that admits a ticket (scan, order redeem, Event Riders,
+        /// offline sync): the band the rider wears on the ticket's business date, and the "required at check-in"
+        /// refusal, which applies to rider tickets only (<paramref name="decision"/>: the gate decision already made).
+        /// </summary>
+        Task<RiderDayBandCheckIn> ForTicketCheckIn(EventTicketPurchase ticket, WaiverGateDecision? decision, DateOnly? date = null);
+        /// <summary>The same for many tickets admitted on one date (an order): their riders and the bands they wear,
+        /// read once, and each ticket's check-in rule. A null decision: never refused (offline sync).</summary>
+        Task<RiderDayBandTickets> ForTickets(IReadOnlyList<(EventTicketPurchase Ticket, WaiverGateDecision? Decision)> tickets, DateOnly date);
         Task CompleteTicketCheckIn(RiderDayBandCheckIn checkIn, Guid ticketId, Guid? staffUserId);
 
         // ── Reads and unlinks ──
@@ -216,19 +228,45 @@ namespace webapi.Helpers
             return RiderDayBandRules.TicketDate(Local(ev.StartsAt), Local(ev.EndsAt), today);
         }
 
-        public Task<RiderDayBand?> BandFor(RiderDayBandSubject subject, DateOnly date) =>
-            _bands.GetActiveForRider(TenantId, date, subject.Rider.OwnerKey, subject.Rider.RiderKey);
+        // ── One rule for the band's date (review of item 10) ──
+        // A band is issued for the business date of the admission it goes on (a pass: today; a ticket: its event's
+        // day). The gate opens the evening before an event, so a band issued tonight for tomorrow is on a wrist
+        // tonight too. Hence, on any gate day T:
+        //   * the band a rider wears is their band for T, else their band for T + 1 (tonight's band): they never
+        //     get a second band tonight, and tonight's admissions are tied to the band on their wrist;
+        //   * a scan resolves to the band for T, else for T + 1;
+        //   * a code is taken for date D by another rider's band within a day of D (their wrists overlap), while
+        //     the same rider may keep their own code from one day to the next.
+        private static bool SameRider(RiderDayBand b, RiderPhotoKey k) => b.OwnerKey == k.OwnerKey && b.RiderKey == k.RiderKey;
 
-        public async Task<RiderDayBand?> TodayForPass(SeasonPassPurchase pass)
+        private IReadOnlyCollection<DateOnly> WearDates(DateOnly date) =>
+            date == Today() ? new[] { date, date.AddDays(1) } : new[] { date };
+
+        public Task<RiderDayBand?> BandFor(RiderDayBandSubject subject, DateOnly date) => CurrentFor(subject.Rider, date);
+
+        private async Task<RiderDayBand?> CurrentFor(RiderPhotoKey key, DateOnly date) =>
+            (await BandsFor(new[] { key }, date)).GetValueOrDefault((key.OwnerKey, key.RiderKey));
+
+        public async Task<Dictionary<(string, string), RiderDayBand>> BandsFor(IEnumerable<RiderPhotoKey> keys, DateOnly date)
         {
-            var key = await RiderForPass(pass);
-            return await _bands.GetActiveForRider(TenantId, Today(), key.OwnerKey, key.RiderKey);
+            var riders = keys.Select(k => (k.OwnerKey, k.RiderKey)).Distinct().ToList();
+            var bands = await _bands.ListActiveForRiders(TenantId, WearDates(date), riders);
+            // The band for the date itself first, else tonight's (tomorrow's) band.
+            return bands
+                .OrderBy(b => b.BusinessDate == date ? 0 : 1)
+                .GroupBy(b => (b.OwnerKey, b.RiderKey))
+                .ToDictionary(g => g.Key, g => g.First());
         }
+
+        public async Task<RiderDayBand?> TodayForPass(SeasonPassPurchase pass) => await CurrentFor(await RiderForPass(pass), Today());
 
         public async Task<BandCodeUse?> CodeInUse(string code, DateOnly date)
         {
             if (RiderDayBandRules.CleanCode(code) is not { } c) return null;
-            if (await _bands.GetActiveByCode(TenantId, date, c) is { } day) return new BandCodeUse(day, null);
+            // The band for that date, else one issued for the next day (worn since the evening before).
+            var near = await _bands.ListActiveByCodeNear(TenantId, date, c);
+            if ((near.FirstOrDefault(b => b.BusinessDate == date) ?? near.FirstOrDefault(b => b.BusinessDate == date.AddDays(1))) is { } day)
+                return new BandCodeUse(day, null);
             return await _legacy.ResolveCodeOn(TenantId, c, date, Timezone) is { } hit ? new BandCodeUse(null, hit) : null;
         }
 
@@ -241,7 +279,8 @@ namespace webapi.Helpers
         // ── Checks, then writes ──
 
         public async Task<RiderDayBandResult> Check(RiderDayBandSubject subject, string? code, string? replaceReason, DateOnly date,
-            WaiverGateDecision? decided = null, Guid? correctingReservation = null, Guid? correctingTicket = null)
+            WaiverGateDecision? decided = null, Guid? correctingReservation = null, Guid? correctingTicket = null,
+            RiderDayBandTickets? read = null)
         {
             if (!_tenantContext.Tenant.WristbandsEnabled)
                 return RiderDayBandResult.Fail("Wristbands aren't turned on for this track (Settings → Features).");
@@ -259,8 +298,11 @@ namespace webapi.Helpers
                     + "Check their photo ID on the scan screen first, then band them.");
 
             var rider = subject.Rider;
-            var current = await BandFor(subject, date);
-            var use = await CodeInUse(clean, date);
+            var current = read is not null && read.Date == date ? read.WornBy(subject) : await BandFor(subject, date);
+            // Another rider wearing this code within a day of the date (wrists overlap), and older bands.
+            var other = (await _bands.ListActiveByCodeNear(TenantId, date, clean)).FirstOrDefault(b => !SameRider(b, rider));
+            var use = other is not null ? new BandCodeUse(other, null)
+                : await _legacy.ResolveCodeOn(TenantId, clean, date, Timezone) is { } hit ? new BandCodeUse(null, hit) : null;
             var reason = replaceReason?.Trim();
             var action = RiderDayBandRules.Decide(current, use?.DayBand, clean, reason is not null);
             // Fixing the band on an admission (the band dialog): the band it carries is replaced, audited.
@@ -294,10 +336,19 @@ namespace webapi.Helpers
             };
         }
 
+        // A band written for an admission replaces any older (event_wristband) band on it: that code stops resolving.
         private async Task LinkAll(Guid bandId, Guid? reservationId, IReadOnlyCollection<Guid>? ticketIds, Guid? staffUserId)
         {
-            if (reservationId is Guid r) await _bands.LinkAdmission(TenantId, bandId, r, null, staffUserId);
-            foreach (var t in ticketIds ?? Array.Empty<Guid>()) await _bands.LinkAdmission(TenantId, bandId, null, t, staffUserId);
+            if (reservationId is Guid r)
+            {
+                await _bands.LinkAdmission(TenantId, bandId, r, null, staffUserId);
+                await _legacy.UnlinkReservation(r, TenantId);
+            }
+            foreach (var t in ticketIds ?? Array.Empty<Guid>())
+            {
+                await _bands.LinkAdmission(TenantId, bandId, null, t, staffUserId);
+                await _legacy.UnlinkTicket(t, TenantId);
+            }
         }
 
         public async Task<RiderDayBandResult> Write(RiderDayBandResult check, RiderDayBandSubject subject, Guid? reservationId,
@@ -340,7 +391,7 @@ namespace webapi.Helpers
             var issued = await _bands.Issue(band, reservationId, first is Guid f && f != Guid.Empty ? f : null);
             if (issued is null)
                 return RiderDayBandResult.Fail($"Band {band.Code} was just put on someone else, or {band.RiderName} was just banded. Scan again.");
-            await LinkAll(issued.Id, null, ticketIds, staffUserId);
+            await LinkAll(issued.Id, reservationId, ticketIds, staffUserId);
             await _audit.Log("wristband.issued", $"Band {band.Code} on {band.RiderName} for {band.BusinessDate:yyyy-MM-dd}",
                 targetKind: "rider_day_band", targetId: issued.Id, tenantId: TenantId,
                 metadata: new { code = band.Code, admission = meta });
@@ -391,6 +442,31 @@ namespace webapi.Helpers
 
         public Task CompleteTicketCheckIn(RiderDayBandCheckIn checkIn, Guid ticketId, Guid? staffUserId) =>
             checkIn.Worn is { } worn ? _bands.LinkAdmission(TenantId, worn.Id, null, ticketId, staffUserId) : Task.CompletedTask;
+
+        public async Task<RiderDayBandCheckIn> ForTicketCheckIn(EventTicketPurchase ticket, WaiverGateDecision? decision, DateOnly? date = null) =>
+            (await ForTickets(new[] { (ticket, decision) }, date ?? await TicketDate(ticket))).CheckIns[ticket.Id];
+
+        public async Task<RiderDayBandTickets> ForTickets(
+            IReadOnlyList<(EventTicketPurchase Ticket, WaiverGateDecision? Decision)> tickets, DateOnly date)
+        {
+            if (!_tenantContext.Tenant.WristbandsEnabled)
+            {
+                var off = new RiderDayBandTickets { Date = date };
+                foreach (var (t, _) in tickets) off.CheckIns[t.Id] = new RiderDayBandCheckIn(null, false);
+                return off;
+            }
+            var subjects = new List<(EventTicketPurchase Ticket, WaiverGateDecision? Decision, RiderDayBandSubject Subject)>();
+            foreach (var (t, d) in tickets) subjects.Add((t, d, await ForTicket(t)));
+            var ctx = new RiderDayBandTickets { Date = date, Worn = await BandsFor(subjects.Select(s => s.Subject.Rider), date) };
+            foreach (var (t, d, subject) in subjects)
+            {
+                ctx.Subjects[t.Id] = subject;
+                var band = ctx.WornBy(subject);
+                // Riders wear bands; a spectator's ticket is never refused for want of one.
+                ctx.CheckIns[t.Id] = new RiderDayBandCheckIn(band, RequiredAtCheckin && band is null && d is { RiderAudience: true }) { Name = subject.Name };
+            }
+            return ctx;
+        }
 
         // ── Reads and unlinks ──
 

@@ -1226,11 +1226,8 @@ namespace webapi.Controllers
                                 return webapi.Helpers.GateBlockResult.Result(waiverDecision, "ticket", t.RedemptionToken, t.Id);
                             // The day band (Script0313), the same rule as every check-in path: a band the rider
                             // wears today covers this admission; a required band must already be worn.
-                            if (_tenantContext.Tenant.WristbandsEnabled)
-                            {
-                                ticketBand = await _dayBands.ForCheckIn(await _dayBands.ForTicket(t), await _dayBands.TicketDate(t));
-                                if (ticketBand.Required && waiverDecision.RiderAudience) return ticketBand.Refusal!;
-                            }
+                            ticketBand = await _dayBands.ForTicketCheckIn(t, waiverDecision);
+                            if (ticketBand.Refusal is { } needTicketBand) return needTicketBand;
                         }
                         // Only a 'paid' ticket may be checked in. TryMarkRedeemed enforces that in SQL,
                         // so a refunded/cancelled ticket can't be flipped to redeemed (which UndoRedeemed

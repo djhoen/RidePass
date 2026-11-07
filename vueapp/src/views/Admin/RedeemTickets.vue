@@ -2069,12 +2069,14 @@ async function redeemSelected() {
         // "Admit and band": one band per person, for the tickets of theirs being redeemed (Script0313).
         const bands = (order.value.waivers ?? [])
             .filter(a => !a.bandCode && personBands.value[a.attendeeKey]?.trim())
-            .map(a => ({ purchaseIds: a.purchaseIds, code: personBands.value[a.attendeeKey].trim() }))
+            .map(a => ({ attendeeKey: a.attendeeKey, purchaseIds: a.purchaseIds, code: personBands.value[a.attendeeKey].trim() }))
         const r = await service.redeemBulk({ orderToken: orderToken.value, items, idVerified: idVerified.value, bands })
         const data = (r.data as any).data
         const n = data.redeemedCount ?? 0
         const errs: string[] = data.errors ?? []
-        if (data.bandedCount) personBands.value = {}
+        // Clear the codes that went on; a person whose band didn't go on keeps theirs to fix and retry.
+        for (const b of (data.bandResults ?? []) as { attendeeKey: string | null; banded: boolean }[])
+            if (b.banded && b.attendeeKey) delete personBands.value[b.attendeeKey]
         if (errs.length && n > 0) flash(`Redeemed ${n}; ${errs.length} skipped: ${errs.join(' ')}`, 'warning')
         else if (errs.length) flash(errs.join(' '), 'error')
         else flash(`Redeemed ${n}.`, 'success')

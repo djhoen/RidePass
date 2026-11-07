@@ -27,21 +27,19 @@ namespace webapi.Controllers
     {
         private readonly IWristbandRepository _wristbands;
         private readonly IEventTicketPurchaseRepository _tickets;
-        private readonly IEventTicketTierRepository _tiers;
         private readonly ISeasonPassRepository _passes;
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly IRiderDayBands _dayBands;
         private readonly ITenantContext _tenantContext;
 
         public WristbandController(IWristbandRepository wristbands, IEventTicketPurchaseRepository tickets,
-            IEventTicketTierRepository tiers, ISeasonPassRepository passes,
+            ISeasonPassRepository passes,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             IRiderDayBands dayBands,
             ITenantContext tenantContext)
         {
             _wristbands = wristbands;
             _tickets = tickets;
-            _tiers = tiers;
             _passes = passes;
             _waiverGate = waiverGate;
             _dayBands = dayBands;
@@ -181,7 +179,7 @@ namespace webapi.Controllers
                     day.Code,
                     RedemptionToken = token,
                     // What the token opens: "pass" (the pass card) or "order" (focus FocusTicketId's rider).
-                    Opens = ticket is not null && focusTicketId is not null ? "order" : "pass",
+                    Opens = ticket is not null ? "order" : "pass",
                     FocusTicketId = focusTicketId,
                     EventTitle = latest?.EventTitle ?? "Day pass",
                     TierName = (string?)null,

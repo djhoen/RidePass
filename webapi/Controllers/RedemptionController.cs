@@ -78,6 +78,7 @@ namespace webapi.Controllers
         [HttpPost("Redeem/{token:guid}")]
         public async Task<IActionResult> Redeem(Guid token)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var preview = await LookupAsync(token);
             if (preview is null)
             {
@@ -115,11 +116,8 @@ namespace webapi.Controllers
                     return GateBlockResult.Result(waiverDecision, "ticket", ticketRow.RedemptionToken, ticketRow.Id);
                 // The day band (Script0313): the band the rider wears today covers this admission; a track that
                 // requires a band at check-in refuses a rider without one (scan them in from the order screen).
-                if (_tenantContext.Tenant.WristbandsEnabled)
-                {
-                    bandRule = await _dayBands.ForCheckIn(await _dayBands.ForTicket(ticketRow), await _dayBands.TicketDate(ticketRow));
-                    if (bandRule.Required && waiverDecision.RiderAudience) return bandRule.Refusal!;
-                }
+                bandRule = await _dayBands.ForTicketCheckIn(ticketRow, waiverDecision);
+                if (bandRule.Refusal is { } needBand) return needBand;
             }
 
             var staffId = TryGetStaffUserId();
@@ -363,7 +361,7 @@ namespace webapi.Controllers
         private async Task LinkWornBand(Services.Repositories.Data.PaymentData.EventTicketPurchase? ticket, DateOnly? day, Guid staffId)
         {
             if (ticket is null || !_tenantContext.Tenant.WristbandsEnabled) return;
-            var rule = await _dayBands.ForCheckIn(await _dayBands.ForTicket(ticket), day ?? await _dayBands.TicketDate(ticket));
+            var rule = await _dayBands.ForTicketCheckIn(ticket, null, day);
             await _dayBands.CompleteTicketCheckIn(rule, ticket.Id, staffId);
         }
 
@@ -556,18 +554,26 @@ namespace webapi.Controllers
                 resp.Waivers = await BuildWaiverPanel(tenantId, anchor.EventId.Value, anchor, decisionById);
                 // Each person's band for the day (Script0313): worn already (a pass, another ticket), or the band
                 // field the people panel shows them ("Admit and band").
+                // One event, so one business date (read once), and every person's band in one read.
                 if (_tenantContext.Tenant.WristbandsEnabled)
+                {
+                    var people = new List<(webapi.Controllers.API.Data.Redemption.OrderWaiverAttendee Person, Services.Repositories.Data.PaymentData.EventTicketPurchase Ticket)>();
                     foreach (var w in resp.Waivers)
                         if ((w.PhotoPurchaseId ?? w.PurchaseIds.FirstOrDefault()) is Guid bandTicketId && bandTicketId != Guid.Empty
                             && await _tickets.GetById(bandTicketId, tenantId) is { } bandTicket)
-                        {
-                            var subject = await _dayBands.ForTicket(bandTicket);
-                            if (await _dayBands.BandFor(subject, await _dayBands.TicketDate(bandTicket)) is { } worn)
+                            people.Add((w, bandTicket));
+                    if (people.Count > 0)
+                    {
+                        var read = await _dayBands.ForTickets(people.Select(p => (p.Ticket, (Services.Waivers.WaiverGateDecision?)null)).ToList(),
+                            await _dayBands.TicketDate(people[0].Ticket));
+                        foreach (var (w, t) in people)
+                            if (read.WornBy(read.Subjects[t.Id]) is { } worn)
                             {
                                 w.BandCode = worn.Code;
                                 w.BandIssuedAtLocal = _dayBands.IssuedTime(worn);
                             }
-                        }
+                    }
+                }
                 resp.WaiverRequiredCount = resp.Waivers.Count(w => w.WaiverRequired);
                 resp.WaiverSignedCount = resp.Waivers.Count(w => w.WaiverRequired && w.WaiverSigned);
                 resp.WaiverMissingCount = resp.Waivers.Count(w => w.WaiverRequired && !w.WaiverSigned);
@@ -607,6 +613,7 @@ namespace webapi.Controllers
         [HttpPost("Order/Redeem")]
         public async Task<IActionResult> RedeemBulk([FromBody] webapi.Controllers.API.Data.Redemption.BulkRedeemRequest req)
         {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var tenantId = _tenantContext.TenantId;
 
             // Photo-ID gate: when the tenant requires it, the gate worker must attest they
@@ -631,6 +638,8 @@ namespace webapi.Controllers
             // enforces this; the bulk path must too, or a crafted request could redeem out-of-window
             // tickets. Computed from the event-scoped ticket rows (all share one event window).
             var eventInWindow = true;
+            // The business date this order's riders are banded for (one event per order, read once).
+            DateOnly? orderBandDate = null;
             if (anchor.EventId.HasValue)
             {
                 var tz = ResolveTenantTimeZone();
@@ -643,6 +652,7 @@ namespace webapi.Controllers
                     var s = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(firstRow.EventStartsAt, DateTimeKind.Utc), tz).Date;
                     var e = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(firstRow.EventEndsAt, DateTimeKind.Utc), tz).Date;
                     eventInWindow = todayInTenant >= s && todayInTenant <= e;
+                    orderBandDate = RiderDayBandRules.TicketDate(DateOnly.FromDateTime(s), DateOnly.FromDateTime(e), DateOnly.FromDateTime(todayInTenant));
                 }
                 foreach (var x in await _extras.ListByEventForPurchaser(anchor.EventId.Value, tenantId, anchor.PurchaserUserId, anchor.PurchaserEmail))
                     allowedExtraIds.Add(x.Id);
@@ -706,52 +716,55 @@ namespace webapi.Controllers
                 }
             }
 
-            // Day bands (Script0313): one band per PERSON. "Admit and band" sends a band for a person's tickets;
-            // without one, a band the rider already wears today covers them, and a track that requires a band at
-            // check-in refuses a rider who has none. A person whose band can't go on is not admitted at all.
+            // Day bands (Script0313): one band per PERSON, a person being the people panel's attendee (its key and
+            // tickets), so a walk-up person whose tickets carry different rider keys is still one band: keyed to their
+            // first ticket's rider, tying all of their tickets. Every person's band is checked before any write; a
+            // person whose band can't go on is not admitted. Without a band: the band the rider already wears that
+            // day covers them, and a track that requires a band at check-in refuses a rider who has none. The
+            // order's riders and their worn bands are read once (one event, one business date).
+            var bandDate = orderBandDate ?? _dayBands.Today();
+            var read = await _dayBands.ForTickets(admissible.Select(a => (a.Ticket, (Services.Waivers.WaiverGateDecision?)a.Decision)).ToList(), bandDate);
             var refused = new HashSet<Guid>();
-            var bandPlans = new List<(RiderDayBandSubject Subject, RiderDayBandResult Check, List<Guid> TicketIds)>();
-            var codeOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // code -> rider key, this request
-            var bandedTickets = new HashSet<Guid>();
-            foreach (var band in req.Bands)
+            var bandPlans = new List<(webapi.Controllers.API.Data.Redemption.BulkRedeemBandResult Result, RiderDayBandSubject Subject,
+                RiderDayBandResult Check, List<Guid> TicketIds)>();
+            var codesInOrder = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var band in req.Bands.Where(b => !string.IsNullOrWhiteSpace(b.Code)))
             {
+                var code = band.Code.Trim();
+                var result = new webapi.Controllers.API.Data.Redemption.BulkRedeemBandResult { AttendeeKey = band.AttendeeKey, Code = code };
+                resp.BandResults.Add(result);
                 var mine = admissible.Where(a => band.PurchaseIds.Contains(a.Ticket.Id)).ToList();
-                if (mine.Count == 0 || string.IsNullOrWhiteSpace(band.Code)) continue;
-                var subjects = new List<RiderDayBandSubject>();
-                foreach (var (ticket, _) in mine) subjects.Add(await _dayBands.ForTicket(ticket));
-                var subject = subjects[0];
-                var riderKey = $"{subject.Rider.OwnerKey}|{subject.Rider.RiderKey}";
-                void Refuse(string why) { resp.Errors.Add(why); foreach (var (t, _) in mine) refused.Add(t.Id); }
-                if (subjects.Any(s => $"{s.Rider.OwnerKey}|{s.Rider.RiderKey}" != riderKey))
+                void Refuse(string why) { result.Error = why; resp.Errors.Add(why); foreach (var (t, _) in mine) refused.Add(t.Id); }
+                if (mine.Count == 0)
                 {
-                    Refuse($"Band {band.Code.Trim()}: one band is for one person; these tickets are for different riders.");
+                    // Nothing of theirs is being admitted now (already in, not selected, or blocked): the band is
+                    // left for the card's own Band action, and the typed code stays on screen.
+                    var who = band.PurchaseIds.FirstOrDefault(allowedTicketIds.Contains) is Guid anyId && anyId != Guid.Empty
+                        && await _tickets.GetById(anyId, tenantId) is { } anyTicket
+                        ? (await _dayBands.ForTicket(anyTicket)).Name : "this person";
+                    Refuse($"Nothing to admit for {who}, so the band wasn't put on. Use Band on the card.");
                     continue;
                 }
-                if (codeOwners.TryGetValue(band.Code.Trim(), out var owner) && owner != riderKey)
+                if (!codesInOrder.Add(code))
                 {
-                    Refuse($"Band {band.Code.Trim()} is already being put on someone else in this order. Each person needs their own band.");
+                    Refuse($"Band {code} is already being put on someone else in this order. Each person needs their own band.");
                     continue;
                 }
-                var check = await _dayBands.Check(subject, band.Code, null, await _dayBands.TicketDate(mine[0].Ticket), mine[0].Decision);
+                var subject = read.Subjects.TryGetValue(mine[0].Ticket.Id, out var known) ? known : await _dayBands.ForTicket(mine[0].Ticket);
+                var check = await _dayBands.Check(subject, code, null, bandDate, mine[0].Decision, read: read);
                 if (!check.Ok) { Refuse($"{subject.Name}: {check.Error}"); continue; }
-                codeOwners[band.Code.Trim()] = riderKey;
-                bandPlans.Add((subject, check, mine.Select(m => m.Ticket.Id).ToList()));
-                foreach (var (t, _) in mine) bandedTickets.Add(t.Id);
+                bandPlans.Add((result, subject, check, mine.Select(m => m.Ticket.Id).ToList()));
             }
-            // Everyone else being admitted: the band they wear today, and the "required at check-in" rule.
-            var checkIns = new Dictionary<Guid, RiderDayBandCheckIn>();
-            foreach (var (ticket, decision) in admissible)
+            var bandedTickets = bandPlans.SelectMany(p => p.TicketIds).ToHashSet();
+            // Everyone else being admitted: the band they wear today covers them, or "required at check-in" refuses.
+            foreach (var (ticket, _) in admissible)
             {
                 if (refused.Contains(ticket.Id) || bandedTickets.Contains(ticket.Id)) continue;
-                var rule = await _dayBands.ForCheckIn(await _dayBands.ForTicket(ticket), await _dayBands.TicketDate(ticket));
-                // Riders wear bands; a spectator's ticket is never refused for want of one.
-                if (rule.Required && decision.RiderAudience)
+                if (read.CheckIns[ticket.Id] is { Required: true } rule)
                 {
-                    resp.Errors.Add($"{RiderLabel(ticket)}: {RiderDayBandCheckIn.RequiredMessage}");
+                    resp.Errors.Add($"{rule.Name}: {RiderDayBandCheckIn.RequiredMessage}");
                     refused.Add(ticket.Id);
-                    continue;
                 }
-                checkIns[ticket.Id] = rule;
             }
 
             // ── 2. Writes ───────────────────────────────────────────────────────────────────────────
@@ -765,22 +778,22 @@ namespace webapi.Controllers
                     else                   await _tickets.UpdateStatus(t.Id, "redeemed");
                     redeemedIds.Add(t.Id);
                     resp.RedeemedCount++;
-                    if (checkIns.TryGetValue(t.Id, out var rule)) await _dayBands.CompleteTicketCheckIn(rule, t.Id, staffId);
+                    if (!bandedTickets.Contains(t.Id)) await _dayBands.CompleteTicketCheckIn(read.CheckIns[t.Id], t.Id, staffId);
                 }
                 catch (Exception ex)
                 {
                     resp.Errors.Add(ex.Message);
                 }
             }
-            foreach (var (subject, check, ticketIds) in bandPlans)
+            foreach (var (result, subject, check, ticketIds) in bandPlans)
             {
                 var admitted = ticketIds.Where(redeemedIds.Contains).ToList();
-                if (admitted.Count == 0) continue;
+                if (admitted.Count == 0) { result.Error = $"{subject.Name} wasn't admitted, so the band wasn't put on."; continue; }
                 // Write only: everything was checked above. A refusal now is a race lost since the check; the
                 // admissions stand.
                 var written = await _dayBands.Write(check, subject, null, admitted, staffId);
-                if (written.Ok) resp.BandedCount++;
-                else resp.Errors.Add($"{subject.Name} was admitted, but the band didn't go on: {written.Error}");
+                if (written.Ok) { result.Banded = true; resp.BandedCount++; }
+                else { result.Error = $"{subject.Name} was admitted, but the band didn't go on: {written.Error}"; resp.Errors.Add(result.Error); }
             }
             foreach (var x in extrasToRedeem)
             {
@@ -985,9 +998,6 @@ namespace webapi.Controllers
 
         private static string WaiverLabel(Services.Repositories.Data.PaymentData.TenantWaiver w) =>
             string.IsNullOrWhiteSpace(w.Name) ? w.Title : w.Name;
-
-        private static string RiderLabel(Services.Repositories.Data.PaymentData.EventTicketPurchase t) =>
-            $"{t.RiderFirstName} {t.RiderLastName}".Trim() is { Length: > 0 } n ? n : t.PurchaserName;
 
         private static DateTime? ToUtc(DateTime? value) =>
             value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : null;

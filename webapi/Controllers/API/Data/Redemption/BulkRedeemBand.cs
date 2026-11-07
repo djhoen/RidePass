@@ -6,6 +6,8 @@ namespace webapi.Controllers.API.Data.Redemption
     /// </summary>
     public class BulkRedeemBand
     {
+        /// <summary>The people panel's person (its attendee key), echoed in the per-person result.</summary>
+        public string? AttendeeKey { get; set; }
         /// <summary>The person's tickets on this order (the people panel's attendee).</summary>
         public List<Guid> PurchaseIds { get; set; } = new();
         /// <summary>The scanned QR payload or typed band number.</summary>

@@ -42,6 +42,7 @@ namespace webapi.Helpers
         private readonly IWaiverCheckInGate _gate;
         private readonly IWaiverRepository _waivers;
         private readonly IEventTicketPurchaseRepository _tickets;
+        private readonly IEventRepository _events;
         private readonly ISeasonPassRepository _passes;
         private readonly IKioskRepository _kiosks;
         private readonly IUserRepository _users;
@@ -49,13 +50,14 @@ namespace webapi.Helpers
         private readonly IRiderPhotos _photos;
         private readonly ITenantContext _tenantContext;
 
-        public KioskPushService(IWaiverCheckInGate gate, IWaiverRepository waivers, IEventTicketPurchaseRepository tickets,
+        public KioskPushService(IWaiverCheckInGate gate, IWaiverRepository waivers, IEventTicketPurchaseRepository tickets, IEventRepository events,
             ISeasonPassRepository passes, IKioskRepository kiosks, IUserRepository users, IRiderDependentRepository dependents,
             IRiderPhotos photos, ITenantContext tenantContext)
         {
             _gate = gate;
             _waivers = waivers;
             _tickets = tickets;
+            _events = events;
             _passes = passes;
             _kiosks = kiosks;
             _users = users;
@@ -119,6 +121,9 @@ namespace webapi.Helpers
                 var d = target.Decision;
                 push.EventTicketPurchaseId = target.TicketId;
                 push.SeasonPassPurchaseId = target.PassPurchaseId;
+                // A pass is judged for the event the request names: only ever one of this tenant's events.
+                if (!isTicket && req.EventId is Guid passEvent && await _events.GetById(passEvent, tenantId) is null)
+                    return (null, "Event not found.");
                 push.EventId = isTicket ? target.EventId : req.EventId;
                 var mode = SignRequestMode.ForTarget(target);
                 push.RiderFirstName = mode.RiderFirstName ?? FirstWord(target.DisplayName);

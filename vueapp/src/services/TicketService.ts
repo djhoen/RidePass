@@ -275,7 +275,7 @@ export class TicketService {
     // require-ID-at-check-in on).
     // bands: "Admit and band", one band per person for the tickets of theirs being admitted (Script0313).
     redeemBulk(req: { orderToken: string; items: { kind: string; purchaseId: string }[]; idVerified?: boolean;
-        bands?: { purchaseIds: string[]; code: string }[] }) {
+        bands?: { attendeeKey: string; purchaseIds: string[]; code: string }[] }) {
         return axios.post<{ data: BulkRedeemResponse }>(`${this.apiUrl}/Redemption/Order/Redeem`, req)
     }
 
@@ -478,4 +478,6 @@ export interface BulkRedeemResponse {
     errors: string[]
     /** People banded (or already banded) by the request. */
     bandedCount?: number
+    /** Per person: banded, or why not (the screen keeps that person's typed code). */
+    bandResults?: { attendeeKey: string | null; code: string; banded: boolean; error: string | null }[]
 }

@@ -11,6 +11,14 @@ namespace Services.Repositories.Interfaces
         /// <summary>The active band with that code on that business date, if any.</summary>
         Task<RiderDayBand?> GetActiveByCode(Guid tenantId, DateOnly date, string code);
 
+        /// <summary>Active bands with that code whose business date is within a day of <paramref name="date"/>
+        /// (a band issued the evening before its day is on a wrist both days), nearest first.</summary>
+        Task<List<RiderDayBand>> ListActiveByCodeNear(Guid tenantId, DateOnly date, string code);
+
+        /// <summary>The active bands of these riders (owner key + rider key) on these business dates, in one read.</summary>
+        Task<List<RiderDayBand>> ListActiveForRiders(Guid tenantId, IReadOnlyCollection<DateOnly> dates,
+            IReadOnlyCollection<(string OwnerKey, string RiderKey)> riders);
+
         /// <summary>Inserts a band and links the admission, in one transaction. Null when the rider or the
         /// code already has an active band that day (a race the caller's checks lost).</summary>
         Task<RiderDayBand?> Issue(RiderDayBand band, Guid? reservationId, Guid? ticketId);
@@ -23,13 +31,13 @@ namespace Services.Repositories.Interfaces
         /// <summary>Ties another admission to a band (idempotent).</summary>
         Task LinkAdmission(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId, Guid? staffUserId);
 
-        /// <summary>Takes one admission off whatever band covers it (the band stays worn). Returns rows removed.</summary>
+        /// <summary>Takes one admission off whatever band covers it (the band stays worn; the row is kept, unlinked, so a later band on it is a correction). Returns rows unlinked.</summary>
         Task<int> UnlinkReservation(Guid tenantId, Guid reservationId);
 
-        /// <summary>Takes one ticket off whatever bands cover it (the bands stay worn). Returns rows removed.</summary>
+        /// <summary>Takes one ticket off whatever bands cover it (kept, unlinked, as above). Returns rows unlinked.</summary>
         Task<int> UnlinkTicket(Guid tenantId, Guid ticketId);
 
-        /// <summary>The band covers that admission (a reservation or a ticket).</summary>
+        /// <summary>The band covers, or covered until it was unlinked, that admission (a reservation or a ticket).</summary>
         Task<bool> Covers(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId);
 
         /// <summary>The admissions a band covers.</summary>

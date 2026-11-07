@@ -35,11 +35,36 @@ namespace Services.Repositories
                   AND b.voided_at IS NULL",
                 new { tenantId, date, code })).FirstOrDefault();
 
+        public async Task<List<RiderDayBand>> ListActiveByCodeNear(Guid tenantId, DateOnly date, string code) =>
+            (await _db.Query<RiderDayBand>($@"SELECT {Columns} {From}
+                WHERE b.tenant_id = @tenantId AND lower(b.code) = lower(@code) AND b.voided_at IS NULL
+                  AND b.business_date BETWEEN @date - 1 AND @date + 1
+                ORDER BY abs(b.business_date - @date), b.business_date DESC",
+                new { tenantId, date, code })).ToList();
+
+        public async Task<List<RiderDayBand>> ListActiveForRiders(Guid tenantId, IReadOnlyCollection<DateOnly> dates,
+            IReadOnlyCollection<(string OwnerKey, string RiderKey)> riders)
+        {
+            if (dates.Count == 0 || riders.Count == 0) return new List<RiderDayBand>();
+            var owners = riders.Select(r => r.OwnerKey).ToArray();
+            var keys = riders.Select(r => r.RiderKey).ToArray();
+            var days = dates.Distinct().Select(d => d.ToDateTime(TimeOnly.MinValue)).ToArray();
+            return (await _db.Query<RiderDayBand>($@"SELECT {Columns} {From}
+                WHERE b.tenant_id = @tenantId AND b.voided_at IS NULL AND b.business_date = ANY(@days::date[])
+                  AND (b.owner_key, b.rider_key) IN (SELECT o, r FROM unnest(@owners::text[], @keys::text[]) AS x(o, r))",
+                new { tenantId, days, owners, keys })).ToList();
+        }
+
         private const string InsertBand = @"
             INSERT INTO rider_day_band (id, tenant_id, business_date, code, owner_key, rider_key, rider_user_id,
                                         rider_name, season_pass_purchase_id, event_ticket_purchase_id, issued_by_user_id)
             VALUES (@Id, @TenantId, @BusinessDate, @Code, @OwnerKey, @RiderKey, @RiderUserId,
                     @RiderName, @SeasonPassPurchaseId, @EventTicketPurchaseId, @IssuedByUserId)";
+
+        private const string ReviveLink = @"
+            UPDATE rider_day_band_admission SET unlinked_at = NULL
+             WHERE band_id = @bandId AND tenant_id = @tenantId AND unlinked_at IS NOT NULL
+               AND (season_pass_reservation_id = @reservationId OR event_ticket_purchase_id = @ticketId);";
 
         private const string InsertLink = @"
             INSERT INTO rider_day_band_admission (tenant_id, band_id, season_pass_reservation_id, event_ticket_purchase_id,
@@ -47,7 +72,14 @@ namespace Services.Repositories
             SELECT @tenantId, @bandId, @reservationId, @ticketId, @staffUserId
              WHERE NOT EXISTS (SELECT 1 FROM rider_day_band_admission
                                 WHERE band_id = @bandId AND tenant_id = @tenantId
-                                  AND (season_pass_reservation_id = @reservationId OR event_ticket_purchase_id = @ticketId))";
+                                  AND (season_pass_reservation_id = @reservationId OR event_ticket_purchase_id = @ticketId))
+               -- The admission itself must be this tenant's (never trust the caller's id alone).
+               AND (@reservationId::uuid IS NULL OR EXISTS (
+                        SELECT 1 FROM season_pass_reservation r
+                        JOIN season_pass_purchase p ON p.id = r.season_pass_purchase_id AND p.tenant_id = @tenantId
+                        WHERE r.id = @reservationId))
+               AND (@ticketId::uuid IS NULL OR EXISTS (
+                        SELECT 1 FROM event_ticket_purchase t WHERE t.id = @ticketId AND t.tenant_id = @tenantId))";
 
         private async Task<RiderDayBand?> Reload(Guid id, Guid tenantId) =>
             (await _db.Query<RiderDayBand>($"SELECT {Columns} {From} WHERE b.id = @id AND b.tenant_id = @tenantId",
@@ -106,16 +138,18 @@ namespace Services.Repositories
         }
 
         public Task LinkAdmission(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId, Guid? staffUserId) =>
-            _db.Execute(InsertLink + @"
+            _db.Execute(ReviveLink + Environment.NewLine + InsertLink + @"
                AND EXISTS (SELECT 1 FROM rider_day_band WHERE id = @bandId AND tenant_id = @tenantId AND voided_at IS NULL)",
                 new { tenantId, bandId, reservationId, ticketId, staffUserId });
 
         public Task<int> UnlinkReservation(Guid tenantId, Guid reservationId) => _db.Execute(@"
-            DELETE FROM rider_day_band_admission WHERE tenant_id = @tenantId AND season_pass_reservation_id = @reservationId",
+            UPDATE rider_day_band_admission SET unlinked_at = now()
+             WHERE tenant_id = @tenantId AND season_pass_reservation_id = @reservationId AND unlinked_at IS NULL",
             new { tenantId, reservationId });
 
         public Task<int> UnlinkTicket(Guid tenantId, Guid ticketId) => _db.Execute(@"
-            DELETE FROM rider_day_band_admission WHERE tenant_id = @tenantId AND event_ticket_purchase_id = @ticketId",
+            UPDATE rider_day_band_admission SET unlinked_at = now()
+             WHERE tenant_id = @tenantId AND event_ticket_purchase_id = @ticketId AND unlinked_at IS NULL",
             new { tenantId, ticketId });
 
         public async Task<bool> Covers(Guid tenantId, Guid bandId, Guid? reservationId, Guid? ticketId) =>
@@ -139,13 +173,15 @@ namespace Services.Repositories
                        sp.id AS SeasonPassPurchaseId
                 FROM rider_day_band_admission a
                 JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId
-                LEFT JOIN season_pass_reservation r ON r.id = a.season_pass_reservation_id
-                LEFT JOIN season_pass_purchase sp ON sp.id = r.season_pass_purchase_id AND sp.tenant_id = @tenantId
+                LEFT JOIN season_pass_purchase sp ON sp.tenant_id = @tenantId
+                      AND sp.id = (SELECT r0.season_pass_purchase_id FROM season_pass_reservation r0 WHERE r0.id = a.season_pass_reservation_id)
+                -- The reservation only through its tenant-scoped pass.
+                LEFT JOIN season_pass_reservation r ON r.id = a.season_pass_reservation_id AND r.season_pass_purchase_id = sp.id
                 LEFT JOIN event_ticket_purchase t ON t.id = a.event_ticket_purchase_id AND t.tenant_id = @tenantId
-                LEFT JOIN event_ticket_attendance att ON att.ticket_id = t.id AND att.on_date = b.business_date
-                LEFT JOIN event_ticket_tier tier ON tier.id = t.tier_id
+                LEFT JOIN event_ticket_attendance att ON att.ticket_id = t.id AND att.on_date = b.business_date AND att.tenant_id = @tenantId
+                LEFT JOIN event_ticket_tier tier ON tier.id = t.tier_id AND tier.tenant_id = @tenantId
                 LEFT JOIN event e ON e.id = COALESCE(r.event_id, tier.event_id) AND e.tenant_id = @tenantId
-                WHERE a.tenant_id = @tenantId AND a.band_id = @bandId
+                WHERE a.tenant_id = @tenantId AND a.band_id = @bandId AND a.unlinked_at IS NULL
                 ORDER BY a.linked_at",
                 new { tenantId, bandId })).ToList();
 
@@ -157,7 +193,7 @@ namespace Services.Repositories
                 SELECT a.season_pass_reservation_id AS ReservationId, b.code AS Code
                 FROM rider_day_band_admission a
                 JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                WHERE a.tenant_id = @tenantId AND a.season_pass_reservation_id = ANY(@ids)",
+                WHERE a.tenant_id = @tenantId AND a.season_pass_reservation_id = ANY(@ids) AND a.unlinked_at IS NULL",
                 new { ids, tenantId });
             return rows.GroupBy(r => r.ReservationId).ToDictionary(g => g.Key, g => g.First().Code);
         }
@@ -171,7 +207,7 @@ namespace Services.Repositories
                 SELECT DISTINCT ON (a.event_ticket_purchase_id) a.event_ticket_purchase_id AS TicketId, b.code AS Code
                 FROM rider_day_band_admission a
                 JOIN rider_day_band b ON b.id = a.band_id AND b.tenant_id = @tenantId AND b.voided_at IS NULL
-                WHERE a.tenant_id = @tenantId AND a.event_ticket_purchase_id = ANY(@ids)
+                WHERE a.tenant_id = @tenantId AND a.event_ticket_purchase_id = ANY(@ids) AND a.unlinked_at IS NULL
                 ORDER BY a.event_ticket_purchase_id, b.business_date DESC",
                 new { ids, tenantId });
             return rows.ToDictionary(r => r.TicketId, r => r.Code);
