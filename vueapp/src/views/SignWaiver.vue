@@ -33,14 +33,17 @@
                     <!-- A link for a specific rider: the server already knows who it is for and how it must be
                          signed, so the page says so up front and asks for no birthdate. -->
                     <v-alert v-if="info.signAs === 'guardian'" type="info" variant="tonal" density="compact" class="mb-4">
-                        You're signing for {{ info.riderName || 'this rider' }} as their parent or guardian.
+                        <template v-if="riderName">You're signing for {{ riderName }} as their parent or guardian.</template>
+                        <template v-else>You're signing for the rider as their parent or guardian. Enter the rider's name below.</template>
                     </v-alert>
                     <v-alert v-else-if="info.signAs === 'adult'" type="info" variant="tonal" density="compact" class="mb-4">
-                        Sign as yourself, {{ info.riderName || 'rider' }}.
+                        {{ riderName ? `Sign as yourself, ${riderName}.` : 'Sign as yourself.' }}
                     </v-alert>
-                    <div v-if="!info.signAs || !info.riderFirstName || !info.riderLastName" class="d-flex ga-2 flex-wrap">
-                        <v-text-field v-model="firstName" label="First name" density="compact" style="min-width: 180px" />
-                        <v-text-field v-model="lastName" label="Last name" density="compact" style="min-width: 180px" />
+                    <div v-if="showNameFields" class="d-flex ga-2 flex-wrap">
+                        <v-text-field v-model="firstName" :label="info.signAs === 'guardian' ? 'Rider\'s first name' : 'First name'"
+                            density="compact" style="min-width: 180px" />
+                        <v-text-field v-model="lastName" :label="info.signAs === 'guardian' ? 'Rider\'s last name' : 'Last name'"
+                            density="compact" style="min-width: 180px" />
                     </div>
                     <v-text-field v-if="!info.signAs" v-model="birthdate" label="Birthdate" type="date" density="compact" class="mt-4"
                         hint="Needed so we know whether a parent or guardian must sign" persistent-hint />
@@ -91,6 +94,12 @@ const signature = ref('')
 const saving = ref(false)
 const submitError = ref<string | null>(null)
 
+// The rider's names as the server holds them; blank counts as unknown (the server's test too).
+const riderFirst = computed(() => info.value?.riderFirstName?.trim() || null)
+const riderLast = computed(() => info.value?.riderLastName?.trim() || null)
+const riderName = computed(() => riderFirst.value && riderLast.value ? `${riderFirst.value} ${riderLast.value}` : null)
+// Name fields: always for an untargeted link; for a targeted one only when the server lacks the name.
+const showNameFields = computed(() => !info.value?.signAs || !riderFirst.value || !riderLast.value)
 // A targeted link: the server's mode. Otherwise from the birthdate typed in.
 const isMinor = computed(() => info.value?.signAs
     ? info.value.signAs === 'guardian'
@@ -110,9 +119,10 @@ async function load() {
         info.value = res.data.data
         // Prefill the name fields from the request when we have one.
         // The rider the link is for: the name the signature is recorded under (the server uses it anyway).
-        if (info.value.signAs && info.value.riderFirstName && info.value.riderLastName) {
-            firstName.value = info.value.riderFirstName
-            lastName.value = info.value.riderLastName
+        if (info.value.signAs) {
+            // Targeted: the rider's own name (never the recipient's: for a guardian link that's the parent).
+            firstName.value = info.value.riderFirstName?.trim() ?? ''
+            lastName.value = info.value.riderLastName?.trim() ?? ''
         } else if (info.value.recipientName && !firstName.value) {
             const parts = info.value.recipientName.trim().split(/\s+/)
             firstName.value = parts[0] ?? ''

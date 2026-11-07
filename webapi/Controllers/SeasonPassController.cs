@@ -1768,9 +1768,18 @@ namespace webapi.Controllers
             // Things change during a day (an ID check cleared, a signature replaced, a birthday), and
             // a card that hid a block the Admit button then enforced left staff with no way to act.
             // The gate decides (including the minor / guardian rule) exactly as admission will.
-            // Judged against the event staff picked (?eventId, when it is one of today's), else the
-            // single event running today, else none.
+            // Judged against the event staff picked (?eventId, when it is one of today's), else the event
+            // the holder was admitted to today (the latest checked_in reservation: a pass admitted via that
+            // event's own waiver reads as signed, as WristbandController.BandBlockReasonForPass accepts it),
+            // else the single event running today, else none. Returned as JudgedEventId so the gate
+            // screen knows which event this verdict belongs to.
+            var admittedEventId = reservations
+                .Where(r => r.Status == "checked_in" && r.EventId is Guid ae && todaysEvents.Any(e => e.Id == ae))
+                .OrderByDescending(r => r.CheckedInAt ?? DateTime.MinValue)
+                .Select(r => r.EventId)
+                .FirstOrDefault();
             var judgedEventId = eventId is Guid picked && todaysEvents.Any(e => e.Id == picked) ? picked
+                : admittedEventId is Guid admitted ? admitted
                 : todaysEvents.Count == 1 ? todaysEvents[0].Id : (Guid?)null;
             var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, judgedEventId);
             var birthdatePolicy = await _waiverGate.BirthdatePolicy(_tenantContext.TenantId);
@@ -1794,6 +1803,8 @@ namespace webapi.Controllers
                 pass.ValidToDate,
                 pass.CreditsRemaining,
                 pass.PhotoDataUrl,
+                // The event the card's verdict was judged against (see judgedEventId above).
+                JudgedEventId = judgedEventId,
                 WaiverSigned = waiverSigned,
                 WaiverBlockReason = waiverBlockReason,
                 // Who signed and how old the holder is today, so staff can see WHY a minor is

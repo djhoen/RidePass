@@ -252,6 +252,8 @@ export interface PassLookup {
     photoBlocked: boolean
     /** When the rider photo was taken: changes on every replace (the image's version). */
     photoTakenAtUtc: string | null
+    /** The event this card's verdict was judged against (picked, else admitted to today, else the only one). */
+    judgedEventId: string | null
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

@@ -728,37 +728,18 @@ namespace webapi.Controllers
             if (row.Status is "pending" or "sent")
                 await _signRequests.MarkOpened(row.Id, _tenantContext.TenantId);
 
-            // A link for a specific rider: the page shows the mode SignByToken will enforce, up front, and
-            // doesn't ask for a birthdate the server already knows (and would ignore).
-            string? signAs = null, riderFirst = null, riderLast = null, riderName = null;
-            if (row.EventTicketPurchaseId is not null || row.SeasonPassPurchaseId is not null)
-            {
-                var target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
-                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
-                if (target is not null)
-                {
-                    riderFirst = target.FirstName; riderLast = target.LastName; riderName = target.DisplayName;
-                    // Same rule as SignByToken: the gate's verdict for a rider, else the target's birthdate.
-                    bool? minor = target.Decision is { RiderAudience: true, IsMinor: bool m } ? m
-                        : target.Decision.Birthdate is { } tb ? WaiverPolicy.IsMinor(tb.ToDateTime(TimeOnly.MinValue)) : null;
-                    if (target.Decision.AdultWaiverNeeded) minor = false;
-                    signAs = minor is null ? null : minor.Value ? "guardian" : "adult";
-                }
-            }
-            else if (row.RiderUserId is not null && row.RiderBirthdate is { } rb
-                     && !string.IsNullOrWhiteSpace(row.RiderFirstName) && !string.IsNullOrWhiteSpace(row.RiderLastName))
-            {
-                riderFirst = row.RiderFirstName; riderLast = row.RiderLastName;
-                riderName = $"{row.RiderFirstName} {row.RiderLastName}";
-                signAs = WaiverPolicy.IsMinor(rb) ? "guardian" : "adult";
-            }
+            // A link for a specific rider: the page shows the mode SignByToken will enforce (the same
+            // ResolveSignMode), up front, and doesn't ask for a birthdate the server already knows. Not
+            // worked out for a link that is already signed (nothing left to sign).
+            var mode = row.Status is "pending" or "sent" or "opened"
+                ? await ResolveSignMode(row) : SignRequestMode.Untargeted;
 
             return new ApiResponses().OkResult(new PublicWaiverSignRequestResponse
             {
-                SignAs = signAs,
-                RiderName = riderName,
-                RiderFirstName = riderFirst,
-                RiderLastName = riderLast,
+                SignAs = mode.SignAs,
+                RiderName = mode.RiderName,
+                RiderFirstName = mode.RiderFirstName,
+                RiderLastName = mode.RiderLastName,
                 Status = row.Status == "signed" ? "signed" : "opened",
                 RecipientName = row.RecipientName,
                 RecipientEmail = row.RecipientEmail,
@@ -801,40 +782,23 @@ namespace webapi.Controllers
             // A link the gate sent FOR a specific ticket or pass (Script0304): the gate's own view of
             // that rider decides who the waiver is for, how old they are, and where it is linked.
             // The form cannot talk its way out of the guardian path.
-            Services.Waivers.WaiverSignTarget? target = null;
-            if (row.EventTicketPurchaseId is not null || row.SeasonPassPurchaseId is not null)
-            {
-                target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
-                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
-                if (target is null)
-                    return new ApiResponses().BadRequestResult(
-                        "The ticket or pass this link was sent for no longer exists. Ask the venue to send a new one.");
-            }
-
-            // An adult-waiver link sent ahead of time with no credential to target (Script0306) carries
-            // the rider it is for: the signature is made AS them, whatever the form says.
-            var riderIdentity = target is null && row.RiderUserId is Guid riderUserId
-                && !string.IsNullOrWhiteSpace(row.RiderFirstName) && !string.IsNullOrWhiteSpace(row.RiderLastName)
-                && row.RiderBirthdate is not null
-                ? new Services.Repositories.Data.WaiverData.SignRequestRider(riderUserId,
-                    row.RiderFirstName!.Trim(), row.RiderLastName!.Trim(), row.RiderBirthdate.Value)
-                : null;
+            // Who the link is for and how it must be signed: the same ResolveSignMode the page showed.
+            var mode = await ResolveSignMode(row);
+            if (mode.TargetMissing)
+                return new ApiResponses().BadRequestResult(
+                    "The ticket or pass this link was sent for no longer exists. Ask the venue to send a new one.");
+            var target = mode.Target;
+            var riderIdentity = mode.RiderIdentity;
 
             // The attendee is the target rider (their name and the birthdate the gate uses), not
             // whatever was typed; a differing typed name is kept only as an audit note.
-            var attendeeFirst = riderIdentity?.FirstName
-                ?? (string.IsNullOrWhiteSpace(target?.FirstName) ? first! : target!.FirstName!.Trim());
-            var attendeeLast = riderIdentity?.LastName
-                ?? (string.IsNullOrWhiteSpace(target?.LastName) ? last! : target!.LastName!.Trim());
+            var attendeeFirst = mode.RiderFirstName ?? first!;
+            var attendeeLast = mode.RiderLastName ?? last!;
             var nameMismatch = (target is not null || riderIdentity is not null)
                 && !(string.Equals(first, attendeeFirst, StringComparison.OrdinalIgnoreCase)
                      && string.Equals(last, attendeeLast, StringComparison.OrdinalIgnoreCase));
-            var targetDob = target?.Decision.Birthdate;
-            DateTime? birthdate = riderIdentity?.Birthdate
-                ?? (targetDob is { } d ? d.ToDateTime(TimeOnly.MinValue) : request.Birthdate);
-            var isMinor = target is { Decision: { RiderAudience: true, IsMinor: bool targetMinor } }
-                ? targetMinor
-                : WaiverPolicy.IsMinor(birthdate);
+            DateTime? birthdate = mode.RiderBirthdate ?? request.Birthdate;
+            var isMinor = mode.KnownMinor ?? WaiverPolicy.IsMinor(birthdate);
 
             // A link sent because the rider turned 18 since their waiver (from the gate, or ahead of
             // time from Signed Waivers): only THEIR adult signature fixes that, so the parent /
@@ -919,6 +883,34 @@ namespace webapi.Controllers
         // ── Signature-request helpers ───────────────────────────────────────────
 
         private static string NewToken() => WaiverSignRequestMail.NewToken();
+
+        /// <summary>
+        /// Who a signing link is for and how it must be signed, shared by the page (GET) and the signing
+        /// (POST): a gate link's target (the gate's own view of that rider: their name, the birthdate the
+        /// gate uses, and its minor verdict, else that birthdate), or an adult-waiver link's stored rider
+        /// (Script0306). Names are null when blank; KnownMinor null when the form's birthdate decides.
+        /// </summary>
+        private async Task<SignRequestMode> ResolveSignMode(Services.Repositories.Data.WaiverData.WaiverSignRequestRow row)
+        {
+            if (row.EventTicketPurchaseId is not null || row.SeasonPassPurchaseId is not null)
+            {
+                var target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
+                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
+                if (target is null) return new SignRequestMode(null, null, true, null, null, null, null);
+                var dob = target.Decision.Birthdate is { } tb ? tb.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
+                bool? minor = target.Decision is { RiderAudience: true, IsMinor: bool m } ? m
+                    : dob is { } b ? WaiverPolicy.IsMinor(b) : null;
+                return new SignRequestMode(target, null, false, SignRequestMode.Clean(target.FirstName),
+                    SignRequestMode.Clean(target.LastName), dob, minor);
+            }
+            if (row.RiderUserId is Guid riderUserId && row.RiderBirthdate is { } rb
+                && SignRequestMode.Clean(row.RiderFirstName) is { } rf && SignRequestMode.Clean(row.RiderLastName) is { } rl)
+            {
+                var rider = new Services.Repositories.Data.WaiverData.SignRequestRider(riderUserId, rf, rl, rb);
+                return new SignRequestMode(null, rider, false, rf, rl, rb, WaiverPolicy.IsMinor(rb));
+            }
+            return SignRequestMode.Untargeted;
+        }
 
         private string BuildSigningLink(string token) =>
             WaiverSignRequestMail.BuildSigningLink(_config, _tenantContext.Tenant, token);

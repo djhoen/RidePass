@@ -30,5 +30,7 @@ namespace Services.Repositories.Data.WaiverData
         public bool NeedsAdultWaiver { get; set; }
         /// <summary>An adult-waiver signing link is already open for this rider.</summary>
         public bool AdultLinkOpen { get; set; }
+        /// <summary>The whole filtered count (COUNT(*) OVER ()), repeated on every row of the page.</summary>
+        public int TotalRows { get; set; }
     }
 }

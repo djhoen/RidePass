@@ -250,6 +250,7 @@ import { TicketService, type GateWaiverSignRequestResult } from '@/services/Tick
 import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 import PhotoCapture from '@/components/PhotoCapture.vue'
+import { useCopyFeedback } from '@/composables/useCopyFeedback'
 
 const props = defineProps<{ initialEventId?: string | null }>()
 
@@ -417,6 +418,7 @@ async function toggleCheckIn(row: EventRiderRow) {
             adultEmail.value = data.riderEmail ?? ''
             adultError.value = ''
             adultResult.value = null
+            resetLinkCopied()
             adultOpen.value = true
             return
         }
@@ -450,16 +452,7 @@ const adultEmail = ref('')
 const adultError = ref('')
 const adultResult = ref<GateWaiverSignRequestResult | null>(null)
 // Copy a signing link (shown when email isn't available) so staff can paste it into a text message.
-const linkCopied = ref(false)
-async function copyLink(link: string) {
-    try {
-        await navigator.clipboard.writeText(link)
-        linkCopied.value = true
-        setTimeout(() => { linkCopied.value = false }, 2000)
-    } catch {
-        linkCopied.value = false
-    }
-}
+const { copied: linkCopied, copy: copyLink, reset: resetLinkCopied } = useCopyFeedback()
 const adultBlock = ref<{ message: string; riderEmail: string | null; kind: 'ticket' | 'season_pass';
     purchaseId: string; eventId: string | null } | null>(null)
 
@@ -471,6 +464,7 @@ async function sendAdultLink() {
     try {
         const r = await ticketService.gateWaiverSignRequest({ kind: b.kind, purchaseId: b.purchaseId,
             email: adultEmail.value.trim(), eventId: b.eventId })
+        resetLinkCopied()
         adultResult.value = r.data.data
     } catch (err: any) {
         adultError.value = err.response?.data?.error || 'Couldn\'t send the link.'

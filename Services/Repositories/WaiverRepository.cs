@@ -421,6 +421,7 @@ namespace Services.Repositories
                                                AND to_char((Birthdate + INTERVAL '18 years')::date, 'MM-DD') = '02-28'
                                               THEN (Birthdate + INTERVAL '18 years')::date + 1
                                               ELSE (Birthdate + INTERVAL '18 years')::date END)";
+            var needsAdultFilter = status == "needs_adult";
             // Person identity: rider account id when the signature has one, else
             // lower(name)|birthdate so a walk-up's repeat visits collapse to one row.
             var baseCte = $@"
@@ -485,36 +486,40 @@ namespace Services.Repositories
                     FROM sigs
                     GROUP BY person_key
                 ),
-                -- The gate's fallback (FindAdultSelfSignature), computed ONCE as a set instead of a
-                -- correlated scan per person: per attendee name + birthdate, the latest tenant-local day an
-                -- adult (not guardian) signature on the current waiver was made. Hash-joined below.
+                {(needsAdultFilter ? $@"
+                -- Filtering BY ""needs adult waiver"": the gate's fallback (FindAdultSelfSignature) is needed for
+                -- every person, so it is computed ONCE as a set (per attendee name + birthdate, the latest
+                -- tenant-local day an adult, not guardian, signature on the current waiver was made) and
+                -- hash-joined, never a correlated scan per person.
                 adult_self AS (
                     SELECT lower(trim(COALESCE(a.spectator_first_name, '') || ' ' || COALESCE(a.spectator_last_name, ''))) AS nm,
                            a.spectator_birthdate AS bd,
                            MAX((a.signed_at AT TIME ZONE @timezone)::date) AS last_local
                     FROM rider_waiver_signature a
                     JOIN tenant_waiver aw ON aw.id = a.waiver_id AND aw.tenant_id = a.tenant_id
-                    WHERE a.tenant_id = @tenantId AND aw.is_active AND (aw.expires_at IS NULL OR aw.expires_at > now())
+                    WHERE a.tenant_id = @tenantId AND {CurrentDocSql("aw")}
                       AND a.signed_by_parent = false
                       AND a.spectator_birthdate IS NOT NULL
                     GROUP BY 1, 2
-                ),
+                )," : "")}
                 ppl AS (
                     SELECT people.*,
+                           -- Needs an adult waiver BEFORE the gate's adult-signature fallback is applied.
                            (Birthdate IS NOT NULL
                             AND {eighteenth} <= @todayLocal::date
                             AND LastCurrentSignedAt IS NOT NULL
+                            AND (LatestByGuardian OR (LastCurrentSignedAt AT TIME ZONE @timezone)::date < {eighteenth})) AS NeedsAdultBase,
+                           {(needsAdultFilter ? $@"(Birthdate IS NOT NULL
+                            AND {eighteenth} <= @todayLocal::date
+                            AND LastCurrentSignedAt IS NOT NULL
                             AND (LatestByGuardian OR (LastCurrentSignedAt AT TIME ZONE @timezone)::date < {eighteenth})
-                            -- The gate's fallback (FindAdultSelfSignature): an adult signature on the current waiver
-                            -- naming them (name + birthdate), made on or after their 18th birthday, counts, even
-                            -- when it is filed under another person row (e.g. a link signed into their account).
-                            AND NOT COALESCE(adult_self.last_local >= {eighteenth}, false)) AS NeedsAdultWaiver,
+                            AND NOT COALESCE(adult_self.last_local >= {eighteenth}, false)) AS NeedsAdultWaiver," : "")}
                            -- An adult-waiver link already out for this rider (Script0306), so a bulk send skips them.
                            EXISTS (SELECT 1 FROM waiver_sign_request q
                                    WHERE q.tenant_id = @tenantId AND q.rider_user_id = people.RiderAccountId
                                      AND q.status IN ('pending', 'sent', 'opened')) AS AdultLinkOpen
                     FROM people
-                    LEFT JOIN adult_self ON adult_self.nm = lower(people.PersonName) AND adult_self.bd = people.Birthdate
+                    {(needsAdultFilter ? "LEFT JOIN adult_self ON adult_self.nm = lower(people.PersonName) AND adult_self.bd = people.Birthdate" : "")}
                 )";
 
             var where = new List<string>();
@@ -548,15 +553,46 @@ namespace Services.Repositories
                 personKeys = personKeys?.ToArray() ?? Array.Empty<string>(),
             };
 
-            var total = (await _db.Query<int>(
-                $"{baseCte} SELECT COUNT(*) FROM ppl {whereSql}", args)).First();
-            var rows = await _db.Query<WaiverPersonRow>($@"{baseCte}
-                SELECT * FROM ppl
-                {whereSql}
-                ORDER BY LastSignedAt DESC
-                LIMIT @pageSize OFFSET @offset", args);
-            return (rows.ToList(), total);
+            // One statement: the page and the total (COUNT(*) OVER () before LIMIT). Not filtering by
+            // "needs adult waiver", the gate's adult-signature fallback is only worked out for the page's
+            // rows that need one before it (a LATERAL lookup per such row), for the status chip.
+            var sql = needsAdultFilter
+                ? $@"{baseCte}
+                    SELECT ppl.*, COUNT(*) OVER () AS TotalRows FROM ppl
+                    {whereSql}
+                    ORDER BY LastSignedAt DESC
+                    LIMIT @pageSize OFFSET @offset"
+                : $@"{baseCte},
+                    pg AS (
+                        SELECT ppl.*, COUNT(*) OVER () AS TotalRows FROM ppl
+                        {whereSql}
+                        ORDER BY LastSignedAt DESC
+                        LIMIT @pageSize OFFSET @offset
+                    )
+                    SELECT pg.*,
+                           (pg.NeedsAdultBase AND NOT COALESCE(ad.last_local >= {eighteenth}, false)) AS NeedsAdultWaiver
+                    FROM pg
+                    LEFT JOIN LATERAL (
+                        SELECT MAX((a.signed_at AT TIME ZONE @timezone)::date) AS last_local
+                        FROM rider_waiver_signature a
+                        JOIN tenant_waiver aw ON aw.id = a.waiver_id AND aw.tenant_id = a.tenant_id
+                        WHERE pg.NeedsAdultBase
+                          AND a.tenant_id = @tenantId AND {CurrentDocSql("aw")}
+                          AND a.signed_by_parent = false
+                          AND a.spectator_birthdate = pg.Birthdate
+                          AND lower(trim(COALESCE(a.spectator_first_name, '') || ' ' || COALESCE(a.spectator_last_name, ''))) = lower(pg.PersonName)
+                    ) ad ON true
+                    ORDER BY pg.LastSignedAt DESC";
+            var rows = (await _db.Query<WaiverPersonRow>(sql, args)).ToList();
+            var total = rows.Count > 0 ? rows[0].TotalRows
+                : page > 1 ? (await _db.Query<int>($"{baseCte} SELECT COUNT(*)::int FROM ppl {whereSql}", args)).First()
+                : 0;
+            return (rows, total);
         }
+
+        // A tenant_waiver row that is the current document (active, not expired).
+        private static string CurrentDocSql(string alias) =>
+            $"{alias}.is_active AND ({alias}.expires_at IS NULL OR {alias}.expires_at > now())";
 
         public async Task<WaiverSignatureDetailRow?> GetSignatureDetail(Guid id, Guid tenantId)
         {

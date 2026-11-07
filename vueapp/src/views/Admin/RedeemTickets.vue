@@ -886,6 +886,7 @@ import { SeasonPassService, type PassLookup } from '@/services/SeasonPassService
 import { CounterService, type CounterRider } from '@/services/CounterService'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import GateRiderPhoto from '@/components/GateRiderPhoto.vue'
+import { useCopyFeedback } from '@/composables/useCopyFeedback'
 import { useGateScanner, parseGateScan, extractGateToken, isPlainWords, type GateScan,
     type GateScanSource } from '@/composables/useGateScanner'
 
@@ -1088,7 +1089,7 @@ watch(passEventId, async (id) => {
         const r = await seasonPasses.lookupByToken(token, id)
         if (seq !== passEventSeq || passToken.value !== token || passEventId.value !== id) return
         pass.value = (r.data as any).data
-        passJudgedEventId.value = id
+        passJudgedEventId.value = pass.value?.judgedEventId ?? id
     } catch (err: any) {
         flash(err.response?.data?.error || 'Couldn\'t check the pass for that event. Pick it again.', 'error')
     }
@@ -1474,9 +1475,9 @@ async function tryLoadPass(token: string, seq = ++lookupSeq, keepEventId: string
         const events = pass.value?.todaysEvents ?? []
         passEventId.value = keepEventId && events.some(e => e.id === keepEventId) ? keepEventId
             : events.length === 1 ? events[0].id : null
-        // The event the server judged the card against: the one sent, else the single event running
-        // today (if any).
-        passJudgedEventId.value = keepEventId ?? (events.length === 1 ? events[0].id : null)
+        // The event the server judged the card against (the one sent, else the event the holder was
+        // admitted to today, else the single event running today).
+        passJudgedEventId.value = pass.value?.judgedEventId ?? null
         return 'ok'
     } catch (err: any) {
         if (seq !== lookupSeq) return 'stale'
@@ -1541,16 +1542,7 @@ const signRequestForMinor = ref(false)
 // Turned 18 since their waiver: the link goes to the RIDER, who signs as an adult.
 const signRequestAdult = ref(false)
 // Copy a signing link (shown when email isn't available) so staff can paste it into a text message.
-const linkCopied = ref(false)
-async function copyLink(link: string) {
-    try {
-        await navigator.clipboard.writeText(link)
-        linkCopied.value = true
-        setTimeout(() => { linkCopied.value = false }, 2000)
-    } catch {
-        linkCopied.value = false
-    }
-}
+const { copied: linkCopied, copy: copyLink, reset: resetLinkCopied } = useCopyFeedback()
 const signRequestTarget = ref<{ kind: 'ticket' | 'season_pass'; purchaseId: string } | null>(null)
 const signRequestResult = ref<GateWaiverSignRequestResult | null>(null)
 
@@ -1564,6 +1556,7 @@ function openSignRequest(kind: 'ticket' | 'season_pass', purchaseId: string, nam
     signRequestSuggested.value = !!guardianEmail
     signRequestError.value = ''
     signRequestResult.value = null
+    resetLinkCopied()
     signRequestOpen.value = true
 }
 
@@ -1574,11 +1567,12 @@ async function sendSignRequest() {
     signRequestBusy.value = true
     signRequestError.value = ''
     try {
-        // For a pass, the same event the card's waiver verdict was judged against (the single event
-        // running today, else none), so the link asks for the document that is actually missing.
-        const eventId = signRequestTarget.value.kind === 'season_pass' && pass.value?.todaysEvents.length === 1
-            ? pass.value.todaysEvents[0].id : null
+        // For a pass, the event the card's verdict was judged against (whatever the server judged it
+        // against, e.g. the event the holder was admitted to today), so the link asks for the document
+        // that is actually missing.
+        const eventId = signRequestTarget.value.kind === 'season_pass' ? passJudgedEventId.value : null
         const r = await service.gateWaiverSignRequest({ ...signRequestTarget.value, email, eventId })
+        resetLinkCopied()
         signRequestResult.value = r.data.data
     } catch (err: any) {
         signRequestError.value = err.response?.data?.error || 'Couldn’t send the link. Check the connection and try again.'
@@ -1682,7 +1676,7 @@ async function refreshAfterPhoto(kind: 'ticket' | 'season_pass') {
             const r = await seasonPasses.lookupByToken(token, keepEvent)
             if (passToken.value !== token) return
             pass.value = (r.data as any).data
-            passJudgedEventId.value = keepEvent
+            passJudgedEventId.value = pass.value?.judgedEventId ?? keepEvent
             if (keepEvent && !pass.value?.todaysEvents.some(e => e.id === keepEvent))
                 passEventId.value = pass.value?.todaysEvents.length === 1 ? pass.value.todaysEvents[0].id : null
         } else if (orderToken.value) {

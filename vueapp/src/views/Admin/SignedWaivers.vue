@@ -274,11 +274,14 @@ async function loadPeople() {
     pplLoading.value = true
     pplError.value = null
     expandedKey.value = null
-    // Never show the previous filter's rows under the new filter (or its button).
-    people.value = []
-    pplTotal.value = 0
-    pplLoadedStatus.value = null
+    // A different status filter: never show the previous filter's rows under it (or its button).
+    // Search, paging and Refresh keep the rows on screen under the progress bar.
     const status = pplStatus.value || null
+    if (status !== pplLoadedStatus.value) {
+        people.value = []
+        pplTotal.value = 0
+        pplLoadedStatus.value = null
+    }
     try {
         const res = await service.listPeople({
             search: pplSearch.value || undefined,
@@ -294,6 +297,8 @@ async function loadPeople() {
         pplLoadedStatus.value = status
     } catch (err: any) {
         if (seq !== pplSeq) return
+        people.value = []
+        pplLoadedStatus.value = null
         pplError.value = err.response?.data?.error
             ?? 'Could not load people. Check your connection and try Refresh.'
     } finally {
