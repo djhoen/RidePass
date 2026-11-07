@@ -12,5 +12,8 @@ namespace webapi.Controllers.API.Data.Redemption
         public Guid PurchaseId { get; set; }
         /// <summary>Where the link goes: the parent / guardian's email.</summary>
         public string Email { get; set; } = string.Empty;
+        /// <summary>Season pass only: the event being admitted to (its waiver is then the document
+        /// to sign), or null for a walk-up / product waiver.</summary>
+        public Guid? EventId { get; set; }
     }
 }

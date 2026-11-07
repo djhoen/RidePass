@@ -30,7 +30,7 @@ namespace Services.Repositories
             string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
             Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null)
         {
-            // The ticket / pass targets (Script0310) are tenant-checked in the insert itself: a
+            // The ticket / pass targets (Script0304) are tenant-checked in the insert itself: a
             // target from another tenant is stored as NULL rather than linked.
             const string sql = @"
                 WITH ins AS (

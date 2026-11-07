@@ -19,9 +19,9 @@ namespace Services.Repositories.Data.WaiverData
         public string? WaiverName { get; set; }
         public int? WaiverVersion { get; set; }
         public string? EventTitle { get; set; }
-        /// <summary>The gate sent this link for this ticket (Script0310); signing links the signature to it.</summary>
+        /// <summary>The gate sent this link for this ticket (Script0304); signing links the signature to it.</summary>
         public Guid? EventTicketPurchaseId { get; set; }
-        /// <summary>The gate sent this link for this season pass (Script0310).</summary>
+        /// <summary>The gate sent this link for this season pass (Script0304).</summary>
         public Guid? SeasonPassPurchaseId { get; set; }
     }
 }

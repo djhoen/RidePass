@@ -294,7 +294,7 @@ export class TicketService {
 
     // Gate fix-up for a waiver block: email a waiver signing link (to a parent / guardian) for one
     // ticket or pass. When it is signed, the signature is linked to that ticket / pass.
-    gateWaiverSignRequest(req: { kind: 'ticket' | 'season_pass'; purchaseId: string; email: string }) {
+    gateWaiverSignRequest(req: { kind: 'ticket' | 'season_pass'; purchaseId: string; email: string; eventId?: string | null }) {
         return axios.post<{ data: GateWaiverSignRequestResult }>(
             `${this.apiUrl}/Redemption/WaiverSignRequest`, req)
     }

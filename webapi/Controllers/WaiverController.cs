@@ -21,8 +21,8 @@ namespace webapi.Controllers
         private readonly IWaiverSignRequestRepository _signRequests;
         private readonly Services.Helpers.ISmtpEmailer _emailer;
         private readonly IConfiguration _config;
-        private readonly IEventTicketPurchaseRepository _tickets;
-        private readonly ISeasonPassRepository _passes;
+        private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
+        private readonly Services.Audit.IAuditLogger _audit;
 
         public WaiverController(
             IWaiverRepository repo,
@@ -32,11 +32,11 @@ namespace webapi.Controllers
             IWaiverSignRequestRepository signRequests,
             Services.Helpers.ISmtpEmailer emailer,
             IConfiguration config,
-            IEventTicketPurchaseRepository tickets,
-            ISeasonPassRepository passes)
+            Services.Waivers.IWaiverCheckInGate waiverGate,
+            Services.Audit.IAuditLogger audit)
         {
-            _tickets = tickets;
-            _passes = passes;
+            _waiverGate = waiverGate;
+            _audit = audit;
             _repo = repo;
             _events = events;
             _users = users;
@@ -640,32 +640,66 @@ namespace webapi.Controllers
             if (waiver.ExpiresAt.HasValue && waiver.ExpiresAt.Value <= DateTime.UtcNow)
                 return new ApiResponses().BadRequestResult("This waiver has expired and can no longer be signed.");
 
-            var isMinor = WaiverPolicy.IsMinor(request.Birthdate);
+            // A link the gate sent FOR a specific ticket or pass (Script0304): the gate's own view of
+            // that rider decides who the waiver is for, how old they are, and where it is linked.
+            // The form cannot talk its way out of the guardian path.
+            Services.Waivers.WaiverSignTarget? target = null;
+            if (row.EventTicketPurchaseId is not null || row.SeasonPassPurchaseId is not null)
+            {
+                target = await _waiverGate.ResolveSignTarget(_tenantContext.TenantId,
+                    row.EventTicketPurchaseId, row.SeasonPassPurchaseId, row.EventId);
+                if (target is null)
+                    return new ApiResponses().BadRequestResult(
+                        "The ticket or pass this link was sent for no longer exists. Ask the venue to send a new one.");
+            }
+
+            // The attendee is the target rider (their name and the birthdate the gate uses), not
+            // whatever was typed; a differing typed name is kept only as an audit note.
+            var attendeeFirst = string.IsNullOrWhiteSpace(target?.FirstName) ? first! : target!.FirstName!.Trim();
+            var attendeeLast = string.IsNullOrWhiteSpace(target?.LastName) ? last! : target!.LastName!.Trim();
+            var nameMismatch = target is not null
+                && !(string.Equals(first, attendeeFirst, StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(last, attendeeLast, StringComparison.OrdinalIgnoreCase));
+            var targetDob = target?.Decision.Birthdate;
+            DateTime? birthdate = targetDob is { } d ? d.ToDateTime(TimeOnly.MinValue) : request.Birthdate;
+            var isMinor = target is { Decision: { RiderAudience: true, IsMinor: bool targetMinor } }
+                ? targetMinor
+                : WaiverPolicy.IsMinor(birthdate);
+
             string? parentName = null, parentPhone = null;
             if (isMinor)
             {
                 parentName = string.IsNullOrWhiteSpace(request.ParentName) ? null : request.ParentName!.Trim();
                 parentPhone = string.IsNullOrWhiteSpace(request.ParentPhone) ? null : request.ParentPhone!.Trim();
                 if (parentName is null || parentPhone is null || parentPhone.Length < 7)
-                    return new ApiResponses().BadRequestResult("A parent or guardian must sign for riders under 18 — please provide their name and phone number.");
+                    return new ApiResponses().BadRequestResult(target is not null
+                        ? $"{target.DisplayName} is under 18, so a parent or guardian has to sign this waiver. Enter the parent or guardian's name and phone number, then sign."
+                        : "A parent or guardian must sign for riders under 18 — please provide their name and phone number.");
             }
 
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
             var sigId = await _repo.SignRegistrant(_tenantContext.TenantId, waiver.Id, ip,
                 request.SignatureDataUrl, signerEmail: row.RecipientEmail,
-                signerName: $"{first} {last}",
-                attendeeFirstName: first!, attendeeLastName: last!,
-                attendeeBirthdate: request.Birthdate,
+                signerName: isMinor ? parentName : $"{attendeeFirst} {attendeeLast}",
+                attendeeFirstName: attendeeFirst, attendeeLastName: attendeeLast,
+                attendeeBirthdate: birthdate,
                 signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
             await _signRequests.MarkSigned(row.Id, _tenantContext.TenantId, sigId);
 
-            // A link the gate sent for a specific ticket or pass (Script0310): make this signature the
-            // one that ticket / pass is judged on, so the rider can be checked in straight away. Only
-            // when the attendee signed for IS that rider; otherwise the signature is kept but unlinked.
-            if (row.EventTicketPurchaseId is Guid ticketId)
-                await _tickets.LinkWaiverSignatureForRider(ticketId, _tenantContext.TenantId, sigId, waiver.Id, first!, last!);
-            if (row.SeasonPassPurchaseId is Guid passId)
-                await _passes.LinkWaiverSignatureForHolder(passId, _tenantContext.TenantId, sigId, first!, last!);
+            if (target is not null)
+            {
+                // Put the signature where the gate reads it, by the request's target ids; the gate
+                // fills only what is missing or failing and never replaces a valid guardian signature.
+                var linked = await _waiverGate.LinkSignedWaiver(_tenantContext.TenantId, target, sigId, waiver.Id);
+                await _audit.Log("waiver.gate_sign_request.signed",
+                    $"Gate waiver link signed for {target.DisplayName}"
+                        + (isMinor ? $" by guardian {parentName}" : "")
+                        + (nameMismatch ? $" (form named \"{first} {last}\")" : ""),
+                    targetKind: target.TicketId is not null ? "event_ticket_purchase" : "season_pass_purchase",
+                    targetId: target.TicketId ?? target.PassPurchaseId,
+                    tenantId: _tenantContext.TenantId,
+                    metadata: new { requestId = row.Id, signatureId = sigId, linked, nameMismatch, typedName = $"{first} {last}" });
+            }
             return new ApiResponses().OkResult();
         }
 

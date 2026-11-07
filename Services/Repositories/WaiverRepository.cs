@@ -171,6 +171,35 @@ namespace Services.Repositories
             return result.First();
         }
 
+        public async Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId)
+        {
+            // One transaction: (1) an existing account row for this document that is NOT a valid
+            // guardian signature is detached (user_id cleared, the account email kept on it so the
+            // signed record stays attributable; its id is unchanged, so anything linked to it still
+            // reads the same signature); (2) the new signature takes the account slot, but only if
+            // the slot is now free, so a valid guardian signature is never replaced.
+            const string detach = @"
+                UPDATE rider_waiver_signature s
+                   SET user_id = NULL,
+                       signer_email = COALESCE(s.signer_email, (SELECT u.email FROM users u WHERE u.id = @userId))
+                 WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
+                   AND s.id <> @signatureId
+                   AND NOT (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> '')";
+            const string attach = @"
+                UPDATE rider_waiver_signature s
+                   SET user_id = @userId
+                 WHERE s.id = @signatureId AND s.tenant_id = @tenantId AND s.waiver_id = @waiverId
+                   AND s.user_id IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature x
+                                   WHERE x.user_id = @userId AND x.waiver_id = @waiverId)";
+            var args = new { tenantId, userId, waiverId, signatureId };
+            await _db.ExecuteBatch(new (string, object?)[] { (detach, args), (attach, args) });
+            var attached = await _db.Query<int>(
+                "SELECT COUNT(*)::int FROM rider_waiver_signature WHERE id = @signatureId AND tenant_id = @tenantId AND user_id = @userId",
+                args);
+            return attached.First();
+        }
+
         // Signature captured during event-ticket registration (a rider or spectator on a purchased
         // ticket), written to the shared rider_waiver_signature store so the "who has signed" report
         // and the check-in gate read one source of truth across sale paths. The attending person lands

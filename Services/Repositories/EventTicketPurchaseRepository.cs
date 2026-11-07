@@ -139,6 +139,14 @@ namespace Services.Repositories
                        p.redeemed_at_utc AS RedeemedAtUtc, p.redeemed_by_user_id AS RedeemedByUserId,
                        p.created_at AS CreatedAt, p.updated_at AS UpdatedAt,
                        p.rider_first_name AS RiderFirstName, p.rider_last_name AS RiderLastName,
+                       -- The waiver gate's inputs, so the order screen can judge each ticket with
+                       -- IWaiverCheckInGate exactly as redeem will. The inline signature image is
+                       -- only needed as a presence marker here, so it is not shipped.
+                       p.rider_birthdate AS RiderBirthdate, p.id_verified_dob AS IdVerifiedDob,
+                       p.waiver_id AS WaiverId, p.waiver_signed_at AS WaiverSignedAt,
+                       CASE WHEN p.waiver_signature_data_url IS NOT NULL THEN 'present' END AS WaiverSignatureDataUrl,
+                       p.waiver_signature_id AS WaiverSignatureId,
+                       p.parent_guardian_name AS ParentGuardianName,
                        COALESCE(sig.signed_by_parent, false) AS SignedByParent,
                        COALESCE(sig.parent_name, p.parent_guardian_name) AS GuardianName,
                        t.name AS TierName, t.kind AS TierKind, t.audience AS TierAudience,
@@ -271,26 +279,15 @@ namespace Services.Repositories
                        COALESCE(sig.waiver_id, p.waiver_id) AS SignedWaiverId,
                        w.name AS SignedWaiverName,
                        w.title AS SignedWaiverTitle,
-                       -- Guardian rule inputs (GuardianWaiverRule): the signature row as such, the
-                       -- ticket's own guardian name for legacy rows, every birthdate source, and
-                       -- the buyer account (its DOB only counts when it IS the rider).
-                       (sig.id IS NOT NULL) AS HasSignatureRow,
-                       sig.parent_name AS SignatureParentName,
-                       p.parent_guardian_name AS TicketGuardianName,
-                       p.id_verified_dob AS IdVerifiedDob,
-                       p.purchaser_email AS PurchaserEmail,
-                       u.first_name AS AccountFirstName,
-                       u.last_name AS AccountLastName,
-                       u.birthdate AS AccountBirthdate,
-                       u.id_verified_dob AS AccountVerifiedDob
+                       -- Default recipient of a gate signing link (the waiver verdict itself comes
+                       -- from IWaiverCheckInGate, not from these rows).
+                       p.purchaser_email AS PurchaserEmail
                 FROM event_ticket_purchase p
                 JOIN event_ticket_tier t ON t.id = p.tier_id AND t.tenant_id = p.tenant_id
                 LEFT JOIN rider_waiver_signature sig
                        ON sig.id = p.waiver_signature_id AND sig.tenant_id = p.tenant_id
                 LEFT JOIN tenant_waiver w
                        ON w.id = COALESCE(sig.waiver_id, p.waiver_id) AND w.tenant_id = p.tenant_id
-                LEFT JOIN users u ON u.id = p.purchaser_user_id
-                                 AND (u.tenant_id IS NULL OR u.tenant_id = p.tenant_id)
                 WHERE p.tenant_id = @tenantId
                   AND t.event_id = @eventId
                   AND p.status IN ('paid', 'redeemed')
@@ -304,31 +301,39 @@ namespace Services.Repositories
             return rows.ToList();
         }
 
-        public async Task<int> LinkWaiverSignatureForRider(Guid ticketId, Guid tenantId, Guid signatureId, Guid waiverId,
-            string attendeeFirstName, string attendeeLastName)
+        public async Task<List<EventTicketPurchase>> ListRegistrantTickets(Guid ticketId, Guid tenantId)
         {
-            // The anchor ticket decides the rider; its registrant siblings (gate fee + class entries
-            // of the same person) take the same signature, because the gate checks every ticket.
-            // The signature must name this rider (the ticket's rider name, else its buyer's name
-            // for a ticket that never captured one), and must be this tenant's own row.
+            // The anchor ticket plus its registrant siblings (gate fee + class entries of one person).
+            var sql = $@"
+                SELECT {Columns} FROM event_ticket_purchase
+                WHERE tenant_id = @tenantId
+                  AND (id = @ticketId
+                       OR registrant_id = (SELECT a.registrant_id FROM event_ticket_purchase a
+                                           WHERE a.id = @ticketId AND a.tenant_id = @tenantId))
+                ORDER BY (id = @ticketId) DESC, created_at";
+            return (await _db.Query<EventTicketPurchase>(sql, new { ticketId, tenantId })).ToList();
+        }
+
+        public async Task<int> LinkWaiverSignature(IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid signatureId, Guid waiverId)
+        {
+            // Defense in depth behind the gate's decision: paid only (a redeemed ticket's record is
+            // history and is never rewritten), this tenant's signature, and never over a ticket whose
+            // current signature is already a valid guardian signature.
             const string sql = @"
                 UPDATE event_ticket_purchase p
                    SET waiver_signature_id = @signatureId,
                        waiver_id = @waiverId,
                        updated_at = now()
-                  FROM event_ticket_purchase a
-                 WHERE a.id = @ticketId
-                   AND a.tenant_id = @tenantId
-                   AND p.tenant_id = a.tenant_id
-                   AND (p.id = a.id OR (a.registrant_id IS NOT NULL AND p.registrant_id = a.registrant_id))
-                   AND p.status IN ('paid', 'redeemed')
-                   AND lower(trim(@attendeeFirstName || ' ' || @attendeeLastName)) =
-                       lower(trim(COALESCE(NULLIF(trim(COALESCE(a.rider_first_name, '') || ' ' ||
-                                                       COALESCE(a.rider_last_name, '')), ''), a.purchaser_name)))
+                 WHERE p.id = ANY(@ids)
+                   AND p.tenant_id = @tenantId
+                   AND p.status = 'paid'
                    AND EXISTS (SELECT 1 FROM rider_waiver_signature s
-                               WHERE s.id = @signatureId AND s.tenant_id = @tenantId)";
-            return await _db.Execute(sql, new { ticketId, tenantId, signatureId, waiverId,
-                attendeeFirstName = attendeeFirstName.Trim(), attendeeLastName = attendeeLastName.Trim() });
+                               WHERE s.id = @signatureId AND s.tenant_id = @tenantId)
+                   AND NOT EXISTS (SELECT 1 FROM rider_waiver_signature cur
+                                   WHERE cur.id = p.waiver_signature_id
+                                     AND cur.signed_by_parent
+                                     AND COALESCE(trim(cur.parent_name), '') <> '')";
+            return await _db.Execute(sql, new { ids = ticketIds.ToArray(), tenantId, signatureId, waiverId });
         }
 
         // Event-wide check-in roster. Only paid/redeemed rows are real attendees (pending /

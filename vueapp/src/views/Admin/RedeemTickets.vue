@@ -404,7 +404,7 @@
                     {{ pass.waiverBlockReason }}
                     <div class="mt-2">
                         <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-email-fast-outline"
-                            @click="openSignRequest('season_pass', pass.id, pass.purchaserName, pass.guardianEmail, !!pass.holderIsMinor)">
+                            @click="openSignRequest('season_pass', pass.id, pass.holderName || pass.purchaserName, pass.guardianEmail, !!pass.holderIsMinor)">
                             Send signing link{{ pass.holderIsMinor ? ' to a guardian' : '' }}
                         </v-btn>
                     </div>
@@ -1422,7 +1422,11 @@ async function sendSignRequest() {
     signRequestBusy.value = true
     signRequestError.value = ''
     try {
-        const r = await service.gateWaiverSignRequest({ ...signRequestTarget.value, email })
+        // For a pass, the same event the card's waiver verdict was judged against (the single event
+        // running today, else none), so the link asks for the document that is actually missing.
+        const eventId = signRequestTarget.value.kind === 'season_pass' && pass.value?.todaysEvents.length === 1
+            ? pass.value.todaysEvents[0].id : null
+        const r = await service.gateWaiverSignRequest({ ...signRequestTarget.value, email, eventId })
         signRequestResult.value = r.data.data
     } catch (err: any) {
         signRequestError.value = err.response?.data?.error || 'Couldn’t send the link. Check the connection and try again.'

@@ -1719,7 +1719,7 @@ namespace webapi.Controllers
         // ── Gate check-in: staff scans a pass QR ─────────────────────────────────
         [Authorize(Policy = TenantPermissions.Policy.SalesRedeem)]
         [HttpGet("Pass/{token:guid}")]
-        public async Task<IActionResult> LookupPassByToken(Guid token)
+        public async Task<IActionResult> LookupPassByToken(Guid token, [FromQuery] Guid? eventId = null)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
             var pass = await _passes.GetPurchaseByRedemptionToken(token);
@@ -1762,8 +1762,11 @@ namespace webapi.Controllers
             // as "not signed" for the rest of the day.
             var admittedToday = reservations.Any(r => r.Status == "checked_in");
             // The gate decides (including the minor / guardian rule) exactly as admission will.
-            var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass.Id,
-                todaysEvents.Count == 1 ? todaysEvents[0].Id : null);
+            // Judged against the event staff picked (?eventId, when it is one of today's), else the
+            // single event running today, else none.
+            var judgedEventId = eventId is Guid picked && todaysEvents.Any(e => e.Id == picked) ? picked
+                : todaysEvents.Count == 1 ? todaysEvents[0].Id : (Guid?)null;
+            var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, judgedEventId);
             var waiverSigned = admittedToday || waiverDecision.Satisfied;
             var waiverBlockReason = admittedToday ? null : waiverDecision.BlockReason;
 
@@ -2130,7 +2133,7 @@ namespace webapi.Controllers
                 // The gate decides, with or without an event: the pass's own signature (the
                 // product waiver, whose presence was checked just above) and, when an event is in
                 // play, the event's rider waiver; a minor needs a guardian's signature either way.
-                var waiverBlock = await _waiverGate.BlockReasonForPass(_tenantContext.TenantId, pass.Id, eventId);
+                var waiverBlock = (await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId)).BlockReason;
                 if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
             }
 

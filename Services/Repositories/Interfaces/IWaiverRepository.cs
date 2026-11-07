@@ -34,6 +34,15 @@ namespace Services.Repositories.Interfaces
             string spectatorFirstName, string spectatorLastName, DateTime? spectatorBirthdate,
             bool signedByParent, string? parentName, string? parentPhone);
 
+        /// <summary>
+        /// Gate signing link for a season pass's EVENT waiver: make <paramref name="signatureId"/> the
+        /// account's signature for <paramref name="waiverId"/> (what the gate reads for that event).
+        /// An existing account row for that document that is not a valid guardian signature is kept
+        /// as a record but detached from the account (user_id cleared, email kept); a valid guardian
+        /// signature is never replaced. One transaction. Returns 1 when attached, else 0.
+        /// </summary>
+        Task<int> AttachAccountSignature(Guid tenantId, Guid userId, Guid waiverId, Guid signatureId);
+
         /// <summary>Signature captured during event-ticket registration (rider or spectator), written
         /// to the shared rider_waiver_signature store. Returns the new signature row id.</summary>
         Task<Guid> SignRegistrant(Guid tenantId, Guid waiverId, string? ipAddress,
