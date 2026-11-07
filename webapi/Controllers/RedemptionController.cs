@@ -21,6 +21,7 @@ namespace webapi.Controllers
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ITenantContext _tenantContext;
         private readonly Services.Audit.IAuditLogger _audit;
+        private readonly ISeasonPassRepository _passes;
 
         public RedemptionController(
             IEventTicketPurchaseRepository tickets,
@@ -30,9 +31,11 @@ namespace webapi.Controllers
             IWaiverRepository waivers,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantContext tenantContext,
-            Services.Audit.IAuditLogger audit)
+            Services.Audit.IAuditLogger audit,
+            ISeasonPassRepository passes)
         {
             _audit = audit;
+            _passes = passes;
             _tickets = tickets;
             _extras = extras;
             _users = users;
@@ -349,6 +352,12 @@ namespace webapi.Controllers
         // Two guards make this safe to hand to gate staff: it only sees events whose check-in window is
         // open today, and it requires a real search term (a 3-char minimum, so it can't be used to walk
         // the customer list). SalesRedeem (class-level) still gates it.
+        //
+        // Results carry a Kind: "ticket" rows anchor an event order (Order/{token}), "season_pass"
+        // rows are passes valid today whose token opens the pass card (SeasonPass/Pass/{token}).
+        // Each kind is capped at GateSearchLimitPerKind.
+        private const int GateSearchLimitPerKind = 25;
+
         [HttpGet("Search")]
         public async Task<IActionResult> Search([FromQuery] string q)
         {
@@ -367,10 +376,18 @@ namespace webapi.Controllers
             var todayEndUtc = TimeZoneInfo.ConvertTimeToUtc(todayLocal.AddDays(1).AddTicks(-1), tz);
 
             var rows = await _tickets.SearchForGate(
-                _tenantContext.TenantId, query, todayStartUtc, todayEndUtc, limit: 25);
+                _tenantContext.TenantId, query, todayStartUtc, todayEndUtc, limit: GateSearchLimitPerKind);
+            // Season pass holders come back in the same list: a pass holder with a dead phone is just
+            // as common at the gate as a ticket holder, and staff shouldn't have to know which one
+            // the person bought before they can look them up.
+            var passRows = await _passes.SearchForGate(
+                _tenantContext.TenantId, query, todayLocal, todayStartUtc, todayEndUtc, limit: GateSearchLimitPerKind);
 
             var results = rows.Select(r => new webapi.Controllers.API.Data.Redemption.GateSearchResult
             {
+                Kind = webapi.Controllers.API.Data.Redemption.GateSearchResult.KindTicket,
+                DisplayName = !string.IsNullOrWhiteSpace(r.RiderNames) ? r.RiderNames! : r.PurchaserName,
+                Holds = r.EventTitle,
                 EventId = r.EventId,
                 EventTitle = r.EventTitle,
                 EventStartsAtUtc = DateTime.SpecifyKind(r.EventStartsAt, DateTimeKind.Utc),
@@ -380,7 +397,23 @@ namespace webapi.Controllers
                 ItemCount = r.ItemCount,
                 RedeemedCount = r.RedeemedCount,
                 RiderNames = r.RiderNames,
-            }).ToList();
+            }).Concat(passRows.Select(p => new webapi.Controllers.API.Data.Redemption.GateSearchResult
+            {
+                Kind = webapi.Controllers.API.Data.Redemption.GateSearchResult.KindSeasonPass,
+                DisplayName = p.HolderName ?? p.PurchaserName,
+                Holds = p.ProductName,
+                PurchaserName = p.PurchaserName,
+                PurchaserEmail = p.PurchaserEmail,
+                AccountEmail = p.AccountEmail,
+                AnchorToken = p.RedemptionToken,
+                // A pass is one admission per day: "1 item, redeemed if already in today" keeps
+                // the result chips meaning the same thing for both kinds.
+                ItemCount = 1,
+                RedeemedCount = p.CheckedInToday ? 1 : 0,
+                ProductKind = p.ProductKind,
+                CreditsRemaining = p.CreditsRemaining,
+                ValidToDate = DateOnly.FromDateTime(p.ValidToDate),
+            })).ToList();
 
             return new ApiResponses().OkResult(results);
         }

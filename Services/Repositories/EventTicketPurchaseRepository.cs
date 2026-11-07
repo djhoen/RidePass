@@ -1,4 +1,5 @@
 ﻿using Services.Helpers.Interfaces;
+using Services.Helpers;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 
@@ -170,14 +171,22 @@ namespace Services.Repositories
         // customer list — it can only see who is actually coming through the gate today.
         //
         // Matching is case-insensitive (Postgres = and LIKE are not) across the buyer's name, the buyer's
-        // email, and the RIDER's name: a parent often buys under their own name for a kid with a different
-        // surname, and staff at the gate know the rider.
+        // email, the RIDER's name, and the linked account (its email, name and phone digits): a parent
+        // often buys under their own name for a kid with a different surname, staff at the gate know the
+        // rider, and a rider who changed their account email since checkout still gets found by the
+        // address they give now. Patterns come from GateSearchTerms (any word order, partial words,
+        // phone-shaped queries collapse to digits).
         //
         // One row per (event, purchaser); purchaser identity is the user id when the buyer had an account,
         // else their lowercased email, which mirrors how the redemption scope resolves a scanned token.
         public async Task<List<GateSearchRow>> SearchForGate(
             Guid tenantId, string query, DateTime todayStartUtc, DateTime todayEndUtc, int limit)
         {
+            var likes = GateSearchTerms.BuildLikePatterns(query);
+            if (likes.Length == 0) return new List<GateSearchRow>();
+            // Rider accounts are platform-wide (users.tenant_id IS NULL), so the users join cannot be
+            // pinned to this tenant outright; it is reached only through this tenant's purchase row and
+            // refuses a staff account that belongs to some other tenant.
             const string sql = @"
                 SELECT e.id AS EventId,
                        MIN(e.title) AS EventTitle,
@@ -190,22 +199,28 @@ namespace Services.Repositories
                        string_agg(DISTINCT NULLIF(trim(COALESCE(p.rider_first_name, '') || ' ' ||
                                                         COALESCE(p.rider_last_name, '')), ''), ', ') AS RiderNames
                 FROM event_ticket_purchase p
-                JOIN event_ticket_tier t ON t.id = p.tier_id
-                JOIN event e ON e.id = t.event_id
+                JOIN event_ticket_tier t ON t.id = p.tier_id AND t.tenant_id = p.tenant_id
+                JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
+                LEFT JOIN users u ON u.id = p.purchaser_user_id
+                                 AND (u.tenant_id IS NULL OR u.tenant_id = p.tenant_id)
                 WHERE p.tenant_id = @tenantId
                   AND p.status IN ('paid', 'redeemed')
                   AND e.starts_at <= @todayEndUtc
                   AND e.ends_at   >= @todayStartUtc
                   -- EVERY word the operator typed has to appear somewhere in this row's searchable
-                  -- text (buyer name + buyer email + rider name), in any order. So 'reed jake',
-                  -- 'jake reed', and plain 'jake' all find Jake Reed, and 'sarah reed' finds the
-                  -- order Sarah bought for rider Reed. A single substring match can't do that, and
-                  -- at a gate people type names in whatever order they hear them.
+                  -- text (buyer name + buyer email + rider name + account email/name/phone digits),
+                  -- in any order. So 'reed jake', 'jake reed', and plain 'jake' all find Jake Reed,
+                  -- and 'sarah reed' finds the order Sarah bought for rider Reed. A single substring
+                  -- match can't do that, and at a gate people type names in whatever order they hear them.
                   AND lower(
                         COALESCE(p.purchaser_name, '') || ' ' ||
                         COALESCE(p.purchaser_email, '') || ' ' ||
                         COALESCE(p.rider_first_name, '') || ' ' ||
-                        COALESCE(p.rider_last_name, '')
+                        COALESCE(p.rider_last_name, '') || ' ' ||
+                        COALESCE(u.email, '') || ' ' ||
+                        COALESCE(u.first_name, '') || ' ' ||
+                        COALESCE(u.last_name, '') || ' ' ||
+                        COALESCE(regexp_replace(u.phone, '\D', '', 'g'), '')
                       ) LIKE ALL (@likes)
                 GROUP BY e.id, COALESCE(p.purchaser_user_id::text, lower(trim(p.purchaser_email)))
                 ORDER BY MIN(e.starts_at), MIN(p.purchaser_name)
@@ -213,32 +228,13 @@ namespace Services.Repositories
             var rows = await _db.Query<GateSearchRow>(sql, new
             {
                 tenantId,
-                likes = BuildLikeTerms(query),
+                likes,
                 todayStartUtc,
                 todayEndUtc,
                 limit,
             });
             return rows.ToList();
         }
-
-        // One '%term%' pattern per word typed, lowercased to match the lowered haystack (Postgres
-        // LIKE is case-sensitive). Capped at 5 words so a pasted paragraph can't build a huge
-        // conjunction. Falls back to the whole trimmed string if it somehow splits to nothing.
-        private static string[] BuildLikeTerms(string query)
-        {
-            var words = query
-                .Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Take(5)
-                .Select(w => $"%{EscapeLike(w.ToLowerInvariant())}%")
-                .ToArray();
-            return words.Length > 0
-                ? words
-                : new[] { $"%{EscapeLike(query.Trim().ToLowerInvariant())}%" };
-        }
-
-        // A rider named "100%" or an email with an underscore must not turn into a wildcard.
-        private static string EscapeLike(string value) =>
-            value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
         // Gate check-in waiver panel: the purchaser's ticket set for one event, denormalized with
         // the tier's audience (which decides whether the rider or the spectator waiver applies) and

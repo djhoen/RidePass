@@ -1,4 +1,5 @@
 ﻿using Services.Helpers.Interfaces;
+using Services.Helpers;
 using Services.Repositories.Data.PaymentData;
 using Services.Repositories.Interfaces;
 
@@ -1048,6 +1049,74 @@ namespace Services.Repositories
                 WHERE p.id = @passPurchaseId AND p.tenant_id = @tenantId
                 LIMIT 1";
             return (await _db.Query<SeasonPassCheckInContext>(sql, new { passPurchaseId, tenantId })).FirstOrDefault();
+        }
+
+        // Gate lookup for a pass holder with no QR (dead phone, card left at home). Mirrors the ticket
+        // gate search: a real search term is required and only passes valid TODAY are visible, so a
+        // gate login can't page through the tenant's pass holders.
+        //
+        // Searchable text: the named holder, the buyer's name and email, and the linked account's
+        // email, name and phone digits (a holder who changed their account email since checkout is
+        // still found by the address they give now). Rider accounts are platform-wide
+        // (users.tenant_id IS NULL), so the users join is reached only through this tenant's pass row
+        // and refuses a staff account belonging to another tenant. season_pass_reservation carries no
+        // tenant_id; it is scoped through p.
+        public async Task<List<GatePassSearchRow>> SearchForGate(Guid tenantId, string query, DateTime todayLocal,
+            DateTime todayStartUtc, DateTime todayEndUtc, int limit)
+        {
+            var likes = GateSearchTerms.BuildLikePatterns(query);
+            if (likes.Length == 0) return new List<GatePassSearchRow>();
+            const string sql = @"
+                SELECT p.id AS PassPurchaseId,
+                       p.redemption_token AS RedemptionToken,
+                       NULLIF(trim(COALESCE(p.holder_first_name, '') || ' ' ||
+                                   COALESCE(p.holder_last_name, '')), '') AS HolderName,
+                       p.purchaser_name AS PurchaserName,
+                       p.purchaser_email AS PurchaserEmail,
+                       CASE WHEN lower(trim(u.email)) <> lower(trim(p.purchaser_email))
+                            THEN u.email END AS AccountEmail,
+                       pr.name AS ProductName,
+                       pr.kind AS ProductKind,
+                       p.credits_remaining AS CreditsRemaining,
+                       p.valid_to_date AS ValidToDate,
+                       EXISTS (
+                           SELECT 1 FROM season_pass_reservation r
+                           WHERE r.season_pass_purchase_id = p.id
+                             AND r.status = 'checked_in'
+                             AND r.checked_in_at >= @todayStartUtc
+                             AND r.checked_in_at <= @todayEndUtc
+                       ) AS CheckedInToday
+                FROM season_pass_purchase p
+                JOIN season_pass_product pr ON pr.id = p.product_id AND pr.tenant_id = p.tenant_id
+                LEFT JOIN users u ON u.id = p.purchaser_user_id
+                                 AND (u.tenant_id IS NULL OR u.tenant_id = p.tenant_id)
+                WHERE p.tenant_id = @tenantId
+                  AND p.status = 'paid'
+                  AND p.valid_from_date <= @todayLocal::date
+                  AND p.valid_to_date   >= @todayLocal::date
+                  AND lower(
+                        COALESCE(p.holder_first_name, '') || ' ' ||
+                        COALESCE(p.holder_last_name, '') || ' ' ||
+                        COALESCE(p.purchaser_name, '') || ' ' ||
+                        COALESCE(p.purchaser_email, '') || ' ' ||
+                        COALESCE(u.email, '') || ' ' ||
+                        COALESCE(u.first_name, '') || ' ' ||
+                        COALESCE(u.last_name, '') || ' ' ||
+                        COALESCE(regexp_replace(u.phone, '\D', '', 'g'), '')
+                      ) LIKE ALL (@likes)
+                ORDER BY COALESCE(NULLIF(trim(COALESCE(p.holder_first_name, '') || ' ' ||
+                                              COALESCE(p.holder_last_name, '')), ''), p.purchaser_name),
+                         p.valid_to_date
+                LIMIT @limit";
+            return (await _db.Query<GatePassSearchRow>(sql, new
+            {
+                tenantId,
+                likes,
+                todayLocal = todayLocal.Date,
+                todayStartUtc,
+                todayEndUtc,
+                limit,
+            })).ToList();
         }
 
         public async Task<(Guid ReservationId, int? CreditsRemaining)?> CreateGateCheckIn(

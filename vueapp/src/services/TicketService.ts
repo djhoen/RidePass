@@ -284,8 +284,9 @@ export class TicketService {
             `${this.apiUrl}/Redemption/Order/${token}/Signature/${purchaseId}`)
     }
 
-    // Gate lookup for the rider with no QR: search today's orders by buyer name, buyer email, or
-    // rider name. Server requires 3+ characters and only sees events open for check-in today.
+    // Gate lookup for the rider with no QR: today's ticket orders (buyer name/email, rider name,
+    // linked account email/phone) and season passes valid today (holder, buyer, account email/phone).
+    // Server requires 3+ characters and only sees today's admissions.
     gateSearch(q: string) {
         return axios.get<{ data: GateSearchResult[] }>(
             `${this.apiUrl}/Redemption/Search`, { params: { q } })
@@ -293,15 +294,28 @@ export class TicketService {
 }
 
 export interface GateSearchResult {
-    eventId: string
-    eventTitle: string
-    eventStartsAtUtc: string
+    /** 'ticket' opens the event order; 'season_pass' opens the pass card. */
+    kind: 'ticket' | 'season_pass'
+    /** Riders on a ticket order (else the buyer); the named holder on a pass (else the buyer). */
+    displayName: string
+    /** Event title for a ticket, pass product name for a season pass. */
+    holds: string
+    eventId: string | null
+    eventTitle: string | null
+    eventStartsAtUtc: string | null
     purchaserName: string
     purchaserEmail: string
+    /** Season pass: the linked account's email when it differs from the checkout email. */
+    accountEmail: string | null
+    /** The redemption token to open (any ticket of the order, or the pass's own). */
     anchorToken: string
     itemCount: number
+    /** Tickets: how many are checked in. Season pass: 1 when already admitted today. */
     redeemedCount: number
     riderNames: string | null
+    productKind: string | null
+    creditsRemaining: number | null
+    validToDate: string | null
 }
 
 export interface OrderLookup {
