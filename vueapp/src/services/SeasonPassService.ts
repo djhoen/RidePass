@@ -233,6 +233,8 @@ export interface PassLookup {
     birthdateVerifyValidDays: number
     birthdateCheckNeeded: boolean
     birthdateBlocked: boolean
+    /** The tenant-local day of the last ID check (yyyy-MM-dd). */
+    idVerifiedLocalDate: string | null
     idVerified: boolean
     idVerifiedAtUtc: string | null
     idVerifiedByName: string | null

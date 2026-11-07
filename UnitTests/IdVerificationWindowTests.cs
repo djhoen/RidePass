@@ -70,5 +70,38 @@ namespace UnitTests
         {
             Assert.That(IdVerificationWindow.IsValidMode(mode), Is.EqualTo(valid));
         }
+
+        // ── Whose check, and which one counts ──
+
+        [Test]
+        public void Rider_key_is_the_riders_normalized_name_else_the_account_owners()
+        {
+            Assert.That(IdCheckRules.RiderKey("  Cody ", "KID", "Pat", "Parent"), Is.EqualTo("cody kid"));
+            Assert.That(IdCheckRules.RiderKey(null, " ", "Pat", "Parent"), Is.EqualTo("pat parent"));
+            // A parent's own record and their child's are different keys under one account.
+            Assert.That(IdCheckRules.RiderKey("Pat", "Parent", "Pat", "Parent"),
+                Is.Not.EqualTo(IdCheckRules.RiderKey("Cody", "Kid", "Pat", "Parent")));
+        }
+
+        [Test]
+        public void Account_is_the_rider_only_by_name()
+        {
+            Assert.That(IdCheckRules.AccountIsRider(null, null, "Pat", "Parent"), Is.True);
+            Assert.That(IdCheckRules.AccountIsRider("pat", "  parent", "Pat", "Parent"), Is.True);
+            Assert.That(IdCheckRules.AccountIsRider("Cody", "Kid", "Pat", "Parent"), Is.False);
+        }
+
+        [Test]
+        public void The_most_recent_check_wins_and_its_dob_is_the_evidence()
+        {
+            var older = new IdCheck(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), null,
+                new DateTime(2000, 1, 1), IdVerificationScope.Rider);
+            var newer = new IdCheck(new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc), null,
+                new DateTime(2001, 2, 2), IdVerificationScope.Credential);
+            Assert.That(IdCheckRules.Latest(older, newer), Is.SameAs(newer));
+            Assert.That(IdCheckRules.Latest(newer, null, older), Is.SameAs(newer));
+            Assert.That(IdCheckRules.Latest(null, null), Is.Null);
+            Assert.That(IdCheckRules.Latest(older)!.VerifiedDob, Is.EqualTo(new DateTime(2000, 1, 1)));
+        }
     }
 }

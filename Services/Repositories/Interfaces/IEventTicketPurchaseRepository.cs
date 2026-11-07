@@ -49,6 +49,8 @@ namespace Services.Repositories.Interfaces
         Task MarkRedeemed(Guid id, Guid tenantId, Guid redeemedByUserId, DateTime atUtc);
         /// <summary>Records a staff ID/age check against this ticket's rider. Tenant-scoped.</summary>
         Task<int> SetIdVerified(Guid id, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
+        /// <summary>The same check on several tickets of one rider, in one statement; paid / redeemed only.</summary>
+        Task<int> SetIdVerifiedMany(IReadOnlyCollection<Guid> ids, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
         /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
         Task<int> ClearIdVerified(Guid id, Guid tenantId);
         // Guarded redeem for offline batch sync: flips paid -> redeemed only, returning true

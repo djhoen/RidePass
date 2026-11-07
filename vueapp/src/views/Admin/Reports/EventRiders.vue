@@ -165,6 +165,28 @@
             </v-card>
         </v-dialog>
 
+        <!-- Check-in refused because the tenant requires a current birthdate check: verify the
+             rider's ID here (the gate's own verify endpoints), then the check-in is retried. -->
+        <v-dialog v-model="verifyOpen" max-width="440">
+            <v-card v-if="verifyBlock">
+                <v-card-title>Verify ID and age</v-card-title>
+                <v-card-text>
+                    <p class="text-body-2 mb-2">{{ verifyBlock.message }}</p>
+                    <div class="text-h6">{{ verifyBlock.riderName || 'This rider' }}</div>
+                    <v-text-field v-model="verifyDob" type="date" label="Date of birth on the ID"
+                        density="compact" class="mt-4"
+                        :error-messages="verifyError ? [verifyError] : []"></v-text-field>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn :disabled="verifying" @click="verifyOpen = false">Cancel</v-btn>
+                    <v-btn color="primary" :loading="verifying" :disabled="!verifyDob" @click="verifyAndCheckIn">
+                        Verify and check in
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000">{{ snackbarText }}</v-snackbar>
     </div>
 </template>
@@ -174,12 +196,16 @@ import { ref, computed, watch, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ReportsService, type EventRiderReport, type EventRiderRow, type ScheduledRiderMessage } from '@/services/ReportsService'
 import { EventService, type EventDto } from '@/services/EventService'
+import { TicketService } from '@/services/TicketService'
+import { SeasonPassService } from '@/services/SeasonPassService'
 import { branding } from '@/stores/branding'
 
 const props = defineProps<{ initialEventId?: string | null }>()
 
 const reportsService = new ReportsService()
 const eventService = new EventService()
+const ticketService = new TicketService()
+const seasonPassService = new SeasonPassService()
 
 const events = ref<EventDto[]>([])
 const loadingEvents = ref(false)
@@ -328,8 +354,48 @@ async function toggleCheckIn(row: EventRiderRow) {
         await reportsService.setCheckIn(row.purchaseId, row.source, !row.checkedIn)
         await loadReport()
     } catch (err: any) {
+        // The tenant requires a current birthdate check and this rider has none: offer to verify
+        // the ID right here instead of a dead end.
+        const data = err.response?.data?.data
+        if (data?.code === 'birthdate_unverified' && data.verifyToken) {
+            verifyBlock.value = {
+                row, message: err.response.data.error, riderName: data.riderName ?? null,
+                verifyKind: data.verifyKind, verifyToken: data.verifyToken, purchaseId: data.purchaseId,
+            }
+            verifyDob.value = ''
+            verifyError.value = ''
+            verifyOpen.value = true
+            return
+        }
         flash(err.response?.data?.error || 'Check-in failed.', 'error')
     }
+}
+
+// ── Verify ID from a birthdate-check refusal ──
+const verifyOpen = ref(false)
+const verifying = ref(false)
+const verifyDob = ref('')
+const verifyError = ref('')
+const verifyBlock = ref<{ row: EventRiderRow; message: string; riderName: string | null;
+    verifyKind: 'ticket' | 'season_pass'; verifyToken: string; purchaseId: string } | null>(null)
+
+async function verifyAndCheckIn() {
+    const b = verifyBlock.value
+    if (!b || !verifyDob.value) return
+    verifying.value = true
+    verifyError.value = ''
+    try {
+        if (b.verifyKind === 'season_pass') await seasonPassService.verifyPassHolderId(b.verifyToken, verifyDob.value)
+        else await ticketService.verifyOrderRiderId(b.verifyToken, b.purchaseId, verifyDob.value)
+    } catch (err: any) {
+        verifyError.value = err.response?.data?.error || 'Couldn\'t record the ID check.'
+        verifying.value = false
+        return
+    }
+    verifying.value = false
+    verifyOpen.value = false
+    flash('ID and age verified.', 'success')
+    await toggleCheckIn(b.row)
 }
 
 async function commitRaceNumber(row: EventRiderRow, value: string) {

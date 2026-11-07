@@ -276,7 +276,7 @@
                                 :type="a.birthdateBlocked ? 'error' : 'warning'" class="mt-2"
                                 icon="mdi-card-account-details-outline">
                                 <div class="d-flex align-center flex-wrap ga-2">
-                                    <span>{{ birthdateCheckText(a.idVerifiedAtUtc) }}</span>
+                                    <span>{{ birthdateCheckText(a.idVerifiedLocalDate) }}</span>
                                     <v-spacer></v-spacer>
                                     <v-btn v-if="a.verifyPurchaseId" size="small" color="primary" variant="flat"
                                         @click="openVerifyRider(a)">Verify ID</v-btn>
@@ -415,7 +415,7 @@
                 <v-alert v-if="pass.birthdateCheckNeeded && !pass.birthdateBlocked" type="warning" variant="tonal"
                     density="compact" class="mt-3" icon="mdi-card-account-details-outline">
                     <div class="d-flex align-center flex-wrap ga-2">
-                        <span>{{ birthdateCheckText(pass.idVerifiedAtUtc) }}</span>
+                        <span>{{ birthdateCheckText(pass.idVerifiedLocalDate) }}</span>
                         <v-spacer></v-spacer>
                         <v-btn size="small" color="primary" variant="flat" @click="openVerifyId">Verify ID</v-btn>
                     </div>
@@ -682,7 +682,7 @@
                     </p>
                     <v-alert v-if="verifyDobMismatch" type="warning" variant="tonal" density="compact" class="mt-3">
                         This differs from the birthdate on file
-                        ({{ dayjs(verifyTarget.recordedBirthdate!).format('MMM D, YYYY') }}). The date on the ID
+                        ({{ calendarText(verifyTarget.recordedBirthdate!) }}). The date on the ID
                         is what counts from now on.
                     </v-alert>
 
@@ -1514,7 +1514,7 @@ function openVerifyDialog(target: NonNullable<typeof verifyTarget.value>) {
     verifyTarget.value = target
     // Seed from what the rider gave at registration: the common case is the document simply
     // confirming it, so staff only change it when the two disagree.
-    verifyDob.value = target.recordedBirthdate ? dayjs(target.recordedBirthdate).format('YYYY-MM-DD') : ''
+    verifyDob.value = target.recordedBirthdate ? calendarDate(target.recordedBirthdate) : ''
     verifyIdError.value = ''
     verifyIdOpen.value = true
 }
@@ -1534,12 +1534,23 @@ function openVerifyRider(a: OrderWaiverAttendee) {
 // The ID says something other than what the rider gave: the ID wins, and staff should see it.
 const verifyDobMismatch = computed(() =>
     !!verifyTarget.value?.recordedBirthdate && !!verifyDob.value && !verifyDobError.value
-    && dayjs(verifyTarget.value.recordedBirthdate).format('YYYY-MM-DD') !== verifyDob.value)
+    && calendarDate(verifyTarget.value.recordedBirthdate) !== verifyDob.value)
 
-// "Check ID: not verified since <date> / never", for the gate banners.
-function birthdateCheckText(verifiedAtUtc: string | null): string {
-    return verifiedAtUtc
-        ? `Check ID: birthdate not verified since ${formatDate(verifiedAtUtc)}.`
+// Birthdates and "checked on" days are CALENDAR dates (the API sends yyyy-MM-dd), never instants:
+// read as plain text so no browser time zone can move them a day.
+function calendarDate(value: string): string {
+    return value.slice(0, 10)
+}
+function calendarText(value: string): string {
+    const [y, m, d] = calendarDate(value).split('-').map(Number)
+    return dayjs(new Date(y, m - 1, d)).format('MMM D, YYYY')
+}
+
+// "Check ID: not verified since <tenant-local day> / never", for the gate banners. The day is the
+// one the server's block message uses.
+function birthdateCheckText(verifiedLocalDate: string | null): string {
+    return verifiedLocalDate
+        ? `Check ID: birthdate not verified since ${calendarText(verifiedLocalDate)}.`
         : 'Check ID: birthdate never verified.'
 }
 

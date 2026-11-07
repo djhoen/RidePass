@@ -1214,8 +1214,10 @@ namespace webapi.Controllers
                         var t = await _tickets.GetById(purchaseId, tenantId);
                         if (t is not null)
                         {
-                            var waiverBlock = await _waiverGate.BlockReasonForTicket(tenantId, t);
-                            if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                            var waiverDecision = await _waiverGate.EvaluateTicket(tenantId, t);
+                            // Structured, so Event Riders can offer "Verify ID" on a birthdate-check block.
+                            if (waiverDecision.BlockReason is not null)
+                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "ticket", t.RedemptionToken, t.Id);
                         }
                         // Only a 'paid' ticket may be checked in. TryMarkRedeemed enforces that in SQL,
                         // so a refunded/cancelled ticket can't be flipped to redeemed (which UndoRedeemed
@@ -1236,8 +1238,17 @@ namespace webapi.Controllers
                         {
                             // Same verdict as the gate screen: the pass's own signature or the
                             // event waiver, and a guardian's signature for a minor.
-                            var waiverBlock = await _waiverGate.BlockReasonForPass(tenantId, ctx.PassPurchaseId, ctx.EventId);
-                            if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                            var waiverDecision = await _waiverGate.EvaluatePass(tenantId, ctx.PassPurchaseId, ctx.EventId);
+                            if (waiverDecision.BlockReason is not null)
+                            {
+                                // The pass's own token is what its verify endpoint takes; loaded only
+                                // on a block, when the screen needs it.
+                                var passToken = waiverDecision.BirthdateBlocked
+                                    ? (await _seasonPasses.GetPurchase(ctx.PassPurchaseId)) is { } sp && sp.TenantId == tenantId
+                                        ? sp.RedemptionToken : (Guid?)null
+                                    : null;
+                                return webapi.Helpers.GateBlockResult.Result(waiverDecision, "season_pass", passToken, ctx.PassPurchaseId);
+                            }
                         }
                     }
                     var affected = await _seasonPasses.UpdateReservationStatus(purchaseId, tenantId,

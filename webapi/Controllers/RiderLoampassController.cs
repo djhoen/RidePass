@@ -150,8 +150,9 @@ namespace webapi.Controllers
             var ticketRow = await _ticketPurchases.GetById(entry.Id, _tenantContext.TenantId);
             if (ticketRow is not null)
             {
-                var waiverBlock = await _waiverGate.BlockReasonForTicket(_tenantContext.TenantId, ticketRow);
-                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                var waiverDecision = await _waiverGate.EvaluateTicket(_tenantContext.TenantId, ticketRow);
+                if (waiverDecision.BlockReason is not null)
+                    return webapi.Helpers.GateBlockResult.Result(waiverDecision, "ticket", ticketRow.RedemptionToken, ticketRow.Id);
             }
 
             await _ticketPurchases.MarkRedeemed(entry.Id, _tenantContext.TenantId, staffId, DateTime.UtcNow);

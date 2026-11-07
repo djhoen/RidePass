@@ -14,7 +14,8 @@ namespace webapi.Controllers.API.Data.Redemption
         /// <summary>Name captured at registration. NULL when registration never happened, itself a red flag at the gate.</summary>
         public string? Name { get; set; }
         public string Audience { get; set; } = "rider";      // rider | spectator
-        public DateTime? Birthdate { get; set; }
+        /// <summary>The birthdate the gate judges age by, as a calendar date (yyyy-MM-dd).</summary>
+        public DateOnly? Birthdate { get; set; }
         public int? Age { get; set; }
         public bool IsMinor { get; set; }
         /// <summary>The tiers this person holds ("Pro 250", "Rider Gate Fee").</summary>
@@ -48,9 +49,11 @@ namespace webapi.Controllers.API.Data.Redemption
 
         // ── Yearly birthdate check ──
         /// <summary>The birthdate the rider gave (ticket), to show beside the ID's when they differ.</summary>
-        public DateTime? RecordedBirthdate { get; set; }
+        public DateOnly? RecordedBirthdate { get; set; }
         /// <summary>When this rider's ID/birthdate was last checked (account first, then ticket).</summary>
         public DateTime? IdVerifiedAtUtc { get; set; }
+        /// <summary>The tenant-local day of that check (yyyy-MM-dd): the date the banner and the block message show.</summary>
+        public DateOnly? IdVerifiedLocalDate { get; set; }
         /// <summary>The tenant checks birthdates and this rider's check is missing or out of date.</summary>
         public bool BirthdateCheckNeeded { get; set; }
         /// <summary>'required' mode: admission is blocked until the ID is checked.</summary>

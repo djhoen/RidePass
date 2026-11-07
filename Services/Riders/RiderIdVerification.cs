@@ -1,4 +1,5 @@
 using Services.Repositories.Data.PaymentData;
+using Services.Repositories.Data.UserData;
 using Services.Repositories.Interfaces;
 
 namespace Services.Riders
@@ -11,8 +12,9 @@ namespace Services.Riders
     /// Why the answer isn't simply a column on users: the account that bought a credential is not
     /// necessarily the person it admits. SeasonPassCheckInContext says it outright: "a parent
     /// buys passes for their kids". The admitted person lives in the holder_*/rider_* columns on
-    /// the credential, often with no account at all. So verification is stored in both places and
-    /// resolved here.
+    /// the credential, often with no account at all. So a check is stored on the credential and,
+    /// when there is a buying account, under that account FOR THAT RIDER (rider_id_verification,
+    /// keyed by the normalized rider name), and resolved here.
     /// </summary>
     public interface IRiderIdVerification
     {
@@ -26,6 +28,12 @@ namespace Services.Riders
 
         Task<RiderIdVerificationStatus> RecordForTicket(EventTicketPurchase ticket, Guid tenantId,
             Guid? staffUserId, DateTime? verifiedDob);
+
+        /// <summary>One rider's tickets (the anchor first, then e.g. the rest of their registrant
+        /// group): every paid / redeemed one stamped in one statement, the account's row for that
+        /// rider written once.</summary>
+        Task<RiderIdVerificationStatus> RecordForRiderTickets(EventTicketPurchase anchor,
+            IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid? staffUserId, DateTime? verifiedDob);
 
         /// <summary>Undoes a verification recorded in error, clearing BOTH the credential and the
         /// account it may have propagated to. Clearing only one would leave the other still
@@ -74,6 +82,45 @@ namespace Services.Riders
         }
     }
 
+    /// <summary>One recorded ID check: when, by whom, what DOB the document showed, where it lives.</summary>
+    public sealed record IdCheck(DateTime VerifiedAtUtc, Guid? VerifiedByUserId, DateTime? VerifiedDob, string Scope);
+
+    /// <summary>
+    /// Pure rules shared by RiderIdVerification and the waiver gate: whose check a stored row is
+    /// (the rider key), and which of several stored checks counts (the most recent one, so a fresh
+    /// check on the credential is never hidden by an older one on the account, or vice versa; its
+    /// DOB is the age evidence).
+    /// </summary>
+    public static class IdCheckRules
+    {
+        /// <summary>Lowercased, inner whitespace collapsed: "Sam  Boyd" and "sam boyd" are one person.</summary>
+        public static string Normalize(string? name) =>
+            string.Join(' ', (name ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToLowerInvariant();
+
+        /// <summary>
+        /// The rider a credential admits, as a key under its buying account: the credential's
+        /// rider / holder name, or, when it names nobody, the account owner's own name.
+        /// </summary>
+        public static string RiderKey(string? riderFirst, string? riderLast, string? accountFirst, string? accountLast)
+        {
+            var rider = Normalize($"{riderFirst} {riderLast}");
+            return rider.Length > 0 ? rider : Normalize($"{accountFirst} {accountLast}");
+        }
+
+        /// <summary>The account IS the rider: the credential names nobody, or names the account owner.</summary>
+        public static bool AccountIsRider(string? riderFirst, string? riderLast, string? accountFirst, string? accountLast)
+        {
+            var rider = Normalize($"{riderFirst} {riderLast}");
+            return rider.Length == 0 || rider == Normalize($"{accountFirst} {accountLast}");
+        }
+
+        /// <summary>The most recently recorded of the given checks (nulls ignored), or null.</summary>
+        public static IdCheck? Latest(params IdCheck?[] checks) =>
+            checks.Where(c => c is not null).OrderByDescending(c => c!.VerifiedAtUtc).FirstOrDefault();
+    }
+
     public class RiderIdVerificationStatus
     {
         public bool Verified { get; init; }
@@ -113,67 +160,62 @@ namespace Services.Riders
         }
 
         // ── Reading ──────────────────────────────────────────────────────────────
-        // The account wins when it carries a verification, because it is the durable record: a
-        // rider verified last season is still verified on a pass bought today. The credential is
-        // the fallback for a holder who has no account.
+        // Candidates: the account's row for THIS rider (any account: a parent's row for their
+        // child counts for that child), the legacy users.id_verified_* stamp of a tenant's own
+        // account when that account is the rider, and the credential's own stamp. The most
+        // recently recorded one wins.
 
-        public async Task<RiderIdVerificationStatus> StatusForPass(SeasonPassPurchase pass, Guid tenantId) =>
-            await Resolve(tenantId, await AccountForHolder(pass, tenantId),
+        public async Task<RiderIdVerificationStatus> StatusForPass(SeasonPassPurchase pass, Guid tenantId)
+        {
+            var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
+            return await Resolve(tenantId, account, pass.HolderFirstName, pass.HolderLastName,
                 pass.IdVerifiedAt, pass.IdVerifiedByUserId, pass.IdVerifiedDob);
+        }
 
-        public async Task<RiderIdVerificationStatus> StatusForTicket(EventTicketPurchase ticket, Guid tenantId) =>
-            await Resolve(tenantId, await AccountForRider(ticket, tenantId),
+        public async Task<RiderIdVerificationStatus> StatusForTicket(EventTicketPurchase ticket, Guid tenantId)
+        {
+            var account = ticket.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
+            return await Resolve(tenantId, account, ticket.RiderFirstName, ticket.RiderLastName,
                 ticket.IdVerifiedAt, ticket.IdVerifiedByUserId, ticket.IdVerifiedDob);
+        }
 
-        private async Task<RiderIdVerificationStatus> Resolve(Guid tenantId,
-            Services.Repositories.Data.UserData.User? account,
+        private async Task<RiderIdVerificationStatus> Resolve(Guid tenantId, User? account,
+            string? riderFirst, string? riderLast,
             DateTime? credentialAt, Guid? credentialBy, DateTime? credentialDob)
         {
-            // A platform-wide rider account's check is this tenant's rider_id_verification row
-            // (Script0305); a tenant's own (staff) account carries it on users, as before.
-            if (account is not null && account.TenantId is null
-                && await _users.GetRiderIdVerification(account.Id, tenantId) is { } riderCheck)
+            IdCheck? row = null, legacy = null;
+            if (account is not null)
             {
-                return new RiderIdVerificationStatus
-                {
-                    Verified = true,
-                    VerifiedAtUtc = DateTime.SpecifyKind(riderCheck.VerifiedAt, DateTimeKind.Utc),
-                    VerifiedByUserId = riderCheck.VerifiedByUserId,
-                    VerifiedByName = await NameOf(riderCheck.VerifiedByUserId, tenantId),
-                    VerifiedDob = riderCheck.VerifiedDob,
-                    Scope = IdVerificationScope.Rider,
-                };
+                var key = IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
+                if (await _users.GetRiderIdVerification(account.Id, tenantId, key) is { } r)
+                    row = new IdCheck(DateTime.SpecifyKind(r.VerifiedAt, DateTimeKind.Utc), r.VerifiedByUserId,
+                        r.VerifiedDob, IdVerificationScope.Rider);
+                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la
+                    && IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                    legacy = new IdCheck(DateTime.SpecifyKind(la, DateTimeKind.Utc), account.IdVerifiedByUserId,
+                        account.IdVerifiedDob, IdVerificationScope.Rider);
             }
-            if (account is not null && account.TenantId == tenantId && account.IdVerifiedAt is not null)
+            var credential = credentialAt is { } ca
+                ? new IdCheck(DateTime.SpecifyKind(ca, DateTimeKind.Utc), credentialBy, credentialDob, IdVerificationScope.Credential)
+                : null;
+
+            var best = IdCheckRules.Latest(row, legacy, credential);
+            if (best is null) return RiderIdVerificationStatus.Unverified;
+            return new RiderIdVerificationStatus
             {
-                return new RiderIdVerificationStatus
-                {
-                    Verified = true,
-                    VerifiedAtUtc = DateTime.SpecifyKind(account.IdVerifiedAt.Value, DateTimeKind.Utc),
-                    VerifiedByUserId = account.IdVerifiedByUserId,
-                    VerifiedByName = await NameOf(account.IdVerifiedByUserId, tenantId),
-                    VerifiedDob = account.IdVerifiedDob,
-                    Scope = IdVerificationScope.Rider,
-                };
-            }
-            if (credentialAt is not null)
-            {
-                return new RiderIdVerificationStatus
-                {
-                    Verified = true,
-                    VerifiedAtUtc = DateTime.SpecifyKind(credentialAt.Value, DateTimeKind.Utc),
-                    VerifiedByUserId = credentialBy,
-                    VerifiedByName = await NameOf(credentialBy, tenantId),
-                    VerifiedDob = credentialDob,
-                    Scope = IdVerificationScope.Credential,
-                };
-            }
-            return RiderIdVerificationStatus.Unverified;
+                Verified = true,
+                VerifiedAtUtc = best.VerifiedAtUtc,
+                VerifiedByUserId = best.VerifiedByUserId,
+                VerifiedByName = await NameOf(best.VerifiedByUserId, tenantId),
+                VerifiedDob = best.VerifiedDob,
+                Scope = best.Scope,
+            };
         }
 
         // ── Writing ──────────────────────────────────────────────────────────────
-        // The credential is always stamped. The account is stamped too ONLY when the buyer is
-        // demonstrably the holder, so a parent's account never inherits their child's ID check.
+        // The credential is always stamped. The buying account gets a row FOR THIS RIDER, so a
+        // parent's own check and their child's never stand in for each other; a tenant's own
+        // account that IS the rider is also stamped on users, as before.
 
         public async Task<RiderIdVerificationStatus> RecordForPass(SeasonPassPurchase pass, Guid tenantId,
             Guid? staffUserId, DateTime? verifiedDob)
@@ -185,27 +227,38 @@ namespace Services.Riders
             var stamped = await _passes.SetIdVerified(pass.Id, tenantId, staffUserId, verifiedDob);
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
-            var account = await AccountForHolder(pass, tenantId);
-            if (account is not null) await StampAccount(account, tenantId, staffUserId, verifiedDob);
-            return new RiderIdVerificationStatus
-            {
-                Verified = true,
-                VerifiedAtUtc = DateTime.UtcNow,
-                VerifiedByUserId = staffUserId,
-                VerifiedByName = await NameOf(staffUserId, tenantId),
-                VerifiedDob = verifiedDob,
-                Scope = account is not null ? IdVerificationScope.Rider : IdVerificationScope.Credential,
-            };
+            var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
+            return await StampAccountAndReport(account, tenantId, pass.HolderFirstName, pass.HolderLastName,
+                staffUserId, verifiedDob);
         }
 
-        public async Task<RiderIdVerificationStatus> RecordForTicket(EventTicketPurchase ticket, Guid tenantId,
-            Guid? staffUserId, DateTime? verifiedDob)
+        public Task<RiderIdVerificationStatus> RecordForTicket(EventTicketPurchase ticket, Guid tenantId,
+            Guid? staffUserId, DateTime? verifiedDob) =>
+            RecordForRiderTickets(ticket, new[] { ticket.Id }, tenantId, staffUserId, verifiedDob);
+
+        public async Task<RiderIdVerificationStatus> RecordForRiderTickets(EventTicketPurchase anchor,
+            IReadOnlyCollection<Guid> ticketIds, Guid tenantId, Guid? staffUserId, DateTime? verifiedDob)
         {
-            var stamped = await _tickets.SetIdVerified(ticket.Id, tenantId, staffUserId, verifiedDob);
+            var ids = ticketIds.Contains(anchor.Id) ? ticketIds : ticketIds.Append(anchor.Id).ToArray();
+            var stamped = await _tickets.SetIdVerifiedMany(ids, tenantId, staffUserId, verifiedDob);
             if (stamped == 0) return RiderIdVerificationStatus.Unverified;
 
-            var account = await AccountForRider(ticket, tenantId);
-            if (account is not null) await StampAccount(account, tenantId, staffUserId, verifiedDob);
+            var account = anchor.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
+            return await StampAccountAndReport(account, tenantId, anchor.RiderFirstName, anchor.RiderLastName,
+                staffUserId, verifiedDob);
+        }
+
+        private async Task<RiderIdVerificationStatus> StampAccountAndReport(User? account, Guid tenantId,
+            string? riderFirst, string? riderLast, Guid? staffUserId, DateTime? verifiedDob)
+        {
+            if (account is not null)
+            {
+                var key = IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
+                await _users.SetRiderIdVerification(account.Id, tenantId, key, staffUserId, verifiedDob);
+                if (account.TenantId == tenantId
+                    && IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                    await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
+            }
             return new RiderIdVerificationStatus
             {
                 Verified = true,
@@ -220,66 +273,28 @@ namespace Services.Riders
         public async Task ClearForPass(SeasonPassPurchase pass, Guid tenantId)
         {
             await _passes.ClearIdVerified(pass.Id, tenantId);
-            var account = await AccountForHolder(pass, tenantId);
+            var account = await BuyerAccount(pass.PurchaserUserId, tenantId);
             if (account is not null)
             {
-                await _users.ClearIdVerified(account.Id, tenantId);
-                await _users.ClearRiderIdVerification(account.Id, tenantId);
+                await _users.ClearRiderIdVerification(account.Id, tenantId,
+                    IdCheckRules.RiderKey(pass.HolderFirstName, pass.HolderLastName, account.FirstName, account.LastName));
+                if (account.TenantId == tenantId
+                    && IdCheckRules.AccountIsRider(pass.HolderFirstName, pass.HolderLastName, account.FirstName, account.LastName))
+                    await _users.ClearIdVerified(account.Id, tenantId);
             }
-        }
-
-        // A platform-wide rider account (users.tenant_id IS NULL) is stamped in this tenant's
-        // rider_id_verification row; a tenant's own account on users, as before.
-        private async Task StampAccount(Services.Repositories.Data.UserData.User account, Guid tenantId,
-            Guid? staffUserId, DateTime? verifiedDob)
-        {
-            if (account.TenantId is null)
-                await _users.SetRiderIdVerification(account.Id, tenantId, staffUserId, verifiedDob);
-            else
-                await _users.SetIdVerified(account.Id, tenantId, staffUserId, verifiedDob);
         }
 
         // ── Identity resolution ──────────────────────────────────────────────────
 
-        /// <summary>
-        /// The account that IS this pass's holder, or null when the holder is someone else (or
-        /// nobody with an account). Two ways to qualify: the pass carries no distinct holder name,
-        /// so the buyer is the rider by default; or the recorded holder name matches the account's
-        /// own name. Compared case- and whitespace-insensitively, per the repo's rule that
-        /// user-entered strings are never matched case-sensitively.
-        /// </summary>
-        private async Task<Services.Repositories.Data.UserData.User?> AccountForHolder(
-            SeasonPassPurchase pass, Guid tenantId)
+        /// <summary>The buying account when it may carry this tenant's checks: a platform-wide rider
+        /// account (no tenant) or this tenant's own account, never another tenant's.</summary>
+        private async Task<User?> BuyerAccount(Guid userId, Guid tenantId)
         {
-            // A pass always has a buyer account (the column is NOT NULL), unlike a ticket.
-            var buyer = await _users.GetById(pass.PurchaserUserId);
-            // A platform-wide rider account (no tenant) or this tenant's own account; never another tenant's.
+            if (userId == Guid.Empty) return null;
+            var buyer = await _users.GetById(userId);
             if (buyer is null || (buyer.TenantId is not null && buyer.TenantId != tenantId)) return null;
-
-            var holder = Normalize($"{pass.HolderFirstName} {pass.HolderLastName}");
-            if (holder.Length == 0) return buyer;   // never registered a distinct holder
-            return holder == Normalize($"{buyer.FirstName} {buyer.LastName}") ? buyer : null;
+            return buyer;
         }
-
-        private async Task<Services.Repositories.Data.UserData.User?> AccountForRider(
-            EventTicketPurchase ticket, Guid tenantId)
-        {
-            if (ticket.PurchaserUserId is not Guid buyerId) return null;
-            var buyer = await _users.GetById(buyerId);
-            // A platform-wide rider account (no tenant) or this tenant's own account; never another tenant's.
-            if (buyer is null || (buyer.TenantId is not null && buyer.TenantId != tenantId)) return null;
-
-            var rider = Normalize($"{ticket.RiderFirstName} {ticket.RiderLastName}");
-            if (rider.Length == 0) return buyer;
-            return rider == Normalize($"{buyer.FirstName} {buyer.LastName}") ? buyer : null;
-        }
-
-        /// <summary>Collapses inner whitespace and lowercases, so "Sam  Boyd" and "sam boyd" are
-        /// the same person and a null half-name doesn't produce a stray space.</summary>
-        private static string Normalize(string? name) =>
-            string.Join(' ', (name ?? string.Empty)
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                .ToLowerInvariant();
 
         private async Task<string?> NameOf(Guid? userId, Guid tenantId)
         {

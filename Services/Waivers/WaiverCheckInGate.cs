@@ -51,6 +51,11 @@ namespace Services.Waivers
         public bool BirthdateCheckNeeded { get; init; }
         /// <summary>Blocked only because the birthdate check is due ('required' mode).</summary>
         public bool BirthdateBlocked { get; init; }
+        /// <summary>The tenant-local day of that last check (the date the block message and the gate
+        /// banner show), serialized as yyyy-MM-dd.</summary>
+        public DateOnly? IdVerifiedLocalDate { get; init; }
+        /// <summary>The rider this decision is about (rider / holder name, else the buyer).</summary>
+        public string? RiderName { get; init; }
     }
 
     /// <summary>The rider a gate signing link is for, resolved by the gate's own rules.</summary>
@@ -103,6 +108,10 @@ namespace Services.Waivers
         /// pass's product-waiver signature at another document. Returns how many places were filled.
         /// </summary>
         Task<int> LinkSignedWaiver(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId);
+
+        /// <summary>The tenant's birthdate-check policy as the gate sees it (read fresh, not from the
+        /// tenant resolution cache), so screens echo exactly what is enforced.</summary>
+        Task<(string Mode, int ValidDays)> BirthdatePolicy(Guid tenantId);
     }
 
     public class WaiverCheckInGate : IWaiverCheckInGate
@@ -114,7 +123,6 @@ namespace Services.Waivers
         private readonly IUserRepository _users;
         private readonly ITenantRepository _tenants;
         private readonly IEventTicketPurchaseRepository _tickets;
-        private readonly Services.Riders.IRiderIdVerification _idVerification;
 
         // Per-request memo (the gate is scoped).
         private readonly Dictionary<Guid, EventTicketTier?> _tierCache = new();
@@ -123,6 +131,7 @@ namespace Services.Waivers
         private readonly Dictionary<Guid, TenantFacts> _tenantCache = new();
         private readonly Dictionary<Guid, User?> _userCache = new();
         private readonly Dictionary<Guid, RiderWaiverSignature?> _sigCache = new();
+        private readonly Dictionary<(Guid AccountId, string RiderKey), RiderAccountIdVerification?> _riderCheckCache = new();
 
         public WaiverCheckInGate(
             IEventRepository events,
@@ -131,8 +140,7 @@ namespace Services.Waivers
             ISeasonPassRepository passes,
             IUserRepository users,
             ITenantRepository tenants,
-            IEventTicketPurchaseRepository tickets,
-            Services.Riders.IRiderIdVerification idVerification)
+            IEventTicketPurchaseRepository tickets)
         {
             _events = events;
             _tiers = tiers;
@@ -141,7 +149,42 @@ namespace Services.Waivers
             _users = users;
             _tenants = tenants;
             _tickets = tickets;
-            _idVerification = idVerification;
+        }
+
+        public async Task<(string Mode, int ValidDays)> BirthdatePolicy(Guid tenantId)
+        {
+            var t = await Tenant(tenantId);
+            return (t.Mode, t.ValidDays);
+        }
+
+        /// <summary>
+        /// The rider's most recent ID check, lightly: the account's row for THIS rider (one query per
+        /// account + rider per request), the legacy users stamp of a tenant's own account that is the
+        /// rider (from the cached account), and the credential's own stamp. The rules (rider key,
+        /// latest wins) are IdCheckRules, shared with RiderIdVerification.
+        /// </summary>
+        private async Task<Services.Riders.IdCheck?> LatestIdCheck(Guid tenantId, User? account,
+            string? riderFirst, string? riderLast, DateTime? credentialAt, DateTime? credentialDob)
+        {
+            Services.Riders.IdCheck? row = null, legacy = null;
+            if (account is not null && (account.TenantId is null || account.TenantId == tenantId))
+            {
+                var key = Services.Riders.IdCheckRules.RiderKey(riderFirst, riderLast, account.FirstName, account.LastName);
+                if (!_riderCheckCache.TryGetValue((account.Id, key), out var r))
+                    _riderCheckCache[(account.Id, key)] = r = await _users.GetRiderIdVerification(account.Id, tenantId, key);
+                if (r is not null)
+                    row = new Services.Riders.IdCheck(DateTime.SpecifyKind(r.VerifiedAt, DateTimeKind.Utc), null,
+                        r.VerifiedDob, Services.Riders.IdVerificationScope.Rider);
+                if (account.TenantId == tenantId && account.IdVerifiedAt is { } la
+                    && Services.Riders.IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName))
+                    legacy = new Services.Riders.IdCheck(DateTime.SpecifyKind(la, DateTimeKind.Utc), null,
+                        account.IdVerifiedDob, Services.Riders.IdVerificationScope.Rider);
+            }
+            var credential = credentialAt is { } ca
+                ? new Services.Riders.IdCheck(DateTime.SpecifyKind(ca, DateTimeKind.Utc), null, credentialDob,
+                    Services.Riders.IdVerificationScope.Credential)
+                : null;
+            return Services.Riders.IdCheckRules.Latest(row, legacy, credential);
         }
 
         // ── Tickets ──────────────────────────────────────────────────────────────────────────
@@ -175,7 +218,10 @@ namespace Services.Waivers
             var account = ticket.PurchaserUserId is Guid uid ? await User(uid) : null;
             // The rider's recorded ID check (account first, then this ticket). Its DOB is the
             // verified one, which wins for age.
-            var idCheck = riderAudience ? await _idVerification.StatusForTicket(ticket, tenantId) : null;
+            var idCheck = riderAudience
+                ? await LatestIdCheck(tenantId, account, ticket.RiderFirstName, ticket.RiderLastName,
+                    ticket.IdVerifiedAt, ticket.IdVerifiedDob)
+                : null;
             var birthdate = GuardianWaiverRule.ResolveBirthdate(new RiderBirthdateFacts(
                 GuardianWaiverRule.ToDateOnly(idCheck?.VerifiedDob ?? ticket.IdVerifiedDob),
                 GuardianWaiverRule.ToDateOnly(ticket.RiderBirthdate),
@@ -315,10 +361,12 @@ namespace Services.Waivers
             DateOnly? sigBirth = GuardianWaiverRule.ToDateOnly(own?.SpectatorBirthdate);
             if (sigBirth is null && accountSig is not null && SignatureCoversHolder(accountSig, pass, accountIsHolder))
                 sigBirth = GuardianWaiverRule.ToDateOnly(accountSig.SpectatorBirthdate);
-            // The holder's recorded ID check (account first, then this pass); its DOB wins for age.
-            var idCheck = await _idVerification.StatusForPass(pass, tenantId);
+            // The holder's most recent recorded ID check (the account's row for this holder, or this
+            // pass); its DOB wins for age.
+            var idCheck = await LatestIdCheck(tenantId, account, pass.HolderFirstName, pass.HolderLastName,
+                pass.IdVerifiedAt, pass.IdVerifiedDob);
             var birthdate = GuardianWaiverRule.ResolveBirthdate(new RiderBirthdateFacts(
-                GuardianWaiverRule.ToDateOnly(idCheck.VerifiedDob ?? pass.IdVerifiedDob),
+                GuardianWaiverRule.ToDateOnly(idCheck?.VerifiedDob ?? pass.IdVerifiedDob),
                 GuardianWaiverRule.ToDateOnly(pass.HolderBirthdate),
                 sigBirth,
                 GuardianWaiverRule.ToDateOnly(account?.IdVerifiedDob),
@@ -483,9 +531,9 @@ namespace Services.Waivers
         /// <summary>The tenant's date, zone and birthdate-check policy, loaded once per request.</summary>
         private sealed record TenantFacts(DateOnly Today, TimeZoneInfo Zone, string Mode, int ValidDays)
         {
-            public VerifyFacts Verify(Services.Riders.RiderIdVerificationStatus? check)
+            public VerifyFacts Verify(Services.Riders.IdCheck? check)
             {
-                var at = check is { Verified: true } ? check.VerifiedAtUtc : null;
+                var at = check?.VerifiedAtUtc;
                 return new VerifyFacts(Mode, at,
                     Services.Riders.IdVerificationWindow.VerifiedLocalDate(at, Zone),
                     Services.Riders.IdVerificationWindow.IsCurrent(at, Today, ValidDays, Zone));
@@ -525,6 +573,8 @@ namespace Services.Waivers
                     BirthdateVerifiedCurrent = Verify.Current,
                     BirthdateCheckNeeded = checkNeeded,
                     BirthdateBlocked = birthdateBlock,
+                    IdVerifiedLocalDate = Verify.VerifiedLocalDate,
+                    RiderName = RiderName,
                 };
             }
         }

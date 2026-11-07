@@ -241,9 +241,12 @@ namespace Services.Repositories
             await _db.Execute(sql, new { tenantId, require });
         }
 
-        public async Task UpdateBirthdateVerification(Guid tenantId, string mode, int validDays)
+        public async Task UpdateBirthdateVerification(Guid tenantId, string? mode, int? validDays)
         {
-            const string sql = @"UPDATE tenant SET birthdate_verify_mode = @mode, birthdate_verify_valid_days = @validDays
+            // Either half may be left out; the stored value is kept, read in the same statement.
+            const string sql = @"UPDATE tenant
+                                 SET birthdate_verify_mode = COALESCE(@mode, birthdate_verify_mode),
+                                     birthdate_verify_valid_days = COALESCE(@validDays, birthdate_verify_valid_days)
                                  WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, mode, validDays });
         }

@@ -16,5 +16,10 @@ namespace webapi.Controllers.API.Data.Redemption
         public DateTime? RedeemedAtUtc { get; set; }
         // Human-readable reason when Outcome is "blocked", for the operator app to surface.
         public string? BlockReason { get; set; }
+        /// <summary>Machine-readable kind of block: "birthdate_unverified" when the tenant requires a
+        /// current ID / birthdate check and this rider has none (fix: verify their ID, then re-sync).</summary>
+        public string? BlockCode { get; set; }
+        /// <summary>The rider the block is about.</summary>
+        public string? RiderName { get; set; }
     }
 }

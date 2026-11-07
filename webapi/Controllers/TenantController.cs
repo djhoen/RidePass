@@ -214,13 +214,15 @@ namespace webapi.Controllers
             await _tenants.UpdateRequireIdAtCheckin(_tenantContext.TenantId, request.RequireIdAtCheckin);
             await _tenants.UpdateRequireIdForWristband(_tenantContext.TenantId, request.RequireIdForWristband);
             await _tenants.UpdateSeasonPassAdmissionType(_tenantContext.TenantId, request.SeasonPassAdmissionTypeId);
-            // Yearly birthdate check: only when the caller sent it (older settings screens don't).
+            // Yearly birthdate check: only the half the caller sent (older settings screens send
+            // neither); the other half is kept in SQL, never re-written from the cached tenant.
             if (request.BirthdateVerifyMode is not null || request.BirthdateVerifyValidDays is not null)
             {
                 await _tenants.UpdateBirthdateVerification(_tenantContext.TenantId,
-                    request.BirthdateVerifyMode ?? _tenantContext.Tenant.BirthdateVerifyMode,
-                    request.BirthdateVerifyValidDays ?? _tenantContext.Tenant.BirthdateVerifyValidDays);
+                    request.BirthdateVerifyMode, request.BirthdateVerifyValidDays);
             }
+            // The resolution cache would otherwise serve the old settings for up to 5 minutes.
+            InvalidateTenantCache();
             return await GetBranding();
         }
 

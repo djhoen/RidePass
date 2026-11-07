@@ -251,36 +251,38 @@ namespace Services.Repositories
             return await _db.Execute(sql, new { userId, tenantId });
         }
 
-        public async Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId)
+        public async Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId, string riderKey)
         {
             const string sql = @"
-                SELECT tenant_id AS TenantId, user_id AS UserId, verified_at AS VerifiedAt,
+                SELECT tenant_id AS TenantId, user_id AS UserId, rider_key AS RiderKey, verified_at AS VerifiedAt,
                        verified_by_user_id AS VerifiedByUserId, verified_dob AS VerifiedDob
                 FROM rider_id_verification
-                WHERE user_id = @userId AND tenant_id = @tenantId
+                WHERE user_id = @userId AND tenant_id = @tenantId AND rider_key = @riderKey
                 LIMIT 1";
-            return (await _db.Query<RiderAccountIdVerification>(sql, new { userId, tenantId })).FirstOrDefault();
+            return (await _db.Query<RiderAccountIdVerification>(sql, new { userId, tenantId, riderKey })).FirstOrDefault();
         }
 
-        public async Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        public async Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, string riderKey,
+            Guid? verifiedByUserId, DateTime? verifiedDob)
         {
-            // One row per (tenant, account): a re-check refreshes it, so the window restarts.
+            // One row per (tenant, account, rider): a re-check refreshes it, so the window restarts.
             const string sql = @"
-                INSERT INTO rider_id_verification (tenant_id, user_id, verified_at, verified_by_user_id, verified_dob)
-                VALUES (@tenantId, @userId, now(), @verifiedByUserId, @verifiedDob)
-                ON CONFLICT (tenant_id, user_id) DO UPDATE
+                INSERT INTO rider_id_verification (tenant_id, user_id, rider_key, verified_at, verified_by_user_id, verified_dob)
+                VALUES (@tenantId, @userId, @riderKey, now(), @verifiedByUserId, @verifiedDob)
+                ON CONFLICT (tenant_id, user_id, rider_key) DO UPDATE
                    SET verified_at = now(),
                        verified_by_user_id = EXCLUDED.verified_by_user_id,
                        verified_dob = EXCLUDED.verified_dob,
                        updated_at = now()";
-            return await _db.Execute(sql, new { userId, tenantId, verifiedByUserId,
+            return await _db.Execute(sql, new { userId, tenantId, riderKey, verifiedByUserId,
                 verifiedDob = verifiedDob?.Date });
         }
 
-        public async Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId)
+        public async Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId, string riderKey)
         {
-            const string sql = "DELETE FROM rider_id_verification WHERE user_id = @userId AND tenant_id = @tenantId";
-            return await _db.Execute(sql, new { userId, tenantId });
+            const string sql = @"DELETE FROM rider_id_verification
+                                 WHERE user_id = @userId AND tenant_id = @tenantId AND rider_key = @riderKey";
+            return await _db.Execute(sql, new { userId, tenantId, riderKey });
         }
 
         public async Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,

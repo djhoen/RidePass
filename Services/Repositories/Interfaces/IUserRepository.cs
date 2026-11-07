@@ -47,12 +47,13 @@ namespace Services.Repositories.Interfaces
         /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>
         Task<int> ClearIdVerified(Guid userId, Guid tenantId);
 
-        /// <summary>This tenant's ID check of a platform-wide RIDER account (rider_id_verification,
-        /// Script0305), or null. Rider accounts carry no tenant_id, so their verification lives here.</summary>
-        Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId);
-        /// <summary>Records (or refreshes) this tenant's ID check of a rider account.</summary>
-        Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob);
-        Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId);
+        /// <summary>This tenant's ID check of one RIDER under an account (rider_id_verification,
+        /// Script0305), or null. <paramref name="riderKey"/> is the normalized rider name
+        /// (RiderIdVerification.RiderKey): a parent's own check and their child's are separate rows.</summary>
+        Task<RiderAccountIdVerification?> GetRiderIdVerification(Guid userId, Guid tenantId, string riderKey);
+        /// <summary>Records (or refreshes) this tenant's ID check of one rider under an account.</summary>
+        Task<int> SetRiderIdVerification(Guid userId, Guid tenantId, string riderKey, Guid? verifiedByUserId, DateTime? verifiedDob);
+        Task<int> ClearRiderIdVerification(Guid userId, Guid tenantId, string riderKey);
         Task UpdateAddress(Guid userId, string? addressLine, string? addressLine2,
             string? city, string? state, string? postalCode, string? country);
         Task<string?> GetDashboardConfig(Guid userId);

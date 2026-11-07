@@ -381,6 +381,8 @@ export interface OrderWaiverAttendee {
     recordedBirthdate: string | null
     /** When this rider's ID/birthdate was last checked (account first, then ticket). */
     idVerifiedAtUtc: string | null
+    /** The tenant-local day of that check (yyyy-MM-dd), as the block message shows it. */
+    idVerifiedLocalDate: string | null
     /** The tenant checks birthdates and this rider's check is missing or out of date. */
     birthdateCheckNeeded: boolean
     /** 'required' mode: admission blocked until the ID is checked. */

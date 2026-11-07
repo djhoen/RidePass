@@ -103,10 +103,11 @@ namespace webapi.Controllers
         /// rider at all, with nothing in the UI to fix it, which is worse than the gap it closes.
         /// Add the ID clause the moment a ticket-side verify action ships.
         /// </summary>
-        private async Task<string?> BandBlockReasonForTicket(EventTicketPurchase ticket)
+        private async Task<Services.Waivers.WaiverGateDecision?> BandBlockForTicket(EventTicketPurchase ticket)
         {
             if (!_tenantContext.Tenant.RequireIdForWristband) return null;
-            return await _waiverGate.BlockReasonForTicket(TenantId, ticket);
+            var decision = await _waiverGate.EvaluateTicket(TenantId, ticket);
+            return decision.BlockReason is null ? null : decision;
         }
 
         [HttpPost("Link")]
@@ -134,8 +135,8 @@ namespace webapi.Controllers
                 var tier = await _tiers.GetById(ticket.TierId, TenantId);
                 if (tier is null) return new ApiResponses().BadRequestResult("This ticket's tier no longer exists.");
 
-                if (await BandBlockReasonForTicket(ticket) is { } ticketBlock)
-                    return new ApiResponses().BadRequestResult(ticketBlock);
+                if (await BandBlockForTicket(ticket) is { } ticketBlock)
+                    return webapi.Helpers.GateBlockResult.Result(ticketBlock, "ticket", ticket.RedemptionToken, ticket.Id);
 
                 var conflictHolder = await _wristbands.Link(TenantId, tier.EventId, ticket.Id, code, UserId);
                 if (conflictHolder is not null)

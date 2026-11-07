@@ -12,8 +12,14 @@
 --    are platform-wide (users.tenant_id IS NULL), so the existing users.id_verified_* columns
 --    (Script0238) can only ever be written for a tenant's own staff accounts; a rider verified at
 --    the gate was recorded on the ticket / pass alone and had to be re-checked on the next one.
---    One row per (tenant, account) makes a verification carry to every later ticket and pass at
---    that tenant, without one track's check ever counting at another.
+--    One row per (tenant, account, rider) makes a verification carry to every later ticket and
+--    pass at that tenant, without one track's check ever counting at another.
+--
+--    rider_key is the RIDER the check was for, as the normalized (lowercased, single-spaced)
+--    rider / holder name on the credential; the account owner's own check uses their own name.
+--    So a parent who buys for themselves and a child holds two rows under one account, the
+--    child's later tickets find the child's row, and the child's DOB never answers for the
+--    parent (or the other way round).
 --
 -- Additive: new columns carry defaults, the new table is unused by older code.
 -- Rerunnable: ADD COLUMN IF NOT EXISTS, guarded constraints, CREATE TABLE / INDEX IF NOT EXISTS.
@@ -37,6 +43,7 @@ CREATE TABLE IF NOT EXISTS rider_id_verification (
     id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id           uuid NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
     user_id             uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rider_key           text NOT NULL,
     verified_at         timestamptz NOT NULL DEFAULT now(),
     verified_by_user_id uuid NULL REFERENCES users(id) ON DELETE SET NULL,
     verified_dob        date NULL,
@@ -44,5 +51,17 @@ CREATE TABLE IF NOT EXISTS rider_id_verification (
     updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_rider_id_verification_tenant_user
-    ON rider_id_verification (tenant_id, user_id);
+-- A database that ran an earlier draft of this script (unpushed) has the table keyed on
+-- (tenant, account) only: add the rider key and re-key it. The draft never shipped, so any such
+-- table is a local dev one; its rows (if any) are cleared rather than guessed at.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'rider_id_verification' AND column_name = 'rider_key') THEN
+        DELETE FROM rider_id_verification;
+        ALTER TABLE rider_id_verification ADD COLUMN rider_key text NOT NULL;
+    END IF;
+END $$;
+DROP INDEX IF EXISTS uk_rider_id_verification_tenant_user;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_rider_id_verification_tenant_user_rider
+    ON rider_id_verification (tenant_id, user_id, rider_key);

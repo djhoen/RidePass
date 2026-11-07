@@ -9,6 +9,8 @@ namespace Services.Repositories.Data.UserData
     {
         public Guid TenantId { get; set; }
         public Guid UserId { get; set; }
+        /// <summary>The rider the check was for: their normalized name (RiderIdVerification.RiderKey).</summary>
+        public string RiderKey { get; set; } = string.Empty;
         public DateTime VerifiedAt { get; set; }
         public Guid? VerifiedByUserId { get; set; }
         public DateTime? VerifiedDob { get; set; }

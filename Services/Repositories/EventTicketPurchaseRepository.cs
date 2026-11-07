@@ -143,6 +143,7 @@ namespace Services.Repositories
                        -- IWaiverCheckInGate exactly as redeem will. The inline signature image is
                        -- only needed as a presence marker here, so it is not shipped.
                        p.rider_birthdate AS RiderBirthdate, p.id_verified_dob AS IdVerifiedDob,
+                       p.id_verified_at AS IdVerifiedAt, p.id_verified_by_user_id AS IdVerifiedByUserId,
                        p.waiver_id AS WaiverId, p.waiver_signed_at AS WaiverSignedAt,
                        CASE WHEN p.waiver_signature_data_url IS NOT NULL THEN 'present' END AS WaiverSignatureDataUrl,
                        p.waiver_signature_id AS WaiverSignatureId,
@@ -410,6 +411,19 @@ namespace Services.Repositories
                     updated_at             = now()
                 WHERE id = @id AND tenant_id = @tenantId";
             return await _db.Execute(sql, new { id, tenantId, verifiedByUserId, verifiedDob });
+        }
+
+        public async Task<int> SetIdVerifiedMany(IReadOnlyCollection<Guid> ids, Guid tenantId, Guid? verifiedByUserId, DateTime? verifiedDob)
+        {
+            // One rider's tickets in one statement; only live (paid / redeemed) ones of this tenant.
+            const string sql = @"
+                UPDATE event_ticket_purchase
+                SET id_verified_at         = now(),
+                    id_verified_by_user_id = @verifiedByUserId,
+                    id_verified_dob        = @verifiedDob,
+                    updated_at             = now()
+                WHERE id = ANY(@ids) AND tenant_id = @tenantId AND status IN ('paid', 'redeemed')";
+            return await _db.Execute(sql, new { ids = ids.ToArray(), tenantId, verifiedByUserId, verifiedDob });
         }
 
         /// <summary>Undoes a verification recorded in error. Tenant-scoped.</summary>

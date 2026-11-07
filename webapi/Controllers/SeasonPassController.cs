@@ -1767,6 +1767,7 @@ namespace webapi.Controllers
             var judgedEventId = eventId is Guid picked && todaysEvents.Any(e => e.Id == picked) ? picked
                 : todaysEvents.Count == 1 ? todaysEvents[0].Id : (Guid?)null;
             var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, judgedEventId);
+            var birthdatePolicy = await _waiverGate.BirthdatePolicy(_tenantContext.TenantId);
             var waiverSigned = admittedToday || waiverDecision.Satisfied;
             var waiverBlockReason = admittedToday ? null : waiverDecision.BlockReason;
 
@@ -1798,10 +1799,13 @@ namespace webapi.Controllers
                 WaiverGuardianName = waiverDecision.GuardianName,
                 WaiverSignerName = waiverDecision.SignerName,
                 // Yearly birthdate check: the tenant's policy and where this holder stands.
-                BirthdateVerifyMode = _tenantContext.Tenant.BirthdateVerifyMode,
-                BirthdateVerifyValidDays = _tenantContext.Tenant.BirthdateVerifyValidDays,
+                // Policy from the gate (fresh), so the screen shows exactly what admission enforces.
+                BirthdateVerifyMode = birthdatePolicy.Mode,
+                BirthdateVerifyValidDays = birthdatePolicy.ValidDays,
                 BirthdateCheckNeeded = waiverDecision.BirthdateCheckNeeded,
                 BirthdateBlocked = waiverDecision.BirthdateBlocked,
+                // The tenant-local day of the last ID check (the date the block message shows).
+                IdVerifiedLocalDate = waiverDecision.IdVerifiedLocalDate,
                 // Who a signing link should go to: the buyer, when they are not the holder (a
                 // parent who bought the pass), else nobody on file and staff type one in.
                 GuardianEmail = Services.Waivers.GuardianWaiverRule.SuggestGuardianEmail(
@@ -1836,8 +1840,9 @@ namespace webapi.Controllers
                 // Age off the DOCUMENT, not the sign-up form. Null until verified, so the screen
                 // can never present a typed-in age as a checked one.
                 IdVerifiedAge = idStatus.VerifiedAge,
-                // Self-reported, shown as the starting point for the verify dialog.
-                HolderBirthdate = pass.HolderBirthdate,
+                // Self-reported, shown as the starting point for the verify dialog. A calendar date
+                // (yyyy-MM-dd), never an instant, so no browser time zone can shift it a day.
+                HolderBirthdate = pass.HolderBirthdate is { } hb ? DateOnly.FromDateTime(hb) : (DateOnly?)null,
                 // Echoed so the scanner knows whether to enforce, without a second round trip.
                 RequireIdForWristband = _tenantContext.Tenant.RequireIdForWristband,
                 // Who the pass admits — may differ from the buyer, so this is the name staff
@@ -1903,12 +1908,8 @@ namespace webapi.Controllers
                     $"This pass is {pass.Status}, so there's nothing to verify against. Sort the pass out first.");
 
             // The DOB is the age evidence, so a verification without one is not worth recording.
-            var dob = request.VerifiedDob ?? pass.HolderBirthdate;
-            if (dob is null)
-                return new ApiResponses().BadRequestResult(
-                    "Enter the date of birth from the rider's ID. It's what the age check rests on.");
-            if (dob.Value.Date > DateTime.UtcNow.Date)
-                return new ApiResponses().BadRequestResult("That date of birth is in the future. Check the ID again.");
+            var (dob, dobError) = RiderIdCheckHelper.ResolveDob(request.VerifiedDob, pass.HolderBirthdate);
+            if (dobError is not null) return new ApiResponses().BadRequestResult(dobError);
 
             var staffId = TryGetUserId(out var sid) ? sid : (Guid?)null;
             var status = await _idVerification.RecordForPass(pass, _tenantContext.TenantId, staffId, dob);
@@ -1919,11 +1920,8 @@ namespace webapi.Controllers
             var holder = string.IsNullOrWhiteSpace(pass.HolderFirstName)
                 ? pass.PurchaserName
                 : $"{pass.HolderFirstName} {pass.HolderLastName}".Trim();
-            await _audit.Log("rider.id_verified",
-                $"Verified ID and age for {holder} (age {status.VerifiedAge}).",
-                targetKind: "season_pass_purchase", targetId: pass.Id,
-                tenantId: _tenantContext.TenantId,
-                metadata: new { scope = status.Scope, verifiedDob = dob.Value.Date });
+            await RiderIdCheckHelper.Audit(_audit, _tenantContext.TenantId, holder, status, dob!.Value,
+                pass.HolderBirthdate, "season_pass_purchase", pass.Id);
 
             return new ApiResponses().OkResult(new
             {
@@ -1932,6 +1930,7 @@ namespace webapi.Controllers
                 IdVerifiedByName = status.VerifiedByName,
                 IdVerifiedScope = status.Scope,
                 IdVerifiedAge = status.VerifiedAge,
+                DobMismatch = RiderIdCheckHelper.Differs(dob.Value, pass.HolderBirthdate),
             });
         }
 
@@ -2032,9 +2031,15 @@ namespace webapi.Controllers
                 // The gate decides: a holder signature on the pass is the holder's own evidence (the
                 // standard a ticket's linked signature meets), otherwise the event waiver is looked
                 // up for the pass's account; either way a minor needs a guardian's signature.
-                var waiverBlock = await _waiverGate.BlockReasonForPass(_tenantContext.TenantId,
+                var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId,
                     ctx.PassPurchaseId, ctx.EventId);
-                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                if (waiverDecision.BlockReason is not null)
+                {
+                    var blockedPass = waiverDecision.BirthdateBlocked ? await _passes.GetPurchase(ctx.PassPurchaseId) : null;
+                    return GateBlockResult.Result(waiverDecision, "season_pass",
+                        blockedPass?.TenantId == _tenantContext.TenantId ? blockedPass.RedemptionToken : null,
+                        ctx.PassPurchaseId);
+                }
             }
 
             var affected = await _passes.UpdateReservationStatus(id, _tenantContext.TenantId, "checked_in", staffId);
@@ -2138,8 +2143,9 @@ namespace webapi.Controllers
                 // The gate decides, with or without an event: the pass's own signature (the
                 // product waiver, whose presence was checked just above) and, when an event is in
                 // play, the event's rider waiver; a minor needs a guardian's signature either way.
-                var waiverBlock = (await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId)).BlockReason;
-                if (waiverBlock is not null) return new ApiResponses().BadRequestResult(waiverBlock);
+                var waiverDecision = await _waiverGate.EvaluatePass(_tenantContext.TenantId, pass, product, eventId);
+                if (waiverDecision.BlockReason is not null)
+                    return GateBlockResult.Result(waiverDecision, "season_pass", pass.RedemptionToken, pass.Id);
             }
 
             // Serialize double-scans of the same pass; the pre-checks below and the atomic
