@@ -805,6 +805,11 @@ namespace webapi.Controllers
             if (activeWaiver is not null)
             {
                 var existing = await _waivers.GetSignature(rider.Id, activeWaiver.Id);
+                // A guardian / pre-18 signature stops counting once the rider is 18: they sign again
+                // as an adult (Sign keeps the old row as the record).
+                var supersede = existing is not null
+                    && AccountWaiverStatus.IsMinorEraForAdult(rider, existing, _tenantContext.Tenant.Timezone, DateTime.UtcNow);
+                if (supersede) existing = null;
                 if (existing is null)
                 {
                     if (!request.SignWaiver)
@@ -829,7 +834,7 @@ namespace webapi.Controllers
                     }
                     var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
                     waiverSignatureId = await _waivers.Sign(_tenantContext.TenantId, rider.Id, activeWaiver.Id, ip, request.SignatureDataUrl,
-                        signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
+                        signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede);
                 }
                 else
                 {

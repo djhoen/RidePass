@@ -23,8 +23,9 @@
             <!-- Ahead of the gate: everyone who turned 18 since their waiver gets a link to sign as
                  an adult. Staff-triggered only; nothing goes out on its own. -->
             <v-btn v-if="pplStatus === 'needs_adult' && pplTotal > 0" color="primary" variant="tonal"
-                prepend-icon="mdi-email-fast-outline" :loading="adultSending" @click="sendAdultLinks">
-                Send signing links ({{ pplTotal }})
+                prepend-icon="mdi-email-fast-outline" :loading="adultSending" :disabled="adultSendable.length === 0"
+                @click="sendAdultLinks">
+                Send signing links ({{ adultSendable.length }})
             </v-btn>
         </div>
 
@@ -61,8 +62,13 @@
                                     <template #activator="{ props }">
                                         <v-chip v-bind="props" size="x-small" color="error" class="ml-1">Needs adult waiver</v-chip>
                                     </template>
-                                    Already 18, but their latest waiver dates from when they were a minor. The gate
-                                    will ask them to sign it themselves as an adult.
+                                    Already 18, but their latest signature on the current waiver is a guardian's
+                                    or dates from before their 18th birthday. The gate will ask them to sign it
+                                    themselves as an adult. (The gate judges each ticket or pass on its own
+                                    signature and any ID-verified birthdate, so a few may differ at the gate.)
+                                    <template v-if="p.adultLinkOpen"><br>A signing link is already open for them.</template>
+                                    <template v-else-if="!p.hasRiderEmail"><br>No email of their own on file, so no link
+                                        can be sent; ask them to sign at the gate.</template>
                                 </v-tooltip>
                                 <v-tooltip v-if="p.agingOutSoon" location="top">
                                     <template #activator="{ props }">
@@ -221,15 +227,24 @@ const statusOptions = [
 const adultSending = ref(false)
 const adultMessage = ref('')
 const adultMessageType = ref<'success' | 'warning' | 'error'>('success')
+// Exactly the people shown that a link can go to: the button count is what will be sent (the
+// server re-checks each one and caps a single send).
+const adultSendable = computed(() => people.value.filter(p => p.needsAdultWaiver && p.hasRiderEmail && !p.adultLinkOpen))
 async function sendAdultLinks() {
     adultSending.value = true
     adultMessage.value = ''
     try {
-        const r = (await service.createAdultWaiverSignRequests()).data.data
-        adultMessageType.value = r.emailFailures > 0 ? 'warning' : 'success'
-        adultMessage.value = `Sent ${r.created - r.emailFailures} signing link${r.created - r.emailFailures === 1 ? '' : 's'}.`
-            + (r.alreadyCovered ? ` ${r.alreadyCovered} skipped (no email on file, or a link is already open).` : '')
+        const r = (await service.createAdultWaiverSignRequests(adultSendable.value.map(p => p.personKey))).data.data
+        const plural = (n: number) => (n === 1 ? '' : 's')
+        const skipped = r.skippedNoRiderEmail + r.skippedOpenLink + r.noLongerNeeded
+        adultMessageType.value = r.emailFailures > 0 || r.emailNotConfigured || r.deferred > 0 ? 'warning' : 'success'
+        adultMessage.value = (r.emailNotConfigured
+            ? `Created ${r.created} signing link${plural(r.created)}; email is not set up, so copy them from Waiver requests.`
+            : `Sent ${r.sent} signing link${plural(r.sent)}.`)
+            + (skipped ? ` ${skipped} skipped (no email of their own, a link already open, or no longer needed).` : '')
             + (r.emailFailures ? ` ${r.emailFailures} could not be emailed; copy their links from Waiver requests.` : '')
+            + (r.deferred ? ` ${r.deferred} more not sent this time; send again to reach them.` : '')
+        await loadPeople()
     } catch (err: any) {
         adultMessageType.value = 'error'
         adultMessage.value = err.response?.data?.error ?? 'Could not send the signing links.'

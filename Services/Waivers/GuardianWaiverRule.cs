@@ -104,8 +104,9 @@ namespace Services.Waivers
         /// </summary>
         public static bool AccountIsRider(string? riderFirst, string? riderLast, string? accountFirst, string? accountLast)
         {
-            if (string.IsNullOrWhiteSpace(riderFirst) && string.IsNullOrWhiteSpace(riderLast)) return true;
-            return Same(riderFirst, accountFirst) && Same(riderLast, accountLast);
+            // One rule for "the buying account is this rider / holder", shared with RiderIdVerification and
+            // the gate (normalized full names; a credential naming nobody is the account owner's own).
+            return Services.Riders.IdCheckRules.AccountIsRider(riderFirst, riderLast, accountFirst, accountLast);
         }
 
         /// <summary>A guardian signature: the row says signed_by_parent with a guardian name, or a legacy
@@ -123,7 +124,7 @@ namespace Services.Waivers
         /// Apply the rule to a signature that is otherwise valid for this rider and event.
         /// </summary>
         public static GuardianCheck Evaluate(DateOnly? birthdate, DateOnly onDate, WaiverSignatureFacts signature,
-            string? riderName)
+            string? riderName, bool applyAdultRule = true)
         {
             var byGuardian = IsGuardianSigned(signature);
             var guardian = byGuardian
@@ -141,7 +142,9 @@ namespace Services.Waivers
             // An ADULT whose covering waiver dates from when they were a minor: a guardian signed it,
             // or they signed it themselves before their 18th birthday (by the tenant-local day). A
             // waiver signed on or after the birthday by the rider is theirs as an adult.
-            if (!minor)
+            // applyAdultRule is false for a signature that is not the rider's own (e.g. a parent's own
+            // signature found on the buying account): it is never judged against the rider's birthday.
+            if (!minor && applyAdultRule)
             {
                 var eighteenth = EighteenthBirthday(birthdate.Value);
                 var minorEra = byGuardian || (signature.SignedLocalDate is { } signedOn && signedOn < eighteenth);
@@ -150,6 +153,18 @@ namespace Services.Waivers
                         byGuardian, guardian, AdultWaiverNeeded: true, TurnedEighteenOn: eighteenth);
             }
             return new GuardianCheck(null, age, minor, false, byGuardian, guardian);
+        }
+
+        /// <summary>
+        /// An account signature that no longer counts for its (now adult) owner: they are 18 or over on
+        /// <paramref name="today"/> and the signature is a guardian's or was made before their 18th
+        /// birthday. The account sign paths (app and counter) treat it as unsigned so the adult re-signs.
+        /// </summary>
+        public static bool IsMinorEraForAdult(DateOnly? birthdate, DateOnly today, WaiverSignatureFacts signature)
+        {
+            if (birthdate is null || !signature.HasSignatureRow || AgeOn(birthdate.Value, today) < AdultAge) return false;
+            return IsGuardianSigned(signature)
+                || (signature.SignedLocalDate is { } on && on < EighteenthBirthday(birthdate.Value));
         }
 
         /// <summary>The day a rider turns 18. A 29 February birthday turns over on 1 March in a common

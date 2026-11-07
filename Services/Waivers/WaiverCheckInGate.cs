@@ -137,7 +137,6 @@ namespace Services.Waivers
         private readonly Dictionary<Guid, User?> _userCache = new();
         private readonly Dictionary<Guid, RiderWaiverSignature?> _sigCache = new();
         private readonly Dictionary<(Guid AccountId, string RiderKey), RiderAccountIdVerification?> _riderCheckCache = new();
-        private bool _adultFallback = true;
 
         public WaiverCheckInGate(
             IEventRepository events,
@@ -201,11 +200,16 @@ namespace Services.Waivers
         public async Task<List<WaiverGateDecision>> EvaluateTickets(Guid tenantId, IReadOnlyList<EventTicketPurchase> tickets)
         {
             var result = new List<WaiverGateDecision>(tickets.Count);
-            foreach (var t in tickets) result.Add(await EvaluateTicket(tenantId, t));
+            foreach (var t in tickets) result.Add(await EvaluateTicketCore(tenantId, t, adultFallback: true));
             return result;
         }
 
-        public async Task<WaiverGateDecision> EvaluateTicket(Guid tenantId, EventTicketPurchase ticket)
+        public Task<WaiverGateDecision> EvaluateTicket(Guid tenantId, EventTicketPurchase ticket) =>
+            EvaluateTicketCore(tenantId, ticket, adultFallback: true);
+
+        /// <param name="adultFallback">Whether an adult signature made since turning 18 (found by name and
+        /// birthdate) may stand in for the linked one. False when deciding where a NEW signature goes.</param>
+        private async Task<WaiverGateDecision> EvaluateTicketCore(Guid tenantId, EventTicketPurchase ticket, bool adultFallback)
         {
             var tier = await Tier(ticket.TierId, tenantId);
             if (tier is null) return new WaiverGateDecision { Satisfied = true };   // can't classify; don't block
@@ -222,6 +226,7 @@ namespace Services.Waivers
             // the buyer account's only when the account IS the rider.
             var sig = ticket.WaiverSignatureId is Guid sigId ? await Signature(sigId, tenantId) : null;
             var account = ticket.PurchaserUserId is Guid uid ? await User(uid) : null;
+            var accountIsRider = AccountIsRider(account, ticket.RiderFirstName, ticket.RiderLastName);
             // The rider's recorded ID check (account first, then this ticket). Its DOB is the
             // verified one, which wins for age.
             var idCheck = riderAudience
@@ -234,12 +239,11 @@ namespace Services.Waivers
                 GuardianWaiverRule.ToDateOnly(sig?.SpectatorBirthdate),
                 GuardianWaiverRule.ToDateOnly(account?.IdVerifiedDob),
                 GuardianWaiverRule.ToDateOnly(account?.Birthdate),
-                account is not null && GuardianWaiverRule.AccountIsRider(
-                    ticket.RiderFirstName, ticket.RiderLastName, account.FirstName, account.LastName)));
+                accountIsRider));
             var tenant = await Tenant(tenantId);
             var ages = new AgeFacts(birthdate, tenant.Today, riderAudience, tenant.Verify(idCheck),
                 JoinName(ticket.RiderFirstName, ticket.RiderLastName) ?? ticket.PurchaserName,
-                RiderEmailOf(account, ticket.RiderFirstName, ticket.RiderLastName));
+                accountIsRider ? account!.Email : null);
             var today = tenant.Today;
 
             // Registration must be finished before admission for rider-audience tickets: it is where
@@ -296,7 +300,7 @@ namespace Services.Waivers
             // link sent ahead of time) is their evidence now.
             if (check.AdultWaiverNeeded
                 && await AdultSelfSignature(tenantId, doc.Value, ticket.RiderFirstName, ticket.RiderLastName,
-                    birthdate, check.TurnedEighteenOn, tenant.Zone) is { } adultSig)
+                    birthdate, check.TurnedEighteenOn, tenant, adultFallback) is { } adultSig)
             {
                 check = GuardianWaiverRule.Evaluate(birthdate, today, Facts(adultSig, null, null, tenant.Zone), riderName);
                 signerName = adultSig.SignerName;
@@ -326,8 +330,12 @@ namespace Services.Waivers
             return await EvaluatePass(tenantId, pass, await _passes.GetProduct(pass.ProductId, tenantId), eventId);
         }
 
-        public async Task<WaiverGateDecision> EvaluatePass(Guid tenantId, SeasonPassPurchase pass,
-            SeasonPassProduct? product, Guid? eventId)
+        public Task<WaiverGateDecision> EvaluatePass(Guid tenantId, SeasonPassPurchase pass,
+            SeasonPassProduct? product, Guid? eventId) =>
+            EvaluatePassCore(tenantId, pass, product, eventId, adultFallback: true);
+
+        private async Task<WaiverGateDecision> EvaluatePassCore(Guid tenantId, SeasonPassPurchase pass,
+            SeasonPassProduct? product, Guid? eventId, bool adultFallback)
         {
             if (pass.TenantId != tenantId) return new WaiverGateDecision();
 
@@ -340,16 +348,19 @@ namespace Services.Waivers
                 eventDoc = ev.RacerWaiverId ?? await ActiveDoc(tenantId);   // none configured: nothing to enforce
 
             var account = await User(pass.PurchaserUserId);
-            var accountIsHolder = account is not null && GuardianWaiverRule.AccountIsRider(
-                pass.HolderFirstName, pass.HolderLastName, account.FirstName, account.LastName);
+            var accountIsHolder = AccountIsRider(account, pass.HolderFirstName, pass.HolderLastName);
             var holderName = JoinName(pass.HolderFirstName, pass.HolderLastName) ?? pass.PurchaserName;
 
             // The pass's own signature is the holder's (pass registration signs for the holder).
             var own = pass.WaiverSignatureId is Guid ownId ? await Signature(ownId, tenantId) : null;
 
             // Evidence to judge, with where a fix would go and for which document.
-            var checks = new List<(RiderWaiverSignature Sig, string Fix, Guid Doc)>();
-            if (productDoc is Guid pd && own is not null) checks.Add((own, "pass", pd));   // presence: registration's job
+            // Covers = the signature is the HOLDER's own (their pass signature, or an account signature
+            // that names them / is the account owner's own when the account is the holder). Only those
+            // are judged by the "signed before their 18th birthday" rule; a parent's own signature on
+            // the buying account never is, and so is never replaced by the adult re-sign flow.
+            var checks = new List<(RiderWaiverSignature Sig, string Fix, Guid Doc, bool Covers)>();
+            if (productDoc is Guid pd && own is not null) checks.Add((own, "pass", pd, true));   // presence: registration's job
 
             RiderWaiverSignature? accountSig = null;
             var eventMissing = false;
@@ -358,7 +369,7 @@ namespace Services.Waivers
                 if (own is not null && own.WaiverId == ed)
                 {
                     // The holder's own signature IS this event's document.
-                    if (!checks.Any(c => c.Sig.Id == own.Id)) checks.Add((own, "pass", ed));
+                    if (!checks.Any(c => c.Sig.Id == own.Id)) checks.Add((own, "pass", ed, true));
                 }
                 else
                 {
@@ -369,7 +380,7 @@ namespace Services.Waivers
                         : string.IsNullOrWhiteSpace(pass.PurchaserEmail) ? null
                             : await _waivers.GetSignatureBySignerEmailForSelf(pass.PurchaserEmail, ed);
                     if (accountSig is null || accountSig.TenantId != tenantId) { accountSig = null; eventMissing = true; }
-                    else checks.Add((accountSig, "account", ed));
+                    else checks.Add((accountSig, "account", ed, SignatureCoversHolder(accountSig, pass, accountIsHolder)));
                 }
             }
 
@@ -394,7 +405,7 @@ namespace Services.Waivers
             var tenant = await Tenant(tenantId);
             var today = tenant.Today;
             var ages = new AgeFacts(birthdate, today, RiderAudience: true, tenant.Verify(idCheck), holderName,
-                RiderEmailOf(account, pass.HolderFirstName, pass.HolderLastName));
+                accountIsHolder ? account!.Email : null);
             var required = productDoc is not null || eventDoc is not null;
 
             if (eventMissing)
@@ -405,14 +416,15 @@ namespace Services.Waivers
                 });
 
             WaiverGateDecision? shown = null;
-            foreach (var (sig, fix, doc) in checks)
+            foreach (var (sig, fix, doc, covers) in checks)
             {
-                var g = GuardianWaiverRule.Evaluate(birthdate, today, Facts(sig, null, null, tenant.Zone), holderName);
+                var g = GuardianWaiverRule.Evaluate(birthdate, today, Facts(sig, null, null, tenant.Zone), holderName,
+                    applyAdultRule: covers);
                 var evidence = sig;
                 // Turned 18 since: an adult signature they made since for this document counts.
                 if (g.AdultWaiverNeeded
                     && await AdultSelfSignature(tenantId, doc, pass.HolderFirstName, pass.HolderLastName,
-                        birthdate, g.TurnedEighteenOn, tenant.Zone) is { } adultSig)
+                        birthdate, g.TurnedEighteenOn, tenant, adultFallback) is { } adultSig)
                 {
                     g = GuardianWaiverRule.Evaluate(birthdate, today, Facts(adultSig, null, null, tenant.Zone), holderName);
                     evidence = adultSig;
@@ -504,11 +516,9 @@ namespace Services.Waivers
 
         public async Task<int> LinkSignedWaiver(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId)
         {
-            // Judge the CURRENT links here, not a just-signed adult signature the fallback would find:
-            // the point is to put the new signature where the gate reads it.
-            _adultFallback = false;
-            try { return await LinkSignedWaiverCore(tenantId, target, signatureId, waiverId); }
-            finally { _adultFallback = true; }
+            // Judge the CURRENT links here (adultFallback: false), not a just-signed adult signature
+            // the fallback would find: the point is to put the new signature where the gate reads it.
+            return await LinkSignedWaiverCore(tenantId, target, signatureId, waiverId);
         }
 
         private async Task<int> LinkSignedWaiverCore(Guid tenantId, WaiverSignTarget target, Guid signatureId, Guid waiverId)
@@ -520,7 +530,8 @@ namespace Services.Waivers
                 // unredeemed ones. The repository re-checks paid + no valid guardian signature; a
                 // guardian's signature is replaced only for a rider now over 18 (it no longer counts).
                 var siblings = await _tickets.ListRegistrantTickets(tid, tenantId);
-                var decisions = await EvaluateTickets(tenantId, siblings);
+                var decisions = new List<WaiverGateDecision>(siblings.Count);
+                foreach (var s in siblings) decisions.Add(await EvaluateTicketCore(tenantId, s, adultFallback: false));
                 var failing = siblings.Zip(decisions)
                     .Where(x => x.First.Status == "paid"
                                 && x.Second.FixTarget == "ticket"
@@ -536,7 +547,10 @@ namespace Services.Waivers
             if (target.PassPurchaseId is Guid pid)
             {
                 // Decided again now, so a link signed after something else fixed the pass is a no-op.
-                var now = (await ResolveSignTarget(tenantId, null, pid, target.EventId))?.Decision;
+                var p = await _passes.GetPurchase(pid);
+                var now = p is null || p.TenantId != tenantId ? null
+                    : await EvaluatePassCore(tenantId, p, await _passes.GetProduct(p.ProductId, tenantId),
+                        target.EventId, adultFallback: false);
                 if (now is null || now.RequiredWaiverId != waiverId) return 0;
                 return now.FixTarget switch
                 {
@@ -561,20 +575,23 @@ namespace Services.Waivers
         /// count at the gate without anyone re-linking credentials.
         /// </summary>
         private async Task<RiderWaiverSignature?> AdultSelfSignature(Guid tenantId, Guid waiverId,
-            string? firstName, string? lastName, DateOnly? birthdate, DateOnly? turnedEighteenOn, TimeZoneInfo zone)
+            string? firstName, string? lastName, DateOnly? birthdate, DateOnly? turnedEighteenOn, TenantFacts tenant,
+            bool adultFallback)
         {
-            if (!_adultFallback || birthdate is null || turnedEighteenOn is null
+            if (!adultFallback || birthdate is null || turnedEighteenOn is null
                 || string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName)) return null;
-            var fromUtc = TimeZoneInfo.ConvertTimeToUtc(
-                DateTime.SpecifyKind(turnedEighteenOn.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified), zone);
+            // Compared as tenant-local calendar days in SQL: no local midnight is ever converted to
+            // UTC, so a birthday on a day whose midnight doesn't exist (DST at 00:00) stays exact.
             return await _waivers.FindAdultSelfSignature(tenantId, waiverId, firstName, lastName,
-                birthdate.Value.ToDateTime(TimeOnly.MinValue), fromUtc);
+                birthdate.Value.ToDateTime(TimeOnly.MinValue), turnedEighteenOn.Value.ToDateTime(TimeOnly.MinValue),
+                tenant.TimezoneId);
         }
 
-        /// <summary>The rider's own email, when the buying account IS the rider (else unknown).</summary>
-        private static string? RiderEmailOf(User? account, string? riderFirst, string? riderLast) =>
-            account is not null && Services.Riders.IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName)
-                ? account.Email : null;
+        /// <summary>The one "the buying account IS this rider / holder" rule (IdCheckRules), used for
+        /// the rider's email, the account's birthdate and an account signature's coverage alike.</summary>
+        private static bool AccountIsRider(User? account, string? riderFirst, string? riderLast) =>
+            account is not null
+            && Services.Riders.IdCheckRules.AccountIsRider(riderFirst, riderLast, account.FirstName, account.LastName);
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────────
 
@@ -599,7 +616,7 @@ namespace Services.Waivers
         private readonly record struct VerifyFacts(string Mode, DateTime? VerifiedAtUtc, DateOnly? VerifiedLocalDate, bool Current);
 
         /// <summary>The tenant's date, zone and birthdate-check policy, loaded once per request.</summary>
-        private sealed record TenantFacts(DateOnly Today, TimeZoneInfo Zone, string Mode, int ValidDays)
+        private sealed record TenantFacts(DateOnly Today, TimeZoneInfo Zone, string Mode, int ValidDays, string TimezoneId)
         {
             public VerifyFacts Verify(Services.Riders.IdCheck? check)
             {
@@ -695,7 +712,8 @@ namespace Services.Waivers
             var mode = Services.Riders.IdVerificationWindow.IsValidMode(tenant?.BirthdateVerifyMode)
                 ? tenant!.BirthdateVerifyMode : Services.Riders.IdVerificationWindow.ModeOff;
             f = new TenantFacts(TenantClock.LocalDate(tenant?.Timezone, DateTime.UtcNow),
-                TenantClock.Resolve(tenant?.Timezone), mode, tenant?.BirthdateVerifyValidDays ?? 365);
+                TenantClock.Resolve(tenant?.Timezone), mode, tenant?.BirthdateVerifyValidDays ?? 365,
+                string.IsNullOrWhiteSpace(tenant?.Timezone) ? "UTC" : tenant!.Timezone);
             _tenantCache[tenantId] = f;
             return f;
         }

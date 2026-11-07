@@ -23,5 +23,10 @@ namespace Services.Repositories.Data.WaiverData
         public Guid? EventTicketPurchaseId { get; set; }
         /// <summary>The gate sent this link for this season pass (Script0304).</summary>
         public Guid? SeasonPassPurchaseId { get; set; }
+        /// <summary>An adult-waiver link: the rider it signs AS (Script0306).</summary>
+        public Guid? RiderUserId { get; set; }
+        public string? RiderFirstName { get; set; }
+        public string? RiderLastName { get; set; }
+        public DateTime? RiderBirthdate { get; set; }
     }
 }

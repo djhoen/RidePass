@@ -183,6 +183,7 @@ namespace Services.Repositories
             const string detach = @"
                 UPDATE rider_waiver_signature s
                    SET user_id = NULL,
+                       former_user_id = @userId,
                        signer_email = COALESCE(s.signer_email, (SELECT u.email FROM users u WHERE u.id = @userId))
                  WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
                    AND s.id <> @signatureId
@@ -203,8 +204,10 @@ namespace Services.Repositories
         }
 
         public async Task<RiderWaiverSignature?> FindAdultSelfSignature(Guid tenantId, Guid waiverId, string firstName,
-            string lastName, DateTime birthdate, DateTime signedOnOrAfterUtc)
+            string lastName, DateTime birthdate, DateTime eighteenthBirthday, string timezone)
         {
+            // "On or after the 18th birthday" is a tenant-local CALENDAR comparison, so a birthday on
+            // a day whose local midnight doesn't exist (a DST change at 00:00) is still exact.
             var sql = $@"
                 SELECT {SignatureColumns}
                 FROM rider_waiver_signature
@@ -214,11 +217,11 @@ namespace Services.Repositories
                   AND lower(trim(spectator_first_name)) = lower(trim(@firstName))
                   AND lower(trim(spectator_last_name)) = lower(trim(@lastName))
                   AND spectator_birthdate = @birthdate::date
-                  AND signed_at >= @signedOnOrAfterUtc
+                  AND (signed_at AT TIME ZONE @timezone)::date >= @eighteenthBirthday::date
                 ORDER BY signed_at DESC
                 LIMIT 1";
             return (await _db.Query<RiderWaiverSignature>(sql,
-                new { tenantId, waiverId, firstName, lastName, birthdate, signedOnOrAfterUtc })).FirstOrDefault();
+                new { tenantId, waiverId, firstName, lastName, birthdate, eighteenthBirthday, timezone })).FirstOrDefault();
         }
 
         // Signature captured during event-ticket registration (a rider or spectator on a purchased
@@ -254,23 +257,42 @@ namespace Services.Repositories
         }
 
         public async Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
-            bool signedByParent, string? parentName, string? parentPhone)
+            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false)
         {
             // Don't overwrite an existing signature image on conflict — the original signature
-            // is the legal artifact. Just refresh the timestamp.
-            const string sql = @"
+            // is the legal artifact. A re-sign of the same kind just refreshes the timestamp.
+            //
+            // A re-sign of a DIFFERENT kind (a rider who has turned 18 signing for themselves over
+            // their guardian's signature, or the other way round) is a new legal act: the old row
+            // is kept as the record but detached from the account (user_id cleared, former_user_id
+            // set so it stays attributable and listed under the same person; its id is unchanged, so
+            // anything linked to it still reads it), and a new row is written with exactly what was
+            // signed.
+            // So signed_by_parent / parent fields on the account's row always match the latest
+            // signature, and a caller reporting signedByParent reports what is stored.
+            const string detach = @"
+                UPDATE rider_waiver_signature s
+                   SET user_id = NULL,
+                       former_user_id = @userId
+                 WHERE s.tenant_id = @tenantId AND s.user_id = @userId AND s.waiver_id = @waiverId
+                   AND (@supersede OR s.signed_by_parent <> @signedByParent)";
+            const string upsert = @"
                 INSERT INTO rider_waiver_signature
                     (tenant_id, user_id, waiver_id, ip_address, signature_data_url,
                      signed_by_parent, parent_name, parent_phone)
                 VALUES (@tenantId, @userId, @waiverId, @ipAddress, @signatureDataUrl,
                         @signedByParent, @parentName, @parentPhone)
-                ON CONFLICT (user_id, waiver_id) DO UPDATE SET signed_at = EXCLUDED.signed_at
-                RETURNING id";
-            var result = await _db.Query<Guid>(sql, new
+                -- uk_rider_waiver_once_user is PARTIAL (user_id IS NOT NULL): the conflict target must say so.
+                ON CONFLICT (user_id, waiver_id) WHERE user_id IS NOT NULL DO UPDATE SET signed_at = EXCLUDED.signed_at";
+            var args = new
             {
                 tenantId, userId, waiverId, ipAddress, signatureDataUrl,
-                signedByParent, parentName, parentPhone,
-            });
+                signedByParent, parentName, parentPhone, supersede,
+            };
+            await _db.ExecuteBatch(new (string, object?)[] { (detach, args), (upsert, args) });
+            var result = await _db.Query<Guid>(
+                "SELECT id FROM rider_waiver_signature WHERE user_id = @userId AND waiver_id = @waiverId AND tenant_id = @tenantId LIMIT 1",
+                args);
             return result.First();
         }
 
@@ -284,6 +306,12 @@ namespace Services.Repositories
                 s.signer_name)";
         private const string SignerEmailExpr = "COALESCE(u.email, s.signer_email)";
         private const string BirthdateExpr = "COALESCE(u.birthdate, s.spectator_birthdate)";
+        // SQL twin of IdCheckRules.AccountIsRider for the buying account "pu": the credential names
+        // nobody, or its whitespace-normalized, case-folded full name is the account's.
+        private static string SameRiderSql(string first, string last) => $@"(
+            lower(regexp_replace(trim(COALESCE({first}, '') || ' ' || COALESCE({last}, '')), '\s+', ' ', 'g')) = ''
+            OR lower(regexp_replace(trim(COALESCE({first}, '') || ' ' || COALESCE({last}, '')), '\s+', ' ', 'g'))
+             = lower(regexp_replace(trim(COALESCE(pu.first_name, '') || ' ' || COALESCE(pu.last_name, '')), '\s+', ' ', 'g')))";
         private const string WaiverIsCurrentExpr =
             "(w.is_active AND (w.expires_at IS NULL OR w.expires_at > now()))";
 
@@ -300,7 +328,7 @@ namespace Services.Repositories
             // lists exactly that person's signatures. The expression MUST stay identical to
             // ListPeople's person_key.
             if (!string.IsNullOrWhiteSpace(personKey))
-                where.Add($@"COALESCE(s.user_id::text,
+                where.Add($@"COALESCE(COALESCE(s.user_id, s.former_user_id)::text,
                     lower(COALESCE(
                         NULLIF(TRIM(COALESCE(s.spectator_first_name,'') || ' ' || COALESCE(s.spectator_last_name,'')), ''),
                         s.signer_name, s.signer_email, s.id::text))
@@ -339,7 +367,7 @@ namespace Services.Repositories
             var countSql = $@"
                 SELECT COUNT(*)
                 FROM rider_waiver_signature s
-                LEFT JOIN users u ON u.id = s.user_id
+                LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.former_user_id)
                 JOIN tenant_waiver w ON w.id = s.waiver_id
                 WHERE {whereSql}";
             var total = (await _db.Query<int>(countSql, args)).First();
@@ -360,7 +388,7 @@ namespace Services.Repositories
                        EXISTS (SELECT 1 FROM event_ticket_purchase p WHERE p.waiver_signature_id = s.id AND p.tenant_id = s.tenant_id) AS FromTicket,
                        EXISTS (SELECT 1 FROM shop_rental_waiver rw WHERE rw.signature_id = s.id) AS FromRental
                 FROM rider_waiver_signature s
-                LEFT JOIN users u ON u.id = s.user_id
+                LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.former_user_id)
                 JOIN tenant_waiver w ON w.id = s.waiver_id
                 WHERE {whereSql}
                 ORDER BY s.signed_at DESC
@@ -385,7 +413,7 @@ namespace Services.Repositories
             // lower(name)|birthdate so a walk-up's repeat visits collapse to one row.
             var baseCte = $@"
                 WITH sigs AS (
-                    SELECT s.user_id,
+                    SELECT COALESCE(s.user_id, s.former_user_id) AS user_id,   -- detached: still this account's
                            s.signed_at,
                            s.signed_by_parent,
                            s.parent_name,
@@ -394,13 +422,34 @@ namespace Services.Repositories
                            {SignerEmailExpr} AS person_email,
                            {BirthdateExpr} AS birthdate,
                            {WaiverIsCurrentExpr} AS on_current_waiver,
-                           COALESCE(s.user_id::text,
+                           ra.id AS rider_account_id,
+                           ra.email AS account_email,
+                           -- A guardian's signature, by the gate's own rule (GuardianWaiverRule.IsGuardianSigned).
+                           (s.signed_by_parent AND COALESCE(trim(s.parent_name), '') <> '') AS by_guardian,
+                           COALESCE(COALESCE(s.user_id, s.former_user_id)::text,
                                lower(COALESCE(
                                    NULLIF(TRIM(COALESCE(s.spectator_first_name,'') || ' ' || COALESCE(s.spectator_last_name,'')), ''),
                                    s.signer_name, s.signer_email, s.id::text))
                                || '|' || COALESCE({BirthdateExpr}::text, '')) AS person_key
                     FROM rider_waiver_signature s
-                    LEFT JOIN users u ON u.id = s.user_id
+                    LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.former_user_id)
+                    -- The RIDER's own account (never a signer's / guardian's): the account the signature is
+                    -- on, else the buying account of the ticket / pass it backs when that account IS the
+                    -- rider / holder (IdCheckRules.AccountIsRider; the bulk send re-checks it in C#).
+                    LEFT JOIN LATERAL (
+                        SELECT x.id, x.email FROM users x
+                        WHERE x.id = COALESCE(s.user_id, s.former_user_id,
+                            (SELECT p.purchaser_user_id FROM event_ticket_purchase p
+                               JOIN users pu ON pu.id = p.purchaser_user_id
+                              WHERE p.waiver_signature_id = s.id AND p.tenant_id = s.tenant_id
+                                AND {SameRiderSql("p.rider_first_name", "p.rider_last_name")}
+                              LIMIT 1),
+                            (SELECT sp.purchaser_user_id FROM season_pass_purchase sp
+                               JOIN users pu ON pu.id = sp.purchaser_user_id
+                              WHERE sp.waiver_signature_id = s.id AND sp.tenant_id = s.tenant_id
+                                AND {SameRiderSql("sp.holder_first_name", "sp.holder_last_name")}
+                              LIMIT 1))
+                    ) ra ON true
                     JOIN tenant_waiver w ON w.id = s.waiver_id
                     WHERE s.tenant_id = @tenantId
                 ),
@@ -416,7 +465,11 @@ namespace Services.Repositories
                            MAX(signed_at) AS LastSignedAt,
                            COUNT(*)::int AS SignatureCount,
                            bool_or(on_current_waiver) AS HasCurrentWaiver,
-                           (array_agg(signed_by_parent ORDER BY signed_at DESC))[1] AS LatestByGuardian
+                           (array_agg(rider_account_id) FILTER (WHERE rider_account_id IS NOT NULL))[1] AS RiderAccountId,
+                           (array_agg(account_email) FILTER (WHERE rider_account_id IS NOT NULL))[1] AS AccountEmail,
+                           -- The gate judges the CURRENT active waiver: its latest signature for this person.
+                           (array_agg(by_guardian ORDER BY signed_at DESC) FILTER (WHERE on_current_waiver))[1] AS LatestByGuardian,
+                           MAX(signed_at) FILTER (WHERE on_current_waiver) AS LastCurrentSignedAt
                     FROM sigs
                     GROUP BY person_key
                 ),
@@ -424,7 +477,23 @@ namespace Services.Repositories
                     SELECT people.*,
                            (Birthdate IS NOT NULL
                             AND {eighteenth} <= @todayLocal::date
-                            AND (LatestByGuardian OR (LastSignedAt AT TIME ZONE @timezone)::date < {eighteenth})) AS NeedsAdultWaiver
+                            AND LastCurrentSignedAt IS NOT NULL
+                            AND (LatestByGuardian OR (LastCurrentSignedAt AT TIME ZONE @timezone)::date < {eighteenth})
+                            -- The gate's fallback (FindAdultSelfSignature): an adult signature on the current waiver
+                            -- naming them (name + birthdate), made on or after their 18th birthday, counts, even
+                            -- when it is filed under another person row (e.g. a link signed into their account).
+                            AND NOT EXISTS (
+                                SELECT 1 FROM rider_waiver_signature a
+                                JOIN tenant_waiver aw ON aw.id = a.waiver_id
+                                WHERE a.tenant_id = @tenantId AND aw.is_active AND (aw.expires_at IS NULL OR aw.expires_at > now())
+                                  AND a.signed_by_parent = false
+                                  AND a.spectator_birthdate = Birthdate
+                                  AND lower(trim(COALESCE(a.spectator_first_name, '') || ' ' || COALESCE(a.spectator_last_name, ''))) = lower(PersonName)
+                                  AND (a.signed_at AT TIME ZONE @timezone)::date >= {eighteenth})) AS NeedsAdultWaiver,
+                           -- An adult-waiver link already out for this rider (Script0306), so a bulk send skips them.
+                           EXISTS (SELECT 1 FROM waiver_sign_request q
+                                   WHERE q.tenant_id = @tenantId AND q.rider_user_id = people.RiderAccountId
+                                     AND q.status IN ('pending', 'sent', 'opened')) AS AdultLinkOpen
                     FROM people
                 )";
 
@@ -495,7 +564,7 @@ namespace Services.Repositories
                          WHERE rw.signature_id = s.id
                          ORDER BY r.starts_at DESC LIMIT 1) AS RentalLabel
                 FROM rider_waiver_signature s
-                LEFT JOIN users u ON u.id = s.user_id
+                LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.former_user_id)
                 JOIN tenant_waiver w ON w.id = s.waiver_id
                 WHERE s.id = @id AND s.tenant_id = @tenantId
                 LIMIT 1";

@@ -16,7 +16,9 @@ namespace Services.Repositories
             w.name AS WaiverName, w.version AS WaiverVersion,
             e.title AS EventTitle,
             q.event_ticket_purchase_id AS EventTicketPurchaseId,
-            q.season_pass_purchase_id AS SeasonPassPurchaseId";
+            q.season_pass_purchase_id AS SeasonPassPurchaseId,
+            q.rider_user_id AS RiderUserId, q.rider_first_name AS RiderFirstName,
+            q.rider_last_name AS RiderLastName, q.rider_birthdate AS RiderBirthdate";
         private const string RequestJoins = @"
             FROM waiver_sign_request q
             LEFT JOIN tenant_waiver w ON w.id = q.waiver_id
@@ -28,19 +30,22 @@ namespace Services.Repositories
 
         public async Task<WaiverSignRequestRow> Create(Guid tenantId, Guid? waiverId, string token,
             string recipientEmail, string? recipientName, Guid? eventId, Guid? requestedByUserId,
-            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null)
+            Guid? eventTicketPurchaseId = null, Guid? seasonPassPurchaseId = null, SignRequestRider? rider = null)
         {
             // The ticket / pass targets (Script0304) are tenant-checked in the insert itself: a
-            // target from another tenant is stored as NULL rather than linked.
+            // target from another tenant is stored as NULL rather than linked. The rider identity
+            // (Script0306) is what an adult-waiver link signs AS.
             const string sql = @"
                 WITH ins AS (
                     INSERT INTO waiver_sign_request
                         (tenant_id, waiver_id, token, recipient_email, recipient_name,
-                         event_id, requested_by_user_id, event_ticket_purchase_id, season_pass_purchase_id)
+                         event_id, requested_by_user_id, event_ticket_purchase_id, season_pass_purchase_id,
+                         rider_user_id, rider_first_name, rider_last_name, rider_birthdate)
                     VALUES (@tenantId, @waiverId, @token, @recipientEmail, @recipientName,
                             @eventId, @requestedByUserId,
                             (SELECT id FROM event_ticket_purchase WHERE id = @eventTicketPurchaseId AND tenant_id = @tenantId),
-                            (SELECT id FROM season_pass_purchase WHERE id = @seasonPassPurchaseId AND tenant_id = @tenantId))
+                            (SELECT id FROM season_pass_purchase WHERE id = @seasonPassPurchaseId AND tenant_id = @tenantId),
+                            @riderUserId, @riderFirstName, @riderLastName, @riderBirthdate::date)
                     RETURNING *
                 )
                 SELECT ins.id, ins.tenant_id AS TenantId, ins.waiver_id AS WaiverId, ins.token,
@@ -51,7 +56,9 @@ namespace Services.Repositories
                        w.name AS WaiverName, w.version AS WaiverVersion,
                        e.title AS EventTitle,
                        ins.event_ticket_purchase_id AS EventTicketPurchaseId,
-                       ins.season_pass_purchase_id AS SeasonPassPurchaseId
+                       ins.season_pass_purchase_id AS SeasonPassPurchaseId,
+                       ins.rider_user_id AS RiderUserId, ins.rider_first_name AS RiderFirstName,
+                       ins.rider_last_name AS RiderLastName, ins.rider_birthdate AS RiderBirthdate
                 FROM ins
                 LEFT JOIN tenant_waiver w ON w.id = ins.waiver_id
                 LEFT JOIN event e ON e.id = ins.event_id";
@@ -62,8 +69,48 @@ namespace Services.Repositories
                 recipientName,
                 eventId, requestedByUserId,
                 eventTicketPurchaseId, seasonPassPurchaseId,
+                riderUserId = rider?.UserId,
+                riderFirstName = rider?.FirstName,
+                riderLastName = rider?.LastName,
+                riderBirthdate = rider?.Birthdate,
             });
             return result.First();
+        }
+
+        public async Task<HashSet<Guid>> RidersWithOpenRequests(Guid tenantId, IReadOnlyCollection<Guid> riderUserIds)
+        {
+            if (riderUserIds.Count == 0) return new HashSet<Guid>();
+            const string sql = @"
+                SELECT DISTINCT rider_user_id
+                FROM waiver_sign_request
+                WHERE tenant_id = @tenantId
+                  AND rider_user_id = ANY(@ids)
+                  AND status IN ('pending', 'sent', 'opened')";
+            return (await _db.Query<Guid>(sql, new { tenantId, ids = riderUserIds.ToArray() })).ToHashSet();
+        }
+
+        public async Task<List<RiderCredentialRef>> UpcomingCredentialsForAccount(Guid tenantId, Guid userId)
+        {
+            // What the gate will check next for this account: paid tickets for events not yet over,
+            // and paid passes still in season, soonest first. The caller keeps only the ones whose
+            // rider / holder IS the account owner.
+            const string sql = @"
+                SELECT 'ticket' AS Kind, p.id AS Id, e.id AS EventId, e.starts_at AS SortAt,
+                       p.rider_first_name AS FirstName, p.rider_last_name AS LastName
+                FROM event_ticket_purchase p
+                JOIN event_ticket_tier t ON t.id = p.tier_id AND t.tenant_id = p.tenant_id
+                JOIN event e ON e.id = t.event_id AND e.tenant_id = p.tenant_id
+                WHERE p.tenant_id = @tenantId AND p.purchaser_user_id = @userId
+                  AND p.status = 'paid' AND e.ends_at >= now()
+                UNION ALL
+                SELECT 'season_pass', sp.id, NULL, sp.valid_from_date::timestamptz,
+                       sp.holder_first_name, sp.holder_last_name
+                FROM season_pass_purchase sp
+                WHERE sp.tenant_id = @tenantId AND sp.purchaser_user_id = @userId
+                  AND sp.status = 'paid' AND sp.valid_to_date >= current_date
+                ORDER BY 4
+                LIMIT 20";
+            return (await _db.Query<RiderCredentialRef>(sql, new { tenantId, userId })).ToList();
         }
 
         public async Task<(List<WaiverSignRequestRow> Rows, int Total)> List(Guid tenantId,

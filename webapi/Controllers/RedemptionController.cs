@@ -938,6 +938,22 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult(
                     $"A signature won't fix this: {decision.BlockReason}");
 
+            // An adult-waiver link goes to the RIDER, never to the buyer / guardian: their own email
+            // when the gate knows it, and never the address of a buying account that isn't them.
+            if (decision.AdultWaiverNeeded)
+            {
+                if (!string.IsNullOrWhiteSpace(decision.RiderEmail)
+                    && !string.Equals(email, decision.RiderEmail.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return new ApiResponses().BadRequestResult(
+                        $"{target.DisplayName} must sign this themselves: send the link to their own email ({decision.RiderEmail}).");
+                var buyerEmail = target.TicketId is Guid tid ? (await _tickets.GetById(tid, tenantId))?.PurchaserEmail
+                    : target.PassPurchaseId is Guid pid ? (await _passes.GetPurchase(pid))?.PurchaserEmail : null;
+                if (string.IsNullOrWhiteSpace(decision.RiderEmail) && !string.IsNullOrWhiteSpace(buyerEmail)
+                    && string.Equals(email, buyerEmail.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return new ApiResponses().BadRequestResult(
+                        $"That is the buyer's email, not {target.DisplayName}'s. {target.DisplayName} is 18 or over and must sign this themselves: enter their own email, or hand them the device.");
+            }
+
             var row = await _signRequests.Create(tenantId, decision.RequiredWaiverId, WaiverSignRequestMail.NewToken(),
                 email, target.DisplayName, target.EventId, TryGetStaffUserId(), target.TicketId, target.PassPurchaseId);
             var sent = await WaiverSignRequestMail.TrySend(_emailer, _config, _tenantContext.Tenant, _signRequests, row);

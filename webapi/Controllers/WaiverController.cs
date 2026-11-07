@@ -204,7 +204,9 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new WaiverSignatureStatusResponse
             {
                 CurrentVersion = active.Version,
-                HasSignedCurrent = sig is not null,
+                // A guardian / pre-18 signature no longer counts once the rider is 18: ask them to sign.
+                HasSignedCurrent = sig is not null
+                    && !AccountWaiverStatus.IsMinorEraForAdult(user, sig, _tenantContext.Tenant.Timezone, DateTime.UtcNow),
                 SignatureId = sig?.Id,
                 SignedAt = sig?.SignedAt,
                 SignatureDataUrl = sig?.SignatureDataUrl,
@@ -231,7 +233,8 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult(new WaiverSignatureStatusResponse
             {
                 CurrentVersion = waiver.Version,
-                HasSignedCurrent = sig is not null,
+                HasSignedCurrent = sig is not null
+                    && !AccountWaiverStatus.IsMinorEraForAdult(user, sig, _tenantContext.Tenant.Timezone, DateTime.UtcNow),
                 SignatureId = sig?.Id,
                 SignedAt = sig?.SignedAt,
                 SignatureDataUrl = sig?.SignatureDataUrl,
@@ -305,21 +308,28 @@ namespace webapi.Controllers
                 }
             }
 
+            // Their current signature is from their minor years (a guardian's, or made before their
+            // 18th birthday) and they are an adult now: this is a new signature, not a refresh.
+            var supersede = !isMinor && AccountWaiverStatus.IsMinorEraForAdult(user,
+                await _repo.GetSignature(userId, waiver.Id), _tenantContext.Tenant.Timezone, DateTime.UtcNow);
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
             var sigId = await _repo.Sign(_tenantContext.TenantId, userId, waiver.Id, ip, dataUrl,
-                signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
+                signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone, supersede: supersede);
 
+            // Report what is STORED: an adult re-signing over their guardian's signature gets a new
+            // row (the old one is kept detached), a same-kind re-sign keeps the original row.
+            var stored = await _repo.GetSignature(userId, waiver.Id);
             return new ApiResponses().OkResult(new WaiverSignatureStatusResponse
             {
                 CurrentVersion = waiver.Version,
                 HasSignedCurrent = true,
-                SignatureId = sigId,
-                SignedAt = DateTime.UtcNow,
-                SignatureDataUrl = dataUrl,
+                SignatureId = stored?.Id ?? sigId,
+                SignedAt = stored?.SignedAt ?? DateTime.UtcNow,
+                SignatureDataUrl = stored?.SignatureDataUrl ?? dataUrl,
                 RiderIsMinor = isMinor,
-                SignedByParent = isMinor,
-                ParentName = parentName,
-                ParentPhone = parentPhone,
+                SignedByParent = stored?.SignedByParent ?? isMinor,
+                ParentName = stored is not null ? stored.ParentName : parentName,
+                ParentPhone = stored is not null ? stored.ParentPhone : parentPhone,
             });
         }
 
@@ -399,6 +409,8 @@ namespace webapi.Controllers
                         SignatureCount = r.SignatureCount,
                         HasCurrentWaiver = r.HasCurrentWaiver,
                         NeedsAdultWaiver = r.NeedsAdultWaiver,
+                        AdultLinkOpen = r.AdultLinkOpen,
+                        HasRiderEmail = r.RiderAccountId is not null && !string.IsNullOrWhiteSpace(r.AccountEmail),
                     };
                 }).ToList(),
                 Total = total,
@@ -411,54 +423,109 @@ namespace webapi.Controllers
             TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.UtcNow).ToDateTime(TimeOnly.MinValue);
 
         /// <summary>
-        /// Ahead of the gate: email a waiver signing link to people who have turned 18 since their
-        /// waiver ("Needs adult waiver" in Signed Waivers), so they can sign as adults before their
-        /// next visit; the gate then finds that adult signature (by name and birthdate). Same
-        /// waiver_sign_request bulk path as the event roster send: the tenant's active waiver, one
-        /// request per person with an email on file, skipping anyone who already has an open request.
-        /// Staff-triggered only; nothing is sent automatically.
+        /// Ahead of the gate: send an adult-waiver signing link to people who have turned 18 since
+        /// their waiver ("Needs adult waiver" in Signed Waivers), so they sign as adults before their
+        /// next visit. Staff-triggered only, for exactly the people on screen (their person keys); each
+        /// is re-checked against the same rule before anything is sent.
+        ///
+        /// - Only to the RIDER's own account email, never a signer's (often a parent's) address;
+        ///   anyone without one is skipped as "no rider email".
+        /// - Targeted at what the gate will check: their next ticket or pass when it is failing on the
+        ///   adult rule (the gate's own target resolution, so the signature is linked there), else
+        ///   the active waiver with the rider's identity on the request (Script0306), so the
+        ///   signature carries their name and birthdate and is attached to their account.
+        /// - One open link per RIDER (not per email): a rider with an open link is skipped.
+        /// - At most MaxAdultLinksPerSend per request (the rest are reported, not sent); emails go out
+        ///   with bounded concurrency. Without an email server the links are still created and can be
+        ///   copied from Waiver requests.
         /// </summary>
+        private const int MaxAdultLinksPerSend = 50;
+
         [Authorize(Policy = TenantPermissions.Policy.CustomersView)]
         [HttpPost("SignRequests/NeedsAdult")]
         public async Task<IActionResult> CreateAdultWaiverSignRequests([FromBody] BulkAdultWaiverSignRequestRequest? request)
         {
             if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var keys = request?.PersonKeys?.Where(k => !string.IsNullOrWhiteSpace(k)).ToHashSet() ?? new HashSet<string>();
+            if (keys.Count == 0) return new ApiResponses().BadRequestResult("Pick the people to send a link to.");
             if (await _repo.GetActive(_tenantContext.TenantId) is null)
                 return new ApiResponses().BadRequestResult("This tenant has no active waiver to request signatures for.");
-            if (!_emailer.IsConfigured)
-                return new ApiResponses().BadRequestResult("Email isn't set up on this server, so these links can't go out.");
+            var tenantId = _tenantContext.TenantId;
 
-            var only = request?.PersonKeys is { Count: > 0 } keys ? keys.ToHashSet() : null;
+            // Re-check: still "needs adult waiver" by the same rule as the list and the gate.
             var people = new List<Services.Repositories.Data.WaiverData.WaiverPersonRow>();
             for (var page = 1; ; page++)
             {
-                var (rows, total) = await _repo.ListPeople(_tenantContext.TenantId, null, "needs_adult",
+                var (rows, total) = await _repo.ListPeople(tenantId, null, "needs_adult",
                     agingOut: false, minorsOnly: false, page, 200, TenantLocalToday(), _tenantContext.Tenant.Timezone);
-                people.AddRange(rows.Where(r => only is null || only.Contains(r.PersonKey)));
+                people.AddRange(rows.Where(r => keys.Contains(r.PersonKey)));
                 if (rows.Count < 200 || page * 200 >= total) break;
             }
+            var resp = new AdultWaiverBulkResponse { NoLongerNeeded = keys.Count - people.Count };
 
-            TryGetUserId(out var adminId);
-            int created = 0, skipped = 0, emailFailures = 0;
+            var withEmail = new List<(Services.Repositories.Data.WaiverData.WaiverPersonRow Person, Guid UserId, string Email)>();
             foreach (var p in people)
             {
-                var email = p.PersonEmail?.Trim();
-                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) { skipped++; continue; }
-                var (open, _) = await _signRequests.List(_tenantContext.TenantId, email, null, 1, 50);
-                if (open.Any(o => string.Equals(o.RecipientEmail, email, StringComparison.OrdinalIgnoreCase)
-                                  && o.Status is "pending" or "sent" or "opened"))
-                { skipped++; continue; }
-                var row = await _signRequests.Create(_tenantContext.TenantId, waiverId: null, NewToken(), email,
-                    p.PersonName, eventId: null, requestedByUserId: adminId == Guid.Empty ? null : adminId);
-                created++;
-                if (!await TrySendRequestEmail(row)) emailFailures++;
+                if (p.RiderAccountId is Guid uid && !string.IsNullOrWhiteSpace(p.AccountEmail) && p.AccountEmail.Contains('@'))
+                    withEmail.Add((p, uid, p.AccountEmail.Trim()));
+                else resp.SkippedNoRiderEmail++;
             }
-            return new ApiResponses().OkResult(new BulkWaiverSignRequestResponse
+            var open = await _signRequests.RidersWithOpenRequests(tenantId, withEmail.Select(x => x.UserId).ToList());
+            var toCreate = withEmail.Where(x => !open.Contains(x.UserId)).ToList();
+            resp.SkippedOpenLink = withEmail.Count - toCreate.Count;
+            resp.Deferred = Math.Max(0, toCreate.Count - MaxAdultLinksPerSend);
+
+            TryGetUserId(out var adminId);
+            var created = new List<Services.Repositories.Data.WaiverData.WaiverSignRequestRow>();
+            foreach (var (person, userId, email) in toCreate.Take(MaxAdultLinksPerSend))
             {
-                Created = created,
-                AlreadyCovered = skipped,
-                EmailFailures = emailFailures,
-            });
+                // Re-check in C# that the account really is this person (the list resolves it in SQL):
+                // the link must never go to anyone else's address.
+                var user = await _users.GetById(userId);
+                if (user is null || person.Birthdate is null
+                    || (user.TenantId is Guid ut && ut != tenantId)
+                    || Services.Riders.IdCheckRules.Normalize(person.PersonName)
+                        != Services.Riders.IdCheckRules.Normalize($"{user.FirstName} {user.LastName}"))
+                { resp.SkippedNoRiderEmail++; continue; }
+                var rider = new Services.Repositories.Data.WaiverData.SignRequestRider(userId,
+                    user.FirstName, user.LastName, person.Birthdate.Value.Date);
+
+                // Their next credential the gate fails on the adult rule, if any: target it.
+                Services.Waivers.WaiverSignTarget? target = null;
+                foreach (var c in await _signRequests.UpcomingCredentialsForAccount(tenantId, userId))
+                {
+                    if (!Services.Riders.IdCheckRules.AccountIsRider(c.FirstName, c.LastName, user.FirstName, user.LastName)) continue;
+                    var t = await _waiverGate.ResolveSignTarget(tenantId,
+                        c.Kind == "ticket" ? c.Id : null, c.Kind == "season_pass" ? c.Id : null, null);
+                    if (t?.Decision is { AdultWaiverNeeded: true, FixTarget: not null, RequiredWaiverId: not null })
+                    { target = t; break; }
+                }
+
+                created.Add(await _signRequests.Create(tenantId, target?.Decision.RequiredWaiverId, NewToken(), email,
+                    person.PersonName, target?.EventId, adminId == Guid.Empty ? null : adminId,
+                    target?.TicketId, target?.PassPurchaseId, rider));
+                if (target is not null) resp.TargetedCredential++;
+            }
+            resp.Created = created.Count;
+
+            if (!_emailer.IsConfigured)
+            {
+                resp.EmailNotConfigured = true;
+            }
+            else
+            {
+                // Bounded concurrency: a few sends at a time, never the whole list at once.
+                using var gate = new SemaphoreSlim(4);
+                var results = await Task.WhenAll(created.Select(async row =>
+                {
+                    await gate.WaitAsync();
+                    try { return await TrySendRequestEmail(row); }
+                    finally { gate.Release(); }
+                }));
+                resp.Sent = results.Count(ok => ok);
+                resp.EmailFailures = results.Count(ok => !ok);
+            }
+            return new ApiResponses().OkResult(resp);
         }
 
         [Authorize(Policy = TenantPermissions.Policy.CustomersView)]
@@ -709,25 +776,38 @@ namespace webapi.Controllers
                         "The ticket or pass this link was sent for no longer exists. Ask the venue to send a new one.");
             }
 
+            // An adult-waiver link sent ahead of time with no credential to target (Script0306) carries
+            // the rider it is for: the signature is made AS them, whatever the form says.
+            var riderIdentity = target is null && row.RiderUserId is Guid riderUserId
+                && !string.IsNullOrWhiteSpace(row.RiderFirstName) && !string.IsNullOrWhiteSpace(row.RiderLastName)
+                && row.RiderBirthdate is not null
+                ? new Services.Repositories.Data.WaiverData.SignRequestRider(riderUserId,
+                    row.RiderFirstName!.Trim(), row.RiderLastName!.Trim(), row.RiderBirthdate.Value)
+                : null;
+
             // The attendee is the target rider (their name and the birthdate the gate uses), not
             // whatever was typed; a differing typed name is kept only as an audit note.
-            var attendeeFirst = string.IsNullOrWhiteSpace(target?.FirstName) ? first! : target!.FirstName!.Trim();
-            var attendeeLast = string.IsNullOrWhiteSpace(target?.LastName) ? last! : target!.LastName!.Trim();
-            var nameMismatch = target is not null
+            var attendeeFirst = riderIdentity?.FirstName
+                ?? (string.IsNullOrWhiteSpace(target?.FirstName) ? first! : target!.FirstName!.Trim());
+            var attendeeLast = riderIdentity?.LastName
+                ?? (string.IsNullOrWhiteSpace(target?.LastName) ? last! : target!.LastName!.Trim());
+            var nameMismatch = (target is not null || riderIdentity is not null)
                 && !(string.Equals(first, attendeeFirst, StringComparison.OrdinalIgnoreCase)
                      && string.Equals(last, attendeeLast, StringComparison.OrdinalIgnoreCase));
             var targetDob = target?.Decision.Birthdate;
-            DateTime? birthdate = targetDob is { } d ? d.ToDateTime(TimeOnly.MinValue) : request.Birthdate;
+            DateTime? birthdate = riderIdentity?.Birthdate
+                ?? (targetDob is { } d ? d.ToDateTime(TimeOnly.MinValue) : request.Birthdate);
             var isMinor = target is { Decision: { RiderAudience: true, IsMinor: bool targetMinor } }
                 ? targetMinor
                 : WaiverPolicy.IsMinor(birthdate);
 
-            // A link sent because the rider turned 18 since their waiver: only THEIR adult signature
-            // fixes that, so the parent / guardian path is refused rather than silently ignored.
-            if (target is { Decision.AdultWaiverNeeded: true }
-                && (!string.IsNullOrWhiteSpace(request.ParentName) || !string.IsNullOrWhiteSpace(request.ParentPhone)))
+            // A link sent because the rider turned 18 since their waiver (from the gate, or ahead of
+            // time from Signed Waivers): only THEIR adult signature fixes that, so the parent /
+            // guardian path is refused rather than silently ignored.
+            var adultOnly = target is { Decision.AdultWaiverNeeded: true } || (riderIdentity is not null && !isMinor);
+            if (adultOnly && (!string.IsNullOrWhiteSpace(request.ParentName) || !string.IsNullOrWhiteSpace(request.ParentPhone)))
                 return new ApiResponses().BadRequestResult(
-                    $"{target.DisplayName} is 18 or over, so they must sign this waiver themselves, not a parent or guardian.");
+                    $"{target?.DisplayName ?? $"{attendeeFirst} {attendeeLast}"} is 18 or over, so they must sign this waiver themselves, not a parent or guardian.");
 
             string? parentName = null, parentPhone = null;
             if (isMinor)
@@ -748,6 +828,20 @@ namespace webapi.Controllers
                 attendeeBirthdate: birthdate,
                 signedByParent: isMinor, parentName: parentName, parentPhone: parentPhone);
             await _signRequests.MarkSigned(row.Id, _tenantContext.TenantId, sigId);
+
+            if (riderIdentity is not null && !isMinor)
+            {
+                // No credential to link: the signature becomes the rider's ACCOUNT signature for this
+                // document (their minor-era one is kept as a record, detached), which is what the
+                // gate reads for their passes; tickets find it by name and birthdate.
+                var attached = await _repo.AttachAccountSignature(_tenantContext.TenantId, riderIdentity.UserId,
+                    waiver.Id, sigId, replaceMinorEra: true);
+                await _audit.Log("waiver.adult_sign_request.signed",
+                    $"Adult waiver link signed by {attendeeFirst} {attendeeLast}"
+                        + (nameMismatch ? $" (form named \"{first} {last}\")" : ""),
+                    targetKind: "user", targetId: riderIdentity.UserId, tenantId: _tenantContext.TenantId,
+                    metadata: new { requestId = row.Id, signatureId = sigId, attached, nameMismatch });
+            }
 
             if (target is not null)
             {

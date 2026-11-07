@@ -19,8 +19,11 @@ namespace Services.Repositories.Interfaces
         /// <summary>Tenant-scoped fetch of one signature row (with its image), for showing gate
         /// staff the signature a given ticket is backed by.</summary>
         Task<RiderWaiverSignature?> GetSignatureById(Guid id, Guid tenantId);
+        /// <summary>Account signature. A re-sign of the other kind (guardian vs self), or with
+        /// <paramref name="supersede"/> (the existing one is from the rider's minor years), keeps the old
+        /// row as the record (detached, former_user_id) and writes a new one; otherwise refreshes signed_at.</summary>
         Task<Guid> Sign(Guid tenantId, Guid userId, Guid waiverId, string? ipAddress, string? signatureDataUrl,
-            bool signedByParent, string? parentName, string? parentPhone);
+            bool signedByParent, string? parentName, string? parentPhone, bool supersede = false);
 
         /// <summary>Email lookup for guest spectator buyers — checks whether this
         /// email has already signed THIS waiver for themselves (not on behalf of a child).</summary>
@@ -45,10 +48,11 @@ namespace Services.Repositories.Interfaces
             bool replaceMinorEra = false);
 
         /// <summary>The latest adult (not guardian) signature naming this person (attendee first + last
-        /// name and birthdate) for this document, signed at or after <paramref name="signedOnOrAfterUtc"/>.
+        /// name and birthdate) for this document, signed on or after their 18th birthday by the tenant-local
+        /// calendar day (<paramref name="timezone"/> is the tenant's IANA zone).
         /// How the gate recognises a rider who has re-signed as an adult since turning 18.</summary>
         Task<RiderWaiverSignature?> FindAdultSelfSignature(Guid tenantId, Guid waiverId, string firstName,
-            string lastName, DateTime birthdate, DateTime signedOnOrAfterUtc);
+            string lastName, DateTime birthdate, DateTime eighteenthBirthday, string timezone);
 
         /// <summary>Signature captured during event-ticket registration (rider or spectator), written
         /// to the shared rider_waiver_signature store. Returns the new signature row id.</summary>

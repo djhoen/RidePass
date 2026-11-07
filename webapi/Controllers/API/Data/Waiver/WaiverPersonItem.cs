@@ -20,5 +20,9 @@ namespace webapi.Controllers.API.Data.Waiver
         /// <summary>Already 18 and their latest waiver dates from when they were a minor: they must sign
         /// as an adult before their next check-in.</summary>
         public bool NeedsAdultWaiver { get; set; }
+        /// <summary>An adult-waiver link is already open for them (a bulk send skips them).</summary>
+        public bool AdultLinkOpen { get; set; }
+        /// <summary>They have an email of their own (account email) an adult-waiver link can go to.</summary>
+        public bool HasRiderEmail { get; set; }
     }
 }
