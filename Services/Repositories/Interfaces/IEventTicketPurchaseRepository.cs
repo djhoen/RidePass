@@ -68,6 +68,10 @@ namespace Services.Repositories.Interfaces
         /// checked in that day. Single-day events use the redeemed status flip instead.</summary>
         Task<bool> TryRecordAttendance(Guid ticketId, Guid tenantId, DateOnly onDate, Guid? byUserId);
 
+        /// <summary>The buyer's rider tickets for this ticket's event that name nobody (no rider name, account or
+        /// dependent; live statuses), and whether this ticket is one of them.</summary>
+        Task<(int Count, bool Included)> CountUnnamedRiderTickets(EventTicketPurchase ticket, Guid tenantId);
+
         /// <summary>Local dates this ticket has been checked in on, oldest first.</summary>
         Task<List<DateOnly>> ListAttendanceDates(Guid ticketId, Guid tenantId);
         Task SetRaceNumber(Guid id, Guid tenantId, string? raceNumber);

@@ -500,6 +500,30 @@ namespace Services.Repositories
         /// <summary>Records this ticket's check-in for one local date. Returns false when the
         /// ticket was already checked in that day (unique index), which the gate reports rather
         /// than double-counting. The insert is tenant-guarded through the ticket row.</summary>
+        public async Task<(int Count, bool Included)> CountUnnamedRiderTickets(EventTicketPurchase ticket, Guid tenantId)
+        {
+            // Rider-audience tickets for the same event, bought by the same buyer (their account, else their email
+            // with no account), naming nobody. Cancelled / failed / abandoned / refunded ones don't count.
+            const string sql = @"
+                SELECT count(*)::int AS Count, COALESCE(bool_or(t.id = @ticketId), false) AS Included
+                FROM event_ticket_purchase t
+                JOIN event_ticket_tier tier ON tier.id = t.tier_id AND tier.tenant_id = @tenantId
+                WHERE t.tenant_id = @tenantId
+                  AND tier.event_id = (SELECT event_id FROM event_ticket_tier WHERE id = @tierId AND tenant_id = @tenantId)
+                  AND (tier.kind = 'race_entry' OR (tier.kind = 'gate_fee' AND tier.audience = 'rider'))
+                  AND t.status NOT IN ('cancelled', 'failed', 'abandoned', 'refunded')
+                  AND btrim(COALESCE(t.rider_first_name, '') || COALESCE(t.rider_last_name, '')) = ''
+                  AND t.rider_user_id IS NULL AND t.rider_dependent_id IS NULL
+                  AND (CASE WHEN @purchaserUserId::uuid IS NOT NULL THEN t.purchaser_user_id = @purchaserUserId
+                            ELSE t.purchaser_user_id IS NULL AND lower(t.purchaser_email) = lower(@purchaserEmail) END)";
+            var row = (await _db.Query<(int Count, bool Included)>(sql, new
+            {
+                tenantId, ticketId = ticket.Id, tierId = ticket.TierId,
+                purchaserUserId = ticket.PurchaserUserId, purchaserEmail = ticket.PurchaserEmail ?? string.Empty,
+            })).FirstOrDefault();
+            return row;
+        }
+
         public async Task<bool> TryRecordAttendance(Guid ticketId, Guid tenantId, DateOnly onDate, Guid? byUserId)
         {
             const string sql = @"

@@ -85,7 +85,10 @@ ALTER TABLE kiosk_signup
     ADD COLUMN IF NOT EXISTS confirmed_at             timestamptz NULL,
     ADD COLUMN IF NOT EXISTS confirmed_by_user_id     uuid        NULL REFERENCES users(id) ON DELETE SET NULL,
     -- The ticket of the sale that used this sign-up: it counts as handled once that ticket is paid.
-    ADD COLUMN IF NOT EXISTS sale_ticket_id           uuid        NULL REFERENCES event_ticket_purchase(id) ON DELETE SET NULL;
+    ADD COLUMN IF NOT EXISTS sale_ticket_id           uuid        NULL REFERENCES event_ticket_purchase(id) ON DELETE SET NULL,
+    -- A sale with no ticket line (a season pass, a membership): the record it created instead, paid = handled.
+    ADD COLUMN IF NOT EXISTS sale_pass_purchase_id       uuid NULL REFERENCES season_pass_purchase(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS sale_membership_purchase_id uuid NULL REFERENCES membership_purchase(id) ON DELETE SET NULL;
 
 -- A held kiosk photo belongs to no account yet: it is filed under the sign-up ("kiosk:{id}"). Widen the
 -- owner check (Script0307) to allow that key; widening is backwards-compatible. Rerunnable: only replaced

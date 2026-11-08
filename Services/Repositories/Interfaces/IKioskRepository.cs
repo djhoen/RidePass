@@ -27,14 +27,21 @@ namespace Services.Repositories.Interfaces
         /// <summary>Sign-ups since <paramref name="sinceUtc"/>, newest first. Sign-ups whose sale's ticket has
         /// been paid since are stamped handled first.</summary>
         Task<List<KioskSignupRow>> ListSignups(Guid tenantId, DateTime sinceUtc, int take);
-        /// <summary>A card sale was started for these sign-ups: they become handled once its ticket is paid.</summary>
-        Task<int> SetPendingSale(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid saleTicketId, Guid? byUserId, string saleRef);
+        /// <summary>A card sale was started for these sign-ups: they read as handled once the record it sold is paid
+        /// (its ticket, else its season pass, else its membership).</summary>
+        Task<int> SetPendingSale(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid? saleTicketId, Guid? salePassId,
+            Guid? saleMembershipId, Guid? byUserId, string saleRef);
         /// <summary>A paid (cash / free) sale used these sign-ups (only ones not handled yet are stamped).</summary>
         Task<int> MarkHandled(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid? byUserId, string saleRef);
         /// <summary>Staff checked ID on a sign-up that matched an existing account: it now points at the
         /// profiles, signature and photo attached to it, and the held signature image is cleared.</summary>
         Task<bool> Confirm(Guid id, Guid tenantId, Guid? userId, Guid? dependentId, Guid? guardianUserId,
             Guid? signatureId, Guid? photoId, Guid? byUserId);
+        /// <summary>Takes a held sign-up for confirming (match_pending -> claimed), once: false when it is already
+        /// confirmed, being confirmed, dismissed, or not held.</summary>
+        Task<bool> ClaimForConfirm(Guid id, Guid tenantId);
+        /// <summary>A confirm that failed gives the sign-up back (held again).</summary>
+        Task ReleaseConfirm(Guid id, Guid tenantId);
         /// <summary>Dismissed: also drops a held signature image.</summary>
         Task<bool> Dismiss(Guid id, Guid tenantId, Guid? byUserId);
 

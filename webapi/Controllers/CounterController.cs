@@ -300,6 +300,9 @@ namespace webapi.Controllers
                 // A sign-up still waiting for an ID check (it matched an existing account) can't be sold against.
                 if (await _kiosks.GetSignup(kid, _tenantContext.TenantId) is { } ks)
                 {
+                    if (ks.DismissedAt is not null)
+                        return new ApiResponses().BadRequestResult(
+                            $"{ks.FirstName} {ks.LastName}'s kiosk sign-up was dismissed. Refresh the kiosk sign-ups list.");
                     if (ks.MatchPending)
                         return new ApiResponses().BadRequestResult(
                             $"{ks.FirstName} {ks.LastName}'s kiosk sign-up matches an existing account: check their ID and confirm it first.");
@@ -1248,13 +1251,16 @@ namespace webapi.Controllers
             }
 
             // The kiosk sign-ups this sale serves count as handled only once it is paid: a cash or free sale
-            // right below; a card sale when its ticket is paid (the payment webhook flips it, and the gate list
-            // stamps the sign-up on its next read). A declined or abandoned card leaves them waiting.
+            // right below; a card sale when the record it sold is paid (its ticket, else its season pass, else its
+            // membership: the payment webhook flips it, and the gate list reads it). A declined card leaves them waiting.
             var kioskIds = kioskSignups.Select(k => k.Id).ToList();
             var kioskSaleRef = lineItems.Count > 0 ? $"counter:{lineItems[0].PurchaseId:D}" : "counter";
             var kioskTicket = lineItems.FirstOrDefault(l => l.Kind == "event_ticket");
-            if (kioskIds.Count > 0 && kioskTicket is not null)
-                await _kiosks.SetPendingSale(_tenantContext.TenantId, kioskIds, kioskTicket.PurchaseId, cashierId, kioskSaleRef);
+            var kioskPass = kioskTicket is null ? lineItems.FirstOrDefault(l => l.Kind == "season_pass") : null;
+            var kioskMembership = kioskTicket is null && kioskPass is null ? lineItems.FirstOrDefault(l => l.Kind == "membership") : null;
+            if (kioskIds.Count > 0 && (kioskTicket ?? kioskPass ?? kioskMembership) is not null)
+                await _kiosks.SetPendingSale(_tenantContext.TenantId, kioskIds, kioskTicket?.PurchaseId, kioskPass?.PurchaseId,
+                    kioskMembership?.PurchaseId, cashierId, kioskSaleRef);
 
             // Record the giveaway now the rows exist, and deliberately before payment: an override
             // that a manager authorised is worth logging whether or not the card went through, and a

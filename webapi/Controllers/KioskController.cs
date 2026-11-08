@@ -235,6 +235,10 @@ namespace webapi.Controllers
             }
 
             // ── A brand-new profile: created now, with the signature and photo attached ──
+            // Everything the attach would refuse is checked first, so a refusal never leaves a profile behind; and
+            // if the attach still fails after the save, the profile it just created is removed again.
+            if (KioskSignupWriter.Validate(plan, waiver?.Id, req.SignatureDataUrl, guardianName, req.GuardianPhone) is { } attachError)
+                return new ApiResponses().BadRequestResult(attachError);
             OtherRiderSaved saved;
             try
             {
@@ -244,9 +248,22 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult(StaffEmailRefused);
             }
-            var attached = await _writer.Attach(tenantId, tenant.Timezone, plan, saved, waiver?.Id, req.SignatureDataUrl, ip,
-                guardianName, req.GuardianPhone, req.GuardianEmail?.Trim(), photo, replacePhotoOnFile: true, staffUserId: null);
-            if (attached.Error is not null) return new ApiResponses().BadRequestResult(attached.Error);
+            KioskAttachResult attached;
+            try
+            {
+                attached = await _writer.Attach(tenantId, tenant.Timezone, plan, saved, waiver?.Id, req.SignatureDataUrl, ip,
+                    guardianName, req.GuardianPhone, req.GuardianEmail?.Trim(), photo, replacePhotoOnFile: true, staffUserId: null);
+            }
+            catch
+            {
+                await _profiles.Discard(saved);
+                throw;
+            }
+            if (attached.Error is not null)
+            {
+                await _profiles.Discard(saved);
+                return new ApiResponses().BadRequestResult(attached.Error);
+            }
 
             var signupId = await _kiosks.CreateSignup(new KioskSignup
             {

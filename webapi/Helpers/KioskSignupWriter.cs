@@ -22,6 +22,20 @@ namespace webapi.Helpers
 
     public class KioskSignupWriter : IKioskSignupWriter
     {
+        /// <summary>
+        /// Everything Attach would refuse, checked BEFORE any profile is saved, so a refusal leaves nothing behind:
+        /// a signature must be a drawn image, and a minor's needs the parent or guardian's name and phone.
+        /// </summary>
+        public static string? Validate(OtherRiderPlan plan, Guid? waiverId, string? signatureDataUrl, string? guardianName,
+            string? guardianPhone)
+        {
+            if (waiverId is null || string.IsNullOrEmpty(signatureDataUrl)) return null;
+            if (!SignatureImages.IsValidPngDataUrl(signatureDataUrl)) return "Sign the waiver with your finger in the box.";
+            if (plan.IsMinor && (string.IsNullOrWhiteSpace(guardianName) || !RiderAccounts.IsValidPhone(guardianPhone)))
+                return AccountWaiverSigning.MinorNeedsGuardian;
+            return null;
+        }
+
         private readonly IUserRepository _users;
         private readonly IWaiverRepository _waivers;
         private readonly IWaiverCheckInGate _gate;

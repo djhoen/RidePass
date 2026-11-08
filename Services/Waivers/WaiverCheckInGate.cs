@@ -246,6 +246,11 @@ namespace Services.Waivers
             var filtered = keying with { Account = Services.Riders.BuyerAccounts.ForTenant(keying.Account, tenantId) };
             var key = Services.Riders.RiderPhotoRules.KeyFor(filtered, buyerEmail, riderFirst, riderLast, credentialKind, credentialId, buyerName);
             var photo = await _photos.Find(tenantId, key);
+            // A photo taken before rider keys (or before a shared unnamed ticket got its own key) is filed under the
+            // credential itself ("ticket:{id}"): still found.
+            if (photo is null && key.RiderKey != Services.Riders.RiderPhotoRules.CredentialRiderKey)
+                photo = await _photos.Find(tenantId, new Services.Riders.RiderPhotoKey($"{credentialKind}:{credentialId:D}",
+                    Services.Riders.RiderPhotoRules.CredentialRiderKey, null, null));
             return new PhotoFacts(tenant.PhotoMode,
                 Services.Riders.RiderPhotoRules.Resolve(photo, passPhotoDataUrl, filtered.Account,
                     Services.Riders.RiderPhotoRules.AccountPhotoIsRiders(filtered, riderFirst, riderLast)));
@@ -287,8 +292,10 @@ namespace Services.Waivers
             // dependent the account is their guardian's and is NOT the rider (no birthdate, email or
             // signature of theirs stands in); for a rider with their own account it is theirs.
             var keying = ticket.RiderUserId is null && ticket.RiderDependentId is null
-                ? Services.Riders.TicketRiderKeys.FromNames(
-                    ticket.PurchaserUserId is Guid uid ? await User(uid) : null, ticket.RiderFirstName, ticket.RiderLastName)
+                ? (await _riderIdentity.IsSharedUnnamed(ticket, tenantId)
+                    ? Services.Riders.TicketRiderKeys.PerTicket(ticket.Id)
+                    : Services.Riders.TicketRiderKeys.FromNames(
+                    ticket.PurchaserUserId is Guid uid ? await User(uid) : null, ticket.RiderFirstName, ticket.RiderLastName))
                 : await _riderIdentity.ForTicket(ticket, tenantId);
             var account = keying.Account;
             var accountIsRider = keying.AccountIsRider;

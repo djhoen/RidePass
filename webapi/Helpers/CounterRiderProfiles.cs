@@ -72,6 +72,9 @@ namespace webapi.Helpers
         /// <summary>Writes the planned profiles of one sale in one transaction (new accounts, empty fields of
         /// existing rider accounts, dependent rows). Same order as <paramref name="plans"/>.</summary>
         Task<List<OtherRiderSaved>> Save(IReadOnlyList<OtherRiderPlan> plans, Guid? staffUserId);
+        /// <summary>Undoes what Save created for one rider (new accounts, a new dependent) when the step after it failed,
+        /// so no orphan account is left. Existing accounts it only filled are left alone.</summary>
+        Task Discard(OtherRiderSaved saved);
     }
 
     /// <summary>
@@ -311,6 +314,18 @@ namespace webapi.Helpers
             }).ToList();
             var ids = await _dependents.SaveOtherRiderProfiles(_tenantContext.TenantId, writes);
             return plans.Select((p, i) => new OtherRiderSaved(p, ids[i].RiderUserId, ids[i].DependentId, ids[i].GuardianUserId)).ToList();
+        }
+
+        public Task Discard(OtherRiderSaved saved)
+        {
+            var p = saved.Plan;
+            var users = new List<Guid>();
+            if (p.Rider is { ExistingId: null } && saved.RiderUserId is Guid r) users.Add(r);
+            if (p.IsMinor && p.Guardian is { ExistingId: null } && saved.GuardianUserId is Guid g) users.Add(g);
+            var dependent = p.IsMinor && p.ExistingDependentId is null ? saved.DependentId : null;
+            return users.Count == 0 && dependent is null
+                ? Task.CompletedTask
+                : _dependents.DiscardNewProfile(_tenantContext.TenantId, users, dependent);
         }
 
         // ── helpers ────────────────────────────────────────────────────────────────────────────

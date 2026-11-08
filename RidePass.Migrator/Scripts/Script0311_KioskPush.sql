@@ -64,7 +64,7 @@ ALTER TABLE kiosk_push
 
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_kiosk_push_end_reason') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_kiosk_push_end_reason' AND conrelid = 'kiosk_push'::regclass) THEN
         ALTER TABLE kiosk_push ADD CONSTRAINT chk_kiosk_push_end_reason
             CHECK (end_reason IS NULL OR end_reason IN ('declined', 'waiver_changed', 'mode_changed', 'no_longer_needed'));
     END IF;

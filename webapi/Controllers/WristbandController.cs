@@ -109,7 +109,7 @@ namespace webapi.Controllers
             // judged against its own event. Linking a different band to an admission that already carries the
             // rider's band corrects it (a replacement "corrected at the gate", audited).
             var result = await _dayBands.IssueForPass(pass, product, reservationId, reservation.EventId, code, null, UserId,
-                businessDate: reservation.BusinessDate ?? TodayLocal(), correcting: reservationId);
+                businessDate: reservation.CheckInDate ?? await _dayBands.AdmissionDate(reservation.EventId), correcting: reservationId);
             if (!result.Ok)
                 return result.GateBlock is { } block
                     ? GateBlockResult.Result(block, "season_pass", pass.RedemptionToken, pass.Id, reservation.EventId)

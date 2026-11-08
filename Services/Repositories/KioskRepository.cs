@@ -129,14 +129,14 @@ namespace Services.Repositories
 
         public async Task<List<KioskSignupRow>> ListSignups(Guid tenantId, DateTime sinceUtc, int take)
         {
-            // A card sale's sign-ups count as handled once its ticket is paid (the payment webhook flips it).
-            await _db.Execute(@"
-                UPDATE kiosk_signup k SET handled_at = now()
-                  FROM event_ticket_purchase p
-                 WHERE k.tenant_id = @tenantId AND k.handled_at IS NULL AND k.sale_ticket_id = p.id
-                   AND p.tenant_id = @tenantId AND p.status IN ('paid', 'redeemed')", new { tenantId });
+            // Handled is computed here, not written on read: stamped by a cash / free sale (handled_at), or the sale
+            // the sign-up was sold on is paid (a card sale: its ticket, else its season pass or membership).
+            var columns = SignupColumns.Replace("s.handled_at AS HandledAt", @"COALESCE(s.handled_at,
+                       CASE WHEN st.status IN ('paid', 'redeemed') THEN st.updated_at
+                            WHEN sp.status = 'paid' THEN sp.updated_at
+                            WHEN sm.status = 'paid' THEN sm.updated_at END) AS HandledAt");
             var sql = $@"
-                SELECT {SignupColumns},
+                SELECT {columns},
                        d.name AS KioskName, u.email AS RiderEmail,
                        g.first_name AS GuardianAccountFirstName, g.last_name AS GuardianAccountLastName,
                        g.email AS GuardianAccountEmail,
@@ -149,6 +149,9 @@ namespace Services.Repositories
                 LEFT JOIN users g ON g.id = s.guardian_user_id
                 LEFT JOIN users mu ON mu.id = s.matched_user_id
                 LEFT JOIN users mg ON mg.id = s.matched_guardian_user_id
+                LEFT JOIN event_ticket_purchase st ON st.id = s.sale_ticket_id AND st.tenant_id = s.tenant_id
+                LEFT JOIN season_pass_purchase sp ON sp.id = s.sale_pass_purchase_id AND sp.tenant_id = s.tenant_id
+                LEFT JOIN membership_purchase sm ON sm.id = s.sale_membership_purchase_id AND sm.tenant_id = s.tenant_id
                 LEFT JOIN rider_photo p ON p.id = s.photo_id AND p.tenant_id = s.tenant_id
                 WHERE s.tenant_id = @tenantId AND s.created_at >= @sinceUtc
                 ORDER BY s.created_at DESC
@@ -156,13 +159,15 @@ namespace Services.Repositories
             return (await _db.Query<KioskSignupRow>(sql, new { tenantId, sinceUtc, take })).ToList();
         }
 
-        public async Task<int> SetPendingSale(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid saleTicketId, Guid? byUserId, string saleRef)
+        public async Task<int> SetPendingSale(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid? saleTicketId, Guid? salePassId,
+            Guid? saleMembershipId, Guid? byUserId, string saleRef)
         {
             if (ids.Count == 0) return 0;
             return await _db.Execute(@"
-                UPDATE kiosk_signup SET sale_ticket_id = @saleTicketId, sale_ref = @saleRef, handled_by_user_id = @byUserId
+                UPDATE kiosk_signup SET sale_ticket_id = @saleTicketId, sale_pass_purchase_id = @salePassId,
+                       sale_membership_purchase_id = @saleMembershipId, sale_ref = @saleRef, handled_by_user_id = @byUserId
                  WHERE tenant_id = @tenantId AND id = ANY(@ids) AND handled_at IS NULL",
-                new { tenantId, ids = ids.ToArray(), saleTicketId, byUserId, saleRef });
+                new { tenantId, ids = ids.ToArray(), saleTicketId, salePassId, saleMembershipId, byUserId, saleRef });
         }
 
         public async Task<int> MarkHandled(Guid tenantId, IReadOnlyCollection<Guid> ids, Guid? byUserId, string saleRef)
@@ -182,8 +187,20 @@ namespace Services.Repositories
                        user_id = @userId, dependent_id = @dependentId, guardian_user_id = @guardianUserId,
                        signature_id = @signatureId, photo_id = @photoId,
                        held_signature_data_url = NULL
-                 WHERE id = @id AND tenant_id = @tenantId AND match_pending",
+                 WHERE id = @id AND tenant_id = @tenantId AND NOT match_pending AND confirmed_at IS NULL",
                 new { id, tenantId, userId, dependentId, guardianUserId, signatureId, photoId, byUserId }) == 1;
+
+        public async Task<bool> ClaimForConfirm(Guid id, Guid tenantId) =>
+            await _db.Execute(@"
+                UPDATE kiosk_signup SET match_pending = false
+                 WHERE id = @id AND tenant_id = @tenantId AND match_pending AND dismissed_at IS NULL AND confirmed_at IS NULL",
+                new { id, tenantId }) == 1;
+
+        public Task ReleaseConfirm(Guid id, Guid tenantId) => _db.Execute(@"
+            UPDATE kiosk_signup SET match_pending = true
+             WHERE id = @id AND tenant_id = @tenantId AND NOT match_pending AND confirmed_at IS NULL AND user_id IS NULL
+               AND dependent_id IS NULL",
+            new { id, tenantId });
 
         public async Task<bool> Dismiss(Guid id, Guid tenantId, Guid? byUserId) =>
             await _db.Execute(@"

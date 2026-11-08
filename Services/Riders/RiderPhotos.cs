@@ -217,6 +217,9 @@ namespace Services.Riders
                 return RiderPhotoRules.KeyFor(keying, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
                     "ticket", ticket.Id, ticket.PurchaserName);
             }
+            // One of several unnamed rider tickets from this buyer for the event: filed under the ticket itself.
+            if (await _riderIdentity.IsSharedUnnamed(ticket, tenantId))
+                return RiderPhotoRules.KeyFor(TicketRiderKeys.PerTicket(ticket.Id), ticket.PurchaserEmail, null, null, "ticket", ticket.Id);
             var account = ticket.PurchaserUserId is Guid id ? BuyerAccounts.ForTenant(await _users.GetById(id), tenantId) : null;
             return RiderPhotoRules.Key(account, ticket.PurchaserEmail, ticket.RiderFirstName, ticket.RiderLastName,
                 "ticket", ticket.Id, ticket.PurchaserName);

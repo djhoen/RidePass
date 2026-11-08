@@ -140,5 +140,21 @@ namespace Services.Repositories
                     ecName = w.EmergencyContactName, ecPhone = w.EmergencyContactPhone, createdBy = w.CreatedByUserId,
                 }, tx);
         }
+
+        public async Task DiscardNewProfile(Guid tenantId, IReadOnlyCollection<Guid> newUserIds, Guid? newDependentId)
+        {
+            var users = newUserIds.Distinct().ToArray();
+            var ownerKeys = users.Select(u => $"user:{u:D}").ToArray();
+            await _db.ExecuteBatch(new List<(string Sql, object? Param)>
+            {
+                (@"DELETE FROM rider_photo WHERE tenant_id = @tenantId AND (user_id = ANY(@users) OR owner_key = ANY(@ownerKeys))",
+                    new { tenantId, users, ownerKeys }),
+                ("DELETE FROM rider_waiver_signature WHERE tenant_id = @tenantId AND user_id = ANY(@users)", new { tenantId, users }),
+                ("DELETE FROM rider_dependent WHERE tenant_id = @tenantId AND id = @newDependentId", new { tenantId, newDependentId }),
+                ("DELETE FROM rider_id_verification WHERE user_id = ANY(@users)", new { users }),
+                // Only brand-new rider accounts (no tenant of their own); never a staff account.
+                ("DELETE FROM users WHERE id = ANY(@users) AND role = 'rider'", new { users }),
+            });
+        }
     }
 }

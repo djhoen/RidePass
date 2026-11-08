@@ -92,6 +92,9 @@ namespace webapi.Helpers
         Task<RiderDayBandSubject> ForTicket(EventTicketPurchase ticket);
         /// <summary>The business date a ticket's admission is banded for (RiderDayBandRules.TicketDate).</summary>
         Task<DateOnly> TicketDate(EventTicketPurchase ticket);
+        /// <summary>The business date of ANY admission (a pass or a ticket): its event's day, today while a multi-day
+        /// event runs (clamped to its days), or today with no event. The one rule both credentials use.</summary>
+        Task<DateOnly> AdmissionDate(Guid? eventId);
         /// <summary>The rider's active band on that date, if any.</summary>
         Task<RiderDayBand?> BandFor(RiderDayBandSubject subject, DateOnly date);
         /// <summary>The bands these riders wear on that date (same rule as BandFor), in one read.</summary>
@@ -220,9 +223,14 @@ namespace webapi.Helpers
 
         public async Task<DateOnly> TicketDate(EventTicketPurchase ticket)
         {
-            var today = Today();
             var tier = await _tiers.GetById(ticket.TierId, TenantId);
-            var ev = tier is null ? null : await _events.GetById(tier.EventId, TenantId);
+            return await AdmissionDate(tier?.EventId);
+        }
+
+        public async Task<DateOnly> AdmissionDate(Guid? eventId)
+        {
+            var today = Today();
+            var ev = eventId is Guid id ? await _events.GetById(id, TenantId) : null;
             if (ev is null) return today;
             DateOnly Local(DateTime utc) => TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.SpecifyKind(utc, DateTimeKind.Utc));
             return RiderDayBandRules.TicketDate(Local(ev.StartsAt), Local(ev.EndsAt), today);
@@ -242,6 +250,30 @@ namespace webapi.Helpers
         private IReadOnlyCollection<DateOnly> WearDates(DateOnly date) =>
             date == Today() ? new[] { date, date.AddDays(1) } : new[] { date };
 
+        /// <summary>The tenant-local day a band was put on.</summary>
+        private DateOnly IssuedOn(RiderDayBand b) =>
+            TenantClock.LocalDate(_tenantContext.Tenant.Timezone, DateTime.SpecifyKind(b.IssuedAt, DateTimeKind.Utc));
+
+        /// <summary>Tonight's band: issued today for tomorrow (the gate opens the evening before an event).</summary>
+        private bool IsTonights(RiderDayBand b) => b.BusinessDate == Today().AddDays(1) && IssuedOn(b) == Today();
+
+        /// <summary>
+        /// Another rider's band holds this code for <paramref name="date"/>: a band for that same date; or, tonight,
+        /// the two bands that are both on wrists tonight (today's, and tonight's for tomorrow). A code from another
+        /// day is free again (cheap packs repeat their numbers daily).
+        /// </summary>
+        private bool HoldsCodeOn(RiderDayBand b, DateOnly date)
+        {
+            if (b.BusinessDate == date) return true;
+            var today = Today();
+            if (date == today && IsTonights(b)) return true;
+            return date == today.AddDays(1) && b.BusinessDate == today;
+        }
+
+        /// <summary>The day a band is for, as staff read it.</summary>
+        private string WhenBand(RiderDayBand b) =>
+            b.BusinessDate == Today() ? "today" : IsTonights(b) ? "tonight (tomorrow's band)" : $"on {b.BusinessDate:MMM d}";
+
         public Task<RiderDayBand?> BandFor(RiderDayBandSubject subject, DateOnly date) => CurrentFor(subject.Rider, date);
 
         private async Task<RiderDayBand?> CurrentFor(RiderPhotoKey key, DateOnly date) =>
@@ -251,8 +283,9 @@ namespace webapi.Helpers
         {
             var riders = keys.Select(k => (k.OwnerKey, k.RiderKey)).Distinct().ToList();
             var bands = await _bands.ListActiveForRiders(TenantId, WearDates(date), riders);
-            // The band for the date itself first, else tonight's (tomorrow's) band.
+            // The band for the date itself first, else tonight's band (issued today for tomorrow).
             return bands
+                .Where(b => b.BusinessDate == date || IsTonights(b))
                 .OrderBy(b => b.BusinessDate == date ? 0 : 1)
                 .GroupBy(b => (b.OwnerKey, b.RiderKey))
                 .ToDictionary(g => g.Key, g => g.First());
@@ -265,7 +298,7 @@ namespace webapi.Helpers
             if (RiderDayBandRules.CleanCode(code) is not { } c) return null;
             // The band for that date, else one issued for the next day (worn since the evening before).
             var near = await _bands.ListActiveByCodeNear(TenantId, date, c);
-            if ((near.FirstOrDefault(b => b.BusinessDate == date) ?? near.FirstOrDefault(b => b.BusinessDate == date.AddDays(1))) is { } day)
+            if ((near.FirstOrDefault(b => b.BusinessDate == date) ?? (date == Today() ? near.FirstOrDefault(IsTonights) : null)) is { } day)
                 return new BandCodeUse(day, null);
             return await _legacy.ResolveCodeOn(TenantId, c, date, Timezone) is { } hit ? new BandCodeUse(null, hit) : null;
         }
@@ -300,7 +333,7 @@ namespace webapi.Helpers
             var rider = subject.Rider;
             var current = read is not null && read.Date == date ? read.WornBy(subject) : await BandFor(subject, date);
             // Another rider wearing this code within a day of the date (wrists overlap), and older bands.
-            var other = (await _bands.ListActiveByCodeNear(TenantId, date, clean)).FirstOrDefault(b => !SameRider(b, rider));
+            var other = (await _bands.ListActiveByCodeNear(TenantId, date, clean)).FirstOrDefault(b => !SameRider(b, rider) && HoldsCodeOn(b, date));
             var use = other is not null ? new BandCodeUse(other, null)
                 : await _legacy.ResolveCodeOn(TenantId, clean, date, Timezone) is { } hit ? new BandCodeUse(null, hit) : null;
             var reason = replaceReason?.Trim();
@@ -317,9 +350,9 @@ namespace webapi.Helpers
                 case DayBandAction.ReplaceWithSameBand:
                     return RiderDayBandResult.Fail($"That's the band {name} is already wearing ({current!.Code}). Scan the new band.", rider, current);
                 case DayBandAction.CodeTaken:
-                    return RiderDayBandResult.Fail($"Band {clean} is already on {use!.HolderName} {When(date)}. Use a different band.", rider, current);
+                    return RiderDayBandResult.Fail($"Band {clean} is already on {use!.HolderName} {WhenBand(use.DayBand!)}. Use a different band.", rider, current);
                 case DayBandAction.RiderHasBand:
-                    return RiderDayBandResult.Fail($"{name} already wears band {current!.Code} {When(date)} (issued {IssuedTime(current)}). "
+                    return RiderDayBandResult.Fail($"{name} already wears band {current!.Code} {WhenBand(current)} (issued {IssuedTime(current)}). "
                         + "Use Replace band for a lost or broken one.", rider, current);
             }
             // A band from before day bands (event_wristband) live that day on someone else.
@@ -378,6 +411,7 @@ namespace webapi.Helpers
             var meta = new { passId = subject.PassId, ticketId = subject.TicketId, reservationId, ticketIds };
             if (check.Action == DayBandAction.Replace && check.Current is { } old)
             {
+                band.BusinessDate = old.BusinessDate;   // the replacement is for the same day as the band it replaces
                 var reason = check.ReplaceReason ?? RiderDayBandRules.CorrectedAtGate;
                 var replaced = await _bands.Replace(old.Id, band, reason, staffUserId);
                 if (replaced is null) return RiderDayBandResult.Fail($"Band {band.Code} was just put on someone else, or the old band changed. Scan again.");
@@ -401,7 +435,7 @@ namespace webapi.Helpers
         public async Task<RiderDayBandResult> Check(SeasonPassPurchase pass, SeasonPassProduct? product, Guid? eventId,
             string? code, string? replaceReason, DateOnly? businessDate = null, WaiverGateDecision? decided = null,
             Guid? correcting = null) =>
-            await Check(await ForPass(pass, product, eventId), code, replaceReason, businessDate ?? Today(), decided, correcting);
+            await Check(await ForPass(pass, product, eventId), code, replaceReason, businessDate ?? await AdmissionDate(eventId), decided, correcting);
 
         public async Task<RiderDayBandResult> Write(RiderDayBandResult check, SeasonPassPurchase pass, Guid reservationId, Guid? staffUserId) =>
             await Write(check, await ForPass(pass, null, null), reservationId, null, staffUserId);
@@ -410,7 +444,7 @@ namespace webapi.Helpers
             Guid? eventId, string? code, string? replaceReason, Guid? staffUserId, DateOnly? businessDate = null, Guid? correcting = null)
         {
             var subject = await ForPass(pass, product, eventId);
-            var check = await Check(subject, code, replaceReason, businessDate ?? Today(), null, correcting);
+            var check = await Check(subject, code, replaceReason, businessDate ?? await AdmissionDate(eventId), null, correcting);
             return check.Ok ? await Write(check, subject, reservationId, null, staffUserId) : check;
         }
 

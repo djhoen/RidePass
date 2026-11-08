@@ -120,40 +120,71 @@ namespace webapi.Controllers
             var tenantId = _tenantContext.TenantId;
             var s = await _kiosks.GetSignup(id, tenantId);
             if (s is null) return new ApiResponses().NotFoundResult("Sign-up not found.");
+            if (s.ConfirmedAt is not null) return new ApiResponses().ConflictResult("Already confirmed.");
             if (!s.MatchPending || s.DismissedAt is not null)
                 return new ApiResponses().BadRequestResult("This sign-up isn't waiting for an ID check.");
 
             var input = SnapshotInput(s);
             var (plan, planError) = await _profiles.Plan(input, null);
             if (planError is not null) return new ApiResponses().BadRequestResult(planError);
-            OtherRiderSaved saved;
-            try
-            {
-                saved = (await _profiles.Save(new[] { plan! }, StaffId()))[0];
-            }
-            catch (InvalidOperationException ex)
-            {
-                return new ApiResponses().BadRequestResult(ex.Message);
-            }
-
             var active = await _waivers.GetActive(tenantId);
             var waiverCurrent = s.HeldWaiverId is Guid hw && active is not null && active.Id == hw
                 && (active.ExpiresAt is null || active.ExpiresAt > DateTime.UtcNow);
-            (byte[] Bytes, string Extension)? photo = null;
-            if (s.PhotoId is Guid heldPhotoId && await _photos.Open(heldPhotoId, tenantId) is { } img)
-                photo = (img.Bytes, img.ContentType == "image/png" ? ".png" : ".jpg");
-
             var guardianName = s.GuardianFirstName is null ? null : $"{s.GuardianFirstName} {s.GuardianLastName}".Trim();
-            var attached = await _writer.Attach(tenantId, _tenantContext.Tenant.Timezone, plan!, saved,
-                waiverCurrent ? s.HeldWaiverId : null, waiverCurrent ? s.HeldSignatureDataUrl : null,
-                HttpContext.Connection.RemoteIpAddress?.ToString(), guardianName, s.GuardianPhone, s.GuardianEmail,
-                photo, req.ReplacePhoto, StaffId());
-            if (attached.Error is not null) return new ApiResponses().BadRequestResult(attached.Error);
+            // Everything the attach would refuse, before any profile is written.
+            if (KioskSignupWriter.Validate(plan!, waiverCurrent ? s.HeldWaiverId : null, waiverCurrent ? s.HeldSignatureDataUrl : null,
+                    guardianName, s.GuardianPhone) is { } attachError)
+                return new ApiResponses().BadRequestResult(attachError);
+
+            // Claimed once (a guarded UPDATE): two staff confirming at once can't both attach; the second is told.
+            if (!await _kiosks.ClaimForConfirm(id, tenantId))
+            {
+                var now = await _kiosks.GetSignup(id, tenantId);
+                return new ApiResponses().ConflictResult(now?.ConfirmedAt is not null
+                    ? "Already confirmed." : "Someone else is confirming this sign-up right now.");
+            }
+            OtherRiderSaved? saved = null;
+            KioskAttachResult attached;
+            try
+            {
+                try
+                {
+                    saved = (await _profiles.Save(new[] { plan! }, StaffId()))[0];
+                }
+                catch (InvalidOperationException ex)
+                {
+                    await _kiosks.ReleaseConfirm(id, tenantId);
+                    return new ApiResponses().BadRequestResult(ex.Message);
+                }
+
+                (byte[] Bytes, string Extension)? photo = null;
+                if (s.PhotoId is Guid heldPhotoId && await _photos.Open(heldPhotoId, tenantId) is { } img)
+                    photo = (img.Bytes, img.ContentType == "image/png" ? ".png" : ".jpg");
+
+                attached = await _writer.Attach(tenantId, _tenantContext.Tenant.Timezone, plan!, saved,
+                    waiverCurrent ? s.HeldWaiverId : null, waiverCurrent ? s.HeldSignatureDataUrl : null,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(), guardianName, s.GuardianPhone, s.GuardianEmail,
+                    photo, req.ReplacePhoto, StaffId());
+                if (attached.Error is not null)
+                {
+                    await _profiles.Discard(saved);
+                    await _kiosks.ReleaseConfirm(id, tenantId);
+                    return new ApiResponses().BadRequestResult(attached.Error);
+                }
+                if (!await _kiosks.Confirm(id, tenantId, saved.RiderUserId, saved.DependentId, saved.GuardianUserId,
+                        attached.SignatureId, attached.PhotoId, StaffId()))
+                    return new ApiResponses().ConflictResult("Already confirmed.");
+            }
+            catch
+            {
+                // Give the sign-up back for another try, and remove any profile this attempt just created.
+                if (saved is not null) await _profiles.Discard(saved);
+                await _kiosks.ReleaseConfirm(id, tenantId);
+                throw;
+            }
 
             // The held photo has been copied to the rider's own key (or the one on file was kept): drop it.
             if (s.PhotoId is Guid held) await _photos.DeletePhoto(held, tenantId);
-            await _kiosks.Confirm(id, tenantId, saved.RiderUserId, saved.DependentId, saved.GuardianUserId,
-                attached.SignatureId, attached.PhotoId, StaffId());
             await _audit.Log("kiosk.signup_confirmed", $"Kiosk sign-up for {s.FirstName} {s.LastName} confirmed after an ID check",
                 targetKind: "kiosk_signup", targetId: id, tenantId: tenantId,
                 metadata: new { saved.RiderUserId, saved.DependentId, saved.GuardianUserId, attached.SignatureId,

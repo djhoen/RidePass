@@ -186,6 +186,8 @@ namespace Services.Riders
         {
             if (ticket.RiderUserId is not null || ticket.RiderDependentId is not null)
                 return await _riderIdentity.ForTicket(ticket, tenantId);
+            // One of several unnamed rider tickets from this buyer for the event: that ticket's own rider.
+            if (await _riderIdentity.IsSharedUnnamed(ticket, tenantId)) return TicketRiderKeys.PerTicket(ticket.Id);
             var account = ticket.PurchaserUserId is Guid id ? await BuyerAccount(id, tenantId) : null;
             return TicketRiderKeys.FromNames(account, ticket.RiderFirstName, ticket.RiderLastName);
         }

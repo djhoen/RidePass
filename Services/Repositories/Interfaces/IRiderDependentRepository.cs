@@ -21,5 +21,10 @@ namespace Services.Repositories.Interfaces
         /// stored one.
         /// </summary>
         Task<List<OtherRiderProfileIds>> SaveOtherRiderProfiles(Guid tenantId, IReadOnlyList<OtherRiderProfileWrite> writes);
+
+        /// <summary>Undoes a profile save that could not be completed (a kiosk sign-up whose attach failed): removes the
+        /// accounts and dependent that save just created, with anything already filed under them, so no orphan is left.
+        /// Only ever called with ids created by that save.</summary>
+        Task DiscardNewProfile(Guid tenantId, IReadOnlyCollection<Guid> newUserIds, Guid? newDependentId);
     }
 }

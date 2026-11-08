@@ -14,6 +14,11 @@ namespace Services.Riders
         RiderAccount,
         /// <summary>The ticket names a minor linked to their guardian (rider_dependent, Script0309).</summary>
         Dependent,
+        /// <summary>
+        /// One of several rider tickets the buyer bought for an event that name nobody (a parent buying three
+        /// unnamed entries): each is its own rider, keyed by the ticket ("ticket:{id}"), never the buyer.
+        /// </summary>
+        PerTicket,
     }
 
     /// <summary>
@@ -64,6 +69,16 @@ namespace Services.Riders
         public static RiderKeying ForDependent(User guardian, Guid dependentId) =>
             new(RiderKeyingKind.Dependent, guardian, $"{RiderKeying.DependentKeyPrefix}{dependentId:D}", false);
 
+        /// <summary>An unnamed rider ticket that is not the buyer's only one for its event: keyed by the ticket itself
+        /// (the same "ticket:{id}" key the photo store used for a credential before rider keys existed).</summary>
+        public static RiderKeying PerTicket(Guid ticketId) =>
+            new(RiderKeyingKind.PerTicket, null, $"ticket:{ticketId:D}", false);
+
+        /// <summary>A rider ticket that names nobody.</summary>
+        public static bool IsUnnamed(EventTicketPurchase t) =>
+            t.RiderUserId is null && t.RiderDependentId is null
+            && IdCheckRules.Normalize($"{t.RiderFirstName} {t.RiderLastName}").Length == 0;
+
         /// <summary>The name-based keying (passes, and tickets without a profile identity).</summary>
         public static RiderKeying FromNames(User? account, string? riderFirst, string? riderLast) =>
             account is null
@@ -77,6 +92,12 @@ namespace Services.Riders
     public interface ITicketRiderIdentity
     {
         Task<RiderKeying> ForTicket(EventTicketPurchase ticket, Guid tenantId);
+
+        /// <summary>
+        /// A ticket that names nobody is the buyer's own ONLY when it is the buyer's single unnamed rider ticket
+        /// for that event; otherwise it is one of several riders the buyer brought, keyed per ticket.
+        /// </summary>
+        Task<bool> IsSharedUnnamed(EventTicketPurchase ticket, Guid tenantId);
     }
 
     /// <summary>Scoped; memoises the accounts and dependents it reads for the request.</summary>
@@ -86,9 +107,12 @@ namespace Services.Riders
         private readonly IRiderDependentRepository _dependents;
         private readonly Dictionary<Guid, User?> _userCache = new();
         private readonly Dictionary<Guid, RiderDependent?> _depCache = new();
+        private readonly Dictionary<Guid, bool> _sharedCache = new();
+        private readonly IEventTicketPurchaseRepository _tickets;
 
-        public TicketRiderIdentity(IUserRepository users, IRiderDependentRepository dependents)
+        public TicketRiderIdentity(IUserRepository users, IRiderDependentRepository dependents, IEventTicketPurchaseRepository tickets)
         {
+            _tickets = tickets;
             _users = users;
             _dependents = dependents;
         }
@@ -98,6 +122,8 @@ namespace Services.Riders
             var purchaser = ticket.PurchaserUserId is Guid pid ? await Account(pid, tenantId) : null;
             User? riderAccount = null, guardian = null;
             RiderDependent? dependent = null;
+            // Several unnamed rider tickets from one buyer for one event: each its own rider.
+            if (await IsSharedUnnamed(ticket, tenantId)) return TicketRiderKeys.PerTicket(ticket.Id);
             if (ticket.RiderDependentId is Guid did)
             {
                 if (!_depCache.TryGetValue(did, out dependent))
@@ -110,6 +136,14 @@ namespace Services.Riders
             }
             return TicketRiderKeys.Resolve(purchaser, ticket.RiderFirstName, ticket.RiderLastName,
                 ticket.RiderUserId, ticket.RiderDependentId, riderAccount, dependent, guardian);
+        }
+
+        public async Task<bool> IsSharedUnnamed(EventTicketPurchase ticket, Guid tenantId)
+        {
+            if (!TicketRiderKeys.IsUnnamed(ticket)) return false;
+            if (_sharedCache.TryGetValue(ticket.Id, out var shared)) return shared;
+            var (count, included) = await _tickets.CountUnnamedRiderTickets(ticket, tenantId);
+            return _sharedCache[ticket.Id] = included && count > 1;
         }
 
         private async Task<User?> Account(Guid id, Guid tenantId)
