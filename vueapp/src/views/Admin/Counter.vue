@@ -623,7 +623,7 @@
                                     <div class="d-flex flex-wrap ga-2 mt-2">
                                         <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-send"
                                             :loading="linkBusy[li.purchaseId] === 'send'" @click="sendRiderLink(li, true)">
-                                            {{ linkDelivered[li.purchaseId] ? 'Send again' : 'Send link' }}
+                                            {{ linkDelivered[li.purchaseId] || riderStatus[li.purchaseId]?.status === 'link_sent' ? 'Send again' : 'Send link' }}
                                         </v-btn>
                                         <v-btn size="small" variant="outlined" prepend-icon="mdi-draw"
                                             :loading="linkBusy[li.purchaseId] === 'device'" @click="signOnDevice(li)">
@@ -1253,8 +1253,9 @@ const blankOtherForm = () => ({
     existingUserId: null as string | null,
     existingDependentId: null as string | null,
     firstName: '', lastName: '', birthdate: '', email: '', phone: '',
-    // Usually a parent buying for their child: the payer signs unless staff say otherwise.
-    guardianMode: 'payer' as 'payer' | 'other',
+    // No default guardian: staff must say whether the payer is the parent (signing for someone
+    // else's child is a legal statement, so it is never assumed).
+    guardianMode: null as 'payer' | 'other' | null,
     guardianFirstName: '', guardianLastName: '', guardianEmail: '', guardianPhone: '', guardianBirthdate: '',
     emergencyContactName: '', emergencyContactPhone: '',
 })
@@ -1330,6 +1331,10 @@ function clearOtherPick() {
 async function saveOtherRider() {
     if (!customer.value || !otherTier.value) return
     const f = otherForm.value
+    if (otherNeedsGuardian.value && !f.guardianMode) {
+        otherError.value = `Under 18: choose whether ${customer.value.firstName} is their parent or guardian, or someone else is.`
+        return
+    }
     otherSaving.value = true
     otherError.value = null
     try {
@@ -2016,7 +2021,8 @@ function kindLabel(kind: string): string {
         case 'extras': return 'Add-on'
         case 'membership': return 'Membership'
         case 'season_pass': return 'Season pass'
-        case 'event_ticket': return 'Day pass'
+        // Day passes, lessons and event entries are all event tickets.
+        case 'event_ticket': return 'Ticket'
         // Anything else: "shop_rental" reads as "Shop rental".
         default: return kind.charAt(0).toUpperCase() + kind.slice(1).replace(/_/g, ' ')
     }

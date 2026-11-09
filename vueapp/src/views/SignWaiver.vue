@@ -8,8 +8,8 @@
 
         <template v-else-if="done || info?.alreadySigned">
             <v-alert type="success" variant="tonal" class="mb-4">
-                <template v-if="isMinor && riderName">
-                    All set. {{ riderName }}'s waiver is signed, and there's no paperwork waiting at the window.
+                <template v-if="isMinor && signedForName">
+                    All set. {{ signedForName }}'s waiver is signed, and there's no paperwork waiting at the window.
                 </template>
                 <template v-else>
                     All set. Your waiver is signed, and there's no paperwork waiting for you when you arrive.
@@ -103,6 +103,9 @@ const submitError = ref<string | null>(null)
 const riderFirst = computed(() => info.value?.riderFirstName?.trim() || null)
 const riderLast = computed(() => info.value?.riderLastName?.trim() || null)
 const riderName = computed(() => riderFirst.value && riderLast.value ? `${riderFirst.value} ${riderLast.value}` : null)
+// Who the signature covers, for the confirmation: the server's name, else the one typed in.
+const signedForName = computed(() => riderName.value
+    || [firstName.value.trim(), lastName.value.trim()].filter(Boolean).join(' ') || null)
 // Name fields: always for an untargeted link; for a targeted one only when the server lacks the name.
 const showNameFields = computed(() => !info.value?.signAs || !riderFirst.value || !riderLast.value)
 // A targeted link: the server's mode. Otherwise from the birthdate typed in.

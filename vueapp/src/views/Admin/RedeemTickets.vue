@@ -547,9 +547,10 @@
                     <div class="d-flex align-center flex-wrap ga-2 mt-3" data-test="day-pass">
                         <v-icon size="18" color="success">mdi-ticket-confirmation-outline</v-icon>
                         <span class="text-body-2">
-                            <template v-if="pass.todaysBand">Today's band: <strong>#{{ pass.todaysBand.code }}</strong>
-                                · issued {{ pass.todaysBand.issuedAtLocal }}</template>
-                            <template v-else>Admitted today, no band yet</template>
+                            {{ admittedTodayLabel }} ·
+                            <template v-if="pass.todaysBand">band <strong>#{{ pass.todaysBand.code }}</strong>
+                                issued {{ pass.todaysBand.issuedAtLocal }}</template>
+                            <template v-else>no band yet</template>
                         </span>
                         <v-spacer></v-spacer>
                         <v-btn v-if="pass.todaysBand" size="small" variant="tonal" prepend-icon="mdi-watch-vibrate"
@@ -976,6 +977,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
+import { formatTenantDate, formatTenantDateTime, formatTenantTime } from '@/helpers/TenantTime'
 import { Html5Qrcode } from 'html5-qrcode'
 import { TicketService, type OrderLookup, type OrderItem, type OrderWaiverAttendee, type OrderSignature,
     type GateSearchResult, type GateWaiverSignRequestResult } from '@/services/TicketService'
@@ -1436,17 +1438,21 @@ const bandLookupInput = ref('')
 const bandLookupBusy = ref(false)
 const bandsByTicket = ref<Record<string, string>>({})
 // The band each person already wears today (any pass or ticket, Script0313), by each of their tickets.
+// It comes with the order; once staff link or unlink a band here, that person's live state is the
+// band chips (bandsByTicket), so the order's copy is no longer shown for them.
+const bandEditedTickets = ref<Set<string>>(new Set())
 const wornBandByTicket = computed(() => {
     const map: Record<string, string> = {}
     for (const w of order.value?.waivers ?? [])
-        if (w.bandCode) for (const id of w.purchaseIds) map[id] = w.bandCode
+        if (w.bandCode && !w.purchaseIds.some(id => bandEditedTickets.value.has(id)))
+            for (const id of w.purchaseIds) map[id] = w.bandCode
     return map
 })
 // "Admit and band" on the order screen (Script0313): the band typed or scanned for each person, by attendee key.
 const personBands = ref<Record<string, string>>({})
 // The person a band scan opened this order for (highlighted in the people panel).
 const focusedAttendeeKey = ref<string | null>(null)
-watch(orderToken, () => { personBands.value = {}; focusedAttendeeKey.value = null })
+watch(orderToken, () => { personBands.value = {}; focusedAttendeeKey.value = null; bandEditedTickets.value = new Set() })
 const bandDialogOpen = ref(false)
 const bandDialogBusy = ref(false)
 const bandDialogError = ref('')
@@ -1528,6 +1534,7 @@ async function saveBandLink() {
     bandDialogError.value = ''
     try {
         await wristbands.link(bandTarget.value.purchaseId, code)
+        bandEditedTickets.value = new Set(bandEditedTickets.value).add(bandTarget.value.purchaseId)
         bandDialogOpen.value = false
         flash(`Band ${code} linked.`, 'success')
         await loadBands()
@@ -1539,6 +1546,7 @@ async function saveBandLink() {
 async function unlinkBand(ticketId: string) {
     try {
         await wristbands.unlink(ticketId)
+        bandEditedTickets.value = new Set(bandEditedTickets.value).add(ticketId)
         flash('Band unlinked.', 'success')
         await loadBands()
     } catch (err: any) {
@@ -1967,6 +1975,14 @@ onBeforeUnmount(disarmBandScan)
 const passAdmittedToday = computed(() =>
     pass.value?.todaysReservations.some(r => r.status === 'checked_in') ?? false)
 
+/** "Admitted to Saturday Open Riding" or "Walk-up admission" (the latest admission today). */
+const admittedTodayLabel = computed(() => {
+    const latest = [...(pass.value?.todaysReservations ?? [])]
+        .filter(r => r.status === 'checked_in')
+        .sort((a, b) => (b.checkedInAtUtc ?? '').localeCompare(a.checkedInAtUtc ?? ''))[0]
+    return latest?.eventId && latest.eventTitle ? `Admitted to ${latest.eventTitle}` : 'Walk-up admission'
+})
+
 /** The admit row offers a band field: wristbands on and the holder not banded today. */
 const admitBandField = computed(() => !!branding.wristbandsEnabled && !!pass.value && !pass.value.todaysBand)
 
@@ -2155,11 +2171,8 @@ function money(cents: number): string {
 
 // Today's times read like the band chips ("5:08 PM"); other days carry the date.
 function formatInTenant(utc: string): string {
-    const tz = branding.timezone || 'UTC'
-    const t = dayjs.utc(utc).tz(tz)
-    return t.format('YYYY-MM-DD') === dayjs().tz(tz).format('YYYY-MM-DD')
-        ? t.format('h:mm A')
-        : t.format('MMM D, YYYY h:mm A')
+    const sameDay = formatTenantDate(utc) === formatTenantDate(new Date())
+    return sameDay ? formatTenantTime(utc, 'h:mm A') : formatTenantDateTime(utc, 'MMM D, YYYY h:mm A')
 }
 
 // Birthdates are calendar dates, not instants: render them as stored so a timezone
