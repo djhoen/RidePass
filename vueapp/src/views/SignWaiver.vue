@@ -8,7 +8,12 @@
 
         <template v-else-if="done || info?.alreadySigned">
             <v-alert type="success" variant="tonal" class="mb-4">
-                All set. Your waiver is signed, and there's no paperwork waiting for you when you arrive.
+                <template v-if="isMinor && riderName">
+                    All set. {{ riderName }}'s waiver is signed, and there's no paperwork waiting at the window.
+                </template>
+                <template v-else>
+                    All set. Your waiver is signed, and there's no paperwork waiting for you when you arrive.
+                </template>
             </v-alert>
         </template>
 
@@ -154,6 +159,8 @@ async function submit() {
             parentPhone: isMinor.value ? parentPhone.value.trim() : null,
         })
         done.value = true
+        // The form collapses to the confirmation: bring it into view (the signer was at the bottom).
+        window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err: any) {
         submitError.value = err.response?.data?.error
             ?? 'Your signature could not be saved. Check your connection and tap Sign waiver again.'

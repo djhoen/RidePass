@@ -442,10 +442,11 @@
                     <v-card-text>
                         <v-alert v-if="otherRiderLines.length > 0" type="info" variant="tonal" density="compact" class="mb-3">
                             <strong>{{ otherRiderLines.length }} other rider{{ otherRiderLines.length === 1 ? '' : 's' }}</strong>
-                            ({{ otherRiderLines.map(l => l.other!.name).join(', ') }}) sign their own waiver after payment:
-                            send them (or their parent or guardian) a link, or sign on this device on the receipt
-                            screen. The gate won’t admit them until it’s signed.
-                            <span v-if="!payerHasOwnLines">Nothing in this cart is for {{ customer?.firstName }}, so they don’t sign here.</span>
+                            ({{ otherRiderLines.map(l => l.other!.name).join(', ') }}):
+                            {{ otherRiderLines.length === 1 ? 'their waiver is' : 'each waiver is' }} signed after payment
+                            (by a parent or guardian for anyone under 18). Send a link, or sign on this device on the
+                            receipt screen. The gate won’t admit them until it’s signed.
+                            <span v-if="!payerHasOwnLines">{{ customer?.firstName }} has no ticket of their own in this cart, so there is nothing to sign here.</span>
                         </v-alert>
                         <div v-if="!activeWaiver" class="text-medium-emphasis">
                             No active waiver configured for this tenant — proceed to payment.
@@ -622,7 +623,7 @@
                                     <div class="d-flex flex-wrap ga-2 mt-2">
                                         <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-send"
                                             :loading="linkBusy[li.purchaseId] === 'send'" @click="sendRiderLink(li, true)">
-                                            {{ riderLinks[li.purchaseId] ? 'Send again' : 'Send link' }}
+                                            {{ linkDelivered[li.purchaseId] ? 'Send again' : 'Send link' }}
                                         </v-btn>
                                         <v-btn size="small" variant="outlined" prepend-icon="mdi-draw"
                                             :loading="linkBusy[li.purchaseId] === 'device'" @click="signOnDevice(li)">
@@ -1252,7 +1253,8 @@ const blankOtherForm = () => ({
     existingUserId: null as string | null,
     existingDependentId: null as string | null,
     firstName: '', lastName: '', birthdate: '', email: '', phone: '',
-    guardianMode: 'other' as 'payer' | 'other',
+    // Usually a parent buying for their child: the payer signs unless staff say otherwise.
+    guardianMode: 'payer' as 'payer' | 'other',
     guardianFirstName: '', guardianLastName: '', guardianEmail: '', guardianPhone: '', guardianBirthdate: '',
     emergencyContactName: '', emergencyContactPhone: '',
 })
@@ -1367,9 +1369,14 @@ async function saveOtherRider() {
         if (dup) { otherError.value = `${other.name} already has this ticket in the cart.`; return }
         cart.value.push(dayPassLine(otherTier.value, other))
         otherDialog.value = false
-        flash(p.matchedExistingRider || p.matchedExistingGuardian
-            ? `Added ${other.name}: their existing profile${p.matchedExistingGuardian ? ' (guardian too)' : ''} will be used.`
-            : `Added ${other.name}: their profile is created with the sale.`, 'success')
+        // The payer always "matches" as guardian, so only a separate guardian's account is worth a mention.
+        const riderPart = p.matchedExistingRider
+            ? 'their existing profile will be used'
+            : 'their profile is created with the sale'
+        const guardianPart = sendGuardian && p.matchedExistingGuardian
+            ? ` ${p.guardianName ?? 'The guardian'}'s existing account signs for them.`
+            : ''
+        flash(`Added ${other.name}: ${riderPart}.${guardianPart}`, 'success')
     } catch (err: any) {
         const msg: string = err.response?.data?.error || 'Couldn’t add that rider.'
         otherError.value = msg
@@ -2009,7 +2016,9 @@ function kindLabel(kind: string): string {
         case 'extras': return 'Add-on'
         case 'membership': return 'Membership'
         case 'season_pass': return 'Season pass'
-        default: return kind
+        case 'event_ticket': return 'Day pass'
+        // Anything else: "shop_rental" reads as "Shop rental".
+        default: return kind.charAt(0).toUpperCase() + kind.slice(1).replace(/_/g, ' ')
     }
 }
 

@@ -134,8 +134,8 @@
                 </v-alert>
                 <v-alert v-else-if="order.waiverRequiredCount > 0" type="success" variant="tonal"
                     density="compact" icon="mdi-shield-check" class="mb-3">
-                    All {{ order.waiverRequiredCount }}
-                    {{ order.waiverRequiredCount === 1 ? 'required waiver is' : 'required waivers are' }} signed.
+                    {{ order.waiverRequiredCount === 1 ? 'The required waiver is signed.'
+                        : `All ${order.waiverRequiredCount} required waivers are signed.` }}
                 </v-alert>
             </div>
 
@@ -185,6 +185,11 @@
                                         prepend-icon="mdi-watch" closable
                                         @click:close="unlinkBand(item.purchaseId)">
                                         Band {{ bandsByTicket[item.purchaseId] }}
+                                    </v-chip>
+                                    <!-- Already banded today on a pass or another ticket: admitting this ticket reuses it. -->
+                                    <v-chip v-else-if="wornBandByTicket[item.purchaseId]" size="x-small" color="indigo"
+                                        variant="tonal" prepend-icon="mdi-watch">
+                                        Band {{ wornBandByTicket[item.purchaseId] }} · already worn today
                                     </v-chip>
                                     <v-btn v-else size="x-small" variant="tonal" prepend-icon="mdi-watch"
                                         @click="openLinkBand(item)">Link band</v-btn>
@@ -542,8 +547,9 @@
                     <div class="d-flex align-center flex-wrap ga-2 mt-3" data-test="day-pass">
                         <v-icon size="18" color="success">mdi-ticket-confirmation-outline</v-icon>
                         <span class="text-body-2">
-                            Today: {{ dayPassLabel }}<template v-if="pass.todaysBand"> · <strong>Band #{{ pass.todaysBand.code }}</strong>
-                                issued {{ pass.todaysBand.issuedAtLocal }}</template>
+                            <template v-if="pass.todaysBand">Today's band: <strong>#{{ pass.todaysBand.code }}</strong>
+                                · issued {{ pass.todaysBand.issuedAtLocal }}</template>
+                            <template v-else>Admitted today, no band yet</template>
                         </span>
                         <v-spacer></v-spacer>
                         <v-btn v-if="pass.todaysBand" size="small" variant="tonal" prepend-icon="mdi-watch-vibrate"
@@ -1429,6 +1435,13 @@ function passResultSummary(r: GateSearchResult): string {
 const bandLookupInput = ref('')
 const bandLookupBusy = ref(false)
 const bandsByTicket = ref<Record<string, string>>({})
+// The band each person already wears today (any pass or ticket, Script0313), by each of their tickets.
+const wornBandByTicket = computed(() => {
+    const map: Record<string, string> = {}
+    for (const w of order.value?.waivers ?? [])
+        if (w.bandCode) for (const id of w.purchaseIds) map[id] = w.bandCode
+    return map
+})
 // "Admit and band" on the order screen (Script0313): the band typed or scanned for each person, by attendee key.
 const personBands = ref<Record<string, string>>({})
 // The person a band scan opened this order for (highlighted in the people panel).
@@ -1954,15 +1967,6 @@ onBeforeUnmount(disarmBandScan)
 const passAdmittedToday = computed(() =>
     pass.value?.todaysReservations.some(r => r.status === 'checked_in') ?? false)
 
-/** "walk-up day pass" or "day pass · Saturday Open Riding" (the latest admission today). */
-const dayPassLabel = computed(() => {
-    const latest = [...(pass.value?.todaysReservations ?? [])]
-        .filter(r => r.status === 'checked_in')
-        .sort((a, b) => (b.checkedInAtUtc ?? '').localeCompare(a.checkedInAtUtc ?? ''))[0]
-    if (!latest) return 'day pass'
-    return latest.eventId ? `day pass · ${latest.eventTitle}` : 'walk-up day pass'
-})
-
 /** The admit row offers a band field: wristbands on and the holder not banded today. */
 const admitBandField = computed(() => !!branding.wristbandsEnabled && !!pass.value && !pass.value.todaysBand)
 
@@ -2149,8 +2153,13 @@ function money(cents: number): string {
     return `$${(cents / 100).toFixed(2)}`
 }
 
+// Today's times read like the band chips ("5:08 PM"); other days carry the date.
 function formatInTenant(utc: string): string {
-    return dayjs.utc(utc).tz(branding.timezone || 'UTC').format('YYYY-MM-DD HH:mm')
+    const tz = branding.timezone || 'UTC'
+    const t = dayjs.utc(utc).tz(tz)
+    return t.format('YYYY-MM-DD') === dayjs().tz(tz).format('YYYY-MM-DD')
+        ? t.format('h:mm A')
+        : t.format('MMM D, YYYY h:mm A')
 }
 
 // Birthdates are calendar dates, not instants: render them as stored so a timezone

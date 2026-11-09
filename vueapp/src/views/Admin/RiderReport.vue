@@ -114,7 +114,7 @@
                         <td class="text-no-wrap">
                             <span v-if="r.eventTitle">{{ r.eventTitle }}</span>
                             <span v-else class="text-medium-emphasis font-italic">Walk-up</span>
-                            <span class="text-caption text-medium-emphasis">{{ formatDay(r.eventStartsAtUtc) }}</span>
+                            <span class="text-caption text-medium-emphasis ml-1">{{ formatDay(r.eventStartsAtUtc) }}</span>
                             <div v-if="r.eventTypeName" class="text-caption text-medium-emphasis">{{ r.eventTypeName }}</div>
                         </td>
                         <td class="text-no-wrap">
