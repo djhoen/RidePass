@@ -1444,6 +1444,8 @@ const linkDelivered = ref<Record<string, boolean>>({})
 const refreshingWaivers = ref(false)
 let waiverPoll: ReturnType<typeof setInterval> | null = null
 
+// Declared before the receipt-rider computeds: the watch below reads it during setup.
+const lineItems = ref<any[]>([])
 const receiptRiderLines = computed(() => (lineItems.value as any[]).filter(l => l.otherRider) as
     { purchaseId: string; riderName: string; riderIsMinor: boolean }[])
 const ridersAllDone = computed(() => receiptRiderLines.value.length > 0 && receiptRiderLines.value.every(l =>
@@ -1592,7 +1594,6 @@ const cashSubmitted = ref(false)
 const creatingSale = ref(false)
 const clientSecret = ref<string | null>(null)
 const totalAmountCents = ref(0)
-const lineItems = ref<any[]>([])
 const stripeReady = ref(false)
 const paying = ref(false)
 const paymentError = ref<string | null>(null)
