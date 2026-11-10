@@ -2467,6 +2467,10 @@ namespace webapi.Controllers
             var pinResult = await _managerPin.VerifyAsync(_tenantContext.TenantId, actingUserId, req?.ManagerPin);
             if (!pinResult.Authorized)
                 return new ApiResponses().BadRequestResult(pinResult.Error ?? "Manager authorization required to refund.");
+            // A venue that keeps refunds for its Admins (Script0314) needs an Admin's PIN here,
+            // not a Manager's. Checked after the PIN so a wrong PIN still counts toward lockout.
+            if (_tenantContext.Tenant.RefundsAdminOnly && !pinResult.IsAdmin)
+                return new ApiResponses().BadRequestResult("Only an Admin can approve a refund here. Ask an Admin to enter their PIN.");
 
             var sale = await _concessions.GetSale(id, _tenantContext.TenantId);
             if (sale is null) return new ApiResponses().NotFoundResult("Sale not found.");

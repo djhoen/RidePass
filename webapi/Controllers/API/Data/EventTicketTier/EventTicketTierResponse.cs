@@ -53,6 +53,14 @@ namespace webapi.Controllers.API.Data.EventTicketTier
         // "covers up to N riders" instead of implying a per-person price.
         public int PartySizeIncluded { get; set; } = 1;
         public int? PartyPriceCents { get; set; }
+        // ── Per-day prices (Script0316) ──
+        /// <summary>The tier's own walk-up price (admin reads); null = same as online.</summary>
+        public int? WalkUpPriceCents { get; set; }
+        public bool NonRefundable { get; set; }
+        /// <summary>The price before a peak-day rule, when one applies to this listing (PriceCents is after).</summary>
+        public int? BasePriceCents { get; set; }
+        /// <summary>The peak-day rule that raised PriceCents, e.g. "Saturday".</summary>
+        public string? DayPriceLabel { get; set; }
         public int? PartySizeMax { get; set; }
     }
 }

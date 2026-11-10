@@ -118,6 +118,11 @@ namespace Services.Repositories.Interfaces
         // Purchases
         Task<(Guid Id, Guid RedemptionToken)> CreatePurchase(SeasonPassPurchase p);
         Task<SeasonPassPurchase?> GetPurchase(Guid id);
+        /// <summary>
+        /// Whether the pass has admitted anyone yet: a check-in, a ride credit spent on a ticket, a
+        /// buddy admission, or its holder's ID checked at the gate. A used pass's holder is locked.
+        /// </summary>
+        Task<bool> HasBeenUsed(Guid passPurchaseId, Guid tenantId);
         Task<SeasonPassPurchase?> GetPurchaseByStripePaymentIntentId(string paymentIntentId);
 
         /// <summary>Every pass on one PaymentIntent. A single checkout can buy several passes

@@ -30,6 +30,7 @@
         public int BirthdateVerifyValidDays { get; set; } = 365;
         // Rider photo on file (Script0307): 'off' | 'prompt' | 'required'. Enforced in IWaiverCheckInGate.
         public string RiderPhotoMode { get; set; } = "off";
+        public bool RefundsAdminOnly { get; set; }
         /// <summary>Customer's share of the platform service charge on a bike shop sale (bps).
         /// 0 = the shop absorbs it and no fee line is shown at checkout.</summary>
         public int ShopBuyerPaidServiceChargeBps { get; set; }

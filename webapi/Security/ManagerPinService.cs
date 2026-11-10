@@ -33,6 +33,8 @@ namespace webapi.Security
         public string? AuthorizedName { get; set; }
         // Whether the matched person holds a manager/admin role (comps and voids).
         public bool IsManager { get; set; }
+        // Whether the matched person is a tenant_admin (a venue may keep refunds for Admins, Script0314).
+        public bool IsAdmin { get; set; }
         public bool Locked { get; set; }
         public DateTime? LockedUntilUtc { get; set; }
         public string? Error { get; set; }
@@ -85,6 +87,7 @@ namespace webapi.Security
                         AuthorizedUserId = c.Id,
                         AuthorizedName = $"{c.FirstName} {c.LastName}".Trim(),
                         IsManager = IsManagerOrAdmin(c),
+                        IsAdmin = c.Role == "tenant_admin" || (c.Roles ?? System.Array.Empty<string>()).Contains("tenant_admin"),
                     };
                 }
             }

@@ -9,7 +9,7 @@
                 <div v-for="t in raceTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="t.dayPriceLabel"> · {{ t.dayPriceLabel }} price</span><span v-if="t.nonRefundable"> · Non-refundable</span><span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>
@@ -56,7 +56,7 @@
                             <v-icon v-else size="14" class="text-medium-emphasis">mdi-account-school-outline</v-icon>
                             <span class="text-caption text-medium-emphasis">with {{ t.instructorName }}</span>
                         </div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="t.dayPriceLabel"> · {{ t.dayPriceLabel }} price</span><span v-if="t.nonRefundable"> · Non-refundable</span><span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>
@@ -72,7 +72,7 @@
                 <div v-for="t in spectatorGateTiers" :key="t.id" class="evt-line pl-4">
                     <div>
                         <div class="font-weight-medium">{{ t.name }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
+                        <div class="text-caption text-medium-emphasis">{{ priceLabel(t.priceCents) }}<span v-if="t.dayPriceLabel"> · {{ t.dayPriceLabel }} price</span><span v-if="t.nonRefundable"> · Non-refundable</span><span v-if="soldOut(t)"> · Sold out</span><span v-else-if="stepHint(t)"> · {{ stepHint(t) }}</span></div>
                     </div>
                     <div class="d-flex align-center ga-1">
                         <v-btn icon="mdi-minus" size="x-small" variant="tonal" :disabled="(qty[t.id] || 0) <= 0" @click="bump(t, -1)"></v-btn>

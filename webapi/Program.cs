@@ -114,6 +114,9 @@ builder.Services.AddScoped<IRiderDependentRepository, RiderDependentRepository>(
 builder.Services.AddScoped<Services.Riders.ITicketRiderIdentity, Services.Riders.TicketRiderIdentity>();
 builder.Services.AddScoped<webapi.Helpers.ICounterRiderProfiles, webapi.Helpers.CounterRiderProfiles>();
 builder.Services.AddScoped<IKioskRepository, KioskRepository>();
+builder.Services.AddScoped<IVoucherRepository, VoucherRepository>();
+builder.Services.AddScoped<IDayPriceRuleRepository, DayPriceRuleRepository>();
+builder.Services.AddScoped<webapi.Helpers.ITierDayPricer, webapi.Helpers.TierDayPricer>();
 builder.Services.AddScoped<webapi.Security.IKioskAuthenticator, webapi.Security.KioskAuthenticator>();
 builder.Services.AddSingleton<webapi.Security.KioskCredentialCache>();
 builder.Services.AddScoped<webapi.Helpers.IKioskSignupWriter, webapi.Helpers.KioskSignupWriter>();

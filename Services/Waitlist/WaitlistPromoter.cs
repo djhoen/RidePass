@@ -32,6 +32,7 @@ namespace Services.Waitlist
         private readonly IFeeCalculator _feeCalculator;
         private readonly ITenantLedgerRepository _ledger;
         private readonly IConfiguration _config;
+        private readonly IDayPriceRuleRepository _dayRules;
         private readonly ILogger<WaitlistPromoter> _logger;
 
         public WaitlistPromoter(
@@ -46,8 +47,10 @@ namespace Services.Waitlist
             IFeeCalculator feeCalculator,
             ITenantLedgerRepository ledger,
             IConfiguration config,
-            ILogger<WaitlistPromoter> logger)
+            ILogger<WaitlistPromoter> logger,
+            IDayPriceRuleRepository dayRules)
         {
+            _dayRules = dayRules;
             _waitlist = waitlist;
             _events = events;
             _tiers = tiers;
@@ -93,7 +96,12 @@ namespace Services.Waitlist
                 var tier = await _tiers.GetById(chargeTierId.Value, next.TenantId);
                 if (tier is null) return;
 
-                var serviceCharge = (int)((long)tier.PriceCents * tenant.ServiceChargeBps / 10_000L);
+                // The day's online price (Script0316), the same one WaitlistController.Join charged.
+                var dayPrice = Services.Pricing.DayPricing.For(tier,
+                    Services.Helpers.TenantClock.LocalDate(tenant.Timezone, DateTime.SpecifyKind(ev.StartsAt, DateTimeKind.Utc)),
+                    ev.EventTypeId, Services.Pricing.DayPricing.Online,
+                    await _dayRules.List(next.TenantId, activeOnly: true)).PriceCents;
+                var serviceCharge = (int)((long)dayPrice * tenant.ServiceChargeBps / 10_000L);
                 var purchase = new EventTicketPurchase
                 {
                     TenantId = next.TenantId,

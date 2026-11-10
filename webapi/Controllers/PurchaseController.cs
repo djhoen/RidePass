@@ -44,6 +44,7 @@ namespace webapi.Controllers
         private readonly IMembershipRepository _memberships;
         private readonly IRecentSalesRepository _recentSales;
         private readonly IDbHelper _db;
+        private readonly ITierDayPricer _dayPricer;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantEventTypeRepository _eventTypes;
         private readonly IRiderLoampassLinkRepository _loampassLinks;
@@ -74,6 +75,7 @@ namespace webapi.Controllers
             IMembershipRepository memberships,
             IRecentSalesRepository recentSales,
             IDbHelper db,
+            ITierDayPricer dayPricer,
             ITenantContext tenantContext,
             ITenantEventTypeRepository eventTypes,
             IRiderLoampassLinkRepository loampassLinks,
@@ -108,6 +110,7 @@ namespace webapi.Controllers
             _memberships = memberships;
             _recentSales = recentSales;
             _db = db;
+            _dayPricer = dayPricer;
             _tenantContext = tenantContext;
             _eventTypes = eventTypes;
             _loampassLinks = loampassLinks;
@@ -323,6 +326,10 @@ namespace webapi.Controllers
                 return new ApiResponses().BadRequestResult("That event has already ended or is no longer available.");
             }
 
+            // Online price and peak days (Script0316): every price below starts from this.
+            foreach (var t in tierLookup.Values)
+                await _dayPricer.Apply(t, parentEvent, Services.Pricing.DayPricing.Online);
+
             // Active tiers for this event, loaded once (used by the price-ladder + gate-fee checks).
             var eventTiers = await _tiers.GetForEvent(parentEvent.Id, _tenantContext.TenantId, activeOnly: true);
 
@@ -352,6 +359,8 @@ namespace webapi.Controllers
                 var groupItems = items.Where(i => tierLookup[i.TierId].LadderGroup == groupId).ToList();
                 if (groupItems.Any(i => i.TierId != state.Active.Id))
                 {
+                    // Quote what the next checkout will charge: the day's price (Script0316).
+                    await _dayPricer.Apply(state.Active, parentEvent, Services.Pricing.DayPricing.Online);
                     return StatusCode(409, new
                     {
                         code = "price_changed",
@@ -558,6 +567,21 @@ namespace webapi.Controllers
                 couponApp = validation.application;
             }
 
+            // Voucher (Script0315): one free rider admission, used once, tied to the account that
+            // redeems it. Serialized on the code so two checkouts can't both pass the one-use check
+            // before either records it; held until the redemption row is written below (a unique
+            // index is the backstop). A null resource makes the `await using` a no-op.
+            await using var voucherLock = couponApp?.Coupon.IsVoucher == true
+                ? await _db.AcquireAdvisoryLock($"voucher:{couponApp.Coupon.Id}")
+                : null;
+            if (couponApp?.Coupon.IsVoucher == true)
+            {
+                if (!purchaserUserId.HasValue)
+                    return new ApiResponses().BadRequestResult("Sign in to use a voucher: it is redeemed onto your rider profile.");
+                if (await _coupons.CountRedemptions(couponApp.Coupon.Id) > 0)
+                    return new ApiResponses().BadRequestResult("That voucher has already been used.");
+            }
+
             // ── Season pass benefits ─────────────────────────────────────────────────
             // A holder whose pass covers this event's type gets their entry discounted (100% = in
             // free). The discount is an entitlement OF A PASS, so the number of tickets it can
@@ -602,6 +626,30 @@ namespace webapi.Controllers
                         passBenefitByTicketIndex[ticketIndex] = ranked[passBenefitByTicketIndex.Count];
                     }
                 }
+            }
+
+            // A voucher pays for exactly one rider admission: the dearest one left after pass
+            // benefits. Picked before any ride credit is burned so a refusal here costs nothing.
+            int? voucherUnitIndex = null;
+            if (couponApp?.Coupon.IsVoucher == true)
+            {
+                var units = new List<(int Index, int PriceCents, bool RiderAudience)>();
+                var vIdx = 0;
+                foreach (var item in items)
+                {
+                    var t = tierLookup[item.TierId];
+                    for (var q = 0; q < item.Quantity; q++, vIdx++)
+                    {
+                        var price = Services.Pricing.PartyPricing.UnitPriceCents(t, q);
+                        if (passBenefitByTicketIndex.GetValueOrDefault(vIdx) is { } g) price -= g.Benefit.DiscountFor(price);
+                        units.Add((vIdx, price, Services.Vouchers.VoucherRules.IsRiderAdmission(t.Kind, t.Audience)));
+                    }
+                }
+                voucherUnitIndex = Services.Vouchers.VoucherRules.PickUnit(units);
+                if (voucherUnitIndex is null)
+                    return new ApiResponses().BadRequestResult(
+                        "A voucher pays for one rider's admission, and nothing in this order still costs one.");
+                couponApp.DiscountCents = units.First(u => u.Index == voucherUnitIndex).PriceCents;
             }
 
             // Create one purchase row per unit. Each gets its own redemption token (QR).
@@ -704,7 +752,16 @@ namespace webapi.Controllers
                     }
 
                     int unitCouponDiscount = 0;
-                    if (couponApp is not null && couponSubtotalDenom > 0)
+                    if (couponApp is not null && couponApp.Coupon.IsVoucher)
+                    {
+                        // The whole of one admission, nothing off the rest (picked above).
+                        if (unitIndex == voucherUnitIndex)
+                        {
+                            unitCouponDiscount = unitPrice;
+                            unitPrice = 0;
+                        }
+                    }
+                    else if (couponApp is not null && couponSubtotalDenom > 0)
                     {
                         // Proportional split; last remaining unit absorbs the rounding remainder.
                         unitCouponDiscount = totalUnitsRemaining == 1
@@ -776,9 +833,11 @@ namespace webapi.Controllers
                         SourceKind = "event_ticket",
                         SourceId = t.purchase.Id,
                         DiscountCents = t.couponDiscountCents,
+                        IsVoucher = couponApp.Coupon.IsVoucher,
                     });
                 }
             }
+            await (voucherLock?.DisposeAsync() ?? ValueTask.CompletedTask);
 
             var totalAmountCents = createdTickets.Sum(t => t.unitAmountCents);
             var totalServiceChargeCents = createdTickets.Sum(t => t.unitServiceChargeCents);
@@ -1293,6 +1352,22 @@ namespace webapi.Controllers
                     var ev = tier is null ? null : await _events.GetById(tier.EventId, tenantId);
                     if (tier is null || ev is null) return new ApiResponses().BadRequestResult("Ticket is missing its event.");
 
+                    // A ride credit pays for its pass holder only (passes aren't transferable, e.g. a
+                    // 3 Ride Pass): the ticket it bought can't be registered to someone else.
+                    if (ticket.AppliedSeasonPassPurchaseId is Guid fundingPassId
+                        && await _seasonPasses.GetPurchase(fundingPassId) is { } fundingPass
+                        && fundingPass.TenantId == tenantId
+                        && !string.IsNullOrWhiteSpace(fundingPass.HolderFirstName)
+                        && !Services.Passes.PassHolderRules.SamePerson(fundingPass.HolderFirstName, fundingPass.HolderLastName,
+                            fundingPass.HolderBirthdate, reg.FirstName, reg.LastName, reg.Birthdate))
+                    {
+                        var passName = (await _seasonPasses.GetProduct(fundingPass.ProductId, tenantId))?.Name ?? "pass";
+                        var holder = $"{fundingPass.HolderFirstName} {fundingPass.HolderLastName}".Trim();
+                        return new ApiResponses().BadRequestResult(
+                            $"This admission was paid with a ride from {holder}'s {passName}, so it is for {holder} only: "
+                            + "rides on a pass can't be used for someone else.");
+                    }
+
                     var isRace = tier.Kind == "race_entry";
                     // A class spans all steps of a price ladder, so key uniqueness on the
                     // ladder group (falling back to the tier id for a standalone class).
@@ -1773,12 +1848,22 @@ namespace webapi.Controllers
         }
 
         // True when the caller may refund a checked-in / used purchase. super_admin always may;
-        // otherwise the role must carry sales.refund.override (tenant_admin + tenant_manager).
+        // otherwise one of the caller's roles must carry sales.refund.override (tenant_admin +
+        // tenant_manager), narrowed to Admins at a venue that keeps refunds for them (Script0314).
+        // The venue's Admin (or a platform super admin): the only people who may cancel or refund a
+        // non-refundable ticket (Script0316).
+        private bool IsVenueAdmin()
+        {
+            var roles = User.FindAll("role").Select(c => c.Value).ToList();
+            return roles.Contains("super_admin") || roles.Contains("tenant_admin");
+        }
+
         private bool HasRefundOverride()
         {
-            var role = User.FindFirst("role")?.Value ?? "";
-            if (role == "super_admin") return true;
-            return TenantPermissions.ForRole(role).Contains(TenantPermissions.SalesRefundOverride);
+            var roles = User.FindAll("role").Select(c => c.Value).ToList();
+            if (roles.Contains("super_admin")) return true;
+            var adminOnly = _tenantContext.IsResolved && _tenantContext.Tenant.RefundsAdminOnly;
+            return TenantPermissions.ForRolesAt(roles, adminOnly).Contains(TenantPermissions.SalesRefundOverride);
         }
 
         // Resolve any purchase to the Stripe PaymentIntent that charged its order (null for
@@ -1831,6 +1916,9 @@ namespace webapi.Controllers
                 {
                     var p = await _ticketPurchases.GetById(purchaseId, tenantId);
                     if (p is null) return (false, false, "Purchase not found.", 0, null);
+                    // Non-refundable ticket types (Script0316): only an Admin may refund one.
+                    if (!IsVenueAdmin() && (await _tiers.GetById(p.TierId, tenantId))?.NonRefundable == true)
+                        return (false, false, "This ticket is non-refundable: only an Admin can refund it.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     connectedAccount = p.StripeConnectedAccountId;
                     eventTicketTierId = p.TierId;
@@ -2299,6 +2387,17 @@ namespace webapi.Controllers
             if (existing.Status != "paid")
             {
                 return new ApiResponses().BadRequestResult($"Cannot cancel a ticket with status '{existing.Status}'.");
+            }
+            // Non-refundable ticket types (Script0316): only an Admin may cancel one.
+            if (!IsVenueAdmin() && (await _tiers.GetById(existing.TierId, _tenantContext.TenantId))?.NonRefundable == true)
+            {
+                return new ApiResponses().BadRequestResult("This ticket is non-refundable: only an Admin can cancel it.");
+            }
+            // Cancelling a paid ticket queues its refund, so at a venue that keeps refunds for its
+            // Admins (Script0314) a Manager can't cancel one that took money either.
+            if (!IsVenueAdmin() && _tenantContext.Tenant.RefundsAdminOnly && existing.AmountCents > 0)
+            {
+                return new ApiResponses().BadRequestResult("At this venue only an Admin can cancel a paid ticket, because cancelling refunds it.");
             }
             if (!TryGetUserId(out var adminId))
             {

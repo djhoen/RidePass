@@ -33,6 +33,8 @@
         public string BirthdateVerifyMode { get; set; } = "off";
         /// <summary>Rider photo on file (Script0307): 'off' | 'prompt' | 'required'. Enforced in IWaiverCheckInGate.</summary>
         public string RiderPhotoMode { get; set; } = "off";
+        /// <summary>Script0314: only tenant_admin may refund (sales.refund / sales.refund.override, F&amp;B refund PIN).</summary>
+        public bool RefundsAdminOnly { get; set; }
         public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted

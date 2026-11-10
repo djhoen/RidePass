@@ -20,6 +20,9 @@ namespace Services.Repositories.Data.CouponData
         // Public tenant coupons leave both fields null.
         public Guid? IssuedToUserId { get; set; }
         public Guid? IssuedFromPurchaseId { get; set; }
+        /// <summary>Script0315: set when this code is a voucher (one free rider admission, used once).</summary>
+        public Guid? VoucherBatchId { get; set; }
+        public bool IsVoucher => VoucherBatchId.HasValue;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
@@ -33,6 +36,8 @@ namespace Services.Repositories.Data.CouponData
         public string SourceKind { get; set; } = null!;  // pass | event_ticket | season_pass
         public Guid SourceId { get; set; }
         public int DiscountCents { get; set; }
+        /// <summary>Script0315: a voucher's one use; a unique index allows one such row per code.</summary>
+        public bool IsVoucher { get; set; }
         public DateTime RedeemedAt { get; set; }
     }
 

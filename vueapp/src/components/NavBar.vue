@@ -333,6 +333,8 @@ const allDirectLinks: AdminLink[] = [
     { to: '/Admin/Dashboard', icon: 'mdi-view-dashboard',   title: 'Dashboard', perm: null, staffOnly: true },
     { to: '/Admin/Users',     icon: 'mdi-account-multiple', title: 'Users',     perm: Perm.UsersManage },
     { to: '/Admin/EmployeePasses', icon: 'mdi-card-account-details', title: 'Employee Passes', perm: Perm.UsersManage },
+    // Every staffer gives vouchers from their own allowance (Script0315); Admins manage them there.
+    { to: '/Admin/Vouchers', icon: 'mdi-gift-outline', title: 'Vouchers', perm: null, staffOnly: true },
     { to: '/Admin/Customers', icon: 'mdi-account-group',    title: 'Customers', perm: Perm.CustomersView },
     { to: '/Admin/Reports',   icon: 'mdi-chart-line',       title: 'Reporting', perm: Perm.ReportsView },
     { to: '/Admin/Feedback',  icon: 'mdi-message-text',     title: 'Feedback',  perm: Perm.SettingsManage },
@@ -375,6 +377,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
+            { to: '/Admin/DayPricing',   icon: 'mdi-calendar-star',        title: 'Peak Days',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
             { to: '/Admin/PassUpgrades', icon: 'mdi-arrow-up-bold-box-outline', title: 'Pass Upgrades', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },
             { to: '/Admin/Packages',     icon: 'mdi-package-variant-closed', title: 'Packages',    perm: Perm.CatalogManage },

@@ -23,6 +23,7 @@ namespace webapi.Controllers
         private readonly IPaymentProvider _payments;
         private readonly IChargeRouter _chargeRouter;
         private readonly ITenantContext _tenantContext;
+        private readonly webapi.Helpers.ITierDayPricer _dayPricer;
 
         public WaitlistController(
             IEventWaitlistRepository waitlist,
@@ -32,8 +33,10 @@ namespace webapi.Controllers
             IUserRepository users,
             IPaymentProvider payments,
             IChargeRouter chargeRouter,
-            ITenantContext tenantContext)
+            ITenantContext tenantContext,
+            webapi.Helpers.ITierDayPricer dayPricer)
         {
+            _dayPricer = dayPricer;
             _waitlist = waitlist;
             _events = events;
             _tiers = tiers;
@@ -135,6 +138,8 @@ namespace webapi.Controllers
                 // Compute pre-pay amount the same way regular checkout does so the rider
                 // ends up with no surprise charge when promoted. ServiceCharge is the
                 // tenant fee; rider pays their share per tier.RiderPaidServiceChargeBps.
+                // Online price on the event's day, peak days included (Script0316).
+                if (ev is not null) await _dayPricer.Apply(chargeTier, ev, Services.Pricing.DayPricing.Online);
                 var serviceChargePerUnit = (int)((long)chargeTier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
                 var riderPortion = (int)((long)serviceChargePerUnit * chargeTier.RiderPaidServiceChargeBps / 10_000L);
                 prepayAmountCents = chargeTier.PriceCents + riderPortion;
@@ -286,6 +291,9 @@ namespace webapi.Controllers
                 var tier = await _tiers.GetById(entry.TierId.Value, _tenantContext.TenantId);
                 if (tier is not null)
                 {
+                    // The day's price (Script0316), which is what Confirm/Pay charges.
+                    if (await _events.GetById(entry.EventId, _tenantContext.TenantId) is { } priceEv)
+                        await _dayPricer.Apply(tier, priceEv, Services.Pricing.DayPricing.Online);
                     resp.TierName = tier.Name;
                     resp.TierPriceCents = tier.PriceCents;
                 }
@@ -328,6 +336,8 @@ namespace webapi.Controllers
             {
                 var tier = await _tiers.GetById(entry.TierId.Value, _tenantContext.TenantId);
                 if (tier is null) return new ApiResponses().BadRequestResult("Selected tier not found.");
+                // Online price on the event's day, peak days included (Script0316).
+                await _dayPricer.Apply(tier, ev, Services.Pricing.DayPricing.Online);
 
                 var serviceChargePerUnit = (int)((long)tier.PriceCents * _tenantContext.Tenant.ServiceChargeBps / 10_000L);
                 var riderPortion = (int)((long)serviceChargePerUnit * tier.RiderPaidServiceChargeBps / 10_000L);

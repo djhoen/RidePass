@@ -56,6 +56,9 @@ namespace webapi.Controllers
         private readonly Services.Waivers.IWaiverCheckInGate _waiverGate;
         private readonly ICounterRiderProfiles _riderProfiles;
         private readonly IKioskRepository _kiosks;
+        private readonly ICouponRepository _coupons;
+        private readonly Services.Coupons.ICouponValidator _couponValidator;
+        private readonly ITierDayPricer _dayPricer;
 
         public CounterController(
             IUserRepository users,
@@ -87,8 +90,14 @@ namespace webapi.Controllers
             Services.Email.IPurchaseConfirmationEmailer purchaseEmails,
             Services.Waivers.IWaiverCheckInGate waiverGate,
             ICounterRiderProfiles riderProfiles,
-            IKioskRepository kiosks)
+            IKioskRepository kiosks,
+            ICouponRepository coupons,
+            Services.Coupons.ICouponValidator couponValidator,
+            ITierDayPricer dayPricer)
         {
+            _dayPricer = dayPricer;
+            _coupons = coupons;
+            _couponValidator = couponValidator;
             _waiverGate = waiverGate;
             _riderProfiles = riderProfiles;
             _kiosks = kiosks;
@@ -398,6 +407,9 @@ namespace webapi.Controllers
                             return new ApiResponses().BadRequestResult($"Tier '{tier.Name}' has only {Math.Max(0, cartCap - sold)} left.");
                         }
                     }
+                    // Walk-up price and peak days (Script0316): what this day pass costs at the gate
+                    // today, set before any price below is worked out from it.
+                    await _dayPricer.Apply(tier, ev, Services.Pricing.DayPricing.WalkUp);
                     // Race classes are one-per-rider: block duplicates within the cart and any
                     // earlier active entry for the same rider in this class. For a ladder the
                     // class spans every step, so check them all (in-cart lines collapse because
@@ -641,6 +653,57 @@ namespace webapi.Controllers
             // The staff discount the cashier chose. Only the cart lines whose kind the preset is
             // scoped to are eligible, because a counter cart is mixed: "10% off event tickets" has to
             // come off the race entry and leave a membership in the same sale alone.
+            // Voucher (Script0315): one free rider admission, the dearest in the cart, used once.
+            // Serialized on the code until its redemption row is written (a unique index is the
+            // backstop); a null resource makes the `await using` a no-op.
+            Services.Repositories.Data.CouponData.Coupon? voucher = null;
+            (int Entry, int Unit)? voucherUnit = null;
+            var voucherCents = 0;
+            var voucherFound = string.IsNullOrWhiteSpace(request.VoucherCode)
+                ? null : await _coupons.GetByCode(_tenantContext.TenantId, request.VoucherCode!.Trim());
+            // Same key as online checkout's, so a code can't be redeemed at the gate and online at once.
+            await using var voucherLock = voucherFound?.IsVoucher == true
+                ? await _db.AcquireAdvisoryLock($"voucher:{voucherFound.Id}")
+                : null;
+            if (!string.IsNullOrWhiteSpace(request.VoucherCode))
+            {
+                var code = request.VoucherCode!.Trim();
+                var found = voucherFound;
+                if (found is null || !found.IsVoucher)
+                    return new ApiResponses().BadRequestResult("That isn't a voucher code here.");
+                var units = new List<(int Index, int PriceCents, bool RiderAudience)>();
+                var flat = new List<(int Entry, int Unit)>();
+                for (var e = 0; e < ticketItems.Count; e++)
+                {
+                    for (var u = 0; u < ticketItems[e].Item.Quantity; u++)
+                    {
+                        // Ranked by what the line would actually charge; another rider's line counts too.
+                        units.Add((flat.Count, ticketItems[e].UnitAmountCents,
+                            Services.Vouchers.VoucherRules.IsRiderAdmission(ticketItems[e].Tier.Kind, ticketItems[e].Tier.Audience)
+                            // A voucher narrowed to one event pays only for a ticket to that event.
+                            && (found.ApplicableEventId is null || found.ApplicableEventId == ticketItems[e].Tier.EventId)));
+                        flat.Add((e, u));
+                    }
+                }
+                var pick = Services.Vouchers.VoucherRules.PickUnit(units);
+                if (pick is null)
+                    return new ApiResponses().BadRequestResult("A voucher pays for one rider's admission, and this cart has none.");
+                var picked = flat[pick.Value];
+                var pickedTier = ticketItems[picked.Entry].Tier;
+                // The shared checks (active, dates, the one-event narrowing, already used), priced at
+                // the picked ticket so the discount is that whole ticket.
+                var (application, voucherError) = await _couponValidator.ValidateAsync(
+                    _tenantContext.TenantId, code, scope: "event_ticket", eventId: pickedTier.EventId,
+                    subtotalCents: pickedTier.PriceCents > 0 ? pickedTier.PriceCents : 1, userId: rider.Id);
+                if (voucherError is not null || application is null)
+                    return new ApiResponses().BadRequestResult(voucherError ?? "That voucher can't be used.");
+                voucher = found;
+                voucherUnit = picked;
+                voucherCents = pickedTier.PriceCents;
+                totalCents -= ticketItems[picked.Entry].UnitAmountCents;
+                ticketTaxCents -= ticketItems[picked.Entry].UnitTaxCents;
+            }
+
             Services.Repositories.Data.DiscountData.DiscountPreset? staffDiscount = null;
             var staffCandidateCents = 0;
             Guid? discountAuthorizedBy = null;
@@ -658,6 +721,8 @@ namespace webapi.Controllers
                 if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.EventTicket))
                 {
                     foreach (var e in ticketItems) eligibleBase += e.Tier.PriceCents * e.Item.Quantity;
+                    // The voucher's ticket is already free, so it is not a base for the discount.
+                    if (voucherUnit is { } vu) eligibleBase -= ticketItems[vu.Entry].Tier.PriceCents;
                 }
                 if (staffDiscount.AppliesTo(Services.Repositories.Data.DiscountData.DiscountSurfaces.Extras))
                 {
@@ -726,6 +791,7 @@ namespace webapi.Controllers
                         var unitBase = ticketItems[e].Tier.PriceCents;
                         for (var u = 0; u < ticketItems[e].Item.Quantity; u++)
                         {
+                            if (voucherUnit is { } vu && vu.Entry == e && vu.Unit == u) continue;
                             targets.Add(("event_ticket", e, u, unitBase));
                         }
                     }
@@ -973,6 +1039,8 @@ namespace webapi.Controllers
                     var adj = unitAdjust.TryGetValue(("event_ticket", tkiIdx, i), out var tAdj)
                         ? tAdj
                         : (Amount: unitAmount, ServiceCharge: unitServiceCharge, Tax: unitTax, Discount: 0);
+                    var isVoucherUnit = voucherUnit is { } vUnit && vUnit.Entry == tkiIdx && vUnit.Unit == i;
+                    if (isVoucherUnit) adj = (Amount: 0, ServiceCharge: 0, Tax: 0, Discount: voucherCents);
                     var t = new EventTicketPurchase
                     {
                         TenantId = _tenantContext.TenantId,
@@ -982,9 +1050,9 @@ namespace webapi.Controllers
                         ServiceChargeCents = adj.ServiceCharge,
                         TaxCents = adj.Tax,
                         DiscountCents = adj.Discount,
-                        DiscountPresetId = adj.Discount > 0 ? staffDiscount?.Id : null,
-                        DiscountLabel = adj.Discount > 0 ? staffDiscount?.Name : null,
-                        DiscountAuthorizedByUserId = adj.Discount > 0 ? discountAuthorizedBy : null,
+                        DiscountPresetId = adj.Discount > 0 && !isVoucherUnit ? staffDiscount?.Id : null,
+                        DiscountLabel = isVoucherUnit ? $"Voucher {voucher!.Code}" : adj.Discount > 0 ? staffDiscount?.Name : null,
+                        DiscountAuthorizedByUserId = adj.Discount > 0 && !isVoucherUnit ? discountAuthorizedBy : null,
                         TaxRateBps = admissionTax.RateBps,
                         TaxInclusive = admissionTax.PricesIncludeTax,
                         PaymentMethod = paymentMethod,
@@ -1000,6 +1068,22 @@ namespace webapi.Controllers
                     // The purchaser stays the payer; another rider's ticket names them and their profile in
                     // its INSERT (the gate decides who the rider is from that identity).
                     var created = await _ticketPurchases.Create(t, orp?.Rider);
+                    if (isVoucherUnit)
+                    {
+                        // Redeemed onto the rider it admits: another rider's own account when they
+                        // have one, else the payer (a child's guardian). A failed card payment
+                        // releases it again (StripePurchaseFinalizer deletes the row by source).
+                        await _coupons.RecordRedemption(new Services.Repositories.Data.CouponData.CouponRedemption
+                        {
+                            CouponId = voucher!.Id,
+                            TenantId = _tenantContext.TenantId,
+                            UserId = orp?.Rider.RiderUserId ?? rider.Id,
+                            SourceKind = "event_ticket",
+                            SourceId = created.Id,
+                            DiscountCents = voucherCents,
+                            IsVoucher = true,
+                        });
+                    }
                     lineItems.Add(new CounterSaleLineItem
                     {
                         Kind = "event_ticket",

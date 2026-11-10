@@ -518,6 +518,18 @@ const features = computed<Feature[]>(() => [
         enabled: branding.riderPhotoMode !== 'off',
         apply: async () => { /* handled by applyRiderPhotoMode */ },
     },
+    {
+        // Script0314: Managers keep everything else; only Admins can refund.
+        key: 'refundsAdminOnly',
+        title: 'Only Admins can refund',
+        description: 'Refunds of tickets, passes, orders, shop sales and food & beverage sales need an Admin, '
+            + 'and so do cancelling a paid ticket, giving store credit and changing the rides left on a pass. '
+            + 'Managers can still sell and comp, and a food & beverage refund needs an Admin’s PIN. '
+            + 'Off: Managers and Admins can both refund.',
+        icon: 'mdi-cash-refund',
+        enabled: branding.refundsAdminOnly,
+        apply: async (next) => { await saveSettings({ refundsAdminOnly: next }) },
+    },
 ])
 
 // Super-admin-gated platform features: the tenant can't flip these on/off (that's a

@@ -16,6 +16,7 @@ namespace Services.Repositories
             created_by_user_id AS CreatedByUserId,
             issued_to_user_id AS IssuedToUserId,
             issued_from_purchase_id AS IssuedFromPurchaseId,
+            voucher_batch_id AS VoucherBatchId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -28,6 +29,9 @@ namespace Services.Repositories
                 SELECT {Columns}
                 FROM coupon
                 WHERE tenant_id = @tenantId
+                  -- Voucher codes (Script0315) live on the Vouchers page; a vendor batch alone can
+                  -- be hundreds of rows, and editing one here would break its one-admission rule.
+                  AND voucher_batch_id IS NULL
                 ORDER BY is_active DESC, created_at DESC";
             return (await _db.Query<Coupon>(sql, new { tenantId })).ToList();
         }
@@ -127,9 +131,9 @@ namespace Services.Repositories
         {
             const string sql = @"
                 INSERT INTO coupon_redemption
-                    (coupon_id, tenant_id, user_id, source_kind, source_id, discount_cents)
+                    (coupon_id, tenant_id, user_id, source_kind, source_id, discount_cents, is_voucher)
                 VALUES
-                    (@CouponId, @TenantId, @UserId, @SourceKind, @SourceId, @DiscountCents)
+                    (@CouponId, @TenantId, @UserId, @SourceKind, @SourceId, @DiscountCents, @IsVoucher)
                 RETURNING id";
             return (await _db.Query<Guid>(sql, r)).First();
         }

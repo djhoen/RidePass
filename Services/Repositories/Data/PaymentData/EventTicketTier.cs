@@ -49,6 +49,11 @@
         public int PartySizeIncluded { get; set; } = 1;
         public int? PartyPriceCents { get; set; }
         public int? PartySizeMax { get; set; }
+        // ── Per-day prices (Script0316) ──────────────────────────────────────────────────
+        /// <summary>What Gate Sale charges; null = the online price (PriceCents).</summary>
+        public int? WalkUpPriceCents { get; set; }
+        /// <summary>Riders can't cancel it; only an Admin can cancel or refund it.</summary>
+        public bool NonRefundable { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

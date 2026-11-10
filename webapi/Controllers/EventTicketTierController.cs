@@ -19,14 +19,20 @@ namespace webapi.Controllers
         private readonly IInstructorRepository _instructors;
         private readonly ITenantContext _tenantContext;
         private readonly ITenantRepository _tenants;
+        private readonly webapi.Helpers.ITierDayPricer _dayPricer;
+        private readonly IAuthorizationService _authz;
 
         public EventTicketTierController(
             IEventTicketTierRepository tiers,
             IEventRepository events,
             IInstructorRepository instructors,
             ITenantContext tenantContext,
-            ITenantRepository tenants)
+            ITenantRepository tenants,
+            webapi.Helpers.ITierDayPricer dayPricer,
+            IAuthorizationService authz)
         {
+            _dayPricer = dayPricer;
+            _authz = authz;
             _tiers = tiers;
             _events = events;
             _instructors = instructors;
@@ -35,11 +41,23 @@ namespace webapi.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetForEvent(Guid eventId)
+        public async Task<IActionResult> GetForEvent(Guid eventId, [FromQuery] string? channel = null)
         {
             if (!_tenantContext.IsResolved)
             {
                 return new ApiResponses().BadRequestResult("No tenant resolved.");
+            }
+            // Prices are the online ones (Script0316); Gate Sale asks for walk-up prices, which only
+            // the gate counter may read.
+            var priceChannel = Services.Pricing.DayPricing.Online;
+            if (channel == Services.Pricing.DayPricing.WalkUp)
+            {
+                if (!(await _authz.AuthorizeAsync(User, TenantPermissions.Policy.SalesCounter)).Succeeded) return Forbid();
+                priceChannel = Services.Pricing.DayPricing.WalkUp;
+            }
+            else if (channel is not null && channel != Services.Pricing.DayPricing.Online)
+            {
+                return new ApiResponses().BadRequestResult("channel is online or walk_up.");
             }
 
             var rows = await _tiers.GetForEvent(eventId, _tenantContext.TenantId, activeOnly: true);
@@ -65,9 +83,23 @@ namespace webapi.Controllers
             // ACTIVE step, augmented with capacity-remaining + next-change for buy-page copy,
             // so the buyer only ever sees (and can only add) the current price.
             var result = new List<EventTicketTierResponse>();
+            // The day's price, with what it was before a peak-day rule when one raised it.
+            async Task<EventTicketTierResponse> Priced(EventTicketTier t)
+            {
+                var day = eventForCapacity is null ? (Services.Pricing.DayPricing.Result?)null
+                    : await _dayPricer.Apply(t, eventForCapacity, priceChannel);
+                var resp = ToResponse(t, sold: null, coaches);
+                if (day is { RuleLabel: not null } d)
+                {
+                    resp.BasePriceCents = d.BaseCents;
+                    resp.DayPriceLabel = d.RuleLabel;
+                }
+                return resp;
+            }
+
             foreach (var r in rows.Where(t => t.LadderGroup is null))
             {
-                var standalone = ToResponse(r, sold: null, coaches);
+                var standalone = await Priced(r);
                 if (r.Audience == "rider") standalone.RemainingToCapacity = riderCapacityRemaining;
                 result.Add(standalone);
             }
@@ -90,17 +122,18 @@ namespace webapi.Controllers
                     {
                         // Misconfigured (no fired step) or event missing: surface the cheapest
                         // step so the ladder isn't invisible.
-                        var fallback = ToResponse(steps.OrderBy(s => s.PriceCents).First(), sold: null, coaches);
+                        var fallback = await Priced(steps.OrderBy(s => s.PriceCents).First());
                         result.Add(fallback);
                         continue;
                     }
 
-                    var resp = ToResponse(state.Active, sold: null, coaches);
+                    var resp = await Priced(state.Active);
                     // Event-wide, not group-scoped: a rider sale on any other tier eats into the
                     // same capacity, and checkout enforces the event-wide number.
                     resp.RemainingToCapacity = state.Active.Audience == "rider" ? riderCapacityRemaining : null;
                     if (state.Next is not null)
                     {
+                        if (ev is not null) await _dayPricer.Apply(state.Next, ev, priceChannel);
                         resp.NextPriceCents = state.Next.PriceCents;
                         if (state.Next.MinSold.HasValue)
                         {
@@ -192,6 +225,8 @@ namespace webapi.Controllers
                 EndsAt = request.EndsAt?.ToUniversalTime(),
                 PartySizeIncluded = Math.Max(1, request.PartySizeIncluded),
                 PartyPriceCents = request.PartyPriceCents,
+                WalkUpPriceCents = request.WalkUpPriceCents,
+                NonRefundable = request.NonRefundable,
                 PartySizeMax = request.PartySizeMax,
             };
             tier.Id = await _tiers.Create(tier);
@@ -247,6 +282,8 @@ namespace webapi.Controllers
             existing.EndsAt = request.EndsAt?.ToUniversalTime();
             existing.PartySizeIncluded = Math.Max(1, request.PartySizeIncluded);
             existing.PartyPriceCents = request.PartyPriceCents;
+            existing.WalkUpPriceCents = request.WalkUpPriceCents;
+            existing.NonRefundable = request.NonRefundable;
             existing.PartySizeMax = request.PartySizeMax;
 
             await _tiers.Update(existing);
@@ -331,6 +368,8 @@ namespace webapi.Controllers
             EndsAt = t.EndsAt,
             PartySizeIncluded = t.PartySizeIncluded,
             PartyPriceCents = t.PartyPriceCents,
+            WalkUpPriceCents = t.WalkUpPriceCents,
+            NonRefundable = t.NonRefundable,
             PartySizeMax = t.PartySizeMax,
         };
 

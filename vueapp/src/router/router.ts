@@ -218,6 +218,21 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'reports.view', hideFooter: true }
     },
     {
+        // Peak days (Script0316): prices are the catalog manager's.
+        path: '/Admin/DayPricing',
+        name: 'AdminDayPricing',
+        component: () => import('../views/Admin/DayPricing.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
+    },
+    {
+        // Vouchers (Script0315): every staffer gives their own from an allowance, so no single
+        // permission gates the page; the Admin tabs inside are gated by the API (TenantAdmin).
+        path: '/Admin/Vouchers',
+        name: 'AdminVouchers',
+        component: () => import('../views/Admin/Vouchers.vue'),
+        meta: { requiresAuth: true, hideFooter: true }
+    },
+    {
         // Employee passes are staff administration that grants free admission, so the same
         // users.manage bar as disabling a staff account rather than catalog.manage.
         path: '/Admin/EmployeePasses',

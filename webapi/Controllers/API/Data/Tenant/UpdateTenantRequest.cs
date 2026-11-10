@@ -37,6 +37,8 @@ namespace webapi.Controllers.API.Data.Tenant
 
         /// <summary>Rider photo on file: 'off' | 'prompt' | 'required'. Null = leave unchanged.</summary>
         public string? RiderPhotoMode { get; set; }
+        /// <summary>Only Admins may refund. Null = leave unchanged (older settings screens).</summary>
+        public bool? RefundsAdminOnly { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

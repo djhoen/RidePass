@@ -227,6 +227,8 @@ namespace webapi.Controllers
             // Rider photo: only when sent (older settings screens don't), written as-is in SQL.
             if (request.RiderPhotoMode is not null)
                 await _tenants.UpdateRiderPhotoMode(_tenantContext.TenantId, request.RiderPhotoMode);
+            if (request.RefundsAdminOnly is { } refundsAdminOnly)
+                await _tenants.UpdateRefundsAdminOnly(_tenantContext.TenantId, refundsAdminOnly);
             // The resolution cache would otherwise serve the old settings for up to 5 minutes.
             InvalidateTenantCache();
             return await GetBranding();
@@ -680,6 +682,7 @@ namespace webapi.Controllers
                 BirthdateVerifyMode = tenant.BirthdateVerifyMode,
                 BirthdateVerifyValidDays = tenant.BirthdateVerifyValidDays,
                 RiderPhotoMode = tenant.RiderPhotoMode,
+                RefundsAdminOnly = tenant.RefundsAdminOnly,
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,

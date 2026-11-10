@@ -22,6 +22,7 @@ namespace Services.Repositories
             equipment_label AS EquipmentLabel, starts_at AS StartsAt, ends_at AS EndsAt,
             party_size_included AS PartySizeIncluded, party_price_cents AS PartyPriceCents,
             party_size_max AS PartySizeMax,
+            walk_up_price_cents AS WalkUpPriceCents, non_refundable AS NonRefundable,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -71,7 +72,8 @@ namespace Services.Repositories
                     bundled_coupon_count, bundled_coupon_discount_kind, bundled_coupon_discount_value,
                     bundled_coupon_scope, bundled_coupon_expires_in_days,
                     instructor_id, skill_level, equipment_label, starts_at, ends_at,
-                    party_size_included, party_price_cents, party_size_max)
+                    party_size_included, party_price_cents, party_size_max,
+                    walk_up_price_cents, non_refundable)
                 VALUES (
                     @TenantId, @EventId, @Kind, @Audience, @Required, @Name, @PriceCents, @Inventory, @SortOrder, @IsActive,
                     @LadderGroup, @MinSold, @EffectiveDaysBefore, @EffectiveAtUtc,
@@ -79,7 +81,8 @@ namespace Services.Repositories
                     @BundledCouponCount, @BundledCouponDiscountKind, @BundledCouponDiscountValue,
                     @BundledCouponScope, @BundledCouponExpiresInDays,
                     @InstructorId, @SkillLevel, @EquipmentLabel, @StartsAt, @EndsAt,
-                    @PartySizeIncluded, @PartyPriceCents, @PartySizeMax)
+                    @PartySizeIncluded, @PartyPriceCents, @PartySizeMax,
+                    @WalkUpPriceCents, @NonRefundable)
                 RETURNING id";
             var result = await _db.Query<Guid>(sql, t);
             return result.First();
@@ -103,7 +106,8 @@ namespace Services.Repositories
                     instructor_id = @InstructorId, skill_level = @SkillLevel,
                     equipment_label = @EquipmentLabel, starts_at = @StartsAt, ends_at = @EndsAt,
                     party_size_included = @PartySizeIncluded, party_price_cents = @PartyPriceCents,
-                    party_size_max = @PartySizeMax
+                    party_size_max = @PartySizeMax,
+                    walk_up_price_cents = @WalkUpPriceCents, non_refundable = @NonRefundable
                 WHERE id = @Id AND tenant_id = @TenantId";
             await _db.Execute(sql, t);
         }

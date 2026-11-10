@@ -17,6 +17,7 @@ namespace Services.Repositories
             birthdate_verify_mode AS BirthdateVerifyMode,
             birthdate_verify_valid_days AS BirthdateVerifyValidDays,
             rider_photo_mode AS RiderPhotoMode,
+            refunds_admin_only AS RefundsAdminOnly,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -257,6 +258,12 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET rider_photo_mode = @mode WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, mode });
+        }
+
+        public async Task UpdateRefundsAdminOnly(Guid tenantId, bool adminOnly)
+        {
+            const string sql = "UPDATE tenant SET refunds_admin_only = @adminOnly WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, adminOnly });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

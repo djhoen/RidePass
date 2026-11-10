@@ -43,5 +43,12 @@ namespace webapi.Controllers.API.Data.Counter
         // Kiosk sign-ups (Script0310) this sale serves: the customer picked from the kiosk list, and any
         // child added from one. The sale marks them handled.
         public List<Guid>? KioskSignupIds { get; set; }
+
+        /// <summary>
+        /// A voucher code (Script0315): pays for one rider admission in this cart, the dearest one.
+        /// The voucher is redeemed onto that rider's profile (the payer, or the other rider named).
+        /// </summary>
+        [System.ComponentModel.DataAnnotations.MaxLength(40)]
+        public string? VoucherCode { get; set; }
     }
 }

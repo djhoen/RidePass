@@ -70,5 +70,11 @@ namespace webapi.Controllers.API.Data.EventTicketTier
         [Range(1, 50)] public int PartySizeIncluded { get; set; } = 1;
         [Range(0, 1_000_000)] public int? PartyPriceCents { get; set; }
         [Range(1, 50)] public int? PartySizeMax { get; set; }
+
+        // ── Per-day prices (Script0316) ──────────────────────────────────────────────
+        /// <summary>What Gate Sale charges; null = the same as online.</summary>
+        [Range(0, 1_000_000)] public int? WalkUpPriceCents { get; set; }
+        /// <summary>Riders can't cancel it; only an Admin can cancel or refund it.</summary>
+        public bool NonRefundable { get; set; }
     }
 }

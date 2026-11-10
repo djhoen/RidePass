@@ -156,9 +156,14 @@ namespace webapi.Controllers
             var roles = user.Roles is { Length: > 0 } ? user.Roles : new[] { user.Role };
             // Super admins implicitly hold every capability; everyone else gets the union
             // of their roles' permission sets.
+            // A venue that keeps refunds for its Admins (Script0314) narrows the set the same way
+            // TenantPermissionHandler does, so the screens hide what the server would refuse.
+            var refundsAdminOnly = _tenantContext.IsResolved
+                && user.TenantId == _tenantContext.TenantId
+                && _tenantContext.Tenant.RefundsAdminOnly;
             var permissions = roles.Contains("super_admin")
                 ? TenantPermissions.All.ToArray()
-                : TenantPermissions.ForRoles(roles).ToArray();
+                : TenantPermissions.ForRolesAt(roles, refundsAdminOnly).ToArray();
 
             return new ApiResponses().OkResult(new MeResponse
             {

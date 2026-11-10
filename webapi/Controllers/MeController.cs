@@ -359,6 +359,11 @@ namespace webapi.Controllers
                 return new ApiResponses().NotFoundResult("Ticket not found.");
             if (purchase.Status != "paid")
                 return new ApiResponses().BadRequestResult($"Cannot cancel a ticket with status '{purchase.Status}'.");
+            // Non-refundable ticket types (Script0316) can't be cancelled by the rider at all, not
+            // even as a request: the venue sold it on those terms.
+            if ((await _ticketTiers.GetById(purchase.TierId, _tenantContext.TenantId))?.NonRefundable == true)
+                return new ApiResponses().BadRequestResult(
+                    "This ticket is non-refundable, so it can't be cancelled. If something went wrong, contact the venue.");
 
             var tenant = _tenantContext.Tenant;
             var reason = string.IsNullOrWhiteSpace(req.Reason) ? null : req.Reason.Trim();

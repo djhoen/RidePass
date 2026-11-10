@@ -76,6 +76,9 @@ namespace webapi.Controllers
         {
             var existing = await _coupons.GetById(id, _tenantContext.TenantId);
             if (existing is null) return new ApiResponses().NotFoundResult("Coupon not found.");
+            // A voucher's terms (100% off one admission, one use) are what its issuer gave away;
+            // they change only on the Vouchers page, by voiding.
+            if (existing.IsVoucher) return new ApiResponses().BadRequestResult("That code is a voucher. Manage it under Vouchers.");
             if (!ValidateDiscountValue(request, out var msg)) return new ApiResponses().BadRequestResult(msg);
 
             if (!string.Equals(existing.Code, request.Code, StringComparison.OrdinalIgnoreCase))
@@ -105,6 +108,8 @@ namespace webapi.Controllers
         {
             var existing = await _coupons.GetById(id, _tenantContext.TenantId);
             if (existing is null) return new ApiResponses().NotFoundResult("Coupon not found.");
+            // Deleting a voucher would erase the record of who it admitted; void it instead.
+            if (existing.IsVoucher) return new ApiResponses().BadRequestResult("That code is a voucher. Void it under Vouchers.");
             // We allow deletion even if it has redemptions — the FK cascades. If you want
             // to preserve redemption history, switch to a soft delete (set is_active=false)
             // by removing this method or using deactivate instead.

@@ -35,7 +35,10 @@ namespace webapi.AuthPolicies
             // Any ONE of the named permissions grants: a requirement usually names one, but a
             // shared endpoint (a catalog read both the catalog manager and the shop cashier need)
             // names several.
-            var held = TenantPermissions.ForRoles(roles);
+            // A venue can keep refunds for its Admins (Script0314); ForRolesAt drops them for
+            // everyone else. The tenant must be resolved for that, and is checked again below.
+            var held = TenantPermissions.ForRolesAt(roles,
+                _tenantContext.IsResolved && _tenantContext.Tenant.RefundsAdminOnly);
             if (!requirement.Permissions.Any(held.Contains))
             {
                 return Task.CompletedTask;

@@ -990,6 +990,23 @@ namespace Services.Repositories
             });
         }
 
+        public async Task<bool> HasBeenUsed(Guid passPurchaseId, Guid tenantId)
+        {
+            const string sql = @"
+                SELECT EXISTS (
+                    SELECT 1 FROM season_pass_purchase p
+                    WHERE p.id = @passPurchaseId AND p.tenant_id = @tenantId
+                      AND (p.id_verified_at IS NOT NULL
+                           OR EXISTS (SELECT 1 FROM season_pass_reservation r
+                                      WHERE r.season_pass_purchase_id = p.id AND r.status = 'checked_in')
+                           OR EXISTS (SELECT 1 FROM event_ticket_purchase t
+                                      WHERE t.tenant_id = @tenantId AND t.applied_season_pass_purchase_id = p.id
+                                        AND t.status IN ('pending', 'paid', 'redeemed'))
+                           OR EXISTS (SELECT 1 FROM season_pass_buddy_redemption b
+                                      WHERE b.tenant_id = @tenantId AND b.pass_purchase_id = p.id)))";
+            return (await _db.Query<bool>(sql, new { passPurchaseId, tenantId })).FirstOrDefault();
+        }
+
         public async Task<int> TryDecrementCredits(Guid purchaseId, Guid tenantId)
         {
             // Guarded so we never go below zero from a race; the caller must treat 0 rows as

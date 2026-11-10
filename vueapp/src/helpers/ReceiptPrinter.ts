@@ -34,6 +34,17 @@ export interface Receipt {
 const money = (c: number) => `$${(c / 100).toFixed(2)}`
 const esc = (s: string | null) => (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// The cash drawer plugs into the printer's DK port, so the printer opens it: an ePOS <pulse> on
+// drawer_1 (pin 2, the usual wiring). pulse_100 is a 100 ms kick, Epson's default.
+const DRAWER_PULSE = `<pulse drawer="drawer_1" time="pulse_100"/>`
+
+function envelope(b: string): string {
+    return `<?xml version="1.0" encoding="utf-8"?>`
+        + `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>`
+        + `<epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">${b}</epos-print>`
+        + `</s:Body></s:Envelope>`
+}
+
 function buildEposXml(r: Receipt): string {
     let b = ''
     b += `<text align="center" width="2" height="2">${esc(r.header)}&#10;</text>`
@@ -53,15 +64,22 @@ function buildEposXml(r: Receipt): string {
     b += `<text width="2" height="2">Total  ${money(r.totalCents)}&#10;</text>`
     b += `<text>Paid: ${esc(r.method)}&#10;</text>`
     b += `<feed line="3"/><cut type="feed"/>`
-    return `<?xml version="1.0" encoding="utf-8"?>`
-        + `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>`
-        + `<epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">${b}</epos-print>`
-        + `</s:Body></s:Envelope>`
+    return envelope(b)
 }
 
 // POSTs the receipt to the printer. Resolves on success; throws an informative Error otherwise so the
 // caller can surface it (we never fall back to a dialog).
 export async function printReceipt(printerUrl: string, r: Receipt): Promise<void> {
+    await post(printerUrl, buildEposXml(r))
+}
+
+// Opens the cash drawer wired to the receipt printer, printing nothing. Same errors as
+// printReceipt, so the caller can say why the drawer stayed shut.
+export async function kickDrawer(printerUrl: string): Promise<void> {
+    await post(printerUrl, envelope(DRAWER_PULSE))
+}
+
+async function post(printerUrl: string, xml: string): Promise<void> {
     const base = printerUrl.trim().replace(/\/+$/, '')
     if (!base) throw new Error('No receipt printer is configured on this tablet.')
     const url = `${base}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`
@@ -70,7 +88,7 @@ export async function printReceipt(printerUrl: string, r: Receipt): Promise<void
         res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
-            body: buildEposXml(r),
+            body: xml,
         })
     } catch {
         // Network/mixed-content/cert failures land here (no HTTP status).

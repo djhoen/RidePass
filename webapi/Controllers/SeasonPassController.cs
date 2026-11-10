@@ -1508,6 +1508,17 @@ namespace webapi.Controllers
                     return new ApiResponses().BadRequestResult(
                         "A photo of the pass holder is required for ID verification at the gate.");
                 }
+                // Passes are not transferable. Before first use the buyer may fix a typo or a bad
+                // photo; once the pass has admitted anyone, its holder stays who it is.
+                if (Services.Passes.PassHolderRules.IsHolderChange(pass.HolderFirstName, pass.HolderLastName,
+                        pass.HolderBirthdate, pass.PhotoDataUrl, item.FirstName.Trim(), item.LastName.Trim(),
+                        item.Birthdate, item.PhotoDataUrl)
+                    && await _passes.HasBeenUsed(pass.Id, _tenantContext.TenantId))
+                {
+                    return new ApiResponses().BadRequestResult(
+                        $"This {product.Name} has already been used, so it stays with {pass.HolderFirstName} {pass.HolderLastName}: "
+                        + "passes can't be transferred. If a name or birthdate is wrong, ask the front desk to fix it.");
+                }
 
                 // The waiver is only enforceable when the tenant actually has one published —
                 // matching WaiverCheckInGate, which treats a missing document as nothing to

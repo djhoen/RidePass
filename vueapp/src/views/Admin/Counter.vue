@@ -5,6 +5,9 @@
                 <div class="rp-pagehead-title">Counter Sale</div>
                 <div class="rp-pagehead-sub">For walk-ins without a device. Look up the customer, build their cart, capture waiver and payment.</div>
             </div>
+            <v-btn variant="text" size="small" prepend-icon="mdi-printer-pos" @click="openPrinterDialog">
+                {{ printerUrl ? 'Cash drawer' : 'Set up cash drawer' }}
+            </v-btn>
         </div>
 
         <v-stepper v-model="step" :items="stepperItems" hide-actions>
@@ -261,6 +264,8 @@
                                                 <div class="flex-grow-1" style="min-width: 160px">
                                                     {{ t.name }}
                                                     <span class="text-medium-emphasis">— ${{ (t.priceCents / 100).toFixed(2) }}</span>
+                                                    <v-chip v-if="t.dayPriceLabel" size="x-small" variant="tonal" color="warning" class="ml-1">{{ t.dayPriceLabel }} price</v-chip>
+                                                    <v-chip v-if="t.nonRefundable" size="x-small" variant="tonal" class="ml-1">Non-refundable</v-chip>
                                                     <v-chip v-if="t.audience === 'spectator'" size="x-small" variant="tonal" class="ml-1">Spectator</v-chip>
                                                 </div>
                                                 <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus"
@@ -369,6 +374,14 @@
                             item-title="title" item-value="value"
                             label="Apply discount (optional)" density="compact"
                             clearable hide-details class="mb-3"></v-select>
+                        <!-- Voucher (Script0315): one free rider admission, the dearest in the cart. Checked
+                             when the sale is taken; the line it covers is estimated here. -->
+                        <v-text-field v-model="voucherCode" label="Voucher code (optional)" density="compact"
+                            clearable autocomplete="off" class="mb-3" prepend-inner-icon="mdi-gift-outline"
+                            :hint="voucherCode?.trim() ? (voucherEstimateCents > 0
+                                ? 'Pays for one rider’s admission. It is checked when you take payment.'
+                                : 'A voucher pays for one rider’s admission: add a day pass or lesson for a rider.') : ''"
+                            :persistent-hint="!!voucherCode?.trim()"></v-text-field>
                         <v-text-field v-if="selectedDiscount?.requiresManager"
                             v-model="discountManagerPin"
                             label="Manager PIN" type="password" density="compact"
@@ -411,6 +424,11 @@
                             <div v-if="cartServiceChargeCents > 0" class="d-flex justify-space-between text-caption text-medium-emphasis">
                                 <div>Service charge</div>
                                 <div>${{ (cartServiceChargeCents / 100).toFixed(2) }}</div>
+                            </div>
+                            <div v-if="voucherEstimateCents > 0"
+                                 class="d-flex justify-space-between text-caption text-success">
+                                <div>Voucher (one admission)</div>
+                                <div>-${{ (voucherEstimateCents / 100).toFixed(2) }}</div>
                             </div>
                             <div v-if="discountEstimateCents > 0"
                                  class="d-flex justify-space-between text-caption text-success">
@@ -542,6 +560,8 @@
                                 <p class="text-caption text-medium-emphasis mb-3">
                                     Collect cash from the customer, then click below to record the sale.
                                     The platform service charge will be deducted from your next payout.
+                                    <template v-if="printerUrl">The cash drawer opens when you confirm.</template>
+                                    <template v-else>The cash drawer won’t open on its own: this tablet has no receipt printer set up (Set up cash drawer, top right).</template>
                                 </p>
                             </div>
 
@@ -677,12 +697,42 @@
                                 </div>
                             </div>
                         </div>
-                        <v-btn color="primary" class="mt-3" @click="reset">New sale</v-btn>
+                        <div class="d-flex flex-wrap ga-2 mt-3">
+                            <v-btn color="primary" @click="reset">New sale</v-btn>
+                            <!-- Only on the screen of a cash sale just taken: an open-on-demand button
+                                 anywhere else would be a way into the drawer with no sale behind it. -->
+                            <v-btn v-if="drawerSale && printerUrl" variant="tonal" prepend-icon="mdi-cash-register"
+                                :loading="kickingDrawer" @click="openDrawer">Open drawer again</v-btn>
+                        </div>
                     </v-card-text>
                 </v-card>
             </v-stepper-window-item>
         </v-stepper-window>
         </v-stepper>
+
+        <!-- Receipt printer / cash drawer for this tablet (the drawer is wired to the printer). -->
+        <v-dialog v-model="printerDialog" max-width="440">
+            <v-card>
+                <v-card-title>Cash drawer</v-card-title>
+                <v-card-text>
+                    <p class="text-caption text-medium-emphasis mb-3">
+                        The cash drawer is plugged into the receipt printer, so the printer opens it. Enter this
+                        tablet’s Epson receipt printer address (e.g. <code>https://192.168.1.50</code>), and the
+                        drawer opens on every cash sale. The printer must be reachable over HTTPS: trust its
+                        certificate on this tablet once.
+                    </p>
+                    <v-text-field v-model="printerUrlDraft" label="Printer URL" placeholder="https://192.168.1.50"
+                        density="compact" hide-details />
+                </v-card-text>
+                <v-card-actions>
+                    <v-btn variant="text" size="small" :disabled="!printerUrlDraft.trim()" :loading="kickingDrawer"
+                        @click="testDrawer">Test: open drawer</v-btn>
+                    <v-spacer />
+                    <v-btn variant="text" @click="printerDialog = false">Cancel</v-btn>
+                    <v-btn color="primary" variant="flat" @click="savePrinter">Save</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <!-- Another rider: a friend or family member on this customer's payment. -->
         <v-dialog v-model="otherDialog" max-width="560" scrollable>
@@ -821,6 +871,7 @@ import KioskSignupsPanel from '@/components/KioskSignupsPanel.vue'
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import type { KioskSignupItem, KioskPushTarget } from '@/services/KioskService'
 import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
+import { kickDrawer } from '@/helpers/ReceiptPrinter'
 
 type Customer = CounterRider
 type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
@@ -843,6 +894,8 @@ interface CartLine {
     group?: 'lesson' | 'daypass'
     // Set when the line is a ticket for another rider on this payment (their own profile and waiver).
     other?: OtherLine
+    // A rider's admission (race entry or rider gate fee): what a voucher can pay for.
+    riderAdmission?: boolean
 }
 
 const MEMBERSHIP_ITEM_ID = '00000000-0000-0000-0000-000000000001'
@@ -994,12 +1047,33 @@ function addSeasonPassToCart(p: SeasonPassProduct, delta: number) {
     }
 }
 
+// Voucher estimate: the dearest rider admission in the cart, with its service charge (the
+// server makes that ticket free, fees and tax included, and keeps it out of a staff discount).
+const voucherCode = ref<string | null>('')
+const voucherLine = computed<CartLine | null>(() => {
+    if (!voucherCode.value?.trim()) return null
+    let best: CartLine | null = null
+    for (const c of cart.value) {
+        if (c.kind !== 'event_ticket' || !c.riderAdmission || c.unitPriceCents <= 0) continue
+        if (!best || c.unitPriceCents > best.unitPriceCents) best = c
+    }
+    return best
+})
+const voucherEstimateCents = computed(() => {
+    const c = voucherLine.value
+    if (!c) return 0
+    const bps = branding.serviceChargeBps ?? 0
+    const charge = Math.floor((Math.floor((c.unitPriceCents * bps) / 10000) * c.riderPaidServiceChargeBps) / 10000)
+    return c.unitPriceCents + charge
+})
+
 const discountEstimateCents = computed(() => {
     const p = selectedDiscount.value
     if (!p) return 0
     const base = cart.value
         .filter(c => p.surfaces.includes(surfaceForKind(c.kind)))
         .reduce((sum, c) => sum + c.unitPriceCents * c.quantity, 0)
+        - (voucherLine.value && p.surfaces.includes(surfaceForKind('event_ticket')) ? voucherLine.value.unitPriceCents : 0)
     if (base <= 0) return 0
     const raw = p.kind === 'percent' ? Math.floor((base * p.value) / 10000) : p.value
     return Math.min(Math.max(raw, 0), base)
@@ -1088,7 +1162,8 @@ async function onLessonSelected(id: string | null) {
     try {
         const [ev, tiers] = await Promise.all([
             eventService.getPublic(id),
-            ticketService.listActiveTiers(id),
+            // Walk-up prices (Script0316): what the gate charges today, peak days included.
+            ticketService.listActiveTiers(id, 'walk_up'),
         ])
         lessonDetail.value = (ev.data as any).data
         lessonTiers.value = (tiers.data as any).data
@@ -1118,6 +1193,7 @@ function addLessonTicket(tier: TicketTier) {
         riderPaidServiceChargeBps: tier.riderPaidServiceChargeBps ?? 10000,
         eventId: selectedLessonId.value,
         group: 'lesson',
+        riderAdmission: tier.kind === 'race_entry' || (tier.kind === 'gate_fee' && tier.audience === 'rider'),
     })
 }
 
@@ -1202,7 +1278,7 @@ async function onDayEventSelected(id: string | null) {
     if (!id) return
     loadingDayTiers.value = true
     try {
-        const r = await ticketService.listActiveTiers(id)
+        const r = await ticketService.listActiveTiers(id, 'walk_up')
         dayTiers.value = ((r.data as any).data as TicketTier[]).filter(t => t.isActive && t.kind === 'gate_fee')
     } catch (err: any) {
         flash(err.response?.data?.error || 'Couldn’t load this day’s tickets.', 'error')
@@ -1226,6 +1302,7 @@ function dayPassLine(t: TicketTier, other?: OtherLine): CartLine {
         eventId: ev?.id ?? null,
         group: 'daypass',
         other,
+        riderAdmission: t.kind === 'race_entry' || (t.kind === 'gate_fee' && t.audience === 'rider'),
     }
 }
 
@@ -1628,7 +1705,7 @@ const cartDepositCents = computed(() => cart.value.reduce((sum, c) => sum + (c.d
 // customer is about to be charged. Still an estimate either way: like the service charge above it,
 // this figure excludes admission tax, which only the server computes.
 const cartTotalCents = computed(() => Math.max(0,
-    cartSubtotalCents.value + cartServiceChargeCents.value - discountEstimateCents.value))
+    cartSubtotalCents.value + cartServiceChargeCents.value - discountEstimateCents.value - voucherEstimateCents.value))
 const totalDollars = computed(() => {
     const cents = clientSecret.value ? totalAmountCents.value : cartTotalCents.value
     return (cents / 100).toFixed(2)
@@ -1901,6 +1978,7 @@ async function createSale(method: 'stripe' | 'cash') {
             creditAccountId: creditAccount.value?.id ?? null,
             creditCents: creditAccount.value?.balanceCents ?? 0,
             kioskSignupIds: kioskSignupIds.value.length > 0 ? kioskSignupIds.value : null,
+            voucherCode: voucherCode.value?.trim() || null,
         })
         const data = (r.data as any).data
         clientSecret.value = data.clientSecret
@@ -1910,6 +1988,11 @@ async function createSale(method: 'stripe' | 'cash') {
         if (!clientSecret.value) {
             cashSubmitted.value = true
             step.value = 5
+            // Cash changed hands (not a zero cart or a sale covered by store credit), so open the
+            // drawer. Not awaited: the sale is recorded either way, and a failure says so in a snackbar.
+            // (A sale with no client secret isn't always cash: a free or credit-covered card sale too.)
+            drawerSale.value = method === 'cash' && (data.dueCents ?? data.totalAmountCents ?? 0) > 0
+            if (drawerSale.value) void openDrawer()
             const credited = data.creditAppliedCents ?? 0
             flash(credited > 0
                 ? `Sale complete: ${moneyCents(credited)} store credit applied, ${moneyCents(data.dueCents ?? 0)} collected.`
@@ -2004,7 +2087,9 @@ function reset() {
     paymentError.value = null
     paymentMethod.value = 'card'
     cashSubmitted.value = false
+    drawerSale.value = false
     selectedDiscountId.value = null
+    voucherCode.value = ''
     discountManagerPin.value = ''
     catalogPanel.value = 'extras'
     creditAccount.value = null
@@ -2041,6 +2126,58 @@ function formatSignedAt(utc: string): string {
 function hasBody(body: string | null | undefined): boolean {
     if (!body) return false
     return body.replace(/<[^>]+>/g, '').trim().length > 0
+}
+
+// ── Cash drawer (item 14): per tablet, like the F&B POS's receipt printer. ──
+// A separate key from the F&B POS's, since a tablet at the gate and one at the pub each sit next
+// to their own printer; the F&B address is only offered as a starting point.
+const PRINTER_KEY = 'gatePrinterUrl'
+function readStored(key: string): string {
+    try { return localStorage.getItem(key) || '' } catch { return '' }
+}
+const printerUrl = ref(readStored(PRINTER_KEY))
+const printerUrlDraft = ref('')
+const printerDialog = ref(false)
+const kickingDrawer = ref(false)
+// The sale on the receipt screen took cash, so the drawer may be opened again from there.
+const drawerSale = ref(false)
+
+function openPrinterDialog() {
+    printerUrlDraft.value = printerUrl.value || readStored('concessionPrinterUrl')
+    printerDialog.value = true
+}
+
+function savePrinter() {
+    printerUrl.value = printerUrlDraft.value.trim()
+    try {
+        if (printerUrl.value) localStorage.setItem(PRINTER_KEY, printerUrl.value)
+        else localStorage.removeItem(PRINTER_KEY)
+    } catch { /* private mode: kept for this visit only */ }
+    printerDialog.value = false
+    flash(printerUrl.value ? 'Saved. The cash drawer opens on every cash sale on this tablet.'
+        : 'Cash drawer turned off on this tablet.', 'success')
+}
+
+async function kick(url: string): Promise<boolean> {
+    kickingDrawer.value = true
+    try {
+        await kickDrawer(url)
+        return true
+    } catch (e: any) {
+        flash(`The cash drawer didn’t open: ${e?.message ?? 'printer error'} Open it with the key.`, 'error')
+        return false
+    } finally {
+        kickingDrawer.value = false
+    }
+}
+
+async function openDrawer() {
+    if (!printerUrl.value) return
+    await kick(printerUrl.value)
+}
+
+async function testDrawer() {
+    if (await kick(printerUrlDraft.value.trim())) flash('The drawer opened.', 'success')
 }
 
 function flash(text: string, color: 'success' | 'error') {

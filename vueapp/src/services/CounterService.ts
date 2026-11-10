@@ -178,7 +178,7 @@ export class CounterService {
         return axios.post<{ data: CounterRider }>(`${this.apiUrl}/Counter/Riders`, body)
     }
 
-    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number; kioskSignupIds?: string[] | null }) {
+    createSale(body: { riderId: string; items: CounterCartItem[]; signWaiver: boolean; signatureDataUrl?: string | null; parentName?: string | null; parentPhone?: string | null; discountPresetId?: string | null; managerPin?: string | null; paymentMethod?: 'stripe' | 'cash' | null; creditAccountId?: string | null; creditCents?: number; kioskSignupIds?: string[] | null; voucherCode?: string | null }) {
         return axios.post<{ data: CounterSaleResponse }>(`${this.apiUrl}/Counter/Sale`, body)
     }
 

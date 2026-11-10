@@ -191,6 +191,32 @@
             CashTurnIn, CashReconcile,
         };
 
+        /// <summary>
+        /// The refund permissions a venue can reserve for its Admins (tenant.refunds_admin_only,
+        /// Script0314). Everything else a Manager holds is unchanged.
+        /// </summary>
+        public static readonly IReadOnlySet<string> RefundPermissions = new HashSet<string>
+        {
+            SalesRefund, SalesRefundOverride,
+        };
+
+        /// <summary>
+        /// ForRoles at a specific venue: when the venue keeps refunds for Admins, a staffer who is
+        /// not a tenant_admin loses sales.refund and sales.refund.override. Every permission check
+        /// that reads a role's set for the current tenant must go through this, or a Manager could
+        /// still refund through whichever path was missed. Super admins are handled by callers
+        /// (they pass every check before reaching a set).
+        /// </summary>
+        public static IReadOnlySet<string> ForRolesAt(IEnumerable<string> roles, bool refundsAdminOnly)
+        {
+            var list = roles as ICollection<string> ?? roles.ToList();
+            var held = ForRoles(list);
+            if (!refundsAdminOnly || list.Contains("tenant_admin")) return held;
+            var narrowed = new HashSet<string>(held);
+            narrowed.ExceptWith(RefundPermissions);
+            return narrowed;
+        }
+
         public static IReadOnlySet<string> ForRoles(IEnumerable<string> roles)
         {
             var union = new HashSet<string>();

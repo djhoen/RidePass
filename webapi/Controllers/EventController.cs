@@ -491,6 +491,9 @@ namespace webapi.Controllers
                     BundledCouponDiscountValue = t.BundledCouponDiscountValue,
                     BundledCouponScope = t.BundledCouponScope,
                     BundledCouponExpiresInDays = t.BundledCouponExpiresInDays,
+                    // Per-day prices (Script0316): a clone keeps its walk-up price and refund terms.
+                    WalkUpPriceCents = t.WalkUpPriceCents,
+                    NonRefundable = t.NonRefundable,
                 });
             }
             FireAndForgetNotify(clone);

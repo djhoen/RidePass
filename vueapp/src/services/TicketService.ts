@@ -36,6 +36,13 @@ export interface TicketTier {
     partySizeIncluded?: number
     partyPriceCents?: number | null
     partySizeMax?: number | null
+    // Per-day prices (Script0316). walkUpPriceCents: what Gate Sale charges (null = the online
+    // price). nonRefundable: riders can't cancel; only an Admin can cancel or refund.
+    walkUpPriceCents?: number | null
+    nonRefundable?: boolean
+    // On a price listing: the price before a peak-day rule raised priceCents, and the rule's name.
+    basePriceCents?: number | null
+    dayPriceLabel?: string | null
     minSold: number | null
     effectiveDaysBefore: number | null
     effectiveAtUtc: string | null
@@ -151,8 +158,10 @@ export class TicketService {
     listTiersForAdmin(eventId: string) {
         return axios.get<{ data: TicketTier[] }>(`${this.apiUrl}/Event/${eventId}/Tiers/Admin`)
     }
-    listActiveTiers(eventId: string) {
-        return axios.get<{ data: TicketTier[] }>(`${this.apiUrl}/Event/${eventId}/Tiers`)
+    // walk_up = Gate Sale's prices (staff with sales.counter only); default = online prices.
+    listActiveTiers(eventId: string, channel?: 'walk_up') {
+        return axios.get<{ data: TicketTier[] }>(`${this.apiUrl}/Event/${eventId}/Tiers`,
+            { params: channel ? { channel } : undefined })
     }
     createTier(eventId: string, body: Omit<TicketTier, 'id' | 'eventId' | 'sold'>) {
         return axios.post(`${this.apiUrl}/Event/${eventId}/Tiers`, body)

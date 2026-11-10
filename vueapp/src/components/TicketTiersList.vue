@@ -98,6 +98,19 @@
                                 @click:append-inner="openHelp('inventory')"></v-text-field>
                         </v-col>
                     </v-row>
+                    <!-- Per-day prices (Script0316). Peak days are venue-wide, under Peak days. -->
+                    <v-row dense class="mt-1">
+                        <v-col cols="12" md="6">
+                            <v-text-field v-model.number="form.walkUpDollars" type="number" step="0.5" min="0"
+                                label="Walk-up price at the gate (optional)" prefix="$" density="compact" clearable
+                                :placeholder="`${form.priceDollars}`"
+                                hint="Blank = the same as online. Peak days raise both." persistent-hint></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                            <v-checkbox v-model="form.nonRefundable" label="Non-refundable" density="compact"
+                                hint="Riders can't cancel it. Only an Admin can cancel or refund it." persistent-hint></v-checkbox>
+                        </v-col>
+                    </v-row>
                     <v-switch v-model="form.isActive" label="Active" hide-details class="mt-2"></v-switch>
                     <v-text-field v-model.number="form.riderPaidServiceChargePct" type="number" step="1" min="0" max="100"
                         label="Buyer pays this % of the service charge" suffix="%" density="compact" class="mt-3"
@@ -390,6 +403,8 @@ const form = ref({
     partySizeIncluded: 1,
     partyExtraDollars: null as number | null,
     partySizeMax: null as number | null,
+    walkUpDollars: null as number | null,
+    nonRefundable: false,
 })
 
 // ── Training groups (lessons only) ────────────────────────────────────────────────────
@@ -508,6 +523,7 @@ function blankForm() {
         instructorId: null as string | null, skillLevel: null as string | null,
         equipmentLabel: null as string | null, groupStartsLocal: '', groupEndsLocal: '',
         partySizeIncluded: 1, partyExtraDollars: null as number | null, partySizeMax: null as number | null,
+        walkUpDollars: null as number | null, nonRefundable: false,
     }
 }
 
@@ -550,6 +566,8 @@ function openEdit(t: TicketTier) {
         partySizeIncluded: t.partySizeIncluded ?? 1,
         partyExtraDollars: t.partyPriceCents != null ? t.partyPriceCents / 100 : null,
         partySizeMax: t.partySizeMax ?? null,
+        walkUpDollars: t.walkUpPriceCents != null ? t.walkUpPriceCents / 100 : null,
+        nonRefundable: !!t.nonRefundable,
     }
     tierDialog.value = true
     loadCoaches()
@@ -605,6 +623,9 @@ function formToTier(): Omit<TicketTier, 'id' | 'eventId' | 'sold'> {
         partyPriceCents: form.value.partyExtraDollars == null || isNaN(form.value.partyExtraDollars)
             ? null : Math.round(form.value.partyExtraDollars * 100),
         partySizeMax: form.value.partySizeMax || null,
+        walkUpPriceCents: form.value.walkUpDollars == null || isNaN(form.value.walkUpDollars)
+            ? null : Math.round(form.value.walkUpDollars * 100),
+        nonRefundable: form.value.nonRefundable,
     }
 }
 
