@@ -100,6 +100,10 @@ namespace webapi.Controllers
                     MatchedGuardianName = r.MatchedGuardianUserId is null ? null : $"{r.MatchedGuardianFirstName} {r.MatchedGuardianLastName}".Trim(),
                     MatchedHasPhoto = r.MatchPending && r.DismissedAt is null && await MatchedPhotoOnFile(r, tenantId),
                     TypedEmail = r.MatchPending ? r.Email : null,
+                    TypedIdBirthdate = !r.MatchPending ? null
+                        : GuardianWaiverRule.ToDateOnly(r.MatchedGuardianUserId is not null ? r.GuardianBirthdate : r.Birthdate),
+                    MatchedIdBirthdate = !r.MatchPending ? null
+                        : GuardianWaiverRule.ToDateOnly(r.MatchedGuardianUserId is not null ? r.MatchedGuardianBirthdate : r.MatchedBirthdate),
                 });
             }
             return new ApiResponses().OkResult(items);

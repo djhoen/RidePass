@@ -30,6 +30,10 @@ namespace webapi.Controllers.API.Data.Kiosk
         public string? MatchedGuardianName { get; set; }
         /// <summary>A photo is already on file for the matched rider (offer "Replace photo on file").</summary>
         public bool MatchedHasPhoto { get; set; }
+        /// <summary>For the ID check (pending sign-ups only): the birthdate typed at the kiosk for the person whose
+        /// ID is checked (the guardian's for a minor) and the one on the matched account.</summary>
+        public DateOnly? TypedIdBirthdate { get; set; }
+        public DateOnly? MatchedIdBirthdate { get; set; }
         /// <summary>What was typed at the kiosk (pending sign-ups).</summary>
         public string? TypedEmail { get; set; }
     }

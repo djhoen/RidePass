@@ -236,6 +236,9 @@ export interface KioskSignupItem {
     matchedAccountName: string | null
     matchedGuardianName: string | null
     matchedHasPhoto: boolean
+    /** ID check: birthdate typed at the kiosk (the guardian's for a minor) and the one on the matched account. */
+    typedIdBirthdate: string | null
+    matchedIdBirthdate: string | null
     typedEmail: string | null
 }
 

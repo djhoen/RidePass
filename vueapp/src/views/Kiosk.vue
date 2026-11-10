@@ -23,7 +23,7 @@
 
             <section v-else-if="step === 'start'" class="kiosk-card kiosk-center">
                 <h1>Welcome</h1>
-                <p class="kiosk-sub">Create your rider profile, sign the waiver and take your photo. It takes about two minutes.</p>
+                <p class="kiosk-sub">{{ welcomeLine }}</p>
                 <v-btn size="x-large" color="primary" class="kiosk-big" :loading="busy" @click="begin">Start</v-btn>
                 <v-alert v-if="error" type="error" variant="tonal" class="mt-6">{{ error }}</v-alert>
             </section>
@@ -99,7 +99,7 @@
                 <div class="kiosk-actions">
                     <v-btn size="x-large" variant="text" :disabled="busy" @click="step = config?.waiverId ? 'waiver' : (isMinor ? 'guardian' : 'who')">Back</v-btn>
                     <v-btn v-if="!config?.photoRequired && !form.photo" size="x-large" variant="outlined" :loading="busy" @click="submit">Skip</v-btn>
-                    <v-btn size="x-large" color="primary" :loading="busy" :disabled="config?.photoRequired && !form.photo" @click="submit">Finish</v-btn>
+                    <v-btn v-if="config?.photoRequired || form.photo" size="x-large" color="primary" :loading="busy" :disabled="!form.photo" @click="submit">Finish</v-btn>
                 </div>
             </section>
 
@@ -208,6 +208,14 @@ function ageOn(birthdate: string, today: string): number {
     if (tm < bm || (tm === bm && td < bd)) age--
     return age
 }
+// Only what this venue's kiosk actually asks for: the waiver when there is one, the photo when it's required.
+const welcomeLine = computed(() => {
+    const steps = ['create your rider profile']
+    if (config.value?.waiverId) steps.push('sign the waiver')
+    if (config.value?.photoRequired) steps.push('take your photo')
+    const list = steps.length === 1 ? steps[0] : `${steps.slice(0, -1).join(', ')} and ${steps[steps.length - 1]}`
+    return `${list.charAt(0).toUpperCase()}${list.slice(1)}. It takes about two minutes.`
+})
 const isMinor = computed(() => !!form.value.birthdate && !!config.value
     && ageOn(form.value.birthdate, config.value.today) < 18)
 const guardianName = computed(() => `${form.value.guardianFirstName} ${form.value.guardianLastName}`.trim())

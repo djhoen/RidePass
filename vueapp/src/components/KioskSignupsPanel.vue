@@ -69,8 +69,17 @@
                     </p>
                     <p class="text-caption text-medium-emphasis mb-2">
                         Check a photo ID{{ confirming.isMinor ? ' for the parent or guardian' : '' }} against that account.
-                        Only then are the kiosk waiver{{ confirming.photoId ? ' and photo' : '' }} attached to it.
+                        Only then {{ confirming.photoId ? 'are the kiosk waiver and photo' : 'is the kiosk waiver' }} attached to it.
                     </p>
+                    <div class="kiosk-idcheck text-body-2 mb-1">
+                        <div>Birthdate typed at the kiosk{{ confirming.isMinor ? ' (parent or guardian)' : '' }}:
+                            <strong>{{ fmtBirthdate(confirming.typedIdBirthdate) ?? 'not given' }}</strong></div>
+                        <div>Birthdate on the account:
+                            <strong>{{ fmtBirthdate(confirming.matchedIdBirthdate) ?? 'not on file' }}</strong></div>
+                        <div v-if="birthdatesDiffer" class="text-warning mt-1">
+                            These don't match. Go by the photo ID, and only confirm if it matches the account.
+                        </div>
+                    </div>
                     <v-checkbox v-model="idChecked" hide-details label="I checked their photo ID and it matches the account"></v-checkbox>
                     <v-checkbox v-if="confirming.matchedHasPhoto && confirming.photoId" v-model="replacePhoto" hide-details
                         label="Replace photo on file with the kiosk photo"></v-checkbox>
@@ -93,6 +102,13 @@ import { KioskAdminService, type KioskSignupItem, type KioskPushTarget } from '@
 import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
+
+/** A plain yyyy-MM-dd birthdate as "Jul 4, 1985" (no time zone shift: it's a calendar date). */
+function fmtBirthdate(d: string | null | undefined): string | null {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d ?? '')
+    if (!m) return null
+    return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
 
@@ -156,6 +172,10 @@ async function dismiss(s: KioskSignupItem) {
 // ── Held sign-ups: confirm after an ID check, then select as usual ──────────────────────────
 const confirmOpen = ref(false)
 const confirming = ref<KioskSignupItem | null>(null)
+const birthdatesDiffer = computed(() => {
+    const c = confirming.value
+    return !!c?.typedIdBirthdate && !!c.matchedIdBirthdate && c.typedIdBirthdate.slice(0, 10) !== c.matchedIdBirthdate.slice(0, 10)
+})
 const idChecked = ref(false)
 const replacePhoto = ref(false)
 const confirmBusy = ref(false)

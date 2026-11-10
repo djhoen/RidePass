@@ -444,8 +444,8 @@
                             <strong>{{ otherRiderLines.length }} other rider{{ otherRiderLines.length === 1 ? '' : 's' }}</strong>
                             ({{ otherRiderLines.map(l => l.other!.name).join(', ') }}):
                             {{ otherRiderLines.length === 1 ? 'their waiver is' : 'each waiver is' }} signed after payment
-                            (by a parent or guardian for anyone under 18). Send a link, or sign on this device on the
-                            receipt screen. The gate won’t admit them until it’s signed.
+                            (by a parent or guardian for anyone under 18). On the receipt screen, send a link, sign on this
+                            device or send it to a kiosk. The gate won’t admit them until it’s signed.
                             <span v-if="!payerHasOwnLines">{{ customer?.firstName }} has no ticket of their own in this cart, so there is nothing to sign here.</span>
                         </v-alert>
                         <div v-if="!activeWaiver" class="text-medium-emphasis">

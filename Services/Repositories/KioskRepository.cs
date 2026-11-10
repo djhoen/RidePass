@@ -141,8 +141,9 @@ namespace Services.Repositories
                        g.first_name AS GuardianAccountFirstName, g.last_name AS GuardianAccountLastName,
                        g.email AS GuardianAccountEmail,
                        p.taken_at AS PhotoTakenAt,
-                       mu.first_name AS MatchedFirstName, mu.last_name AS MatchedLastName,
-                       mg.first_name AS MatchedGuardianFirstName, mg.last_name AS MatchedGuardianLastName
+                       mu.first_name AS MatchedFirstName, mu.last_name AS MatchedLastName, mu.birthdate AS MatchedBirthdate,
+                       mg.first_name AS MatchedGuardianFirstName, mg.last_name AS MatchedGuardianLastName,
+                       mg.birthdate AS MatchedGuardianBirthdate
                 FROM kiosk_signup s
                 LEFT JOIN kiosk_device d ON d.id = s.kiosk_device_id AND d.tenant_id = s.tenant_id
                 LEFT JOIN users u ON u.id = s.user_id

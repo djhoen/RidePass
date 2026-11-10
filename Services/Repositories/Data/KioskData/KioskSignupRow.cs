@@ -14,5 +14,8 @@ namespace Services.Repositories.Data.KioskData
         public string? MatchedLastName { get; set; }
         public string? MatchedGuardianFirstName { get; set; }
         public string? MatchedGuardianLastName { get; set; }
+        /// <summary>The birthdate on the matched account, for staff to hold against the photo ID.</summary>
+        public DateTime? MatchedBirthdate { get; set; }
+        public DateTime? MatchedGuardianBirthdate { get; set; }
     }
 }
