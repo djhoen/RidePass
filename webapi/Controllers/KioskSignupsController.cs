@@ -34,11 +34,14 @@ namespace webapi.Controllers
         private readonly IWaiverRepository _waivers;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ITenantContext _tenantContext;
+        private readonly IRiderMeasurementRepository _measurements;
 
         public KioskSignupsController(IKioskRepository kiosks, IAuthorizationService authz, ICounterRiderProfiles profiles,
             IKioskSignupWriter writer, IRiderPhotos photos, IUserRepository users, IRiderDependentRepository dependents,
-            IWaiverRepository waivers, Services.Audit.IAuditLogger audit, ITenantContext tenantContext)
+            IWaiverRepository waivers, Services.Audit.IAuditLogger audit, ITenantContext tenantContext,
+            IRiderMeasurementRepository measurements)
         {
+            _measurements = measurements;
             _kiosks = kiosks;
             _authz = authz;
             _profiles = profiles;
@@ -189,6 +192,12 @@ namespace webapi.Controllers
 
             // The held photo has been copied to the rider's own key (or the one on file was kept): drop it.
             if (s.PhotoId is Guid held) await _photos.DeletePhoto(held, tenantId);
+            // Height and weight typed at the kiosk (Script0317) go onto the confirmed profile.
+            if (await _measurements.GetHeldOnKioskSignup(id, tenantId) is { HeightIn: int heldH, WeightLb: int heldW })
+            {
+                if (saved.DependentId is Guid depId) await _measurements.SaveForDependent(depId, tenantId, null, heldH, heldW);
+                else if (saved.RiderUserId is Guid riderId) await _measurements.SaveForUser(riderId, tenantId, heldH, heldW);
+            }
             await _audit.Log("kiosk.signup_confirmed", $"Kiosk sign-up for {s.FirstName} {s.LastName} confirmed after an ID check",
                 targetKind: "kiosk_signup", targetId: id, tenantId: tenantId,
                 metadata: new { saved.RiderUserId, saved.DependentId, saved.GuardianUserId, attached.SignatureId,

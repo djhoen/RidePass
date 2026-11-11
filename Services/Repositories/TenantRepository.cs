@@ -18,6 +18,7 @@ namespace Services.Repositories
             birthdate_verify_valid_days AS BirthdateVerifyValidDays,
             rider_photo_mode AS RiderPhotoMode,
             refunds_admin_only AS RefundsAdminOnly,
+            kiosk_height_weight_mode AS KioskHeightWeightMode,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -264,6 +265,12 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET refunds_admin_only = @adminOnly WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, adminOnly });
+        }
+
+        public async Task UpdateKioskHeightWeightMode(Guid tenantId, string mode)
+        {
+            const string sql = "UPDATE tenant SET kiosk_height_weight_mode = @mode WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, mode });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

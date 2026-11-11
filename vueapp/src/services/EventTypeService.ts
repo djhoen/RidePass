@@ -9,6 +9,8 @@ export interface EventType {
     sortOrder: number
     isSystem: boolean
     allowLoampassRedemption: boolean
+    /** The survey asked as the rider self-assessment at checkout (Script0318); null = none. */
+    assessmentSurveyId?: string | null
 }
 
 export class EventTypeService {
@@ -44,6 +46,10 @@ export class EventTypeService {
 
     async reorder(items: { id: string; sortOrder: number }[]) {
         return axios.post(`${this.apiUrl}/EventType/Reorder`, { items })
+    }
+
+    async setAssessmentSurvey(id: string, surveyId: string | null) {
+        return axios.put(`${this.apiUrl}/EventType/${id}/AssessmentSurvey`, { surveyId })
     }
 
     async setLoampassRedemption(id: string, allow: boolean) {

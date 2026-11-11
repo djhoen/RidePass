@@ -54,6 +54,10 @@ namespace webapi.Controllers
         private readonly ISeasonPassRepository _seasonPasses;
         private readonly ITenantTaxRepository _tax;
         private readonly Services.Payments.IFeeCalculator _feeCalculator;
+        private readonly IRiderMeasurementRepository _measurements;
+        private readonly IRiderDependentRepository _dependents;
+        private readonly ILessonAssessmentRepository _assessments;
+        private readonly ISurveyRepository _surveys;
 
         public PurchaseController(
             IWaiverRepository waivers,
@@ -87,8 +91,16 @@ namespace webapi.Controllers
             ITenantTaxRepository tax,
             Services.Payments.IFeeCalculator feeCalculator,
             ITenantCreditRepository credit,
-            Services.Audit.IAuditLogger audit)
+            Services.Audit.IAuditLogger audit,
+            IRiderMeasurementRepository measurements,
+            IRiderDependentRepository dependents,
+            ILessonAssessmentRepository assessments,
+            ISurveyRepository surveys)
         {
+            _measurements = measurements;
+            _dependents = dependents;
+            _assessments = assessments;
+            _surveys = surveys;
             _audit = audit;
             _credit = credit;
             _waivers = waivers;
@@ -514,6 +526,17 @@ namespace webapi.Controllers
                 rentalStartsAtUtc = DateTime.SpecifyKind(parentEvent.StartsAt, DateTimeKind.Utc);
                 rentalEndsAtUtc = DateTime.SpecifyKind(parentEvent.EndsAt, DateTimeKind.Utc);
                 rentalQty = Math.Max(1, request.LessonRental.Quantity);
+
+                // The shop sizes the bike from the rider's height and weight (Script0317): required, one bike
+                // per booking (the numbers are one rider's). A dependent must be one of the buyer's own.
+                if (rentalQty > 1)
+                    return new ApiResponses().BadRequestResult("Book one bike per lesson booking.");
+                if (Services.Riders.RiderMeasurementRules.Validate(request.LessonRental.RiderHeightIn,
+                        request.LessonRental.RiderWeightLb, required: true, who: "the bike rider") is { } hwError)
+                    return new ApiResponses().BadRequestResult(hwError);
+                if (request.LessonRental.RiderDependentId is Guid bikeDependentId
+                    && (await _dependents.GetById(bikeDependentId, _tenantContext.TenantId))?.GuardianUserId != purchaserUserId)
+                    return new ApiResponses().BadRequestResult("That rider isn't on your account.");
 
                 var free = bike.TrackingKind == "pool"
                     ? await _shop.GetPoolAvailability(bike.VariantId, _tenantContext.TenantId, rentalStartsAtUtc, rentalEndsAtUtc)
@@ -995,6 +1018,16 @@ namespace webapi.Controllers
                     EventId = parentEvent.Id,
                 }, rentalLines);
                 lessonShopRentalId = rid;
+
+                // The size the bike is set up for, frozen on the rental, and kept on the rider's profile so the
+                // next booking is prefilled: the dependent's row for a minor, the buyer's account for themselves.
+                var bikeHeightIn = request.LessonRental!.RiderHeightIn!.Value;
+                var bikeWeightLb = request.LessonRental.RiderWeightLb!.Value;
+                await _measurements.SnapshotOnShopRental(rid, _tenantContext.TenantId, bikeHeightIn, bikeWeightLb);
+                if (request.LessonRental.RiderDependentId is Guid bikeDepId)
+                    await _measurements.SaveForDependent(bikeDepId, _tenantContext.TenantId, purchaserUserId, bikeHeightIn, bikeWeightLb);
+                else if (request.LessonRental.ForSelf && purchaserUserId is Guid buyerId)
+                    await _measurements.SaveForUser(buyerId, _tenantContext.TenantId, bikeHeightIn, bikeWeightLb);
             }
 
             // Build the membership purchase up front (when bundling) so its price
@@ -1312,6 +1345,8 @@ namespace webapi.Controllers
             // Cache of an event's tiers, to resolve which tiers form a race "class" (a price
             // ladder shares one class across all its steps).
             var eventTierCache = new Dictionary<Guid, List<Services.Repositories.Data.PaymentData.EventTicketTier>>();
+            // An event's self-assessment survey (Script0318), loaded once per event in this submission.
+            var assessmentCache = new Dictionary<Guid, LoadedAssessment?>();
 
             foreach (var reg in request.Registrants)
             {
@@ -1448,6 +1483,31 @@ namespace webapi.Controllers
                     }
                 }
 
+                // Rider self-assessment (Script0318): when the event's type asks a survey, a rider registrant
+                // answers it (required questions enforced here, not only in the UI); stored per rider ticket below.
+                LoadedAssessment? assessment = null;
+                List<Services.Surveys.SurveyAnswerRow>? assessmentRows = null;
+                if (isRiderRegistrant)
+                {
+                    var assessEventId = loaded.First(x => x.isRace || (x.tier.Kind == "gate_fee" && x.tier.Audience == "rider")).tier.EventId;
+                    if (!assessmentCache.TryGetValue(assessEventId, out assessment))
+                    {
+                        assessment = await LessonAssessments.ForEvent(_assessments, _surveys, assessEventId, tenantId);
+                        assessmentCache[assessEventId] = assessment;
+                    }
+                    if (assessment is not null)
+                    {
+                        var inputs = LessonAssessments.ToInputs(reg.AssessmentAnswers);
+                        var missing = Services.Surveys.SurveyAnswerRules.FirstUnanswered(assessment.Questions, assessment.Choices, inputs);
+                        if (missing is not null)
+                        {
+                            return new ApiResponses().BadRequestResult(
+                                $"{reg.FirstName} needs to answer \"{missing.Prompt}\" ({assessment.Survey.Title}).");
+                        }
+                        assessmentRows = Services.Surveys.SurveyAnswerRules.ToRows(assessment.Questions, assessment.Choices, inputs);
+                    }
+                }
+
                 // One registrant id ties the rider's gate fee + their class entries together.
                 var registrantId = Guid.NewGuid();
 
@@ -1509,6 +1569,19 @@ namespace webapi.Controllers
                     }
                     completed++;
                 }
+
+                // The self-assessment, once per rider ticket this registrant holds (a re-submit replaces it).
+                if (assessment is not null && assessmentRows is not null)
+                {
+                    Guid? respondentUserId = Guid.TryParse(User.FindFirst("UserId")?.Value, out var ruid) ? ruid : null;
+                    var respondentName = $"{reg.FirstName!.Trim()} {reg.LastName!.Trim()}".Trim();
+                    foreach (var x in loaded.Where(l => l.isRace || (l.tier.Kind == "gate_fee" && l.tier.Audience == "rider")))
+                    {
+                        await _assessments.SaveForTicket(tenantId, assessment.Survey.Id, x.ticket.Id, respondentUserId,
+                            respondentName, x.ticket.PurchaserEmail, HttpContext.Connection.RemoteIpAddress?.ToString(),
+                            assessmentRows);
+                    }
+                }
             }
 
             // If the buyer is logged in and has no emergency contact on file yet, backfill their
@@ -1565,10 +1638,19 @@ namespace webapi.Controllers
                     needsWaiver = (isRace || isRiderGate) ? r.RequiresRiderWaiver : r.RequiresSpectatorWaiver,
                 };
             }).ToList();
+            // The event's rider self-assessment (Script0318), so the resume page asks it too.
+            LoadedAssessment? assessment = null;
+            if (rows.FirstOrDefault(r => r.Kind == "race_entry" || (r.Kind == "gate_fee" && r.Audience == "rider")) is { } riderRow
+                && await _ticketPurchases.GetById(riderRow.TicketId, _tenantContext.TenantId) is { } riderTicket
+                && await _tiers.GetById(riderTicket.TierId, _tenantContext.TenantId) is { } riderTier)
+            {
+                assessment = await LessonAssessments.ForEvent(_assessments, _surveys, riderTier.EventId, _tenantContext.TenantId);
+            }
             return new ApiResponses().OkResult(new
             {
                 eventTitle = rows.FirstOrDefault()?.EventTitle,
                 tickets,
+                assessment = assessment?.ToResponse(),
             });
         }
 

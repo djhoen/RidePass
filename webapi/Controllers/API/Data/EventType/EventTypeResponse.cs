@@ -10,5 +10,7 @@ namespace webapi.Controllers.API.Data.EventType
         public int SortOrder { get; set; }
         public bool IsSystem { get; set; }
         public bool AllowLoampassRedemption { get; set; }
+        /// <summary>The survey asked as a rider self-assessment at checkout (Script0318); null = none.</summary>
+        public Guid? AssessmentSurveyId { get; set; }
     }
 }

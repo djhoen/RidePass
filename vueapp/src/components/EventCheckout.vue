@@ -149,6 +149,17 @@
                         </template>
                     </v-radio>
                 </v-radio-group>
+
+                <!-- The shop sizes the bike from the rider's height and weight (required). Prefilled from
+                     the rider's profile; what is entered here is saved back to it. -->
+                <div v-if="selectedBike" class="evt-bike-rider mb-5 pa-3">
+                    <div class="font-weight-medium mb-1">Who's riding the bike?</div>
+                    <div class="text-caption text-medium-emphasis mb-3">We use height and weight to set up the right size bike.</div>
+                    <v-select v-if="isAuthed" v-model="bikeRiderKey" :items="bikeRiderOptions" item-title="label"
+                        item-value="value" label="Bike rider" density="compact" hide-details class="mb-3"></v-select>
+                    <HeightWeightFields v-model="bikeMeasurement" required />
+                    <p v-if="bikeMeasurementError" class="text-caption text-error mt-1">{{ bikeMeasurementError }}</p>
+                </div>
             </template>
 
             <!-- Section 2: Your info (+ inline login) -->
@@ -275,6 +286,13 @@
                     </div>
                 </template>
 
+                <!-- Rider self-assessment (the event type's survey), once per rider. -->
+                <template v-if="assessment && riderHasTickets(ri)">
+                    <div class="evt-group-label mt-4 mb-1">{{ assessment.title }}</div>
+                    <p v-if="assessment.description" class="text-caption text-medium-emphasis mb-2" style="white-space: pre-wrap">{{ assessment.description }}</p>
+                    <SurveyQuestionFields :questions="assessment.questions" v-model="rider.assessmentAnswers" dense />
+                </template>
+
                 <template v-if="rider.needsWaiver">
                     <div class="text-caption text-medium-emphasis mt-3 mb-1">
                         {{ isMinor(rider.birthdate) ? 'Rider is under 18 — a parent/guardian must sign' : 'Signature' }}
@@ -344,6 +362,12 @@ import ExtrasPicker, { type ExtraSelection } from '@/components/ExtrasPicker.vue
 import AccountSignupForm from '@/components/AccountSignupForm.vue'
 import { TaxService } from '@/services/TaxService'
 import type { EventDto, EligibleExtra, EligibleRental } from '@/services/EventService'
+import HeightWeightFields from '@/components/HeightWeightFields.vue'
+import SurveyQuestionFields from '@/components/SurveyQuestionFields.vue'
+import { measurementError, type Measurement } from '@/helpers/RiderMeasurements'
+import { firstUnanswered, type SurveyAnswerInput } from '@/helpers/SurveyAnswers'
+import { RiderMeasurementService, type MyMeasurements } from '@/services/RiderMeasurementService'
+import { LessonAssessmentService, type LessonAssessmentSurvey } from '@/services/LessonAssessmentService'
 
 const props = defineProps<{ event: EventDto; tiers: TicketTier[] }>()
 // Asks the parent to re-fetch tiers (e.g. after a 409 price_changed) so the buyer
@@ -433,6 +457,8 @@ interface RiderCard {
     signatureDataUrl: string | null
     gateTicketId: string | null    // this rider's gate fee ticket (one per rider)
     needsWaiver: boolean
+    // Answers to the event type's self-assessment survey (Script0318), when it asks one.
+    assessmentAnswers: SurveyAnswerInput[]
 }
 interface ClassAssign {
     ticketId: string
@@ -476,6 +502,42 @@ const selectedBikeId = ref<string | null>(null)
 const selectedBike = computed<EligibleRental | null>(() =>
     lessonBikes.value.find(b => b.variantId === selectedBikeId.value) ?? null)
 const bikeFeeCents = computed(() => selectedBike.value?.priceCents ?? 0)
+
+// The bike rider's height and weight (Script0317): required with a bike. 'self' = the buyer,
+// 'dep:<id>' = one of their dependents (saved back to that profile), 'other' = someone else.
+const measurementService = new RiderMeasurementService()
+const myMeasurements = ref<MyMeasurements | null>(null)
+const bikeRiderKey = ref<string>('self')
+const bikeMeasurement = ref<Measurement>({ heightIn: null, weightLb: null })
+const bikeRiderOptions = computed(() => [
+    { value: 'self', label: name.value.trim() ? `Me (${name.value.trim()})` : 'Me' },
+    ...(myMeasurements.value?.dependents ?? []).map(d => ({ value: `dep:${d.id}`, label: `${d.firstName} ${d.lastName}`.trim() })),
+    { value: 'other', label: 'Someone else' },
+])
+const bikeMeasurementError = computed(() =>
+    selectedBike.value ? measurementError(bikeMeasurement.value, true, 'the bike rider') : null)
+function prefillBikeMeasurement() {
+    const m = myMeasurements.value
+    const src = bikeRiderKey.value === 'self' ? m?.self
+        : bikeRiderKey.value.startsWith('dep:') ? m?.dependents.find(d => `dep:${d.id}` === bikeRiderKey.value)
+        : null
+    bikeMeasurement.value = { heightIn: src?.heightIn ?? null, weightLb: src?.weightLb ?? null }
+}
+watch(bikeRiderKey, prefillBikeMeasurement)
+async function loadMyMeasurements() {
+    if (!isAuthed.value) { myMeasurements.value = null; return }
+    try {
+        myMeasurements.value = (await measurementService.mine()).data.data
+        if (bikeMeasurement.value.heightIn == null && bikeMeasurement.value.weightLb == null) prefillBikeMeasurement()
+    } catch { /* nothing to prefill; the rider types it */ }
+}
+watch(isAuthed, loadMyMeasurements)
+
+// The event type's rider self-assessment survey (Script0318), asked once per rider at registration.
+const assessment = ref<LessonAssessmentSurvey | null>(null)
+function riderHasTickets(ri: number): boolean {
+    return !!riders.value[ri]?.gateTicketId || classAssigns.value.some(c => c.riderIndex === ri)
+}
 // Second PaymentIntent (the refundable deposit hold) to authorize after the main charge.
 const depositHoldSecret = ref<string | null>(null)
 // Resolve each selection's unit price (variant override or product base) for the running total.
@@ -586,7 +648,8 @@ const estTaxCents = computed(() => {
     return tax
 })
 const grandTotalCents = computed(() => estTotalCents.value + serviceFeeCents.value + estTaxCents.value)
-const detailsValid = computed(() => name.value.trim().length > 1 && /\S+@\S+\.\S+/.test(email.value.trim()))
+const detailsValid = computed(() => name.value.trim().length > 1 && /\S+@\S+\.\S+/.test(email.value.trim())
+    && !bikeMeasurementError.value)
 const anyWaiver = computed(() => riders.value.some(r => r.needsWaiver) || spectators.value.length > 0)
 
 // Prefill the post-checkout signup from what we already collected: the purchaser's name +
@@ -748,7 +811,13 @@ onMounted(async () => {
             profileEmergencyName.value = p.emergencyContactName ?? ''
             profileEmergencyPhone.value = p.emergencyContactPhone ?? ''
         } catch { /* leave blank for them to fill */ }
+        await loadMyMeasurements()
     }
+    // Best-effort: no survey (or a failed load) just means no self-assessment is shown; the server
+    // still refuses a registration that skips a required question, and says which.
+    try {
+        assessment.value = (await new LessonAssessmentService().forEvent(props.event.id)).data.data ?? null
+    } catch { assessment.value = null }
 })
 
 // "Not you?" on a shared device: silently sign out (no redirect, keeps the cart) and clear
@@ -828,7 +897,15 @@ async function createIntent() {
         const r = await ticketService.createTicketPurchase({
             items,
             extras: extras.length ? extras : null,
-            lessonRental: selectedBikeId.value ? { variantId: selectedBikeId.value, quantity: 1 } : null,
+            lessonRental: selectedBikeId.value ? {
+                variantId: selectedBikeId.value,
+                quantity: 1,
+                riderHeightIn: bikeMeasurement.value.heightIn,
+                riderWeightLb: bikeMeasurement.value.weightLb,
+                // Guests have no profile to save to; a signed-in buyer picks whose it is.
+                forSelf: isAuthed.value && bikeRiderKey.value === 'self',
+                riderDependentId: isAuthed.value && bikeRiderKey.value.startsWith('dep:') ? bikeRiderKey.value.slice(4) : null,
+            } : null,
             email: isAuthed.value ? null : email.value.trim(),
             name: isAuthed.value ? null : name.value.trim(),
             couponCode: couponCode.value.trim() || null,
@@ -893,6 +970,7 @@ function buildRegistration(tickets: TicketRedemption[]) {
         emergencyName: '', emergencyPhone: '', signatureDataUrl: null,
         gateTicketId: riderGateTickets[i]?.purchaseId ?? null,
         needsWaiver: props.event.requiresRiderWaiver,
+        assessmentAnswers: [],
     }))
     classAssigns.value = classTickets.map((tk, i) => ({
         ticketId: tk.purchaseId,
@@ -999,6 +1077,7 @@ async function finish() {
         parentGuardianName?: string | null
         emergencyContactName?: string | null; emergencyContactPhone?: string | null
         waiverSignatureDataUrl?: string | null
+        assessmentAnswers?: SurveyAnswerInput[] | null
         tickets: Array<{ ticketId: string; raceNumber?: string | null }>
     }> = []
 
@@ -1027,7 +1106,12 @@ async function finish() {
         if (branding.requireEmergencyContact && !r.emergencyPhone.trim()) {
             errorMessage.value = `An emergency contact phone is required for ${r.firstName || `rider ${i + 1}`}.`; return
         }
+        const unanswered = assessment.value ? firstUnanswered(assessment.value.questions, r.assessmentAnswers) : null
+        if (unanswered) {
+            errorMessage.value = `${r.firstName || `Rider ${i + 1}`} needs to answer "${unanswered.prompt}".`; return
+        }
         registrants.push({
+            assessmentAnswers: assessment.value ? r.assessmentAnswers : null,
             firstName: r.firstName.trim(), lastName: r.lastName.trim(),
             birthdate: r.birthdate || null, bike: r.bike.trim() || null,
             parentGuardianName: r.needsWaiver && isMinor(r.birthdate) ? r.parentName.trim() : null,
@@ -1094,6 +1178,7 @@ async function finish() {
 .evt-login,
 .evt-reg,
 .evt-riders,
+.evt-bike-rider,
 .evt-signup {
     background: var(--rp-card2);
     border: 1px solid var(--rp-line);

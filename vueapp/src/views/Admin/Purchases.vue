@@ -188,16 +188,33 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="it in detailsItems" :key="it.kind + ':' + it.id">
-                                    <td>{{ it.productName }}</td>
-                                    <td><v-chip size="x-small">{{ kindLabel(it.kind) }}</v-chip></td>
-                                    <td>${{ (it.amountCents / 100).toFixed(2) }}</td>
-                                    <td><v-chip size="small" :color="statusColor(it.status)">{{ it.status }}</v-chip></td>
-                                    <td class="text-right">
-                                        <v-btn v-if="canCancel(it) && !canRefund(it)" size="x-small" color="error"
-                                            variant="tonal" @click="openCancel(it)">Cancel</v-btn>
-                                    </td>
-                                </tr>
+                                <template v-for="it in detailsItems" :key="it.kind + ':' + it.id">
+                                    <tr>
+                                        <td>
+                                            {{ it.productName }}
+                                            <!-- Rider self-assessment on this ticket (Script0318). -->
+                                            <div v-if="assessmentByTicket[it.id]">
+                                                <a href="#" class="text-caption text-primary"
+                                                    @click.prevent="toggleAssessment(it.id)">
+                                                    <v-icon size="14">{{ openAssessments.includes(it.id) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                                                    Self-assessment<span v-if="assessmentByTicket[it.id].riderName"> · {{ assessmentByTicket[it.id].riderName }}</span>
+                                                </a>
+                                            </div>
+                                        </td>
+                                        <td><v-chip size="x-small">{{ kindLabel(it.kind) }}</v-chip></td>
+                                        <td>${{ (it.amountCents / 100).toFixed(2) }}</td>
+                                        <td><v-chip size="small" :color="statusColor(it.status)">{{ it.status }}</v-chip></td>
+                                        <td class="text-right">
+                                            <v-btn v-if="canCancel(it) && !canRefund(it)" size="x-small" color="error"
+                                                variant="tonal" @click="openCancel(it)">Cancel</v-btn>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="assessmentByTicket[it.id] && openAssessments.includes(it.id)">
+                                        <td colspan="5" class="py-3">
+                                            <SelfAssessmentAnswers :assessment="assessmentByTicket[it.id]" />
+                                        </td>
+                                    </tr>
+                                </template>
                             </tbody>
                         </v-table>
                     </template>
@@ -310,6 +327,8 @@ import { PurchaseService } from '@/services/PurchaseService'
 import { branding } from '@/stores/branding'
 import authHelper from '@/helpers/AuthHelper'
 import { Perm } from '@/helpers/TenantPermissions'
+import SelfAssessmentAnswers from '@/components/SelfAssessmentAnswers.vue'
+import { LessonAssessmentService, type TicketAssessment } from '@/services/LessonAssessmentService'
 
 const service = new PassService()
 const purchaseService = new PurchaseService()
@@ -620,14 +639,36 @@ async function openDetails(p: PurchaseRow) {
     detailsError.value = ''
     detailsDialog.value = true
     detailsLoading.value = true
+    assessmentByTicket.value = {}
+    openAssessments.value = []
     try {
         const r = await service.adminOrderDetails(p.kind, p.id)
         detailsItems.value = (r.data as any).data
+        void loadAssessments(detailsItems.value)
     } catch (err: any) {
         detailsError.value = err.response?.data?.error ?? 'Couldn’t load this order. Close and try again.'
     } finally {
         detailsLoading.value = false
     }
+}
+
+// Rider self-assessments (Script0318) on the order's tickets, for staff who can read the Rider Report.
+const assessmentService = new LessonAssessmentService()
+const assessmentByTicket = ref<Record<string, TicketAssessment>>({})
+const openAssessments = ref<string[]>([])
+async function loadAssessments(items: PurchaseRow[]) {
+    if (!authHelper.hasPermission(Perm.ReportsView)) return
+    const ids = items.filter(i => i.kind === 'event_ticket').map(i => i.id).slice(0, 200)
+    if (ids.length === 0) return
+    try {
+        const list = (await assessmentService.answers(ids)).data.data ?? []
+        assessmentByTicket.value = Object.fromEntries(list.map(a => [a.ticketId, a]))
+    } catch { /* no link shown; the order details still load */ }
+}
+function toggleAssessment(ticketId: string) {
+    openAssessments.value = openAssessments.value.includes(ticketId)
+        ? openAssessments.value.filter(id => id !== ticketId)
+        : [...openAssessments.value, ticketId]
 }
 
 // Re-pull the open order's lines after a refund/cancel so their statuses update in place.

@@ -47,6 +47,15 @@
                         <v-text-field v-model="form.emergencyContactPhone" type="tel" label="Contact phone" variant="outlined" class="kiosk-input" autocomplete="off"></v-text-field>
                     </div>
                 </template>
+                <template v-if="heightWeightMode !== 'off'">
+                    <div class="kiosk-label">
+                        Height and weight{{ heightWeightMode === 'optional' ? ' (optional)' : '' }}
+                    </div>
+                    <p class="kiosk-sub mb-2">So the shop can set up the right size bike for {{ isMinor ? (form.firstName.trim() || 'the rider') : 'you' }}.</p>
+                    <HeightWeightFields v-model="form.measurement" :required="heightWeightMode === 'required'" class="mb-2" />
+                    <p v-if="measurementProblem && (form.measurement.heightIn != null || form.measurement.weightLb != null)"
+                        class="text-caption text-error mb-2">{{ measurementProblem }}</p>
+                </template>
                 <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</v-alert>
                 <div class="kiosk-actions">
                     <v-btn size="x-large" variant="text" @click="reset">Cancel</v-btn>
@@ -175,6 +184,8 @@ import SignaturePad from '@/components/SignaturePad.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
 import authHelper from '@/helpers/AuthHelper'
 import { KioskDeviceApi, getKioskToken, saveKioskPairing, forgetKioskPairing, type KioskConfig, type KioskPushPayload, type KioskPushWaiver } from '@/services/KioskService'
+import HeightWeightFields from '@/components/HeightWeightFields.vue'
+import { measurementError, type Measurement } from '@/helpers/RiderMeasurements'
 
 type Step = 'pair' | 'loading' | 'start' | 'who' | 'guardian' | 'waiver' | 'photo' | 'done'
     | 'push-intro' | 'push-waiver' | 'push-photo' | 'push-aborted'
@@ -197,8 +208,14 @@ const blankForm = () => ({
     agreed: false,
     signature: null as string | null,
     photo: null as string | null,
+    measurement: { heightIn: null, weightLb: null } as Measurement,
 })
 const form = ref(blankForm())
+// Height and weight (Script0317): asked when the venue turned it on, required when it says so.
+const heightWeightMode = computed(() => config.value?.heightWeightMode ?? 'off')
+const measurementProblem = computed(() => heightWeightMode.value === 'off' ? null
+    : measurementError(form.value.measurement, heightWeightMode.value === 'required',
+        isMinor.value ? form.value.firstName.trim() || null : null))
 
 /** Under 18 on the venue's date, as the gate judges it. */
 function ageOn(birthdate: string, today: string): number {
@@ -228,6 +245,7 @@ const whoComplete = computed(() => {
     if (isMinor.value && f.email.trim() && !emailOk(f.email)) return false
     if (config.value?.requireEmergencyContact && !isMinor.value
         && (!f.emergencyContactName.trim() || digits(f.emergencyContactPhone) < 7)) return false
+    if (measurementProblem.value) return false
     return true
 })
 const guardianComplete = computed(() => {
@@ -371,6 +389,8 @@ async function submit() {
             agreedToWaiver: f.agreed,
             signatureDataUrl: config.value.waiverId ? f.signature : null,
             photoDataUrl: f.photo,
+            heightIn: heightWeightMode.value !== 'off' ? f.measurement.heightIn : null,
+            weightLb: heightWeightMode.value !== 'off' ? f.measurement.weightLb : null,
         })
         // Done: nothing they typed stays on the page.
         form.value = blankForm()

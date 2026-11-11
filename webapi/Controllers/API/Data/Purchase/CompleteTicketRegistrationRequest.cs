@@ -28,6 +28,9 @@ namespace webapi.Controllers.API.Data.Purchase
         // Data-URL of the drawn signature; required when any of this registrant's tickets
         // belong to an audience the event requires a waiver for (rider vs spectator).
         public string? WaiverSignatureDataUrl { get; set; }
+        // Answers to the event type's self-assessment survey (Script0318), when it has one: required
+        // questions must be answered for a rider registrant. Stored per rider ticket.
+        public List<webapi.Controllers.API.Data.Survey.SubmitSurveyAnswer>? AssessmentAnswers { get; set; }
         // Every ticket this registrant covers: their gate fee + assigned race classes, or
         // a single spectator gate fee. Each class entry may carry its own race number.
         [Required, MinLength(1)]

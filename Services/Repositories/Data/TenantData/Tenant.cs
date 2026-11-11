@@ -35,6 +35,8 @@
         public string RiderPhotoMode { get; set; } = "off";
         /// <summary>Script0314: only tenant_admin may refund (sales.refund / sales.refund.override, F&amp;B refund PIN).</summary>
         public bool RefundsAdminOnly { get; set; }
+        // Kiosk sign-up asks height + weight (Script0317): off | optional | required.
+        public string KioskHeightWeightMode { get; set; } = "off";
         public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted

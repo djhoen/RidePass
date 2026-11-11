@@ -22,6 +22,10 @@ namespace Services.Repositories.Interfaces
         /// <summary>Set whether Loam Pass credits are accepted for entry to this event type.</summary>
         Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow);
 
+        /// <summary>The self-assessment survey for this type (null = none). Only a survey of the same tenant is
+        /// linked; returns false when the type or the survey is not this tenant's.</summary>
+        Task<bool> SetAssessmentSurvey(Guid id, Guid tenantId, Guid? surveyId);
+
         /// <summary>
         /// Point this event type's revenue at a QuickBooks slot (null = source-kind default).
         /// Values are constrained by chk_tenant_event_type_revenue_key; validate before calling.

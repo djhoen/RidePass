@@ -110,6 +110,11 @@
                                 {{ r.ageAtEvent }}
                             </v-chip>
                             <div v-if="r.email" class="text-caption text-medium-emphasis">{{ r.email }}</div>
+                            <!-- Rider self-assessment on this ticket (Script0318). -->
+                            <a v-if="assessedIds.has(r.purchaseId)" href="#" class="text-caption text-primary"
+                                @click.prevent.stop="openAssessment(r)">
+                                <v-icon size="14">mdi-clipboard-text-outline</v-icon> Self-assessment
+                            </a>
                         </td>
                         <td class="text-no-wrap">
                             <span v-if="r.eventTitle">{{ r.eventTitle }}</span>
@@ -303,6 +308,29 @@
                 </v-card-actions>
             </v-card>
         </v-dialog>
+
+        <!-- ── Rider self-assessment (Script0318) ────────────────────────── -->
+        <v-dialog v-model="assessmentOpen" max-width="620">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    Self-assessment · {{ assessmentName }}
+                    <v-spacer />
+                    <v-btn icon="mdi-close" variant="text" size="small" @click="assessmentOpen = false" />
+                </v-card-title>
+                <v-card-text>
+                    <div v-if="assessmentLoading" class="text-center py-6">
+                        <v-progress-circular indeterminate color="primary" />
+                    </div>
+                    <v-alert v-else-if="assessmentError" type="error" variant="tonal">{{ assessmentError }}</v-alert>
+                    <SelfAssessmentAnswers v-else-if="assessment" :assessment="assessment" />
+                    <div v-else class="text-medium-emphasis">No self-assessment on file for this ticket.</div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="assessmentOpen = false">Close</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
     </v-container>
 </template>
 
@@ -316,6 +344,8 @@ import {
 } from '@/services/ReportsService'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding } from '@/stores/branding'
+import SelfAssessmentAnswers from '@/components/SelfAssessmentAnswers.vue'
+import { LessonAssessmentService, type TicketAssessment } from '@/services/LessonAssessmentService'
 
 const props = defineProps<{
     // 'rider' (default) or 'spectator': the same page serves both Admission reports.
@@ -441,6 +471,7 @@ async function load() {
         })
         if (s !== seq) return
         data.value = res.data.data
+        void loadAssessedIds(data.value.rows, s)
         if (data.value.truncated) cappedToast.value = true
         // Drop a stale event filter when the new range no longer contains that event.
         if (eventFilter.value && !data.value.rows.some(r => r.eventId === eventFilter.value)) {
@@ -452,6 +483,37 @@ async function load() {
             ?? 'Could not load the rider report. Check the date range and try Refresh.'
     } finally {
         if (s === seq) loading.value = false
+    }
+}
+
+// ── Rider self-assessments (Script0318): which ticket rows have one, and one opened at a time ──
+const assessmentService = new LessonAssessmentService()
+const assessedIds = ref<Set<string>>(new Set())
+const assessmentOpen = ref(false)
+const assessmentLoading = ref(false)
+const assessmentError = ref<string | null>(null)
+const assessment = ref<TicketAssessment | null>(null)
+const assessmentName = ref('')
+async function loadAssessedIds(rows: RiderReportItem[], s: number) {
+    const ids = rows.filter(r => r.source === 'ticket').map(r => r.purchaseId)
+    if (ids.length === 0) { assessedIds.value = new Set(); return }
+    try {
+        const has = (await assessmentService.has(ids)).data.data ?? []
+        if (s === seq) assessedIds.value = new Set(has)
+    } catch { if (s === seq) assessedIds.value = new Set() }   // no links; the report itself still shows
+}
+async function openAssessment(r: RiderReportItem) {
+    assessmentName.value = r.riderName
+    assessment.value = null
+    assessmentError.value = null
+    assessmentOpen.value = true
+    assessmentLoading.value = true
+    try {
+        assessment.value = ((await assessmentService.answers([r.purchaseId])).data.data ?? [])[0] ?? null
+    } catch (err: any) {
+        assessmentError.value = err.response?.data?.error ?? 'Could not load the self-assessment.'
+    } finally {
+        assessmentLoading.value = false
     }
 }
 

@@ -130,6 +130,30 @@
                 </v-card>
             </v-col>
 
+            <!-- Height and weight (Script0317): the bike shop sizes rental and lesson bikes from these. -->
+            <v-col cols="12" v-if="!isApex && measurements">
+                <v-card class="mt-4">
+                    <v-card-title>Height and weight</v-card-title>
+                    <v-card-text>
+                        <p class="text-caption text-medium-emphasis mb-3">
+                            The bike shop uses these to set up the right size bike when you rent one with a lesson.
+                        </p>
+                        <div v-for="row in measurementRows" :key="row.key" class="mb-4">
+                            <div class="text-subtitle-2 mb-2">
+                                {{ row.label }}
+                                <span v-if="row.measuredAt" class="text-caption text-medium-emphasis">
+                                    · updated {{ formatMeasuredAt(row.measuredAt) }}
+                                </span>
+                            </div>
+                            <div class="d-flex align-start ga-3 flex-wrap">
+                                <HeightWeightFields v-model="row.value" required style="flex: 1 1 320px; max-width: 460px" />
+                                <v-btn color="primary" variant="tonal" :loading="savingMeasurementKey === row.key"
+                                    :disabled="!!measurementError(row.value, true)" @click="saveMeasurement(row)">Save</v-btn>
+                            </div>
+                        </div>
+                    </v-card-text>
+                </v-card>
+            </v-col>
 
             <v-col cols="12" v-if="!isApex && branding.allowEventSubscriptions">
                 <v-card class="mt-4">
@@ -182,8 +206,54 @@ import tenantHelper from '@/helpers/TenantHelper'
 import { LoampassLinkService, type LoampassStatus } from '@/services/LoampassLinkService'
 import { EventSubscriptionService } from '@/services/EventSubscriptionService'
 import { useConfirm } from '@/composables/useConfirm'
+import HeightWeightFields from '@/components/HeightWeightFields.vue'
+import { measurementError, type Measurement } from '@/helpers/RiderMeasurements'
+import { RiderMeasurementService, type MyMeasurements } from '@/services/RiderMeasurementService'
+import dayjs from 'dayjs'
 
 const userService = new UserService()
+
+// Height and weight for the rider and their dependents at this venue (Script0317), saved per row.
+interface MeasurementRow { key: string; label: string; dependentId: string | null; value: Measurement; measuredAt: string | null }
+const measurementService = new RiderMeasurementService()
+const measurements = ref<MyMeasurements | null>(null)
+const measurementRows = ref<MeasurementRow[]>([])
+const savingMeasurementKey = ref<string | null>(null)
+async function loadMeasurements() {
+    try {
+        const m = (await measurementService.mine()).data.data
+        measurements.value = m
+        measurementRows.value = [
+            { key: 'self', label: 'You', dependentId: null,
+              value: { heightIn: m.self.heightIn, weightLb: m.self.weightLb }, measuredAt: m.self.measuredAt },
+            ...m.dependents.map(d => ({
+                key: d.id, label: `${d.firstName} ${d.lastName}`.trim(), dependentId: d.id,
+                value: { heightIn: d.heightIn, weightLb: d.weightLb }, measuredAt: d.measuredAt,
+            })),
+        ]
+    } catch { measurements.value = null }   // section stays hidden (e.g. no venue resolved)
+}
+async function saveMeasurement(row: MeasurementRow) {
+    if (row.value.heightIn == null || row.value.weightLb == null) return
+    savingMeasurementKey.value = row.key
+    try {
+        const body = { heightIn: row.value.heightIn, weightLb: row.value.weightLb }
+        const r = row.dependentId
+            ? await measurementService.updateDependent(row.dependentId, body)
+            : await measurementService.updateMine(body)
+        row.measuredAt = r.data.data.measuredAt
+        snackbarColor.value = 'success'
+        snackbarText.value = row.dependentId ? `Saved ${row.label}'s height and weight.` : 'Saved your height and weight.'
+        snackbar.value = true
+    } catch (err: any) {
+        snackbarColor.value = 'error'
+        snackbarText.value = err.response?.data?.error || "Couldn't save height and weight."
+        snackbar.value = true
+    } finally {
+        savingMeasurementKey.value = null
+    }
+}
+function formatMeasuredAt(iso: string) { return dayjs(iso).format('MMM D, YYYY') }
 const newsletterService = new NewsletterService()
 const loampassService = new LoampassLinkService()
 const eventSubService = new EventSubscriptionService()
@@ -245,6 +315,7 @@ const snackbarText = ref('')
 const snackbarColor = ref('success')
 
 onMounted(async () => {
+    if (!isApex.value) void loadMeasurements()
     try {
         loading.value = true
         const response = await userService.getProfile()

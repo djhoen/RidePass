@@ -39,6 +39,8 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? RiderPhotoMode { get; set; }
         /// <summary>Only Admins may refund. Null = leave unchanged (older settings screens).</summary>
         public bool? RefundsAdminOnly { get; set; }
+        /// <summary>Kiosk sign-up asks height and weight: 'off' | 'optional' | 'required'. Null = leave unchanged.</summary>
+        public string? KioskHeightWeightMode { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

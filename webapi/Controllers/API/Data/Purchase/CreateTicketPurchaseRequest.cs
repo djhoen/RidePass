@@ -62,6 +62,15 @@ namespace webapi.Controllers.API.Data.Purchase
     {
         [Required] public Guid VariantId { get; set; }
         [Range(1, 50)] public int Quantity { get; set; } = 1;
+
+        // The bike rider's height (whole inches) and weight (whole pounds), Script0317: required, so the
+        // shop can size the bike. Saved onto the rider's profile and frozen on the rental.
+        public int? RiderHeightIn { get; set; }
+        public int? RiderWeightLb { get; set; }
+        // Whose profile they are saved to: one of the buyer's dependents (a minor under their account),
+        // or the buyer themselves when ForSelf. Neither = someone else (the numbers stay on the rental only).
+        public Guid? RiderDependentId { get; set; }
+        public bool ForSelf { get; set; }
     }
 
     public class TicketCartItem
