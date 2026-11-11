@@ -1,5 +1,6 @@
 import { reactive, computed } from 'vue'
-import { permissionsForRoles, type Permission } from './TenantPermissions'
+import { permissionsForRolesAt, type Permission } from './TenantPermissions'
+import { branding } from '@/stores/branding'
 
 interface AuthState {
     token: string | null
@@ -189,12 +190,12 @@ export default {
 
     hasPermission(permission: Permission): boolean {
         if (state.token === null) return false
-        return permissionsForRoles(state.roles).has(permission)
+        return permissionsForRolesAt(state.roles, branding.refundsAdminOnly).has(permission)
     },
 
     hasAnyPermission(...permissions: Permission[]): boolean {
         if (state.token === null) return false
-        const set = permissionsForRoles(state.roles)
+        const set = permissionsForRolesAt(state.roles, branding.refundsAdminOnly)
         return permissions.some(p => set.has(p))
     },
 

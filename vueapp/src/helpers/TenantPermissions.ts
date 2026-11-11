@@ -82,6 +82,18 @@ export function permissionsForRoles(roles: readonly string[] | null): ReadonlySe
     return union
 }
 
+// Mirrors the server's TenantPermissions.ForRolesAt: a venue that keeps refunds for its Admins
+// (Script0314, branding.refundsAdminOnly) takes the refund permissions away from everyone who
+// isn't an Admin, so their screens don't offer a Refund the server will refuse.
+const REFUND_PERMISSIONS: readonly Permission[] = [Perm.SalesRefund, Perm.SalesRefundOverride]
+export function permissionsForRolesAt(roles: readonly string[] | null, refundsAdminOnly: boolean): ReadonlySet<Permission> {
+    const held = permissionsForRoles(roles)
+    if (!refundsAdminOnly || (roles ?? []).some(r => r === 'tenant_admin' || r === 'super_admin')) return held
+    const narrowed = new Set(held)
+    for (const p of REFUND_PERMISSIONS) narrowed.delete(p)
+    return narrowed
+}
+
 export const ASSIGNABLE_ROLES: { value: string; title: string; description: string }[] = [
     { value: 'tenant_admin',      title: 'Admin',      description: 'Full access including user management and branding.' },
     { value: 'tenant_manager',    title: 'Manager',    description: 'Run day-to-day: catalog, sales, reports, refunds. No user or branding edits.' },

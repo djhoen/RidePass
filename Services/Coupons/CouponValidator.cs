@@ -27,7 +27,8 @@ namespace Services.Coupons
             if (string.IsNullOrWhiteSpace(code)) return (null, "Coupon code is empty.");
             var coupon = await _coupons.GetByCode(tenantId, code.Trim());
             if (coupon is null) return (null, "That coupon code isn't valid here.");
-            if (!coupon.IsActive) return (null, "That coupon is no longer active.");
+            // A voided voucher (Script0315) is an inactive coupon: say so in voucher terms.
+            if (!coupon.IsActive) return (null, coupon.IsVoucher ? "That voucher was cancelled." : "That coupon is no longer active.");
 
             var now = DateTime.UtcNow;
             if (coupon.ValidFromUtc.HasValue && now < coupon.ValidFromUtc.Value)
@@ -47,7 +48,7 @@ namespace Services.Coupons
             {
                 var total = await _coupons.CountRedemptions(coupon.Id);
                 if (total >= coupon.MaxTotalUses.Value)
-                    return (null, "That coupon has been fully redeemed.");
+                    return (null, coupon.IsVoucher ? "That voucher has already been used." : "That coupon has been fully redeemed.");
             }
 
             if (coupon.MaxUsesPerUser.HasValue)

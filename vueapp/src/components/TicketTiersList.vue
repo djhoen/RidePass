@@ -727,6 +727,18 @@ function getBuffered(): Array<Omit<TicketTier, 'id' | 'eventId' | 'sold'>> {
         minSold: t.minSold,
         effectiveDaysBefore: t.effectiveDaysBefore,
         effectiveAtUtc: t.effectiveAtUtc,
+        // Everything else the pass dialog sets, so a pass added before the event exists keeps
+        // it: lesson group, party pricing, walk-up price and refund terms (Script0316).
+        instructorId: t.instructorId,
+        skillLevel: t.skillLevel,
+        equipmentLabel: t.equipmentLabel,
+        startsAt: t.startsAt,
+        endsAt: t.endsAt,
+        partySizeIncluded: t.partySizeIncluded,
+        partyPriceCents: t.partyPriceCents,
+        partySizeMax: t.partySizeMax,
+        walkUpPriceCents: t.walkUpPriceCents,
+        nonRefundable: t.nonRefundable,
     }))
 }
 

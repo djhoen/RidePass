@@ -84,15 +84,22 @@ async function post(printerUrl: string, xml: string): Promise<void> {
     if (!base) throw new Error('No receipt printer is configured on this tablet.')
     const url = `${base}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`
     let res: Response
+    // An address nothing answers on would otherwise hang until the browser gives up (minutes).
+    // The printer itself waits up to 10s (timeout=10000 above), so allow a little more.
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), 12_000)
     try {
         res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
             body: xml,
+            signal: abort.signal,
         })
     } catch {
-        // Network/mixed-content/cert failures land here (no HTTP status).
+        // Network/mixed-content/cert failures and the timeout land here (no HTTP status).
         throw new Error('Could not reach the printer. Check it is on, on this network, and reachable over HTTPS (trust its certificate on the tablet).')
+    } finally {
+        clearTimeout(timer)
     }
     if (!res.ok) throw new Error(`Printer returned HTTP ${res.status}.`)
     const body = await res.text()
