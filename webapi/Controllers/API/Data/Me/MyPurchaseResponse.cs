@@ -18,5 +18,10 @@ namespace webapi.Controllers.API.Data.Me
         // The registered rider/holder this admission is for, so a buyer holding several passes can
         // tell which QR belongs to whom. Null until the ticket is registered to a rider.
         public string? HolderName { get; set; }
+        /// <summary>A lesson booking (Script0319): moved with Change date rather than cancelled when the
+        /// venue sells lessons on rebook-only terms.</summary>
+        public bool IsLesson { get; set; }
+        /// <summary>The venue cancelled this lesson session for weather: rebook or refund.</summary>
+        public bool WeatherCancelled { get; set; }
     }
 }

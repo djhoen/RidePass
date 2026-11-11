@@ -11,7 +11,7 @@ export class TenantService {
         return axios.get(`${this.apiUrl}/Tenant/Branding`)
     }
 
-    async updateSettings(req: { timezone: string; requireReservationForPasses: boolean; requireEmergencyContact: boolean; allowEventSubscriptions: boolean; requireIdAtCheckin: boolean; requireIdForWristband: boolean; seasonPassAdmissionTypeId: number; birthdateVerifyMode?: 'off' | 'prompt' | 'required'; birthdateVerifyValidDays?: number; riderPhotoMode?: 'off' | 'prompt' | 'required'; refundsAdminOnly?: boolean }) {
+    async updateSettings(req: { timezone: string; requireReservationForPasses: boolean; requireEmergencyContact: boolean; allowEventSubscriptions: boolean; requireIdAtCheckin: boolean; requireIdForWristband: boolean; seasonPassAdmissionTypeId: number; birthdateVerifyMode?: 'off' | 'prompt' | 'required'; birthdateVerifyValidDays?: number; riderPhotoMode?: 'off' | 'prompt' | 'required'; refundsAdminOnly?: boolean; lessonRebookOnly?: boolean; lessonChangeCutoffHours?: number }) {
         return axios.put(`${this.apiUrl}/Tenant`, req)
     }
 

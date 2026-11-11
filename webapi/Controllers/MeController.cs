@@ -244,6 +244,20 @@ namespace webapi.Controllers
                     ? null : $"{tk.RiderFirstName} {tk.RiderLastName}".Trim(),
             }));
 
+            // Lesson bookings (Script0319): flag them so the page offers Change date / Rebook or refund.
+            var ticketIds = combined.Where(p => p.Kind == "event_ticket").Select(p => p.Id).ToList();
+            if (ticketIds.Count > 0)
+            {
+                var flags = (await HttpContext.RequestServices.GetRequiredService<ILessonChangeRepository>()
+                    .LessonFlags(_tenantContext.TenantId, ticketIds)).ToDictionary(f => f.TicketId);
+                foreach (var p in combined.Where(p => p.Kind == "event_ticket"))
+                {
+                    if (!flags.TryGetValue(p.Id, out var f)) continue;
+                    p.IsLesson = true;
+                    p.WeatherCancelled = f.WeatherCancelled;
+                }
+            }
+
             var ordered = combined.OrderByDescending(p => p.CreatedAtUtc).ToList();
             return new ApiResponses().OkResult(ordered);
         }
@@ -364,6 +378,21 @@ namespace webapi.Controllers
             if ((await _ticketTiers.GetById(purchase.TierId, _tenantContext.TenantId))?.NonRefundable == true)
                 return new ApiResponses().BadRequestResult(
                     "This ticket is non-refundable, so it can't be cancelled. If something went wrong, contact the venue.");
+
+            // Lessons (Script0319): on rebook-only terms a lesson is moved, not cancelled; a session the
+            // venue called off for weather has its own rebook-or-refund page.
+            var lesson = await HttpContext.RequestServices.GetRequiredService<ILessonChangeRepository>()
+                .GetTicket(_tenantContext.TenantId, id);
+            if (lesson is { IsLesson: true })
+            {
+                if (lesson.WeatherCancelledAt is not null)
+                    return new ApiResponses().BadRequestResult(
+                        "This lesson was cancelled for weather. Use Rebook or refund on the booking to choose.");
+                if (_tenantContext.Tenant.LessonRebookOnly)
+                    return new ApiResponses().BadRequestResult(
+                        $"Lessons can't be cancelled for a refund, but you can move yours to another date up to "
+                        + $"{_tenantContext.Tenant.LessonChangeCutoffHours} hours before it starts. Use Change date.");
+            }
 
             var tenant = _tenantContext.Tenant;
             var reason = string.IsNullOrWhiteSpace(req.Reason) ? null : req.Reason.Trim();

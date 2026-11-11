@@ -39,6 +39,11 @@ namespace webapi.Controllers.API.Data.Tenant
         public string? RiderPhotoMode { get; set; }
         /// <summary>Only Admins may refund. Null = leave unchanged (older settings screens).</summary>
         public bool? RefundsAdminOnly { get; set; }
+        /// <summary>Lessons on rebook-only terms (Script0319). Null = leave unchanged.</summary>
+        public bool? LessonRebookOnly { get; set; }
+        /// <summary>How many hours before a lesson the rider can still move it (0-720). Null = unchanged.</summary>
+        [System.ComponentModel.DataAnnotations.Range(0, 720)]
+        public int? LessonChangeCutoffHours { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

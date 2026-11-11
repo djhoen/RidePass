@@ -225,6 +225,18 @@ const routes = [
         meta: { requiresAuth: true, requiresPermission: 'catalog.manage', hideFooter: true }
     },
     {
+        path: '/Admin/Lessons',
+        name: 'AdminLessons',
+        component: () => import('../views/Admin/Lessons.vue'),
+        meta: { requiresAuth: true, requiresPermission: 'sales.view', hideFooter: true }
+    },
+    {
+        // Lesson rebook / weather refund link from the email; the ticket token stands in for sign-in.
+        path: '/Lesson/:id',
+        name: 'LessonChange',
+        component: () => import('../views/LessonChange.vue'),
+    },
+    {
         // Vouchers (Script0315): every staffer gives their own from an allowance, so no single
         // permission gates the page; the Admin tabs inside are gated by the API (TenantAdmin).
         path: '/Admin/Vouchers',

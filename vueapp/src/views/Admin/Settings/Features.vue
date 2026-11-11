@@ -530,6 +530,18 @@ const features = computed<Feature[]>(() => [
         enabled: branding.refundsAdminOnly,
         apply: async (next) => { await saveSettings({ refundsAdminOnly: next }) },
     },
+    {
+        // Script0319: lessons are moved, not refunded.
+        key: 'lessonRebookOnly',
+        title: 'Lessons: date changes only',
+        description: `Riders can't cancel a lesson for a refund. They can move it to another date of the same lesson up to `
+            + `${branding.lessonChangeCutoffHours} hours before it starts, and not at all on the day. Staff can still move or `
+            + 'cancel any booking under Tickets > Lessons, and a session cancelled there for weather lets every rider rebook or '
+            + 'take a refund. Off: lessons follow the normal cancellation setting.',
+        icon: 'mdi-calendar-sync',
+        enabled: branding.lessonRebookOnly,
+        apply: async (next) => { await saveSettings({ lessonRebookOnly: next }) },
+    },
 ])
 
 // Super-admin-gated platform features: the tenant can't flip these on/off (that's a

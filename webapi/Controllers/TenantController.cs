@@ -229,6 +229,9 @@ namespace webapi.Controllers
                 await _tenants.UpdateRiderPhotoMode(_tenantContext.TenantId, request.RiderPhotoMode);
             if (request.RefundsAdminOnly is { } refundsAdminOnly)
                 await _tenants.UpdateRefundsAdminOnly(_tenantContext.TenantId, refundsAdminOnly);
+            if (request.LessonRebookOnly is not null || request.LessonChangeCutoffHours is not null)
+                await _tenants.UpdateLessonChangePolicy(_tenantContext.TenantId, request.LessonRebookOnly,
+                    request.LessonChangeCutoffHours);
             // The resolution cache would otherwise serve the old settings for up to 5 minutes.
             InvalidateTenantCache();
             return await GetBranding();
@@ -683,6 +686,8 @@ namespace webapi.Controllers
                 BirthdateVerifyValidDays = tenant.BirthdateVerifyValidDays,
                 RiderPhotoMode = tenant.RiderPhotoMode,
                 RefundsAdminOnly = tenant.RefundsAdminOnly,
+                LessonRebookOnly = tenant.LessonRebookOnly,
+                LessonChangeCutoffHours = tenant.LessonChangeCutoffHours,
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,

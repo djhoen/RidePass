@@ -57,6 +57,11 @@
                             Share my registration
                         </v-btn>
                         <v-spacer></v-spacer>
+                        <v-btn v-if="lessonAction(p)" size="small" :variant="p.weatherCancelled ? 'tonal' : 'text'"
+                            :color="p.weatherCancelled ? 'warning' : 'primary'" prepend-icon="mdi-calendar-sync"
+                            @click="openLessonChange(p)">
+                            {{ p.weatherCancelled ? 'Rebook or refund' : 'Change date' }}
+                        </v-btn>
                         <v-btn v-if="canCancel(p)" size="x-small" variant="text" color="medium-emphasis"
                             @click="openCancelDialog(p)">
                             {{ branding.allowSelfCancel ? 'Cancel' : 'Request cancellation' }}
@@ -215,6 +220,19 @@
             </v-card>
         </v-dialog>
 
+        <v-dialog v-model="lessonDialog" max-width="560">
+            <v-card v-if="lessonTarget">
+                <v-card-title>{{ lessonTarget.weatherCancelled ? 'Rebook or refund' : 'Change date' }}</v-card-title>
+                <v-card-text class="pt-2">
+                    <LessonChangePanel :ticket-id="lessonTarget.id" @changed="lessonChanged = true" />
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer></v-spacer>
+                    <v-btn variant="text" @click="closeLessonChange">Close</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
         <v-dialog v-model="cancelDialog" max-width="520" persistent>
             <v-card v-if="cancelTarget">
                 <v-card-title class="d-flex align-center">
@@ -283,6 +301,7 @@ import { SeasonPassService, type UpgradeOfferItem } from '@/services/SeasonPassS
 import { branding } from '@/stores/branding'
 import QrCode from '@/components/QrCode.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import LessonChangePanel from '@/components/LessonChangePanel.vue'
 
 const service = new TicketService()
 const confirm = useConfirm()
@@ -464,7 +483,30 @@ const cancelReason = ref('')
 const cancelling = ref(false)
 
 function canCancel(p: MyPurchase): boolean {
+    // Lessons on rebook-only terms (Script0319) are moved with Change date, and a weather-cancelled
+    // one has Rebook or refund instead.
+    if (p.isLesson && (branding.lessonRebookOnly || p.weatherCancelled)) return false
     return p.status === 'paid'
+}
+
+// ── Lesson date change (Script0319) ─────────────────────────────────────────
+const lessonDialog = ref(false)
+const lessonTarget = ref<MyPurchase | null>(null)
+const lessonChanged = ref(false)
+
+function lessonAction(p: MyPurchase): boolean {
+    return !!p.isLesson && p.status === 'paid' && (branding.lessonRebookOnly || !!p.weatherCancelled)
+}
+
+function openLessonChange(p: MyPurchase) {
+    lessonTarget.value = p
+    lessonChanged.value = false
+    lessonDialog.value = true
+}
+
+async function closeLessonChange() {
+    lessonDialog.value = false
+    if (lessonChanged.value) await load()
 }
 
 const regShareOpen = ref(false)

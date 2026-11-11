@@ -31,6 +31,7 @@ namespace Services.Repositories.Interfaces
         /// <summary>Rider photo on file: 'off' | 'prompt' | 'required' (Script0307).</summary>
         Task UpdateRiderPhotoMode(Guid tenantId, string mode);
         Task UpdateRefundsAdminOnly(Guid tenantId, bool adminOnly);
+        Task UpdateLessonChangePolicy(Guid tenantId, bool? rebookOnly, int? cutoffHours);
         /// <summary>Who funds the platform service charge on a bike shop sale (bps of the charge;
         /// 0 = the shop absorbs it, 10000 = the customer pays it), and whether the customer's share
         /// is taxed.</summary>

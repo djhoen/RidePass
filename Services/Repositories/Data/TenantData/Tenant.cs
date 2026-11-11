@@ -35,6 +35,9 @@
         public string RiderPhotoMode { get; set; } = "off";
         /// <summary>Script0314: only tenant_admin may refund (sales.refund / sales.refund.override, F&amp;B refund PIN).</summary>
         public bool RefundsAdminOnly { get; set; }
+        // Lessons sold on rebook-only terms (Script0319): no refund on cancel, date changes up to the cutoff.
+        public bool LessonRebookOnly { get; set; }
+        public int LessonChangeCutoffHours { get; set; } = 72;
         public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted

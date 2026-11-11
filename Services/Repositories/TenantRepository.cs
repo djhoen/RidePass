@@ -18,6 +18,8 @@ namespace Services.Repositories
             birthdate_verify_valid_days AS BirthdateVerifyValidDays,
             rider_photo_mode AS RiderPhotoMode,
             refunds_admin_only AS RefundsAdminOnly,
+            lesson_rebook_only AS LessonRebookOnly,
+            lesson_change_cutoff_hours AS LessonChangeCutoffHours,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -264,6 +266,16 @@ namespace Services.Repositories
         {
             const string sql = "UPDATE tenant SET refunds_admin_only = @adminOnly WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, adminOnly });
+        }
+
+        public async Task UpdateLessonChangePolicy(Guid tenantId, bool? rebookOnly, int? cutoffHours)
+        {
+            // Only the half the caller sent; the other is kept as it is in SQL.
+            const string sql = @"UPDATE tenant
+                SET lesson_rebook_only = COALESCE(@rebookOnly, lesson_rebook_only),
+                    lesson_change_cutoff_hours = COALESCE(@cutoffHours, lesson_change_cutoff_hours)
+                WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, rebookOnly, cutoffHours });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

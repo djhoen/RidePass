@@ -116,6 +116,7 @@ builder.Services.AddScoped<webapi.Helpers.ICounterRiderProfiles, webapi.Helpers.
 builder.Services.AddScoped<IKioskRepository, KioskRepository>();
 builder.Services.AddScoped<IVoucherRepository, VoucherRepository>();
 builder.Services.AddScoped<IDayPriceRuleRepository, DayPriceRuleRepository>();
+builder.Services.AddScoped<ILessonChangeRepository, LessonChangeRepository>();
 builder.Services.AddScoped<webapi.Helpers.ITierDayPricer, webapi.Helpers.TierDayPricer>();
 builder.Services.AddScoped<webapi.Security.IKioskAuthenticator, webapi.Security.KioskAuthenticator>();
 builder.Services.AddSingleton<webapi.Security.KioskCredentialCache>();

@@ -50,6 +50,9 @@ export interface BrandingState {
     riderPhotoMode: 'off' | 'prompt' | 'required'
     // Script0314: only Admins can refund at this venue.
     refundsAdminOnly: boolean
+    // Script0319: lessons are moved to another date, not refunded, up to the cutoff.
+    lessonRebookOnly: boolean
+    lessonChangeCutoffHours: number
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
     stripeChargeMode: string
@@ -197,6 +200,8 @@ const defaults: BrandingState = {
     birthdateVerifyValidDays: 365,
     riderPhotoMode: 'off',
     refundsAdminOnly: false,
+    lessonRebookOnly: false,
+    lessonChangeCutoffHours: 72,
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
     stripeChargeMode: 'platform',
@@ -378,6 +383,8 @@ export async function loadBranding(): Promise<void> {
         branding.riderPhotoMode = data.riderPhotoMode === 'prompt' || data.riderPhotoMode === 'required'
             ? data.riderPhotoMode : 'off'
         branding.refundsAdminOnly = data.refundsAdminOnly === true
+        branding.lessonRebookOnly = data.lessonRebookOnly === true
+        branding.lessonChangeCutoffHours = data.lessonChangeCutoffHours ?? 72
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'

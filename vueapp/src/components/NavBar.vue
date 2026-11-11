@@ -376,6 +376,7 @@ const allGroups: AdminGroup[] = [
             { to: '/Admin/BuddyPassUsage', icon: 'mdi-account-multiple-plus', title: 'Buddy Passes', perm: Perm.ReportsView, feature: 'seasonPassesEnabled' },
             { to: '/Admin/EventTypes',   icon: 'mdi-tag-multiple',         title: 'Event Types',   perm: Perm.CatalogManage },
             { to: '/Admin/Instructors',  icon: 'mdi-whistle',              title: 'Instructors',   perm: Perm.CatalogManage },
+            { to: '/Admin/Lessons',      icon: 'mdi-school-outline',       title: 'Lessons',       perm: Perm.SalesView },
             { to: '/Admin/Blackouts',    icon: 'mdi-calendar-remove',      title: 'Blackouts',     perm: Perm.CatalogManage },
             { to: '/Admin/DayPricing',   icon: 'mdi-calendar-star',        title: 'Peak Days',     perm: Perm.CatalogManage },
             { to: '/Admin/SeasonPasses', icon: 'mdi-ticket-percent',       title: 'Season Passes', perm: Perm.CatalogManage, feature: 'seasonPassesEnabled' },

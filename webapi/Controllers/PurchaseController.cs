@@ -1820,6 +1820,43 @@ namespace webapi.Controllers
         // Refund a caller-selected set of order lines, each in full (incl. service charge). Backs the
         // Order details refund modal's row selection. RefundOne validates each line is in the tenant,
         // so a spoofed id from another tenant resolves to "Purchase not found" and is skipped.
+        /// <summary>
+        /// The rider's refund for a lesson session the venue cancelled for weather (Script0319): the
+        /// full amount, whatever the ticket's refund terms or the lesson cutoff. The signed-in buyer or
+        /// the ticket's redemption token (the emailed link) may take it. Card payments only; anything
+        /// else the venue refunds by hand.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("Ticket/{id:guid}/WeatherRefund")]
+        public async Task<IActionResult> WeatherRefund(Guid id, [FromBody] webapi.Controllers.API.Data.LessonChange.LessonTokenRequest request,
+            CancellationToken ct)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var tenantId = _tenantContext.TenantId;
+            var lessons = HttpContext.RequestServices.GetRequiredService<ILessonChangeRepository>();
+            var ctx = await lessons.GetTicket(tenantId, id);
+            var byToken = ctx is not null && request.Token is Guid t && t != Guid.Empty && t == ctx.RedemptionToken;
+            var byOwner = ctx is not null && TryGetUserId(out var callerId) && ctx.PurchaserUserId == callerId;
+            if (ctx is null || !(byToken || byOwner)) return new ApiResponses().NotFoundResult("Booking not found.");
+            if (ctx.WeatherCancelledAt is null)
+                return new ApiResponses().BadRequestResult("This session wasn't cancelled for weather.");
+            if (ctx.Status != "paid")
+                return new ApiResponses().BadRequestResult("This booking has already been refunded, cancelled or used.");
+            if (ctx.PaymentMethod is not ("stripe" or "stripe_connect" or "stripe_direct"))
+                return new ApiResponses().BadRequestResult("This booking wasn't paid by card online, so the venue will refund you directly. Contact them.");
+            // Recorded as cancelled by the staffer who called off the session: the venue's decision.
+            var actor = ctx.WeatherCancelledByUserId ?? ctx.PurchaserUserId;
+            if (actor is not Guid actorId)
+                return new ApiResponses().BadRequestResult("This refund needs the venue. Contact them.");
+
+            var r = await RefundOne(tenantId, "event_ticket", id, amountCents: null, "Session cancelled for weather",
+                actorId, allowCheckedIn: false, fullAmount: true, ct, venueCancelled: true);
+            if (!r.ok) return new ApiResponses().BadRequestResult(r.error ?? "The refund didn't go through.");
+            await _audit.Log("lesson.weather_refund", $"Rider took a ${r.refundCents / 100m:0.00} refund for a weather-cancelled lesson",
+                "event_ticket_purchase", id, tenantId, new { refundCents = r.refundCents, refundId = r.refundId, byToken });
+            return new ApiResponses().OkResult(new { id, refundCents = r.refundCents });
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.SalesRefund)]
         [HttpPost("RefundLines")]
         public async Task<IActionResult> RefundLines([FromBody] RefundLinesRequest request, CancellationToken ct)
@@ -1896,7 +1933,7 @@ namespace webapi.Controllers
         // refunded/cancelled row so a whole-order refund can skip it silently.
         private async Task<(bool ok, bool alreadyDone, string? error, int refundCents, string? refundId)> RefundOne(
             Guid tenantId, string kind, Guid purchaseId, int? amountCents, string? reason,
-            Guid staffId, bool allowCheckedIn, bool fullAmount, CancellationToken ct)
+            Guid staffId, bool allowCheckedIn, bool fullAmount, CancellationToken ct, bool venueCancelled = false)
         {
             int amount = 0, serviceCharge = 0;
             string paymentMethod = "stripe", status = "";
@@ -1917,7 +1954,8 @@ namespace webapi.Controllers
                     var p = await _ticketPurchases.GetById(purchaseId, tenantId);
                     if (p is null) return (false, false, "Purchase not found.", 0, null);
                     // Non-refundable ticket types (Script0316): only an Admin may refund one.
-                    if (!IsVenueAdmin() && (await _tiers.GetById(p.TierId, tenantId))?.NonRefundable == true)
+                    // A session the venue cancelled (weather, Script0319) is refunded whatever its terms.
+                    if (!venueCancelled && !IsVenueAdmin() && (await _tiers.GetById(p.TierId, tenantId))?.NonRefundable == true)
                         return (false, false, "This ticket is non-refundable: only an Admin can refund it.", 0, null);
                     (amount, serviceCharge, paymentMethod, status, stripePi) = (p.AmountCents, p.ServiceChargeCents, p.PaymentMethod, p.Status, p.StripePaymentIntentId);
                     connectedAccount = p.StripeConnectedAccountId;

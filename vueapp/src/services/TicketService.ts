@@ -91,6 +91,9 @@ export interface MyPurchase {
     createdAtUtc: string
     tierKind: 'race_entry' | 'gate_fee' | 'spectator_pass' | null
     holderName: string | null
+    // Script0319: a lesson booking, and whether its session was cancelled for weather.
+    isLesson?: boolean
+    weatherCancelled?: boolean
 }
 
 export interface MyCoupon {
