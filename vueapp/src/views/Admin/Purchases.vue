@@ -569,6 +569,9 @@ function kindLabel(kind: string): string {
 // it to a 404.
 function canCancel(p: PurchaseRow): boolean {
     if (p.status !== 'paid') return false
+    // Cancelling a paid ticket refunds it, so a venue that keeps refunds for its Admins
+    // (Script0314) doesn't offer it to anyone else: the server would refuse.
+    if (branding.refundsAdminOnly && p.amountCents > 0 && !authHelper.hasRole('tenant_admin', 'super_admin')) return false
     return p.kind === 'event_ticket'
 }
 

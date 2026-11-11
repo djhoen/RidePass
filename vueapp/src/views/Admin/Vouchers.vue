@@ -90,7 +90,7 @@
         <v-dialog v-model="issueDialog" max-width="520">
             <v-card>
                 <v-card-title>{{ issueKind === 'vendor' ? 'New vendor list' : 'Give vouchers' }}</v-card-title>
-                <v-card-text>
+                <v-card-text class="pt-3">
                     <template v-if="!issued">
                         <v-text-field v-model="form.label" :label="issueKind === 'vendor' ? 'For (e.g. Red Bull)' : 'Who are they for?'"
                             density="compact" class="mb-2"></v-text-field>

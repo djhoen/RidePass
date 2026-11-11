@@ -111,7 +111,7 @@
                                 hint="Riders can't cancel it. Only an Admin can cancel or refund it." persistent-hint></v-checkbox>
                         </v-col>
                     </v-row>
-                    <v-switch v-model="form.isActive" label="Active" hide-details class="mt-2"></v-switch>
+                    <v-switch v-model="form.isActive" label="Active" color="primary" hide-details class="mt-2"></v-switch>
                     <v-text-field v-model.number="form.riderPaidServiceChargePct" type="number" step="1" min="0" max="100"
                         label="Buyer pays this % of the service charge" suffix="%" density="compact" class="mt-3"
                         hint="100% = added to rider's bill. 0% = absorbed by you."
