@@ -39,6 +39,8 @@ export interface KioskConfig {
     photoMode: 'off' | 'prompt' | 'required'
     photoRequired: boolean
     requireEmergencyContact: boolean
+    /** Height and weight at sign-up (tenant.kiosk_height_weight_mode, Script0317). */
+    heightWeightMode?: 'off' | 'optional' | 'required'
     /** The venue's date (yyyy-MM-dd): under-18 is judged on it, as at the gate. */
     today: string
 }
@@ -61,6 +63,9 @@ export interface KioskSignupBody {
     agreedToWaiver: boolean
     signatureDataUrl: string | null
     photoDataUrl: string | null
+    /** Whole inches / whole pounds, when the venue asks (Script0317). */
+    heightIn?: number | null
+    weightLb?: number | null
 }
 
 function kioskClient() {
@@ -126,6 +131,9 @@ export interface KioskPushCompleteBody {
     guardianName: string | null
     guardianPhone: string | null
     photoDataUrl: string | null
+    /** Whole inches / whole pounds, when the venue asks (Script0317). */
+    heightIn?: number | null
+    weightLb?: number | null
 }
 
 // ── Staff: send a waiver / photo step to a kiosk (Script0311) ───────────────────────────────────

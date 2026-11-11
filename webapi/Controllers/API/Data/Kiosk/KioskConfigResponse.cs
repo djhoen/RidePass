@@ -12,6 +12,8 @@ namespace webapi.Controllers.API.Data.Kiosk
         public string PhotoMode { get; set; } = "off";
         public bool PhotoRequired { get; set; }
         public bool RequireEmergencyContact { get; set; }
+        /// <summary>off | optional | required (tenant.kiosk_height_weight_mode): whether sign-up asks height and weight.</summary>
+        public string HeightWeightMode { get; set; } = "off";
         /// <summary>The venue's local date (yyyy-MM-dd), so the kiosk judges under-18 on the same day the gate does.</summary>
         public DateOnly Today { get; set; }
     }

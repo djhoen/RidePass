@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { LessonAssessmentSurvey } from '@/services/LessonAssessmentService'
 
 export interface TicketTier {
     id: string
@@ -197,7 +198,13 @@ export class TicketService {
         extras?: Array<{ productId: string; quantity: number; variantId?: string | null }> | null
         // Optional bike rental bundled with a lesson: its fee rides this same PI; the deposit
         // comes back as depositHoldClientSecret to confirm separately with the same card.
-        lessonRental?: { variantId: string; quantity: number } | null
+        // Height/weight of the bike rider (Script0317), required with a bike; forSelf / riderDependentId
+        // say whose profile they are saved to (neither = someone else, kept on the rental only).
+        lessonRental?: {
+            variantId: string; quantity: number
+            riderHeightIn?: number | null; riderWeightLb?: number | null
+            forSelf?: boolean; riderDependentId?: string | null
+        } | null
         // Bundles a track-membership purchase into the same PI when the rider opts in
         // from the membership-required dialog instead of being kicked out to /Membership.
         addMembership?: boolean
@@ -212,7 +219,7 @@ export class TicketService {
     // looked up by any ticket's redemption token. Returns one row per ticket with enough
     // to group them into riders (gate fee + assigned race classes) vs spectators.
     getRegistration(token: string) {
-        return axios.get<{ data: { eventTitle: string | null; tickets: RegistrationTicket[] } }>(
+        return axios.get<{ data: { eventTitle: string | null; tickets: RegistrationTicket[]; assessment?: LessonAssessmentSurvey | null } }>(
             `${this.apiUrl}/Purchase/EventTicket/Registration/${token}`)
     }
 
@@ -230,6 +237,8 @@ export class TicketService {
             emergencyContactName?: string | null
             emergencyContactPhone?: string | null
             waiverSignatureDataUrl?: string | null
+            // Answers to the event type's self-assessment survey (Script0318), when it asks one.
+            assessmentAnswers?: Array<{ questionId: string; choiceIds: string[]; freeText: string | null }> | null
             tickets: Array<{ ticketId: string; raceNumber?: string | null }>
         }>
     }) {

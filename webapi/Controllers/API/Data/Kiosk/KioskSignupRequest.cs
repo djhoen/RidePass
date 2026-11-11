@@ -26,5 +26,10 @@ namespace webapi.Controllers.API.Data.Kiosk
         public bool AgreedToWaiver { get; set; }
         public string? SignatureDataUrl { get; set; }
         public string? PhotoDataUrl { get; set; }
+
+        /// <summary>The rider's height in whole inches and weight in whole pounds (Script0317), when the venue's
+        /// kiosk asks for them (tenant.kiosk_height_weight_mode).</summary>
+        public int? HeightIn { get; set; }
+        public int? WeightLb { get; set; }
     }
 }

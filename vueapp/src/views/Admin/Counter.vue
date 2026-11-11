@@ -90,6 +90,11 @@
                                 <div v-else class="text-caption text-warning mt-1">
                                     No emergency contact on file.
                                 </div>
+                                <div class="text-caption mt-1">
+                                    Height / weight:
+                                    <strong v-if="customerMeasurementLabel">{{ customerMeasurementLabel }}</strong>
+                                    <span v-else class="text-medium-emphasis">not on file</span>
+                                </div>
                             </v-alert>
                             <div class="mt-3">
                                 <v-btn variant="text" size="small" @click="resetCustomer">Pick a different customer</v-btn>
@@ -359,6 +364,17 @@
                                                     @click="toggleLessonBike(b)">
                                                     {{ lessonBikeInCart()?.itemId === b.variantId ? 'Added' : 'Add' }}
                                                 </v-btn>
+                                            </div>
+                                            <!-- The shop sizes the bike from the customer's height and weight (required). -->
+                                            <div v-if="lessonBikeInCart()?.measurement" class="mt-3">
+                                                <div class="text-caption text-medium-emphasis mb-2">
+                                                    {{ customer?.firstName || 'Customer' }}'s height and weight, to size the bike
+                                                    (saved to their profile)
+                                                </div>
+                                                <HeightWeightFields v-model="lessonBikeInCart()!.measurement!" required />
+                                                <div v-if="bikeMeasurementProblem(lessonBikeInCart()!)" class="text-caption text-error mt-1">
+                                                    {{ bikeMeasurementProblem(lessonBikeInCart()!) }}
+                                                </div>
                                             </div>
                                         </template>
                                     </template>
@@ -872,6 +888,8 @@ import SendToKioskDialog from '@/components/SendToKioskDialog.vue'
 import type { KioskSignupItem, KioskPushTarget } from '@/services/KioskService'
 import { useKioskPushWatch } from '@/composables/useKioskPushWatch'
 import { kickDrawer } from '@/helpers/ReceiptPrinter'
+import HeightWeightFields from '@/components/HeightWeightFields.vue'
+import { formatMeasurement, measurementError, type Measurement } from '@/helpers/RiderMeasurements'
 
 type Customer = CounterRider
 type CartKind = 'extras' | 'membership' | 'event_ticket' | 'rental' | 'season_pass'
@@ -890,6 +908,8 @@ interface CartLine {
     // Refundable bike deposit (rental lines only). Added to the charged total but held, not
     // earned — returned to the customer at bike return.
     depositCents?: number
+    // Rental lines only: the customer's height and weight the bike is sized for (Script0317).
+    measurement?: Measurement
     // "lesson" (Lesson panel) or "daypass" (Day passes panel) for event tickets, so each panel counts its own.
     group?: 'lesson' | 'daypass'
     // Set when the line is a ticket for another rider on this payment (their own profile and waiver).
@@ -1217,7 +1237,22 @@ function toggleLessonBike(bike: EligibleRental) {
         riderPaidServiceChargeBps: 0,
         eventId: selectedLessonId.value,
         depositCents: bike.depositCents,
+        // Prefilled from the customer's profile; the cashier confirms or types it.
+        measurement: {
+            heightIn: existing?.measurement?.heightIn ?? customer.value?.heightIn ?? null,
+            weightLb: existing?.measurement?.weightLb ?? customer.value?.weightLb ?? null,
+        },
     })
+}
+
+// Height and weight (Script0317): the customer card line, and the bike line's check.
+const customerMeasurementLabel = computed(() => formatMeasurement({
+    heightIn: customer.value?.heightIn ?? null, weightLb: customer.value?.weightLb ?? null,
+}))
+function bikeMeasurementProblem(line: CartLine): string | null {
+    return line.kind === 'rental' && line.measurement
+        ? measurementError(line.measurement, true, customer.value?.firstName ?? null)
+        : null
 }
 
 // ── Day passes: gate-fee tiers of upcoming riding days, for the customer or another rider ──────
@@ -1956,6 +1991,9 @@ async function submitCash() {
 async function createSale(method: 'stripe' | 'cash') {
     if (!customer.value) return
     paymentError.value = null
+    // A lesson bike needs the customer's height and weight (the server refuses the sale without them).
+    const bikeProblem = cart.value.map(bikeMeasurementProblem).find(p => !!p)
+    if (bikeProblem) { paymentError.value = bikeProblem; return }
     try {
         const signingForMinor = willSignWaiver.value && customer.value?.isMinor === true
         const r = await counter.createSale({
@@ -1967,6 +2005,8 @@ async function createSale(method: 'stripe' | 'cash') {
                 eventId: c.eventId ?? null,
                 variantId: c.variantId ?? null,
                 otherRider: c.other?.input ?? null,
+                riderHeightIn: c.kind === 'rental' ? c.measurement?.heightIn ?? null : null,
+                riderWeightLb: c.kind === 'rental' ? c.measurement?.weightLb ?? null : null,
             })),
             signWaiver: willSignWaiver.value && customerAcknowledged.value,
             signatureDataUrl: willSignWaiver.value ? customerSignatureDataUrl.value : null,

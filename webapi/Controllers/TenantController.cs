@@ -209,6 +209,9 @@ namespace webapi.Controllers
             if (request.RiderPhotoMode is not null
                 && !Services.Riders.IdVerificationWindow.IsValidMode(request.RiderPhotoMode))
                 return new ApiResponses().BadRequestResult("Rider photo must be off, prompt or required.");
+            if (request.KioskHeightWeightMode is not null
+                && !Services.Riders.RiderMeasurementRules.IsValidMode(request.KioskHeightWeightMode))
+                return new ApiResponses().BadRequestResult("Kiosk height and weight must be off, optional or required.");
 
             await _tenants.UpdateTimezone(_tenantContext.TenantId, request.Timezone);
             await _tenants.UpdateRequireReservation(_tenantContext.TenantId, request.RequireReservationForPasses);
@@ -232,6 +235,8 @@ namespace webapi.Controllers
             if (request.LessonRebookOnly is not null || request.LessonChangeCutoffHours is not null)
                 await _tenants.UpdateLessonChangePolicy(_tenantContext.TenantId, request.LessonRebookOnly,
                     request.LessonChangeCutoffHours);
+            if (request.KioskHeightWeightMode is not null)
+                await _tenants.UpdateKioskHeightWeightMode(_tenantContext.TenantId, request.KioskHeightWeightMode);
             // The resolution cache would otherwise serve the old settings for up to 5 minutes.
             InvalidateTenantCache();
             return await GetBranding();
@@ -688,6 +693,7 @@ namespace webapi.Controllers
                 RefundsAdminOnly = tenant.RefundsAdminOnly,
                 LessonRebookOnly = tenant.LessonRebookOnly,
                 LessonChangeCutoffHours = tenant.LessonChangeCutoffHours,
+                KioskHeightWeightMode = Services.Riders.RiderMeasurementRules.NormalizeMode(tenant.KioskHeightWeightMode),
                 ShopBuyerPaidServiceChargeBps = tenant.ShopBuyerPaidServiceChargeBps,
                 ShopTaxServiceChargeTaxable = tenant.ShopTaxServiceChargeTaxable,
                 StripeConnectAccountId = tenant.StripeConnectAccountId,

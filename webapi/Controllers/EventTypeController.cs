@@ -87,6 +87,20 @@ namespace webapi.Controllers
             return new ApiResponses().OkResult();
         }
 
+        // The survey every event of this type asks once per rider ticket at online checkout (Script0318).
+        [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
+        [HttpPut("{id:guid}/AssessmentSurvey")]
+        public async Task<IActionResult> SetAssessmentSurvey(Guid id, [FromBody] SetEventTypeAssessmentSurveyRequest request)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var existing = await _repo.GetById(id, _tenantContext.TenantId);
+            if (existing is null) return new ApiResponses().NotFoundResult("Event type not found.");
+            if (!await _repo.SetAssessmentSurvey(id, _tenantContext.TenantId, request.SurveyId))
+                return new ApiResponses().BadRequestResult("That survey isn't available.");
+            existing.AssessmentSurveyId = request.SurveyId;
+            return new ApiResponses().OkResult(ToResponse(existing));
+        }
+
         // Tenant toggle: accept Loam Pass credits for entry to this event type. Practice is
         // forced on and can't be turned off. Only meaningful when the tenant is a LoamPassMx track.
         [Authorize(Policy = TenantPermissions.Policy.CatalogManage)]
@@ -168,6 +182,7 @@ namespace webapi.Controllers
             IsSystem = row.IsSystem,
             // Practice always accepts Loam Pass credits, regardless of the stored flag.
             AllowLoampassRedemption = row.Code == "practice" || row.AllowLoampassRedemption,
+            AssessmentSurveyId = row.AssessmentSurveyId,
         };
     }
 }

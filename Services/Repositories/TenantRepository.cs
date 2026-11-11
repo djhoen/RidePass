@@ -20,6 +20,7 @@ namespace Services.Repositories
             refunds_admin_only AS RefundsAdminOnly,
             lesson_rebook_only AS LessonRebookOnly,
             lesson_change_cutoff_hours AS LessonChangeCutoffHours,
+            kiosk_height_weight_mode AS KioskHeightWeightMode,
             stripe_connect_account_id AS StripeConnectAccountId,
             stripe_connect_status AS StripeConnectStatus,
             stripe_charge_mode AS StripeChargeMode,
@@ -276,6 +277,12 @@ namespace Services.Repositories
                     lesson_change_cutoff_hours = COALESCE(@cutoffHours, lesson_change_cutoff_hours)
                 WHERE id = @tenantId";
             await _db.Execute(sql, new { tenantId, rebookOnly, cutoffHours });
+        }
+
+        public async Task UpdateKioskHeightWeightMode(Guid tenantId, string mode)
+        {
+            const string sql = "UPDATE tenant SET kiosk_height_weight_mode = @mode WHERE id = @tenantId";
+            await _db.Execute(sql, new { tenantId, mode });
         }
 
         public async Task UpdateShopServiceChargeSettings(Guid tenantId, int buyerPaidBps, bool taxServiceCharge)

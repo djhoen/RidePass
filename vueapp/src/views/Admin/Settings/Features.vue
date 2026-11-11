@@ -72,6 +72,19 @@
                                     :loading="savingKey === 'riderPhoto'"
                                     :disabled="savingKey !== null && savingKey !== 'riderPhoto'"
                                     @update:model-value="(v: 'off' | 'prompt' | 'required') => applyRiderPhotoMode(v)"></v-select>
+                                <!-- Kiosk height and weight: off / optional / required. -->
+                                <v-select v-else-if="f.key === 'kioskHeightWeight'"
+                                    :model-value="branding.kioskHeightWeightMode"
+                                    :items="[
+                                        { title: 'Off', value: 'off' },
+                                        { title: 'Optional', value: 'optional' },
+                                        { title: 'Required', value: 'required' },
+                                    ]"
+                                    density="compact" hide-details variant="outlined"
+                                    style="min-width: 220px"
+                                    :loading="savingKey === 'kioskHeightWeight'"
+                                    :disabled="savingKey !== null && savingKey !== 'kioskHeightWeight'"
+                                    @update:model-value="(v: 'off' | 'optional' | 'required') => applyKioskHeightWeightMode(v)"></v-select>
                                 <v-switch v-else
                                     :model-value="f.enabled"
                                     @update:model-value="(v: boolean | null) => toggle(f, !!v)"
@@ -542,6 +555,18 @@ const features = computed<Feature[]>(() => [
         enabled: branding.lessonRebookOnly,
         apply: async (next) => { await saveSettings({ lessonRebookOnly: next }) },
     },
+    {
+        // Script0317: the kiosk sign-up asks the rider's height and weight, kept on their profile.
+        key: 'kioskHeightWeight',
+        title: 'Kiosk asks height and weight',
+        description: 'The front-desk kiosk sign-up asks the rider\'s height (ft / in) and weight (lb), so the bike shop '
+            + 'can size a lesson or rental bike. They are saved on the rider\'s profile (a minor\'s under their parent '
+            + 'or guardian) and riders can update them on their profile. "Optional" lets a rider skip it; "Required" '
+            + 'won\'t finish the sign-up without them.',
+        icon: 'mdi-human-male-height',
+        enabled: branding.kioskHeightWeightMode !== 'off',
+        apply: async () => { /* handled by applyKioskHeightWeightMode */ },
+    },
 ])
 
 // Super-admin-gated platform features: the tenant can't flip these on/off (that's a
@@ -619,6 +644,22 @@ async function applyRiderPhotoMode(next: 'off' | 'prompt' | 'required') {
             : 'A rider photo on file is now required to admit a rider.', 'success')
     } catch (err: any) {
         flash(err.response?.data?.error || "Couldn't save the rider photo setting.", 'error')
+    } finally {
+        savingKey.value = null
+    }
+}
+
+async function applyKioskHeightWeightMode(next: 'off' | 'optional' | 'required') {
+    if (savingKey.value) return
+    savingKey.value = 'kioskHeightWeight'
+    try {
+        await saveSettings({ kioskHeightWeightMode: next })
+        await loadBranding()
+        flash(next === 'off' ? 'The kiosk no longer asks height and weight.'
+            : next === 'optional' ? 'The kiosk now asks height and weight (optional).'
+            : 'The kiosk now requires height and weight to sign up.', 'success')
+    } catch (err: any) {
+        flash(err.response?.data?.error || "Couldn't save the kiosk height and weight setting.", 'error')
     } finally {
         savingKey.value = null
     }

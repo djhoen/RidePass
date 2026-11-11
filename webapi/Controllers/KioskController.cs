@@ -40,12 +40,14 @@ namespace webapi.Controllers
         private readonly IKioskPushService _pushes;
         private readonly Services.Audit.IAuditLogger _audit;
         private readonly ITenantContext _tenantContext;
+        private readonly IRiderMeasurementRepository _measurements;
 
         public KioskController(IKioskAuthenticator auth, IKioskRepository kiosks, ICounterRiderProfiles profiles,
             IUserRepository users, IWaiverRepository waivers, Services.Waivers.IWaiverCheckInGate waiverGate,
             ITenantRepository tenants, IRiderPhotos photos, Services.Audit.IAuditLogger audit, ITenantContext tenantContext,
-            IKioskSignupWriter writer, IKioskPushService pushes)
+            IKioskSignupWriter writer, IKioskPushService pushes, IRiderMeasurementRepository measurements)
         {
+            _measurements = measurements;
             _auth = auth;
             _kiosks = kiosks;
             _profiles = profiles;
@@ -103,7 +105,8 @@ namespace webapi.Controllers
                 PhotoMode = mode,
                 PhotoRequired = mode != IdVerificationWindow.ModeOff,
                 RequireEmergencyContact = tenant.RequireEmergencyContact,
-                Today = TenantClock.LocalDate(tenant.Timezone, DateTime.UtcNow),
+                HeightWeightMode = RiderMeasurementRules.NormalizeMode(tenant.KioskHeightWeightMode),
+                Today =TenantClock.LocalDate(tenant.Timezone, DateTime.UtcNow),
             });
         }
 
@@ -169,6 +172,13 @@ namespace webapi.Controllers
             {
                 return new ApiResponses().BadRequestResult("Take your photo to finish checking in.");
             }
+            // Height and weight (Script0317), per the venue's kiosk setting; ignored when it is off.
+            var hwMode = RiderMeasurementRules.NormalizeMode(tenant.KioskHeightWeightMode);
+            int? heightIn = hwMode == RiderMeasurementRules.ModeOff ? null : req.HeightIn;
+            int? weightLb = hwMode == RiderMeasurementRules.ModeOff ? null : req.WeightLb;
+            if (RiderMeasurementRules.Validate(heightIn, weightLb, hwMode == RiderMeasurementRules.ModeRequired,
+                    typedMinor ? req.FirstName : null) is { } hwError)
+                return new ApiResponses().BadRequestResult(hwError);
 
             // ── The profile: the same rules as the Gate Sale (rider accounts only, never duplicated) ──
             var input = new CounterOtherRiderInput
@@ -228,6 +238,9 @@ namespace webapi.Controllers
                     var heldPhoto = await _photos.RecordForKey(tenantId, heldKey, held.Bytes, held.Extension, null);
                     await _kiosks.SetPhoto(pendingId, tenantId, heldPhoto.Id);
                 }
+                // Held with the sign-up, copied onto the account when staff confirm it.
+                if (heightIn is int hh && weightLb is int hw)
+                    await _measurements.HoldOnKioskSignup(pendingId, tenantId, hh, hw);
                 await _audit.Log("kiosk.signup", $"Kiosk sign-up on \"{device.Name}\" (matches an existing account: held for ID check)",
                     targetKind: "kiosk_signup", targetId: pendingId, tenantId: tenantId,
                     metadata: new { kioskDeviceId = device.Id, minor = plan.IsMinor, pending = true });
@@ -263,6 +276,12 @@ namespace webapi.Controllers
             {
                 await _profiles.Discard(saved);
                 return new ApiResponses().BadRequestResult(attached.Error);
+            }
+            // On the new profile: the minor's dependent row, else the rider's own account.
+            if (heightIn is int h && weightLb is int w)
+            {
+                if (saved.DependentId is Guid depId) await _measurements.SaveForDependent(depId, tenantId, null, h, w);
+                else if (saved.RiderUserId is Guid riderId) await _measurements.SaveForUser(riderId, tenantId, h, w);
             }
 
             var signupId = await _kiosks.CreateSignup(new KioskSignup

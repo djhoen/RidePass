@@ -33,6 +33,8 @@
         public bool RefundsAdminOnly { get; set; }
         public bool LessonRebookOnly { get; set; }
         public int LessonChangeCutoffHours { get; set; } = 72;
+        // Kiosk sign-up asks height + weight (Script0317): off | optional | required.
+        public string KioskHeightWeightMode { get; set; } = "off";
         /// <summary>Customer's share of the platform service charge on a bike shop sale (bps).
         /// 0 = the shop absorbs it and no fee line is shown at checkout.</summary>
         public int ShopBuyerPaidServiceChargeBps { get; set; }

@@ -71,6 +71,12 @@
                             label="Rider" density="compact" hide-details style="max-width: 120px"></v-select>
                     </div>
                 </template>
+                <!-- Rider self-assessment (the event type's survey), once per rider. -->
+                <template v-if="assessment">
+                    <div class="text-subtitle-2 mt-4 mb-1">{{ assessment.title }}</div>
+                    <p v-if="assessment.description" class="text-caption text-medium-emphasis mb-2" style="white-space: pre-wrap">{{ assessment.description }}</p>
+                    <SurveyQuestionFields :questions="assessment.questions" v-model="rider.assessmentAnswers" dense />
+                </template>
                 <template v-if="rider.needsWaiver">
                     <div class="text-caption text-medium-emphasis mt-3 mb-1">
                         {{ isMinor(rider.birthdate) ? 'Rider is under 18 — a parent/guardian must sign' : 'Signature' }}
@@ -112,8 +118,13 @@ import { branding } from '@/stores/branding'
 import authHelper from '@/helpers/AuthHelper'
 import SignaturePad from '@/components/SignaturePad.vue'
 import AccountSignupForm from '@/components/AccountSignupForm.vue'
+import SurveyQuestionFields from '@/components/SurveyQuestionFields.vue'
+import { firstUnanswered, type SurveyAnswerInput } from '@/helpers/SurveyAnswers'
+import type { LessonAssessmentSurvey } from '@/services/LessonAssessmentService'
 
 const route = useRoute()
+// The event type's rider self-assessment (Script0318), when it asks one: once per rider.
+const assessment = ref<LessonAssessmentSurvey | null>(null)
 const service = new TicketService()
 const userService = new UserService()
 const token = String(route.params.token)
@@ -130,6 +141,7 @@ interface RiderCard {
     signatureDataUrl: string | null
     gateTicketId: string | null
     needsWaiver: boolean
+    assessmentAnswers: SurveyAnswerInput[]
 }
 interface ClassAssign {
     ticketId: string
@@ -209,6 +221,7 @@ onMounted(async () => {
         const r = await service.getRegistration(token)
         const d = (r.data as any).data
         eventTitle.value = d.eventTitle
+        assessment.value = d.assessment ?? null
         build((d.tickets ?? []) as RegistrationTicket[])
         await prefillEmergencyFromProfile()
     } catch (err: any) {
@@ -245,6 +258,7 @@ function build(tickets: RegistrationTicket[]) {
         emergencyName: '', emergencyPhone: '', signatureDataUrl: null,
         gateTicketId: riderGateTickets[i]?.ticketId ?? null,
         needsWaiver: riderWaiver,
+        assessmentAnswers: [],
     }))
     classAssigns.value = classTickets.map((t, i) => ({
         ticketId: t.ticketId,
@@ -277,6 +291,7 @@ async function finish() {
         parentGuardianName?: string | null
         emergencyContactName?: string | null; emergencyContactPhone?: string | null
         waiverSignatureDataUrl?: string | null
+        assessmentAnswers?: SurveyAnswerInput[] | null
         tickets: Array<{ ticketId: string; raceNumber?: string | null }>
     }> = []
 
@@ -295,7 +310,10 @@ async function finish() {
         if (r.needsWaiver && !r.birthdate) { error.value = `${r.firstName || `Rider ${i + 1}`} needs a date of birth to sign the waiver.`; return }
         if (r.needsWaiver && isMinor(r.birthdate) && !r.parentName.trim()) { error.value = `A parent/guardian name is required for ${r.firstName || `rider ${i + 1}`}.`; return }
         if (branding.requireEmergencyContact && !r.emergencyPhone.trim()) { error.value = `An emergency contact phone is required for ${r.firstName || `rider ${i + 1}`}.`; return }
+        const unanswered = assessment.value ? firstUnanswered(assessment.value.questions, r.assessmentAnswers) : null
+        if (unanswered) { error.value = `${r.firstName || `Rider ${i + 1}`} needs to answer "${unanswered.prompt}".`; return }
         registrants.push({
+            assessmentAnswers: assessment.value ? r.assessmentAnswers : null,
             firstName: r.firstName.trim(), lastName: r.lastName.trim(),
             birthdate: r.birthdate || null, bike: r.bike.trim() || null,
             parentGuardianName: r.needsWaiver && isMinor(r.birthdate) ? r.parentName.trim() : null,

@@ -38,6 +38,8 @@
         // Lessons sold on rebook-only terms (Script0319): no refund on cancel, date changes up to the cutoff.
         public bool LessonRebookOnly { get; set; }
         public int LessonChangeCutoffHours { get; set; } = 72;
+        // Kiosk sign-up asks height + weight (Script0317): off | optional | required.
+        public string KioskHeightWeightMode { get; set; } = "off";
         public int BirthdateVerifyValidDays { get; set; } = 365;
         public string? StripeConnectAccountId { get; set; }
         public string? StripeConnectStatus { get; set; }      // pending | active | restricted

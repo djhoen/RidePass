@@ -44,6 +44,8 @@ namespace webapi.Controllers.API.Data.Tenant
         /// <summary>How many hours before a lesson the rider can still move it (0-720). Null = unchanged.</summary>
         [System.ComponentModel.DataAnnotations.Range(0, 720)]
         public int? LessonChangeCutoffHours { get; set; }
+        /// <summary>Kiosk sign-up asks height and weight: 'off' | 'optional' | 'required'. Null = leave unchanged.</summary>
+        public string? KioskHeightWeightMode { get; set; }
     }
 
     public class UpdateTenantHomeContentRequest

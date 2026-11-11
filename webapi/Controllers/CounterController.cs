@@ -59,6 +59,7 @@ namespace webapi.Controllers
         private readonly ICouponRepository _coupons;
         private readonly Services.Coupons.ICouponValidator _couponValidator;
         private readonly ITierDayPricer _dayPricer;
+        private readonly IRiderMeasurementRepository _measurements;
 
         public CounterController(
             IUserRepository users,
@@ -93,8 +94,10 @@ namespace webapi.Controllers
             IKioskRepository kiosks,
             ICouponRepository coupons,
             Services.Coupons.ICouponValidator couponValidator,
-            ITierDayPricer dayPricer)
+            ITierDayPricer dayPricer,
+            IRiderMeasurementRepository measurements)
         {
+            _measurements = measurements;
             _dayPricer = dayPricer;
             _coupons = coupons;
             _couponValidator = couponValidator;
@@ -207,6 +210,8 @@ namespace webapi.Controllers
                 }
             }
 
+            // Height and weight on file (Script0317), for the customer card and to size a lesson bike.
+            var measured = await _measurements.GetForUser(rider.Id, _tenantContext.TenantId);
             return new ApiResponses().OkResult(new RiderLookupResponse
             {
                 Id = rider.Id,
@@ -222,6 +227,8 @@ namespace webapi.Controllers
                 WaiverParentPhone = parentPhone,
                 EmergencyContactName = rider.EmergencyContactName,
                 EmergencyContactPhone = rider.EmergencyContactPhone,
+                HeightIn = measured?.HeightIn,
+                WeightLb = measured?.WeightLb,
             });
         }
 
@@ -332,6 +339,10 @@ namespace webapi.Controllers
                                         DateTime StartsAtUtc, DateTime EndsAtUtc,
                                         int Quantity, int FrozenRate, int FeeCents, int CashCutCents,
                                         int DepositCents, List<Guid> PickedUnits)>();
+            // The customer's height and weight each bike is sized for (Script0317), by rentalItems index;
+            // Typed = entered at the counter (saved back to the customer's profile).
+            var rentalMeasurements = new List<(int HeightIn, int WeightLb, bool Typed)>();
+            Services.Repositories.Data.RiderData.RiderMeasurement? customerMeasured = null;
             // Memberships: at most one per cart (every rider has exactly one active membership at a time).
             (CounterCartItem Item, int PriceCents, int ServiceChargeCents)? membershipItem = null;
             // Season passes: one purchase row per unit, exactly as the online flow does, so a parent
@@ -585,8 +596,20 @@ namespace webapi.Controllers
                     var feeCents = blockPrice * rQty;
                     var cashCut = feeCents == 0 ? 0
                         : (await _feeCalculator.Calculate(_tenantContext.TenantId, feeCents, 0, 0, DateTime.UtcNow)).RidepassCutCents;
+                    // Sized from the customer's height and weight: typed now, else what is on their profile.
+                    var typed = item.RiderHeightIn is not null || item.RiderWeightLb is not null;
+                    int? hIn = item.RiderHeightIn, wLb = item.RiderWeightLb;
+                    if (!typed)
+                    {
+                        customerMeasured ??= await _measurements.GetForUser(rider.Id, _tenantContext.TenantId);
+                        hIn = customerMeasured?.HeightIn;
+                        wLb = customerMeasured?.WeightLb;
+                    }
+                    if (Services.Riders.RiderMeasurementRules.Validate(hIn, wLb, required: true, who: rider.FirstName) is { } hwError)
+                        return new ApiResponses().BadRequestResult(hwError);
                     rentalItems.Add((bike, lessonId, rStartsAt, rEndsAt, rQty, blockPrice,
                         feeCents, cashCut, bike.DepositCents * rQty, pickedUnits));
+                    rentalMeasurements.Add((hIn!.Value, wLb!.Value, typed));
                     totalCents += feeCents;
                 }
                 else if (item.Kind == "membership")
@@ -1242,6 +1265,11 @@ namespace webapi.Controllers
                     LineAmountCents = r.FeeCents,
                 });
                 ledgerLines.Add(("shop_rental", rid, r.FeeCents, r.CashCutCents));
+
+                // The size the bike is set up for, frozen on the rental; typed numbers also go on the profile.
+                var (sizedH, sizedW, sizedTyped) = rentalMeasurements[rIdx];
+                await _measurements.SnapshotOnShopRental(rid, _tenantContext.TenantId, sizedH, sizedW);
+                if (sizedTyped) await _measurements.SaveForUser(rider.Id, _tenantContext.TenantId, sizedH, sizedW);
             }
 
             // Membership: one row per sale, frozen pricing + duration.

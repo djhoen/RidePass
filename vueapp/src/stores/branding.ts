@@ -53,6 +53,8 @@ export interface BrandingState {
     // Script0319: lessons are moved to another date, not refunded, up to the cutoff.
     lessonRebookOnly: boolean
     lessonChangeCutoffHours: number
+    // Script0317: the kiosk sign-up asks height and weight: off | optional | required.
+    kioskHeightWeightMode: 'off' | 'optional' | 'required'
     stripeConnectAccountId: string | null
     stripeConnectStatus: string | null
     stripeChargeMode: string
@@ -202,6 +204,7 @@ const defaults: BrandingState = {
     refundsAdminOnly: false,
     lessonRebookOnly: false,
     lessonChangeCutoffHours: 72,
+    kioskHeightWeightMode: 'off',
     stripeConnectAccountId: null,
     stripeConnectStatus: null,
     stripeChargeMode: 'platform',
@@ -385,6 +388,8 @@ export async function loadBranding(): Promise<void> {
         branding.refundsAdminOnly = data.refundsAdminOnly === true
         branding.lessonRebookOnly = data.lessonRebookOnly === true
         branding.lessonChangeCutoffHours = data.lessonChangeCutoffHours ?? 72
+        branding.kioskHeightWeightMode = data.kioskHeightWeightMode === 'optional' || data.kioskHeightWeightMode === 'required'
+            ? data.kioskHeightWeightMode : 'off'
         branding.stripeConnectAccountId = data.stripeConnectAccountId ?? null
         branding.stripeConnectStatus = data.stripeConnectStatus ?? null
         branding.stripeChargeMode = data.stripeChargeMode ?? 'platform'

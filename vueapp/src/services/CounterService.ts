@@ -14,6 +14,9 @@ export interface CounterRider {
     waiverParentPhone?: string | null
     emergencyContactName?: string | null
     emergencyContactPhone?: string | null
+    /** Height (whole inches) and weight (whole pounds) on file (Script0317). */
+    heightIn?: number | null
+    weightLb?: number | null
 }
 
 export interface CounterCartItem {
@@ -32,6 +35,10 @@ export interface CounterCartItem {
     // "Another rider" on the payer's order (a day pass / gate ticket, quantity 1): who it is for, as
     // entered. The sale checks it again and creates / links their profile. Null = the payer's own line.
     otherRider?: OtherRiderInput | null
+    // "rental" only: the customer's height (whole inches) and weight (whole pounds) the bike is sized for
+    // (Script0317). Null = what is on their profile; the sale is refused when neither has them.
+    riderHeightIn?: number | null
+    riderWeightLb?: number | null
 }
 
 /** "Another rider": pick an existing profile, or type a new rider (and a minor's guardian). */

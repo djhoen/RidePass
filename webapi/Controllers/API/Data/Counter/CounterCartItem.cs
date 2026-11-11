@@ -32,5 +32,11 @@ namespace webapi.Controllers.API.Data.Counter
         // for, as entered at the counter. The sale re-checks it and creates or links their profile (and a
         // minor's guardian) when it is made. Null = the payer's own line, as before.
         public CounterOtherRiderInput? OtherRider { get; set; }
+
+        // "rental" only: the customer's height (whole inches) and weight (whole pounds) the bike is sized for
+        // (Script0317). Null = use what is on the customer's profile; the sale is refused when neither has them.
+        // Sent values are saved to the customer's profile and frozen on the rental.
+        public int? RiderHeightIn { get; set; }
+        public int? RiderWeightLb { get; set; }
     }
 }

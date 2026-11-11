@@ -11,6 +11,7 @@ namespace Services.Repositories
             sort_order AS SortOrder, is_system AS IsSystem,
             allow_loampass_redemption AS AllowLoampassRedemption,
             revenue_key AS RevenueKey,
+            assessment_survey_id AS AssessmentSurveyId,
             created_at AS CreatedAt, updated_at AS UpdatedAt";
 
         private readonly IDbHelper _db;
@@ -65,6 +66,18 @@ namespace Services.Repositories
         {
             const string sql = "DELETE FROM tenant_event_type WHERE id = @id AND tenant_id = @tenantId AND is_system = false";
             await _db.Execute(sql, new { id, tenantId });
+        }
+
+        public async Task<bool> SetAssessmentSurvey(Guid id, Guid tenantId, Guid? surveyId)
+        {
+            // The survey must be this tenant's too (null clears), so a crafted id can't link another tenant's survey.
+            const string sql = @"
+                UPDATE tenant_event_type t
+                SET assessment_survey_id = @surveyId
+                WHERE t.id = @id AND t.tenant_id = @tenantId
+                  AND (@surveyId::uuid IS NULL
+                       OR EXISTS (SELECT 1 FROM survey s WHERE s.id = @surveyId AND s.tenant_id = @tenantId))";
+            return await _db.Execute(sql, new { id, tenantId, surveyId }) > 0;
         }
 
         public async Task SetLoampassRedemption(Guid id, Guid tenantId, bool allow)

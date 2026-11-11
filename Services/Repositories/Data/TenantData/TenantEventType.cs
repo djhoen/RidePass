@@ -16,6 +16,8 @@ namespace Services.Repositories.Data.TenantData
         // Which QuickBooks revenue slot this type's ticket (and event-extra) revenue posts to.
         // NULL = whatever the source kind implies (Script0274); the DB CHECK limits the values.
         public string? RevenueKey { get; set; }
+        // The survey asked once per rider ticket at online checkout for events of this type (Script0318).
+        public Guid? AssessmentSurveyId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

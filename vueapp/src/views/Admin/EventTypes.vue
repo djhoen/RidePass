@@ -19,6 +19,15 @@
                         <th style="width: 120px">Code</th>
                         <th style="width: 110px">Kind</th>
                         <th v-if="branding.loampassMxEnabled" style="width: 130px">Loam Pass</th>
+                        <th style="width: 230px">
+                            Self-assessment
+                            <v-tooltip location="top" max-width="320"
+                                text="A survey every rider answers once per ticket at online checkout for events of this type (rider history for lessons). Build it under Surveys.">
+                                <template #activator="{ props }">
+                                    <v-icon v-bind="props" size="14" class="text-medium-emphasis">mdi-information-outline</v-icon>
+                                </template>
+                            </v-tooltip>
+                        </th>
                         <th style="width: 180px" class="text-right"></th>
                     </tr>
                 </thead>
@@ -48,6 +57,12 @@
                                     @update:model-value="(v: boolean | null) => toggleLoampass(row, !!v)"></v-switch>
                                 <span v-if="row.code === 'practice'" class="text-caption text-medium-emphasis">always on</span>
                             </td>
+                            <td>
+                                <v-select :model-value="row.assessmentSurveyId ?? null" :items="surveyOptions"
+                                    item-title="title" item-value="value" density="compact" hide-details variant="outlined"
+                                    :loading="assessmentSavingId === row.id" :disabled="assessmentSavingId === row.id"
+                                    @update:model-value="(v: string | null) => setAssessment(row, v)"></v-select>
+                            </td>
                             <td class="text-right">
                                 <v-btn variant="text" size="small" @click="openEdit(row)">Edit</v-btn>
                                 <v-btn v-if="!row.isSystem" variant="text" size="small" color="error" @click="remove(row)">Delete</v-btn>
@@ -57,7 +72,7 @@
                 </draggable>
                 <tbody v-if="!loading && !loadError && rows.length === 0">
                     <tr>
-                        <td :colspan="branding.loampassMxEnabled ? 7 : 6" class="text-center text-medium-emphasis py-8">No event types.</td>
+                        <td :colspan="branding.loampassMxEnabled ? 8 : 7" class="text-center text-medium-emphasis py-8">No event types.</td>
                     </tr>
                 </tbody>
             </v-table>
@@ -115,6 +130,7 @@ import { useDragReorder } from '@/composables/useDragReorder'
 import { EventTypeService, type EventType } from '@/services/EventTypeService'
 import { branding, loadBranding } from '@/stores/branding'
 import { useConfirm } from '@/composables/useConfirm'
+import { LessonAssessmentService } from '@/services/LessonAssessmentService'
 
 const service = new EventTypeService()
 const confirm = useConfirm()
@@ -157,6 +173,32 @@ const snackbarColor = ref<'success' | 'error'>('success')
 
 const required = (v: string) => !!v || 'Required'
 
+// Rider self-assessment (Script0318): the survey each event of a type asks once per rider at checkout.
+const assessmentService = new LessonAssessmentService()
+const surveyOptions = ref<{ title: string; value: string | null }[]>([{ title: 'None', value: null }])
+const assessmentSavingId = ref<string | null>(null)
+async function loadSurveyOptions() {
+    try {
+        const list = (await assessmentService.surveys()).data.data ?? []
+        surveyOptions.value = [
+            { title: 'None', value: null },
+            ...list.map(s => ({ title: s.status === 'draft' ? `${s.name} (draft)` : s.name, value: s.id })),
+        ]
+    } catch { /* picker shows only None; the column still shows the current setting */ }
+}
+async function setAssessment(row: EventType, surveyId: string | null) {
+    assessmentSavingId.value = row.id
+    try {
+        await service.setAssessmentSurvey(row.id, surveyId)
+        row.assessmentSurveyId = surveyId
+        flash(surveyId ? `${row.name} checkout now asks the self-assessment.` : `${row.name} no longer asks a self-assessment.`, 'success')
+    } catch (e: any) {
+        flash(e?.response?.data?.error || 'Failed to update the self-assessment.', 'error')
+    } finally {
+        assessmentSavingId.value = null
+    }
+}
+
 function normalizeHex(hex: string): string {
     const v = (hex || '').trim()
     if (/^#[0-9A-Fa-f]{6}$/.test(v)) return v.toUpperCase()
@@ -181,6 +223,7 @@ async function toggleLoampass(row: EventType, allow: boolean) {
 
 onMounted(async () => {
     if (!branding.loaded) await loadBranding()
+    void loadSurveyOptions()
     await load()
 })
 

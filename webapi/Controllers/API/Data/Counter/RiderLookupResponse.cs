@@ -15,5 +15,8 @@ namespace webapi.Controllers.API.Data.Counter
         public string? WaiverParentPhone { get; set; }
         public string? EmergencyContactName { get; set; }
         public string? EmergencyContactPhone { get; set; }
+        /// <summary>Height (whole inches) and weight (whole pounds) on file (Script0317); null when unknown.</summary>
+        public int? HeightIn { get; set; }
+        public int? WeightLb { get; set; }
     }
 }
