@@ -1570,15 +1570,18 @@ namespace webapi.Controllers
                     completed++;
                 }
 
-                // The self-assessment, once per rider ticket this registrant holds (a re-submit replaces it).
+                // The self-assessment, once per rider (a re-submit replaces it): filed on their rider
+                // gate ticket, else their first race entry, so a rider with several classes is one response.
                 if (assessment is not null && assessmentRows is not null)
                 {
                     Guid? respondentUserId = Guid.TryParse(User.FindFirst("UserId")?.Value, out var ruid) ? ruid : null;
                     var respondentName = $"{reg.FirstName!.Trim()} {reg.LastName!.Trim()}".Trim();
-                    foreach (var x in loaded.Where(l => l.isRace || (l.tier.Kind == "gate_fee" && l.tier.Audience == "rider")))
+                    var home = loaded.FirstOrDefault(l => l.tier.Kind == "gate_fee" && l.tier.Audience == "rider");
+                    if (home.ticket is null) home = loaded.FirstOrDefault(l => l.isRace);
+                    if (home.ticket is not null)
                     {
-                        await _assessments.SaveForTicket(tenantId, assessment.Survey.Id, x.ticket.Id, respondentUserId,
-                            respondentName, x.ticket.PurchaserEmail, HttpContext.Connection.RemoteIpAddress?.ToString(),
+                        await _assessments.SaveForTicket(tenantId, assessment.Survey.Id, home.ticket.Id, respondentUserId,
+                            respondentName, home.ticket.PurchaserEmail, HttpContext.Connection.RemoteIpAddress?.ToString(),
                             assessmentRows);
                     }
                 }

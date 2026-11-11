@@ -45,7 +45,9 @@ namespace Services.Repositories
         {
             const string sql = @"
                 UPDATE users
-                   SET height_in = @heightIn, weight_lb = @weightLb, measured_at = now(), updated_at = now()
+                   SET measured_at = CASE WHEN height_in IS DISTINCT FROM @heightIn OR weight_lb IS DISTINCT FROM @weightLb
+                                          THEN now() ELSE measured_at END,
+                       height_in = @heightIn, weight_lb = @weightLb, updated_at = now()
                  WHERE id = @userId AND (tenant_id IS NULL OR tenant_id = @tenantId)";
             return await _db.Execute(sql, new { userId, tenantId, heightIn, weightLb }) > 0;
         }
@@ -54,7 +56,9 @@ namespace Services.Repositories
         {
             const string sql = @"
                 UPDATE rider_dependent
-                   SET height_in = @heightIn, weight_lb = @weightLb, measured_at = now()
+                   SET measured_at = CASE WHEN height_in IS DISTINCT FROM @heightIn OR weight_lb IS DISTINCT FROM @weightLb
+                                          THEN now() ELSE measured_at END,
+                       height_in = @heightIn, weight_lb = @weightLb
                  WHERE id = @dependentId AND tenant_id = @tenantId
                    AND (@guardianUserId::uuid IS NULL OR guardian_user_id = @guardianUserId)";
             return await _db.Execute(sql, new { dependentId, tenantId, guardianUserId, heightIn, weightLb }) > 0;

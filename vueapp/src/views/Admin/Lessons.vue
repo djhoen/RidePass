@@ -44,6 +44,19 @@
                                 </tr>
                             </tbody>
                         </v-table>
+                        <template v-if="bikes[s.eventId]?.length">
+                            <div class="text-subtitle-2 mt-4 mb-1">Bikes for this session</div>
+                            <v-table density="compact">
+                                <thead><tr><th>Rented by</th><th>Bike</th><th>Rider size</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="k in bikes[s.eventId]" :key="k.rentalId">
+                                        <td>{{ k.renterName }}</td>
+                                        <td>{{ k.items }}</td>
+                                        <td>{{ sizeText(k) }}</td>
+                                    </tr>
+                                </tbody>
+                            </v-table>
+                        </template>
                         <div v-if="canWeather && !s.weatherCancelledAt && s.status === 'scheduled'" class="d-flex mt-3">
                             <v-spacer></v-spacer>
                             <v-btn variant="outlined" color="warning" prepend-icon="mdi-weather-lightning-rainy"
@@ -73,7 +86,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { LessonChangeService, type LessonSession, type LessonBooking } from '@/services/LessonChangeService'
+import { LessonChangeService, type LessonSession, type LessonBooking, type LessonBike } from '@/services/LessonChangeService'
 import LessonChangePanel from '@/components/LessonChangePanel.vue'
 import { formatTenantDateTime } from '@/helpers/TenantTime'
 import { useConfirm } from '@/composables/useConfirm'
@@ -92,6 +105,13 @@ const sessions = ref<LessonSession[]>([])
 const openPanel = ref<string | null>(null)
 const bookings = ref<Record<string, LessonBooking[]>>({})
 const bookingsLoading = ref<Record<string, boolean>>({})
+const bikes = ref<Record<string, LessonBike[]>>({})
+// Height in inches -> 5' 4", weight in lb (the shop sizes the bike from these).
+function sizeText(k: LessonBike): string {
+    const h = k.riderHeightIn != null ? `${Math.floor(k.riderHeightIn / 12)}' ${k.riderHeightIn % 12}"` : null
+    const w = k.riderWeightLb != null ? `${k.riderWeightLb} lb` : null
+    return [h, w].filter(Boolean).join(' · ') || 'Not given'
+}
 const cancelling = ref<string | null>(null)
 const moveDialog = ref(false)
 const moveTarget = ref<LessonBooking | null>(null)
@@ -113,7 +133,9 @@ async function loadBookings(eventId: string, force = false) {
     if (bookings.value[eventId] && !force) return
     bookingsLoading.value[eventId] = true
     try {
-        bookings.value[eventId] = (await svc.bookings(eventId)).data.data
+        const [b, k] = await Promise.all([svc.bookings(eventId), svc.bikes(eventId)])
+        bookings.value[eventId] = b.data.data
+        bikes.value[eventId] = k.data.data
     } catch (e: any) {
         flash(e?.response?.data?.error || 'Could not load bookings.', 'error')
     } finally {

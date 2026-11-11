@@ -118,6 +118,24 @@ namespace webapi.Controllers
             }).ToList());
         }
 
+        /// <summary>Bikes rented for a session and the rider height/weight each was set up for.</summary>
+        [Authorize(Policy = TenantPermissions.Policy.SalesView)]
+        [HttpGet("Sessions/{eventId:guid}/Bikes")]
+        public async Task<IActionResult> Bikes(Guid eventId)
+        {
+            if (!_tenantContext.IsResolved) return new ApiResponses().BadRequestResult("No tenant resolved.");
+            var rows = await _lessons.ListBikes(_tenantContext.TenantId, eventId);
+            return new ApiResponses().OkResult(rows.Select(b => new LessonBikeItem
+            {
+                RentalId = b.RentalId,
+                Status = b.Status,
+                RenterName = b.RenterName,
+                Items = b.Items,
+                RiderHeightIn = b.RiderHeightIn,
+                RiderWeightLb = b.RiderWeightLb,
+            }).ToList());
+        }
+
         [Authorize(Policy = TenantPermissions.Policy.SalesCancel)]
         [HttpGet("Staff/Ticket/{id:guid}")]
         public async Task<IActionResult> GetForStaff(Guid id)

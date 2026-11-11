@@ -32,6 +32,9 @@ namespace Services.Repositories.Interfaces
 
         Task<List<LessonBookingRow>> ListBookings(Guid tenantId, Guid eventId);
 
+        /// <summary>Bikes rented for the session, with the rider size each was set up for.</summary>
+        Task<List<LessonBikeRow>> ListBikes(Guid tenantId, Guid eventId);
+
         /// <summary>Cancels the event for weather. False when it isn't this venue's or was already weather-cancelled.</summary>
         Task<bool> WeatherCancel(Guid tenantId, Guid eventId, Guid byUserId);
     }

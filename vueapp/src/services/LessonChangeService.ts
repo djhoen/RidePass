@@ -50,6 +50,15 @@ export interface LessonBooking {
     amountCents: number
 }
 
+export interface LessonBike {
+    rentalId: string
+    status: string
+    renterName: string
+    items: string
+    riderHeightIn: number | null
+    riderWeightLb: number | null
+}
+
 export class LessonChangeService {
     private apiUrl: string
     // Typed loosely: this project's env typings are not set up for vue-tsc.
@@ -81,6 +90,9 @@ export class LessonChangeService {
     }
     bookings(eventId: string) {
         return axios.get<{ data: LessonBooking[] }>(`${this.apiUrl}/LessonChange/Sessions/${eventId}/Bookings`)
+    }
+    bikes(eventId: string) {
+        return axios.get<{ data: LessonBike[] }>(`${this.apiUrl}/LessonChange/Sessions/${eventId}/Bikes`)
     }
     weatherCancel(eventId: string) {
         return axios.post<{ data: { bookings: number; emailed: number } }>(`${this.apiUrl}/LessonChange/Sessions/${eventId}/WeatherCancel`)

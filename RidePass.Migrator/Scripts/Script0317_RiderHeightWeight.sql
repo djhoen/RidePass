@@ -1,4 +1,6 @@
 -- Rider height and weight, so the bike shop can size a rental bike before the rider turns up.
+-- An adult's numbers sit on their platform-wide account (users), like their name and birthdate, so
+-- every venue they ride at sees and updates the same values; a minor's sit on the venue's rider_dependent row.
 --
 -- Highland's go-live list: "ask height and weight when a bike is rented with a lesson" and "ask it at
 -- the lessons kiosk". The numbers belong to the RIDER, not to an order, so they live on the rider's

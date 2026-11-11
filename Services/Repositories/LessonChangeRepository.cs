@@ -84,11 +84,11 @@ namespace Services.Repositories
         {
             const string sql = @"
                 SELECT EXISTS (
-                    SELECT 1 FROM rental_purchase r
+                    SELECT 1 FROM shop_rental r
                     WHERE r.tenant_id = @tenantId AND r.event_id = @eventId
-                      AND r.status IN ('pending', 'paid')
-                      AND ((@purchaserUserId::uuid IS NOT NULL AND r.purchaser_user_id = @purchaserUserId)
-                           OR lower(r.purchaser_email) = lower(@purchaserEmail)))";
+                      AND r.status IN ('pending', 'paid', 'out')
+                      AND ((@purchaserUserId::uuid IS NOT NULL AND r.renter_user_id = @purchaserUserId)
+                           OR lower(r.renter_email) = lower(@purchaserEmail)))";
             return (await _db.Query<bool>(sql, new { tenantId, eventId, purchaserUserId, purchaserEmail })).FirstOrDefault();
         }
 
@@ -157,6 +157,21 @@ namespace Services.Repositories
                 WHERE t.event_id = @eventId AND p.tenant_id = @tenantId AND p.status IN ('paid', 'redeemed')
                 ORDER BY lower(t.name), lower(COALESCE(p.rider_last_name, p.purchaser_name))";
             return (await _db.Query<LessonBookingRow>(sql, new { tenantId, eventId })).ToList();
+        }
+
+        public async Task<List<LessonBikeRow>> ListBikes(Guid tenantId, Guid eventId)
+        {
+            const string sql = @"
+                SELECT r.id AS RentalId, r.status, COALESCE(NULLIF(TRIM(r.renter_name), ''), r.renter_email, '(walk-in)') AS RenterName,
+                       COALESCE((SELECT string_agg(l.quantity || ' x ' || l.name_snapshot
+                                     || COALESCE(' (' || l.variant_label || ')', ''), ', ' ORDER BY l.name_snapshot)
+                                 FROM shop_rental_line l WHERE l.rental_id = r.id), '') AS Items,
+                       r.rider_height_in AS RiderHeightIn, r.rider_weight_lb AS RiderWeightLb
+                FROM shop_rental r
+                WHERE r.tenant_id = @tenantId AND r.event_id = @eventId
+                  AND r.status IN ('pending', 'paid', 'out', 'returned')
+                ORDER BY lower(COALESCE(r.renter_name, r.renter_email, ''))";
+            return (await _db.Query<LessonBikeRow>(sql, new { tenantId, eventId })).ToList();
         }
 
         public async Task<bool> WeatherCancel(Guid tenantId, Guid eventId, Guid byUserId)
